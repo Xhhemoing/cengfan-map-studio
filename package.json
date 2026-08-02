@@ -1,0 +1,44 @@
+{
+  "name": "cengfan-map-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n web,api -c cyan,magenta \"vite\" \"tsx server/index.ts\"",
+    "dev:web": "vite",
+    "dev:ai": "tsx server/index.ts",
+    "build": "bash scripts/run-heavy.sh bash -c 'tsc -b && vite build'",
+    "start": "STATIC_DIR=dist tsx server/index.ts",
+    "test": "bash scripts/run-heavy.sh vitest run",
+    "test:watch": "vitest",
+    "lint": "bash scripts/run-heavy.sh eslint .",
+    "preview": "npm run start"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "d3-geo": "latest",
+    "lucide-react": "latest",
+    "pinyin-pro": "^3.28.2",
+    "react": "latest",
+    "react-dom": "latest",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@types/d3-geo": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "concurrently": "^9.2.1",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "eslint-plugin-react-refresh": "latest",
+    "globals": "latest",
+    "jsdom": "latest",
+    "tsx": "^4.23.1",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  }
+}
