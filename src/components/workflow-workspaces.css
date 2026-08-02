@@ -1,0 +1,25 @@
+.workflow-panel { display: grid; align-content: start; gap: 12px; }
+.workflow-panel .panel-heading { margin-bottom: 0; }
+.workflow-panel--roster .data-workspace { grid-template-columns: 1fr; gap: 12px; }
+.workflow-panel--roster .data-workspace > * { grid-column: 1; }
+.workflow-panel--roster .data-workspace > .panel-heading { display: none; }
+.workflow-panel--roster .data-summary { grid-template-columns: 1fr 1fr; }
+.workflow-panel--roster .data-list { max-height: 290px; }
+.workflow-panel--roster .data-table-wrap { order: 3; }
+.workflow-data-views { display: grid; gap: 6px; }
+.workflow-data-views button { display: grid; gap: 3px; padding: 10px; color: #5d7180; text-align: left; background: #fff; border: 1px solid #d5e0e2; border-radius: 4px; cursor: pointer; }
+.workflow-data-views button:hover { border-color: #83afa9; }
+.workflow-data-views button.is-active { color: #135f5a; background: #edf7f4; border-color: #75aaa1; box-shadow: inset 3px 0 #2e7d6b; }
+.workflow-data-views strong { font-size: 12px; }.workflow-data-views small { font-size: 10px; }
+.workflow-panel--map .property-panel { margin-top: 4px; }
+.workflow-delivery-checks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.workflow-delivery-checks > div { display: grid; gap: 3px; padding: 12px; color: #5d7480; background: #fff; border: 1px solid #d7e1e3; border-radius: 4px; }
+.workflow-delivery-checks strong { color: #d05a45; font: 700 24px "DM Mono", monospace; }.workflow-delivery-checks span { font-size: 10px; }
+.workflow-export-button { color: #fff; background: #1e766e; border-color: #318f85; }.workflow-export-button:hover { background: #135e59; }
+
+@media (max-width: 760px) {
+  .workspace-nav { display: flex; gap: 3px; overflow-x: auto; padding: 7px; }
+  .workspace-nav button { grid-template-columns: 22px; grid-template-rows: 22px auto; width: 74px; min-width: 74px; min-height: 52px; justify-items: center; gap: 1px; padding: 4px; text-align: center; }
+  .workspace-nav button small { display: none; }.workspace-nav button strong { font-size: 10px; }.workspace-nav button.is-active { box-shadow: inset 0 -3px #2e7d6b; }
+  .workflow-panel--roster .data-list { max-height: none; }
+}
