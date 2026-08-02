@@ -25,7 +25,7 @@ function click(element: Element): void {
 
 function openDesignTool(container: HTMLElement, label: string): void {
   if (label !== "模板") throw new Error(`Unsupported legacy design tool: ${label}`);
-  click(Array.from(container.querySelectorAll(".workspace-nav button")).find((button) => button.textContent?.includes("版式"))!);
+  click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="版式"]')!);
 }
 
 function openWorkflowGuide(container: HTMLElement): void {
@@ -41,6 +41,10 @@ function openGlobalSettingsSection(container: HTMLElement, controls: string): vo
 function openPeopleData(container: HTMLElement): void {
   click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
   click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-cards"]')!);
+}
+
+function openGlobalData(container: HTMLElement): void {
+  click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="名单"]')!);
 }
 
 function changeInput(input: HTMLInputElement | HTMLTextAreaElement, value: string): void {
@@ -280,7 +284,7 @@ describe("App student editing", () => {
 
     expect(container.querySelector('[data-background-image]')?.getAttribute("href")).toBe("data:image/png;base64,QkFDS0dST1VORA==");
     expect(container.querySelector('[data-province-texture]')?.getAttribute("href")).toBe("data:image/png;base64,VEVYVFVSRS==");
-    click(Array.from(container.querySelectorAll(".workspace-nav button")).find((button) => button.textContent?.includes("素材"))!);
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
     expect(container.textContent).toContain("导入的北京贴图");
   }, 30_000);
 
@@ -414,7 +418,7 @@ describe("App student editing", () => {
 
   it("applies valid material panel actions without offering built-in landmarks or decorations", () => {
     const container = renderApp();
-    click(Array.from(container.querySelectorAll(".workspace-nav button")).find((button) => button.textContent?.includes("素材"))!);
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
 
     const background = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent?.includes("设为背景"))!;
@@ -435,7 +439,7 @@ describe("App student editing", () => {
     }
     vi.stubGlobal("FileReader", ImmediateFileReader);
     const container = renderApp();
-    click(Array.from(container.querySelectorAll(".workspace-nav button")).find((button) => button.textContent?.includes("素材"))!);
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
 
     const input = container.querySelector<HTMLInputElement>("#asset-svg-canvas-upload")!;
     Object.defineProperty(input, "files", {
@@ -454,7 +458,7 @@ describe("App student editing", () => {
 
   it("keeps the province texture library available after removing landmark presets", () => {
     const container = renderApp();
-    click(Array.from(container.querySelectorAll(".workspace-nav button")).find((button) => button.textContent?.includes("素材"))!);
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
     expect(container.textContent).toContain("省份外观");
     expect(container.querySelector("#asset-province")).not.toBeNull();
     expect(container.textContent).not.toContain("地标和装饰");
@@ -567,25 +571,50 @@ describe("App student editing", () => {
     expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform")).not.toContain("translate(50 50)");
   });
 
+  it("opens the project-level global data workbench from the roster workflow step", () => {
+    const container = renderApp();
+    openGlobalData(container);
+
+    expect(container.querySelector('main[aria-label="全局数据工作台"]')).not.toBeNull();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(5);
+    expect(container.textContent).toContain("数据总览");
+  });
+
+  it("applies a presentation change from the global data workbench to the poster", () => {
+    const container = renderApp();
+    openGlobalData(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="数据呈现"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="切换为地图图钉"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+
+    expect(container.querySelectorAll("[data-student-pin]")).toHaveLength(12);
+  });
+
+  it("opens the same global data workbench from global settings", () => {
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
+    click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-cards"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局数据"]')!);
+
+    expect(container.querySelector('main[aria-label="全局数据工作台"]')).not.toBeNull();
+    expect(container.querySelector(".student-table")).not.toBeNull();
+  });
+
   it("organizes the actual editor into six user workflow workspaces", () => {
     const container = renderApp();
-    const tabs = container.querySelector(".workspace-nav")!;
-    expect(Array.from(tabs.querySelectorAll("button")).map((button) => button.textContent?.trim())).toEqual([
-      "名单整理名单、修正问题",
-      "地图选择数据表达",
-      "版式模板、画布和卡片",
-      "内容标题、备注和嘉宾",
-      "素材贴图、背景和字体",
-      "交付检查、保存和导出",
-    ]);
+    const tabs = container.querySelector(".topbar .workflow-stepper")!;
+    expect(tabs.querySelectorAll("button")).toHaveLength(6);
+    expect(container.querySelector(".workspace-nav")).toBeNull();
 
-    click(Array.from(tabs.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("名单"))!);
-    expect(container.textContent).toContain("学生数据中心");
+    click(tabs.querySelector<HTMLButtonElement>('[aria-label="名单"]')!);
+    expect(container.querySelector('main[aria-label="全局数据工作台"]')).not.toBeNull();
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
 
-    click(Array.from(tabs.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("地图"))!);
+    const editorTabs = container.querySelector(".topbar .workflow-stepper")!;
+    click(editorTabs.querySelector<HTMLButtonElement>('[aria-label="地图"]')!);
     expect(container.textContent).toContain("地图表达");
 
-    click(Array.from(tabs.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("交付"))!);
+    click(editorTabs.querySelector<HTMLButtonElement>('[aria-label="交付"]')!);
     expect(container.textContent).toContain("交付检查");
   });
 
@@ -744,14 +773,7 @@ describe("App student editing", () => {
     expect(projectMenu.textContent).toContain("导入工程");
     expect(projectMenu.textContent).toContain("在线协作");
 
-    expect(Array.from(container.querySelectorAll<HTMLButtonElement>(".workspace-nav button")).map((button) => button.textContent?.trim())).toEqual([
-      "名单整理名单、修正问题",
-      "地图选择数据表达",
-      "版式模板、画布和卡片",
-      "内容标题、备注和嘉宾",
-      "素材贴图、背景和字体",
-      "交付检查、保存和导出",
-    ]);
+    expect(container.querySelectorAll<HTMLButtonElement>(".topbar .workflow-stepper button")).toHaveLength(6);
     expect(topbar.querySelector('[aria-label="打开全局设置"]')).not.toBeNull();
   });
 
@@ -882,6 +904,28 @@ describe("App student editing", () => {
 });
 
 describe("App workflow guidance", () => {
+  it("keeps workflow navigation only in the top stepper", () => {
+    const container = renderApp();
+
+    expect(container.querySelector(".workspace-nav")).toBeNull();
+    expect(container.querySelectorAll(".topbar .workflow-stepper button")).toHaveLength(6);
+  });
+
+  it("switches the editor theme without changing poster data or viewBox", () => {
+    const container = renderApp();
+    const shell = container.querySelector<HTMLElement>(".app-shell")!;
+    const poster = container.querySelector<SVGSVGElement>("svg.poster")!;
+    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="切换到暗色模式"]')!;
+
+    expect(shell.dataset.editorTheme).toBe("light");
+    const viewBox = poster.getAttribute("viewBox");
+    click(toggle);
+
+    expect(shell.dataset.editorTheme).toBe("dark");
+    expect(poster.getAttribute("viewBox")).toBe(viewBox);
+    expect(window.localStorage.getItem("cengfan-map-studio:theme-mode")).toBe("dark");
+  });
+
   it("renders the workflow guide in the topbar with roster as the initial step", () => {
     const container = renderApp();
     openWorkflowGuide(container);
@@ -929,9 +973,8 @@ describe("App workflow guidance", () => {
     click(Array.from(container.querySelectorAll(".workflow-nav button"))
       .find((button) => button.textContent?.includes("局部调整"))!);
 
-    const assetsNav = Array.from(container.querySelectorAll(".workspace-nav button"))
-      .find((button) => button.textContent?.includes("素材"))!;
-    expect(assetsNav.getAttribute("aria-selected")).toBe("true");
+    const assetsStep = container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!;
+    expect(assetsStep.className).toContain("is-active");
     expect(container.querySelector(".inspector h2")?.textContent).toContain("北京市");
     expect(container.querySelector('[aria-label="局部调整"]')?.textContent).toContain("当前选中：北京市");
   });

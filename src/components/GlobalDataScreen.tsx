@@ -10,7 +10,7 @@ import { DataWorkspace } from "./DataWorkspace";
 import type { CustomTemplateOption, TemplateOption } from "./TemplatePicker";
 import { CompactButton, PanelHeader } from "./StudioUi";
 
-type GlobalDataView = "overview" | "roster" | "quality" | "mapping" | "presentation";
+export type GlobalDataView = "overview" | "roster" | "quality" | "mapping" | "presentation";
 
 const navigation: Array<{ id: GlobalDataView; label: string; description: string; icon: typeof Database }> = [
   { id: "overview", label: "数据总览", description: "查看工程数据状态", icon: Database },
@@ -22,6 +22,7 @@ const navigation: Array<{ id: GlobalDataView; label: string; description: string
 
 export function GlobalDataScreen({
   project,
+  initialView = "overview",
   summary,
   issues,
   dataViewLabel,
@@ -39,6 +40,7 @@ export function GlobalDataScreen({
   dataWorkspaceProps,
 }: {
   project: ProjectDocument;
+  initialView?: GlobalDataView;
   summary: DataHealthSummary;
   issues: DataIssue[];
   dataViewLabel: string;
@@ -55,7 +57,7 @@ export function GlobalDataScreen({
   onOpenGlobalSettings: () => void;
   dataWorkspaceProps: ComponentProps<typeof DataWorkspace>;
 }) {
-  const [activeView, setActiveView] = useState<GlobalDataView>("overview");
+  const [activeView, setActiveView] = useState<GlobalDataView>(initialView);
   const [issueFilter, setIssueFilter] = useState<DataIssueKind | null>(null);
 
   const visibleIssues = useMemo(

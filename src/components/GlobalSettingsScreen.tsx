@@ -1,4 +1,4 @@
-import { ArrowLeft, LayoutPanelTop, Map, Redo2, RectangleHorizontal, Settings2, Type, Undo2, Wallpaper } from "lucide-react";
+import { ArrowLeft, Database, LayoutPanelTop, Map, Redo2, RectangleHorizontal, Settings2, Type, Undo2, Wallpaper } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 import type { ProjectDocument } from "../lib/project-document";
 import type { UserFont } from "../lib/fonts";
@@ -15,6 +15,9 @@ import { WorkflowGuide } from "./WorkflowGuide";
 import type { WorkflowProgress, WorkflowStepId, WorkflowStepStatus } from "../lib/workflow-progress";
 import { TemplatePicker } from "./TemplatePicker";
 import { CardPresentationSettings } from "./CardPresentationSettings";
+import { ThemeToggle } from "./ThemeToggle";
+import type { ResolvedTheme, ThemeMode } from "../lib/theme";
+import { ActionGroup, CompactButton, IconButton, SegmentedControl } from "./StudioUi";
 
 export type GlobalSettingsSection = "canvas" | "map" | "cards" | "guests" | "typography" | "advanced";
 
@@ -107,6 +110,10 @@ export function GlobalSettingsScreen({
   onApplyTemplate,
   onApplyCustomTemplate,
   onSaveTemplate,
+  onOpenGlobalData,
+  themeMode,
+  resolvedTheme,
+  onThemeChange,
 }: {
   project: ProjectDocument;
   userFonts?: UserFont[];
@@ -144,6 +151,10 @@ export function GlobalSettingsScreen({
   onApplyTemplate: (id: MapTemplateId) => void;
   onApplyCustomTemplate: (record: { id: string; name: string; scope: "visual" | "layout" }) => void;
   onSaveTemplate: () => void;
+  onOpenGlobalData?: () => void;
+  themeMode?: ThemeMode;
+  resolvedTheme?: ResolvedTheme;
+  onThemeChange?: (mode: ThemeMode) => void;
 }) {
   const [activeSection, setActiveSection] = useState<GlobalSettingsSection>(initialSection);
   const [dataView, setDataView] = useState<"people" | "cards">("people");
@@ -184,25 +195,19 @@ export function GlobalSettingsScreen({
   return (
     <main className="global-settings-screen" aria-label="全局设置">
       <header className="global-settings-header">
-        <button type="button" className="global-settings-back" aria-label="返回编辑器" onClick={onClose}>
-          <ArrowLeft size={18} aria-hidden />
-          <span>返回编辑器</span>
-        </button>
+        <CompactButton className="global-settings-back" aria-label="返回编辑器" icon={<ArrowLeft size={17} aria-hidden />} onClick={onClose}>返回编辑器</CompactButton>
         <div className="global-settings-title">
           <h1>全局设置</h1>
           <p>配置当前作品的画布与整体布局</p>
         </div>
-        <div className="global-settings-history" role="group" aria-label="全局设置历史">
-          <button type="button" aria-label={undoLabel} title={undoLabel} disabled={!canUndo} onClick={onUndo}>
-            <Undo2 size={17} aria-hidden />
-            <span>撤销</span>
-          </button>
-          <button type="button" aria-label={redoLabel} title={redoLabel} disabled={!canRedo} onClick={onRedo}>
-            <Redo2 size={17} aria-hidden />
-            <span>重做</span>
-          </button>
-          <button type="button" className="global-settings-done" onClick={onClose}>完成</button>
-        </div>
+        <ActionGroup label="全局设置历史" className="global-settings-history">
+          <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
+          <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
+          {themeMode && resolvedTheme && onThemeChange && (
+            <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={onThemeChange} />
+          )}
+          <CompactButton className="global-settings-done" onClick={onClose}>完成</CompactButton>
+        </ActionGroup>
       </header>
 
       <div className="global-settings-guide">
@@ -291,10 +296,23 @@ export function GlobalSettingsScreen({
             )}
             {activeSection === "cards" && (
               <>
-                <div className="global-settings-data-nav" role="group" aria-label="数据板块内容">
-                  <button type="button" aria-pressed={dataView === "people"} className={dataView === "people" ? "is-active" : undefined} onClick={() => setDataView("people")}>人员数据</button>
-                  <button type="button" aria-label="数据展示设置" aria-pressed={dataView === "cards"} className={dataView === "cards" ? "is-active" : undefined} onClick={() => setDataView("cards")}>数据展示</button>
-                </div>
+                {onOpenGlobalData && (
+                  <CompactButton
+                    className="global-settings-open-data"
+                    icon={<Database size={14} aria-hidden />}
+                    aria-label="打开全局数据"
+                    onClick={onOpenGlobalData}
+                  >
+                    打开全局数据
+                  </CompactButton>
+                )}
+                <SegmentedControl
+                  label="数据板块内容"
+                  activeId={dataView}
+                  items={[{ id: "people", label: "人员数据" }, { id: "cards", label: "数据展示", ariaLabel: "数据展示设置" }]}
+                  onChange={setDataView}
+                  className="global-settings-data-nav"
+                />
                 {dataView === "people" ? (
                   <DataWorkspace
                     students={project.students}
@@ -318,9 +336,7 @@ export function GlobalSettingsScreen({
                     onApplyCustomTemplate={onApplyCustomTemplate}
                     onSaveTemplate={onSaveTemplate}
                   />
-                  <button type="button" className="global-settings-arrange" aria-label="一键智能排版" onClick={onArrangeCards}>
-                    一键智能排版
-                  </button>
+                  <CompactButton className="global-settings-arrange" icon={<LayoutPanelTop size={14} aria-hidden />} aria-label="一键智能排版" onClick={onArrangeCards}>一键智能排版</CompactButton>
                   <CardsInspector
                     cards={project.cards}
                     userFonts={userFonts}
