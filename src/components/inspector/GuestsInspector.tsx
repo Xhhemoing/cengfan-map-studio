@@ -1,6 +1,8 @@
+import { Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
 import { createId } from "../../lib/ids";
 import type { GuestPanelSettings, GuestPerson } from "../../lib/scene-document";
 import { DeferredInput, DeferredTextarea } from "../DeferredInput";
+import { ActionGroup, CompactButton, IconButton, InspectorHeader } from "../StudioUi";
 
 const readAvatarFile = (file: File | null | undefined, done: (src: string) => void) => {
   if (!file) return;
@@ -65,17 +67,15 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
     </label>
   </div>;
 
-  if (placementOnly) return <section className="property-panel"><header><h2>辅助板块位置与尺寸</h2></header>{placementControls}</section>;
+  if (placementOnly) return <section className="property-panel"><InspectorHeader title="辅助板块位置与尺寸" />{placementControls}</section>;
 
   return (
     <section className="property-panel">
       {!peopleOnly && <>
-        <header>
-          <h2>特邀嘉宾</h2>
-          <button type="button" onClick={() => onPatch({ visibility: !guests.visibility })}>
-            {guests.visibility ? "隐藏" : "显示"}
-          </button>
-        </header>
+        <InspectorHeader
+          title="特邀嘉宾"
+          actions={<IconButton label={guests.visibility ? "隐藏嘉宾板块" : "显示嘉宾板块"} icon={guests.visibility ? <EyeOff size={15} /> : <Eye size={15} />} variant="ghost" onClick={() => onPatch({ visibility: !guests.visibility })} />}
+        />
         <label htmlFor="guests-title">板块标题
           <DeferredInput id="guests-title" value={guests.title} onCommit={(title) => onPatch({ title })} />
         </label>
@@ -123,7 +123,7 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
           <strong>老师名单</strong>
           <small>{people.length} 人</small>
         </div>
-        <button type="button" className="wide-button" onClick={addPerson}>添加老师 / 嘉宾</button>
+        <CompactButton className="wide-button" icon={<Plus size={14} aria-hidden />} onClick={addPerson}>添加老师 / 嘉宾</CompactButton>
         {people.map((person) => (
           <div key={person.id} className="guest-person-row" data-guest-editor={person.id}>
             <label>
@@ -155,22 +155,20 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
                 }}
               />
               {person.avatarSrc && (
-                <button type="button" data-guest-avatar-clear={person.id} onClick={() => updatePerson(person.id, { avatarSrc: undefined })}>
-                  清除头像
-                </button>
+                <IconButton label={`清除 ${person.name} 的头像`} icon={<X size={14} />} variant="ghost" data-guest-avatar-clear={person.id} onClick={() => updatePerson(person.id, { avatarSrc: undefined })} />
               )}
             </div>
-            <div className="guest-person-row__actions">
+            <ActionGroup label={`${person.name} 操作`} className="guest-person-row__actions">
               <label>
                 <input
                   type="checkbox"
                   checked={person.visibility !== false}
                   onChange={(event) => updatePerson(person.id, { visibility: event.target.checked })}
-                />
+              />
                 显示
               </label>
-              <button type="button" onClick={() => removePerson(person.id)}>删除</button>
-            </div>
+              <IconButton label={`删除 ${person.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={() => removePerson(person.id)} />
+            </ActionGroup>
           </div>
         ))}
       </div>}

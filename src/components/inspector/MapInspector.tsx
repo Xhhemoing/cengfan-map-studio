@@ -1,3 +1,4 @@
+import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, Maximize2, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { createId } from "../../lib/ids";
 import { autoFitAlignment } from "../../lib/map-alignment";
@@ -8,6 +9,7 @@ import { heatPreviewSteps, normalizeHeatScale } from "../../lib/heat-scale";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { FileDropzone } from "../FileDropzone";
 import { DeferredInput } from "../DeferredInput";
+import { ActionGroup, CompactButton, IconButton, InspectorHeader } from "../StudioUi";
 
 function isImageSource(source: MapRenderSource | undefined): source is Extract<MapRenderSource, { kind: "image" }> {
   return source?.kind === "image";
@@ -213,7 +215,7 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
               onCommit={patchProvinceColor}
             />
           </label>
-          <button type="button" onClick={clearProvinceColor}>恢复跟随整体</button>
+          <CompactButton variant="ghost" icon={<RotateCcw size={14} aria-hidden />} onClick={clearProvinceColor}>恢复跟随整体</CompactButton>
         </div>}
         <p className="property-panel__hint">单独颜色优先于热力变色；也可直接点击画布省份进入更完整的贴图设置。</p>
       </fieldset>
@@ -230,7 +232,10 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
 
   return (
     <section className="property-panel">
-      <header><h2>{mode === "placement" ? "地图位置与尺寸" : "地图属性"}</h2>{showGlobal && <button type="button" onClick={onReset}>重置</button>}</header>
+      <InspectorHeader
+        title={mode === "placement" ? "地图位置与尺寸" : "地图属性"}
+        actions={showGlobal ? <IconButton label="重置地图" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} /> : undefined}
+      />
       {showPlacement && <>
         {number("x", map.x, 0, 6000, 1, "X")}
         {number("y", map.y, 0, 6000, 1, "Y")}
@@ -251,12 +256,12 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
             }}
           />
         </label>
-        <div className="inspector-actions">
-          <button type="button" aria-label="地图上移" onClick={() => onPatch({ zIndex: Math.min(CANVAS_LAYER_Z_RANGE.max, (map.zIndex ?? CANVAS_LAYER_Z.map) + 1) })}>上移</button>
-          <button type="button" aria-label="地图下移" onClick={() => onPatch({ zIndex: Math.max(CANVAS_LAYER_Z_RANGE.min, (map.zIndex ?? CANVAS_LAYER_Z.map) - 1) })}>下移</button>
-          <button type="button" aria-label="地图置顶" onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.max })}>置顶</button>
-          <button type="button" aria-label="地图置底" onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.min })}>置底</button>
-        </div>
+        <ActionGroup label="地图层级" className="inspector-actions">
+          <IconButton label="地图上移" text="上移" icon={<ArrowUp size={14} />} onClick={() => onPatch({ zIndex: Math.min(CANVAS_LAYER_Z_RANGE.max, (map.zIndex ?? CANVAS_LAYER_Z.map) + 1) })} />
+          <IconButton label="地图下移" text="下移" icon={<ArrowDown size={14} />} onClick={() => onPatch({ zIndex: Math.max(CANVAS_LAYER_Z_RANGE.min, (map.zIndex ?? CANVAS_LAYER_Z.map) - 1) })} />
+          <IconButton label="地图置顶" text="置顶" icon={<ChevronsUp size={14} />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.max })} />
+          <IconButton label="地图置底" text="置底" icon={<ChevronsDown size={14} />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.min })} />
+        </ActionGroup>
         <p className="property-panel__hint">数值越大越靠上。参照：数据框 10 · 嘉宾面板 20 · 装饰素材 30 · 文本 40。置顶/置底即相对全部画布层。</p>
       </>}
 
@@ -495,15 +500,15 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
               }}
             />
           </label>
-          <div className="inspector-actions">
-            <button type="button" onClick={() => patchImage({ zIndex: 25 })}>省界下</button>
-            <button type="button" onClick={() => patchImage({ zIndex: 60 })}>省界上</button>
-            <button type="button" onClick={() => patchImage({ zIndex: 110 })}>标签上</button>
-          </div>
-          <button type="button" onClick={() => { void autoFitCurrent(); }}>自动适配</button>
+          <ActionGroup label="地图覆盖层级" className="inspector-actions">
+            <CompactButton onClick={() => patchImage({ zIndex: 25 })}>省界下</CompactButton>
+            <CompactButton onClick={() => patchImage({ zIndex: 60 })}>省界上</CompactButton>
+            <CompactButton onClick={() => patchImage({ zIndex: 110 })}>标签上</CompactButton>
+          </ActionGroup>
+          <CompactButton icon={<Maximize2 size={14} aria-hidden />} onClick={() => { void autoFitCurrent(); }}>自动适配</CompactButton>
           <p className="property-panel__hint">可在画布上直接拖拽角点/边线拉伸覆盖图宽高，或用对齐 X/Y/宽高/旋转微调。覆盖层级决定特色地图相对省界(50)/标签(100)的显示顺序，默认 25 在省界之下。</p>
           </>}
-          {showGlobal && <button type="button" onClick={() => onPatch({ renderSource: { kind: "vector" } })}>恢复原始地图</button>}
+          {showGlobal && <CompactButton variant="ghost" icon={<RotateCcw size={14} aria-hidden />} onClick={() => onPatch({ renderSource: { kind: "vector" } })}>恢复原始地图</CompactButton>}
         </>
       )}
       {showGlobal && <p className="property-panel__hint">点击画布中的省份，可在右侧调整该省贴图；省界线纹理会立即应用到整张地图。</p>}

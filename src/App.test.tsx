@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { createProjectDocument, serializeProjectDocument } from "./lib/project-document";
+import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
 import { sampleStudents } from "./lib/project-data";
 import { createProjectPackage } from "./lib/project-package";
 import { createCustomTemplateFromProject, saveCustomTemplates } from "./lib/template-store";
@@ -627,7 +628,8 @@ describe("App student editing", () => {
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
 
     expect(container.querySelector('main[aria-label="全局设置"]')).not.toBeNull();
-    expect(container.querySelector(".topbar")).toBeNull();
+    expect(container.querySelector(".topbar")).not.toBeNull();
+    expect(container.querySelectorAll(".topbar .workflow-stepper button")).toHaveLength(6);
     expect(container.querySelector(".workspace")).toBeNull();
     expect(container.querySelector(".sidebar")).toBeNull();
     expect(container.querySelector(".inspector")).toBeNull();
@@ -994,81 +996,16 @@ describe("App workflow guidance", () => {
     expect(container.querySelector(".project-summary")?.textContent).toContain("已记录 1 步");
   });
 
-  it("guides the user inside the fullscreen global settings", () => {
+  it("shows the current workflow context without duplicating workflow controls", () => {
     const container = renderApp();
     openGlobalSettingsSection(container, "canvas");
 
-    // 全屏页顶部有流程引导，当前步骤为全局布局
-    const guide = container.querySelector(".global-settings-screen .workflow-guide");
-    expect(guide).not.toBeNull();
-    expect(guide?.querySelector(".workflow-guide__bar")?.textContent).toContain("全局布局");
-
-    // 点击“准备名单”步骤 → 切到数据板块分区
-    click(Array.from(guide!.querySelectorAll(".workflow-nav button"))
-      .find((button) => button.textContent?.includes("准备名单"))!);
-    expect(container.querySelector('[role="tab"][aria-controls="global-settings-cards"]')?.getAttribute("aria-selected")).toBe("true");
-    expect(container.textContent).toContain("学生数据中心");
-    expect(container.querySelector(".global-settings-guide__note")?.textContent).toContain("整理名单并修正未匹配城市");
-
-    // 点击“检查导出”步骤 → 返回编辑器
-    click(Array.from(container.querySelectorAll(".workflow-nav button"))
-      .find((button) => button.textContent?.includes("检查导出"))!);
-    expect(container.querySelector(".global-settings-screen")).toBeNull();
-    expect(container.querySelector(".workflow-guide__bar")?.textContent).toContain("检查导出");
-  });
-
-  it("jumps back to the global design group when the layout step is picked in fullscreen", () => {
-    const container = renderApp();
-    openGlobalSettingsSection(container, "canvas");
-    const guide = container.querySelector(".global-settings-screen .workflow-guide")!;
-
-    // 先切到「其他设置」组的辅助板块
-    click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-guests"]')!);
-    expect(container.querySelector('[role="tab"][aria-controls="global-settings-guests"]')?.getAttribute("aria-selected")).toBe("true");
-
-    // 点击引导“全局布局”步骤 → 回到全局设计组（画布设置激活）
-    click(Array.from(guide.querySelectorAll(".workflow-nav button"))
-      .find((button) => button.textContent?.includes("全局布局"))!);
-    expect(container.querySelector('[role="tab"][aria-controls="global-settings-canvas"]')?.getAttribute("aria-selected")).toBe("true");
-    expect(container.querySelector('[role="tab"][aria-controls="global-settings-guests"]')?.getAttribute("aria-selected")).toBe("false");
-    expect(container.querySelector(".workflow-guide__bar")?.textContent).toContain("全局布局");
-  });
-
-  it("syncs the guide step to global layout when switching settings sections", () => {
-    const container = renderApp();
-    openGlobalSettingsSection(container, "canvas");
-
-    // 通过引导切到「准备名单」（数据板块 · 人员数据），引导步骤变为 roster
-    const guide = container.querySelector(".global-settings-screen .workflow-guide")!;
-    click(Array.from(guide.querySelectorAll(".workflow-nav button"))
-      .find((button) => button.textContent?.includes("准备名单"))!);
-    expect(container.querySelector(".workflow-guide__bar")?.textContent).toContain("准备名单");
-
-    // 手动切换分区（辅助板块）→ 引导步骤同步回「全局布局」
-    click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-guests"]')!);
-    expect(container.querySelector('[role="tab"][aria-controls="global-settings-guests"]')?.getAttribute("aria-selected")).toBe("true");
-    expect(container.querySelector(".workflow-guide__bar")?.textContent).toContain("全局布局");
-  });
-
-  it("switches sections from the fullscreen guide section links with active highlight", () => {
-    const container = renderApp();
-    openGlobalSettingsSection(container, "canvas");
-
-    const guide = container.querySelector(".global-settings-screen .workflow-guide")!;
-    const links = Array.from(guide.querySelectorAll(".workflow-guide__section-link"));
-    expect(links.map((link) => link.textContent?.trim())).toEqual([
-      "画布设置",
-      "地图展示框",
-      "数据板块",
-      "辅助板块",
-      "字体排版",
-      "高级设置",
-    ]);
-    expect(links.find((link) => link.textContent?.includes("画布设置"))?.className).toContain("is-active");
-
-    click(links.find((link) => link.textContent?.includes("地图展示框"))!);
+    expect(container.querySelector(".global-settings-screen .workflow-guide")).toBeNull();
+    expect(container.querySelector(".global-settings-guide__step")?.textContent).toContain("全局布局");
+    expect(container.querySelector(".global-settings-guide__note")?.textContent).toContain("集中设置画布");
+    click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-map"]')!);
     expect(container.querySelector('[role="tab"][aria-controls="global-settings-map"]')?.getAttribute("aria-selected")).toBe("true");
-    expect(container.querySelector(".workflow-guide__section-link.is-active")?.textContent).toContain("地图展示框");
+    expect(container.querySelector('[role="tab"][aria-controls="global-settings-canvas"]')?.getAttribute("aria-selected")).toBe("false");
   });
 
   it("applies a template from the template picker inside global settings", () => {
@@ -1104,5 +1041,55 @@ describe("App workflow guidance", () => {
     expect(badge).not.toBeNull();
     expect(badge?.getAttribute("data-status")).toBe("ready");
     expect(badge?.textContent).toBe("✓");
+  });
+});
+
+describe("Responsive editor shell", () => {
+  it("restores adjustable desktop panel widths and exposes two separators", () => {
+    const previousInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+    window.localStorage.setItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({ sidebarWidth: 270, inspectorWidth: 330 }));
+    try {
+      const container = renderApp(false);
+      const workspace = container.querySelector<HTMLElement>(".workspace");
+
+      expect(workspace?.style.getPropertyValue("--sidebar-width")).toBe("270px");
+      expect(workspace?.style.getPropertyValue("--inspector-width")).toBe("330px");
+      expect(container.querySelectorAll('[role="separator"]')).toHaveLength(2);
+      expect(container.querySelector<HTMLElement>('[role="separator"][aria-label="调整左侧栏宽度"]')?.getAttribute("aria-valuenow")).toBe("270");
+      expect(container.querySelector<HTMLElement>('[role="separator"][aria-label="调整右侧栏宽度"]')?.getAttribute("aria-valuenow")).toBe("330");
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousInnerWidth });
+    }
+  });
+
+  it("opens and closes the inspector through an explicit toolbar control", () => {
+    const container = renderApp();
+    const openButton = container.querySelector<HTMLButtonElement>('button[aria-label="打开属性面板"]');
+
+    expect(openButton).not.toBeNull();
+    expect(openButton?.getAttribute("aria-expanded")).toBe("false");
+    click(openButton!);
+
+    expect(container.querySelector(".inspector")?.className).toContain("is-open");
+    expect(openButton?.getAttribute("aria-expanded")).toBe("true");
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="关闭属性面板"]')!);
+    expect(container.querySelector(".inspector")?.className).not.toContain("is-open");
+  });
+
+  it("keeps the top stepper as the only workflow navigation entry", () => {
+    const container = renderApp();
+    openGlobalSettingsSection(container, "canvas");
+
+    expect(container.querySelector(".global-settings-screen .workflow-guide")).toBeNull();
+    expect(container.querySelector(".global-settings-guide__note")).not.toBeNull();
+  });
+
+  it("keeps the global settings back label in an accessible text wrapper", () => {
+    const container = renderApp();
+    openGlobalSettingsSection(container, "canvas");
+
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"] span')?.textContent).toContain("返回编辑器");
   });
 });

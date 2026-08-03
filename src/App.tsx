@@ -4,6 +4,8 @@ import {
   FolderOpen,
   ImageDown,
   MapPinned,
+  PanelRight,
+  PanelRightClose,
   Plus,
   Redo2,
   Save,
@@ -22,6 +24,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import { createNoteElement, createTextElement } from "./lib/canvas-data";
 import { CHINA_PROVINCE_ADJACENCY, getProvinceNames } from "./lib/map-data";
@@ -45,6 +48,7 @@ import { ActionGroup, CompactButton, ControlCluster, SegmentedControl, ToolbarBu
 import { WorkflowGuide } from "./components/WorkflowGuide";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
 import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
 import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
 import {
@@ -123,6 +127,14 @@ import {
 import { applyTypographyFont, type TypographyTarget } from "./lib/typography";
 import type { ImageThemeResult } from "./lib/image-color";
 import { loadThemeMode, resolveTheme, saveThemeMode, type ThemeMode } from "./lib/theme";
+import {
+  getPanelWidthBounds,
+  normalizeEditorPanelLayout,
+  readEditorPanelLayout,
+  writeEditorPanelLayout,
+  type EditorPanelLayout,
+  type PanelSide,
+} from "./lib/editor-layout";
 
 import {
   clampGridSize,
@@ -294,12 +306,15 @@ export function App() {
   const stageRef = useRef<HTMLDivElement>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel>("roster");
   const [contentView, setContentView] = useState<"layers" | "assistant">("layers");
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
   const [globalDataOpen, setGlobalDataOpen] = useState(false);
   const [globalDataInitialView, setGlobalDataInitialView] = useState<GlobalDataView>("overview");
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => typeof window === "undefined" ? "system" : loadThemeMode());
   const [prefersDark, setPrefersDark] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true);
+  const [panelLayout, setPanelLayout] = useState<EditorPanelLayout>(() => readEditorPanelLayout());
+  const [resizingPanel, setResizingPanel] = useState<PanelSide | null>(null);
 
   const resolvedRenderInterval = renderIntervalMs(renderSettings);
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
@@ -307,6 +322,13 @@ export function App() {
   const dataIssues = useMemo(() => listDataIssues(project), [project]);
   const exportWarnings = useMemo(() => listStudentWarnings(project), [project]);
   const resolvedTheme = resolveTheme(themeMode, prefersDark);
+  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
+  const sidebarBounds = getPanelWidthBounds("sidebar", viewportWidth, panelLayout.inspectorWidth);
+  const inspectorBounds = getPanelWidthBounds("inspector", viewportWidth, panelLayout.sidebarWidth);
+  const workspaceStyle = {
+    "--sidebar-width": `${panelLayout.sidebarWidth}px`,
+    "--inspector-width": `${panelLayout.inspectorWidth}px`,
+  } as CSSProperties;
   const selectionDescription = (() => {
     switch (selection.type) {
       case "canvas":
@@ -342,6 +364,25 @@ export function App() {
   useEffect(() => {
     saveThemeMode(themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    writeEditorPanelLayout(window.localStorage, panelLayout, window.innerWidth);
+  }, [panelLayout]);
+
+  useEffect(() => {
+    const onResize = () => {
+      setPanelLayout((current) => normalizeEditorPanelLayout(current, window.innerWidth));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const updatePanelWidth = (side: PanelSide, value: number) => {
+    setPanelLayout((current) => normalizeEditorPanelLayout({
+      ...current,
+      [side === "sidebar" ? "sidebarWidth" : "inspectorWidth"]: value,
+    }, viewportWidth));
+  };
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -615,6 +656,21 @@ export function App() {
     });
     setZoomPercent(next);
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia?.("(max-width: 1120px)").matches) return;
+    const timer = window.setTimeout(() => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      setZoomPercent(fitZoomPercent({
+        stageWidth: stage.clientWidth,
+        stageHeight: stage.clientHeight,
+        canvasWidth: project.canvas.width,
+        canvasHeight: project.canvas.height,
+      }));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [project.canvas.height, project.canvas.width]);
 
   const maybeSnap = (x: number, y: number) => {
     if (!showGrid || !snapToGridEnabled) return { x: Math.round(x), y: Math.round(y) };
@@ -1191,6 +1247,18 @@ export function App() {
   if (globalSettingsSection) {
     return (
       <div className="app-shell" data-editor-theme={resolvedTheme}>
+        <header className="topbar">
+          <div className="brand">
+            <MapPinned size={24} />
+            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
+            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
+            <em>Beta</em>
+          </div>
+          <div className="topbar-workflow" aria-hidden="false">
+            <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
+          </div>
+          <div className="topbar-actions" />
+        </header>
         <GlobalSettingsScreen
         project={project}
         userFonts={userFonts}
@@ -1223,8 +1291,6 @@ export function App() {
         onDeleteUserFont={deleteUserFont}
         workflowProgress={workflowProgress}
         workflowActiveStep={activeWorkflowStep}
-        workflowDataViewLabel={dataViewLabel}
-        onWorkflowStep={setActiveWorkflowStep}
         templates={(["original", "cartoon", "grain", "q", "scenery"] as const).map((templateId) => ({
           id: templateId,
           name: createSystemTemplate(templateId).name,
@@ -1340,6 +1406,17 @@ export function App() {
               label="放大画布"
               icon={<ZoomIn size={17} />}
               onClick={() => setZoomPercent((value) => Math.min(300, value + 10))}
+            />
+          </ToolbarGroup>
+
+          <ToolbarGroup label="属性面板" className="inspector-toggle-group">
+            <ToolbarButton
+              className="inspector-toggle"
+              label={mobileInspectorOpen ? "关闭属性面板" : "打开属性面板"}
+              icon={mobileInspectorOpen ? <PanelRightClose size={17} /> : <PanelRight size={17} />}
+              aria-expanded={mobileInspectorOpen}
+              aria-controls="editor-inspector"
+              onClick={() => setMobileInspectorOpen((open) => !open)}
             />
           </ToolbarGroup>
 
@@ -1476,7 +1553,12 @@ export function App() {
         </div>
       )}
 
-      <section className="workspace">
+      <section
+        className="workspace"
+        style={workspaceStyle}
+        data-editor-resizing={resizingPanel ? "true" : undefined}
+        data-resizing-panel={resizingPanel ?? undefined}
+      >
         <aside className="sidebar">
           {activePanel === "roster" && (
             <div className="panel-content workflow-panel workflow-panel--roster">
@@ -1954,7 +2036,7 @@ export function App() {
           </div>
         </section>
 
-        <aside className="inspector">
+        <aside id="editor-inspector" className={`inspector${mobileInspectorOpen ? " is-open" : ""}`}>
           <InspectorPanel
             project={renderProject}
             selection={selection}
@@ -1994,6 +2076,27 @@ export function App() {
             {statusMessage && <p className="panel-note">{statusMessage}</p>}
           </details>
         </aside>
+
+        <ResizablePanelDivider
+          side="sidebar"
+          value={panelLayout.sidebarWidth}
+          min={sidebarBounds.min}
+          max={sidebarBounds.max}
+          ariaLabel="调整左侧栏宽度"
+          onChange={(value) => updatePanelWidth("sidebar", value)}
+          onResizeStart={() => setResizingPanel("sidebar")}
+          onResizeEnd={() => setResizingPanel(null)}
+        />
+        <ResizablePanelDivider
+          side="inspector"
+          value={panelLayout.inspectorWidth}
+          min={inspectorBounds.min}
+          max={inspectorBounds.max}
+          ariaLabel="调整右侧栏宽度"
+          onChange={(value) => updatePanelWidth("inspector", value)}
+          onResizeStart={() => setResizingPanel("inspector")}
+          onResizeEnd={() => setResizingPanel(null)}
+        />
       </section>
     </main>
   );

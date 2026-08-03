@@ -11,7 +11,6 @@ import { DataWorkspace } from "./DataWorkspace";
 import type { DataViewId, MapTemplateId, Student } from "../lib/project-data";
 import { TypographyPanel } from "./TypographyPanel";
 import type { TypographyTarget } from "../lib/typography";
-import { WorkflowGuide } from "./WorkflowGuide";
 import type { WorkflowProgress, WorkflowStepId, WorkflowStepStatus } from "../lib/workflow-progress";
 import { TemplatePicker } from "./TemplatePicker";
 import { CardPresentationSettings } from "./CardPresentationSettings";
@@ -73,6 +72,14 @@ const workflowStepDescriptions: Record<WorkflowStepId, string> = {
   export: "检查未匹配或隐藏名单后导出海报与工程",
 };
 
+const workflowStepLabels: Record<WorkflowStepId, string> = {
+  roster: "准备名单",
+  presentation: "地图呈现",
+  layout: "全局布局",
+  local: "局部调整",
+  export: "检查导出",
+};
+
 export function GlobalSettingsScreen({
   project,
   userFonts = [],
@@ -102,8 +109,6 @@ export function GlobalSettingsScreen({
   onDeleteUserFont,
   workflowProgress,
   workflowActiveStep,
-  workflowDataViewLabel,
-  onWorkflowStep,
   templates,
   currentTemplateId,
   customTemplates,
@@ -143,8 +148,6 @@ export function GlobalSettingsScreen({
   onDeleteUserFont?: (fontId: string) => void;
   workflowProgress: WorkflowProgress;
   workflowActiveStep: WorkflowStepId;
-  workflowDataViewLabel: string;
-  onWorkflowStep: (step: WorkflowStepId) => void;
   templates: Array<{ id: MapTemplateId; name: string }>;
   currentTemplateId: string;
   customTemplates: Array<{ id: string; name: string; scope: "visual" | "layout" }>;
@@ -159,25 +162,8 @@ export function GlobalSettingsScreen({
   const [activeSection, setActiveSection] = useState<GlobalSettingsSection>(initialSection);
   const [dataView, setDataView] = useState<"people" | "cards">("people");
 
-  const handleWorkflowStep = (step: WorkflowStepId) => {
-    if (step === "roster" || step === "presentation") {
-      setActiveSection("cards");
-      if (step === "roster") setDataView("people");
-      if (step === "presentation") setDataView("cards");
-    }
-    if (step === "layout") {
-      // 回到「全局设计」组：已在组内保持当前分区，否则默认画布设置
-      const inGlobalDesign = sectionGroups[0]!.sections.some((section) => section.id === activeSection);
-      if (!inGlobalDesign) setActiveSection("canvas");
-    }
-    if (step === "local" || step === "export") onClose();
-    onWorkflowStep(step);
-  };
-
   const handleSectionClick = (section: GlobalSettingsSection) => {
     setActiveSection(section);
-    // 全局设置是「全局布局」步骤的工作台：手动切换分区时把引导步骤同步为 layout
-    onWorkflowStep("layout");
   };
   const active = allSections.find((section) => section.id === activeSection) ?? allSections[0]!;
 
@@ -195,7 +181,7 @@ export function GlobalSettingsScreen({
   return (
     <main className="global-settings-screen" aria-label="全局设置">
       <header className="global-settings-header">
-        <CompactButton className="global-settings-back" aria-label="返回编辑器" icon={<ArrowLeft size={17} aria-hidden />} onClick={onClose}>返回编辑器</CompactButton>
+        <CompactButton className="global-settings-back" aria-label="返回编辑器" icon={<ArrowLeft size={17} aria-hidden />} onClick={onClose}><span>返回编辑器</span></CompactButton>
         <div className="global-settings-title">
           <h1>全局设置</h1>
           <p>配置当前作品的画布与整体布局</p>
@@ -210,18 +196,8 @@ export function GlobalSettingsScreen({
         </ActionGroup>
       </header>
 
-      <div className="global-settings-guide">
-        <WorkflowGuide
-          progress={workflowProgress}
-          activeStep={workflowActiveStep}
-          dataViewLabel={workflowDataViewLabel}
-          variant="fullscreen"
-          showStepPanel={false}
-          globalSections={allSections.map(({ id, label }) => ({ id, label }))}
-          activeSection={activeSection}
-          onOpenGlobalSettings={(section) => handleSectionClick(section)}
-          onSelectStep={handleWorkflowStep}
-        />
+      <div className="global-settings-guide" role="status">
+        <strong className="global-settings-guide__step">当前流程：{workflowStepLabels[workflowActiveStep]}</strong>
         <p className="global-settings-guide__note">
           {workflowStepDescriptions[workflowActiveStep]}。
         </p>

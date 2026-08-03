@@ -1,8 +1,9 @@
-import { ImageUp, Trash2 } from "lucide-react";
+import { ImageUp, RotateCcw, Trash2 } from "lucide-react";
 import { CANVAS_SIZE_PRESETS, type CanvasSizePresetId } from "../../lib/grid";
 import type { CanvasSettings } from "../../lib/scene-document";
 import { FileDropzone } from "../FileDropzone";
 import { DeferredInput } from "../DeferredInput";
+import { CompactButton, IconButton, InspectorHeader } from "../StudioUi";
 
 export function CanvasInspector({ canvas, onPatch, onReset }: {
   canvas: CanvasSettings;
@@ -30,10 +31,10 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
 
   return (
     <section className="property-panel">
-      <header>
-        <h2>画布属性</h2>
-        <button type="button" onClick={onReset}>重置</button>
-      </header>
+      <InspectorHeader
+        title="画布属性"
+        actions={<IconButton label="重置画布" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} />}
+      />
       <label htmlFor="canvas-size-preset">尺寸预设
         <select
           id="canvas-size-preset"
@@ -82,14 +83,12 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
           onFile={setBackgroundImage}
         />
         {canvas.backgroundImageSrc && (
-          <button
-            type="button"
+          <CompactButton
             className="canvas-background-remove"
+            variant="danger"
+            icon={<Trash2 size={14} aria-hidden />}
             onClick={() => onPatch({ backgroundImageSrc: undefined })}
-          >
-            <Trash2 size={14} aria-hidden />
-            移除背景
-          </button>
+          >移除背景</CompactButton>
         )}
       </div>
       <label htmlFor="canvas-background-opacity">背景透明度
