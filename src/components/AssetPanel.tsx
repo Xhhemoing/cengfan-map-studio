@@ -26,7 +26,7 @@ import {
 import { FileDropzone } from "./FileDropzone";
 import { DeferredInput } from "./DeferredInput";
 import { RangeNumberControl } from "./RangeNumberControl";
-import { ActionButton, PanelHeader, PanelSection } from "./StudioUi";
+import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, PanelSection } from "./StudioUi";
 
 interface AssetInstanceSummary {
   id: string;
@@ -476,35 +476,32 @@ export function AssetPanel({
                   onApplyProvinceAppearance?.(selectedProvince, { kind: "manual-color", color });
                 }} />
               </label>
-              <button type="button" onClick={() => onResetProvinceAppearance?.(selectedProvince)}>系统默认</button>
+              <CompactButton variant="ghost" onClick={() => onResetProvinceAppearance?.(selectedProvince)}>系统默认</CompactButton>
             </div>
-            <div className="asset-panel__theme-actions">
-              <button
-                type="button"
+            <ActionGroup label="省份底色操作" className="asset-panel__theme-actions">
+              <CompactButton
+                icon={<Palette size={14} aria-hidden />}
                 disabled={!activeTexture || matchingThemes}
                 aria-label={`智能匹配${selectedProvince}底色`}
                 onClick={() => activeTexture && void inferProvinceThemes([[selectedProvince, activeTexture.src]])}
               >
-                <Palette size={15} aria-hidden /> 智能匹配本省底色
-              </button>
-              <button
-                type="button"
+                智能匹配本省底色
+              </CompactButton>
+              <CompactButton
+                icon={<Sparkles size={14} aria-hidden />}
                 disabled={texturedProvinceEntries.length === 0 || matchingThemes}
                 aria-label="一键智能匹配所有省份底色"
                 onClick={() => void inferProvinceThemes(texturedProvinceEntries)}
               >
-                <Sparkles size={15} aria-hidden />
                 {matchingThemes ? "正在分析贴图..." : `一键匹配全部 ${texturedProvinceEntries.length} 省`}
-              </button>
-            </div>
+              </CompactButton>
+            </ActionGroup>
             <p className="panel-note">从贴图标志色生成低色度浅背景，并自动避开相邻省份近似颜色；手动纯色不会被覆盖。</p>
             <details className="asset-panel__texture-layout asset-panel__advanced" aria-label="省份贴图比例">
               <summary>高级贴图设置</summary>
               <div className="province-inspector__texture-position">
                 <span>位置 X {Math.round(layout.offsetX ?? 0)} · Y {Math.round(layout.offsetY ?? 0)}</span>
-                <button type="button" disabled={!activeTexture} title="恢复贴图居中" onClick={() => patchActiveTextureLayout({ offsetX: 0, offsetY: 0 })}>
-                  <RotateCcw size={15} /> 恢复居中
-                </button>
+                <CompactButton icon={<RotateCcw size={14} aria-hidden />} variant="ghost" disabled={!activeTexture} onClick={() => patchActiveTextureLayout({ offsetX: 0, offsetY: 0 })}>恢复居中</CompactButton>
               </div>
               <label htmlFor="asset-texture-sizing">比例依据
                 <select id="asset-texture-sizing" value={layout.sizingMode === "natural" ? "natural" : "province"} disabled={!activeTexture} onChange={(event) => patchActiveTextureLayout({ sizingMode: event.target.value as "province" | "natural" })}>
@@ -597,17 +594,16 @@ export function AssetPanel({
         )}
         {!selectedProvince && <p className="asset-empty-state">点击地图省份，或在上方选择后开始设置。</p>}
         {!selectedProvince && texturedProvinceEntries.length > 0 && (
-          <div className="asset-panel__theme-actions">
-            <button
-              type="button"
+          <ActionGroup label="省份底色操作" className="asset-panel__theme-actions">
+            <CompactButton
+              icon={<Sparkles size={14} aria-hidden />}
               disabled={matchingThemes}
               aria-label="一键智能匹配所有省份底色"
               onClick={() => void inferProvinceThemes(texturedProvinceEntries)}
             >
-              <Sparkles size={15} aria-hidden />
               {matchingThemes ? "正在分析贴图..." : `一键匹配全部 ${texturedProvinceEntries.length} 省`}
-            </button>
-          </div>
+            </CompactButton>
+          </ActionGroup>
         )}
       </PanelSection>
 
@@ -639,19 +635,17 @@ export function AssetPanel({
                   <span>{asset.label}</span>
                   {assetUsageById[asset.id] && <em className="asset-usage-badge">{assetUsageById[asset.id]}</em>}
                 </button>
-                <button
-                  type="button"
+                <IconButton
                   className="asset-thumb-delete"
-                  aria-label={`删除素材 ${asset.label}`}
-                  title="从素材库删除"
+                  label={`删除素材 ${asset.label}`}
+                  variant="danger"
                   onClick={() => {
                     if (!confirmDeleteAsset(asset)) return;
                     onDeleteUserAsset?.(asset.id);
                     setMessage(`已从素材库删除：${asset.label}`);
                   }}
-                >
-                  <Trash2 size={14} />
-                </button>
+                  icon={<Trash2 size={14} />}
+                />
               </div>
             ))}
           </div>
@@ -681,26 +675,24 @@ export function AssetPanel({
                 </span>
               </button>
               {asset.kind === "decoration" && !asset.mattingApplied && !asset.src.startsWith("data:image/svg+xml") && (
-                <button
-                  type="button"
-                  aria-label={`自动抠图 ${asset.label}`}
-                  title="自动抠图"
+                <IconButton
+                  label={`自动抠图 ${asset.label}`}
+                  icon={<Scissors size={14} />}
+                  variant="ghost"
                   disabled={processing}
                   onClick={() => { void applyMatting(asset); }}
-                ><Scissors size={14} /></button>
+                />
               )}
-              <button
-                type="button"
-                aria-label={`删除素材 ${asset.label}`}
-                title="从素材库删除"
+              <IconButton
+                label={`删除素材 ${asset.label}`}
+                icon={<Trash2 size={14} />}
+                variant="danger"
                 onClick={() => {
                   if (!confirmDeleteAsset(asset)) return;
                   onDeleteUserAsset?.(asset.id);
                   setMessage(`已从素材库删除：${asset.label}`);
                 }}
-              >
-                <Trash2 size={14} />
-              </button>
+              />
             </div>
           ))}
         </PanelSection>

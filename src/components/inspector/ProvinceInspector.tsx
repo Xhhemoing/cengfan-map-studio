@@ -15,6 +15,7 @@ import {
 import { FileDropzone } from "../FileDropzone";
 import { DeferredInput } from "../DeferredInput";
 import { RangeNumberControl } from "../RangeNumberControl";
+import { CompactButton, InspectorHeader } from "../StudioUi";
 
 function loadImageSize(src: string): Promise<{ width: number; height: number } | null> {
   return new Promise((resolve) => {
@@ -139,7 +140,7 @@ export function ProvinceInspector({ province, style, onPatch, onAddUserAsset, un
 
   return (
     <section className="property-panel province-inspector">
-      <header><h2>{province}</h2><span>{appearance && appearance.kind !== "manual-color" ? "贴图" : "纯色"}</span></header>
+      <InspectorHeader title={province} meta={appearance && appearance.kind !== "manual-color" ? "贴图" : "纯色"} />
       <div className="province-inspector__primary">
       <label htmlFor="province-color">底色
         <DeferredInput id="province-color" type="color" value={color} onCommit={(next) => onPatch({
@@ -148,9 +149,9 @@ export function ProvinceInspector({ province, style, onPatch, onAddUserAsset, un
       </label>
       {features.length > 0 && <div className="province-inspector__features">
         <strong>地方特色</strong>
-        {features.map((asset) => <button key={asset.id} type="button" onClick={() => onPatch({
+        {features.map((asset) => <CompactButton key={asset.id} onClick={() => onPatch({
           appearance: createTextureAppearance({ kind: "feature", assetId: asset.id, src: asset.src, fit: "contain", scale: DEFAULT_TEXTURE_SCALE, overflow: false, sizingMode: "province" }),
-        })}>{asset.label}</button>)}
+        })}>{asset.label}</CompactButton>)}
       </div>}
       <FileDropzone
         id="province-texture-upload"
@@ -186,9 +187,9 @@ export function ProvinceInspector({ province, style, onPatch, onAddUserAsset, un
             <summary>高级贴图设置</summary>
             <div className="province-inspector__texture-position">
               <span>位置 X {Math.round(layout.offsetX ?? 0)} · Y {Math.round(layout.offsetY ?? 0)}</span>
-              <button type="button" title="恢复贴图居中" onClick={() => onPatch({
+              <CompactButton icon={<RotateCcw size={14} aria-hidden />} variant="ghost" onClick={() => onPatch({
                 appearance: withTextureLayout(appearance, { offsetX: 0, offsetY: 0 }),
-              })}><RotateCcw size={15} /> 恢复居中</button>
+              })}>恢复居中</CompactButton>
             </div>
             <label htmlFor="province-texture-sizing">比例依据
               <select id="province-texture-sizing" value={layout.sizingMode} onChange={(event) => patchTextureLayout(
@@ -279,12 +280,12 @@ export function ProvinceInspector({ province, style, onPatch, onAddUserAsset, un
               />
               允许图片溢出省界
             </label>
-            <button type="button" onClick={() => patchTextureLayout(appearance, {
+            <CompactButton icon={<RotateCcw size={14} aria-hidden />} onClick={() => patchTextureLayout(appearance, {
               fit: "contain",
               scale: DEFAULT_TEXTURE_SCALE,
               overflow: false,
               sizingMode: "natural",
-            })}>智能适配（完整且不溢出）</button>
+            })}>智能适配（完整且不溢出）</CompactButton>
 
           </details>
         );
@@ -292,7 +293,7 @@ export function ProvinceInspector({ province, style, onPatch, onAddUserAsset, un
       <label htmlFor="province-visible">显示省份
         <input id="province-visible" type="checkbox" checked={visible} onChange={(event) => onPatch({ visible: event.target.checked })} />
       </label>
-      <button type="button" onClick={() => onPatch({ appearance: undefined, fill: undefined, textureSrc: undefined })}>跟随整体地图</button>
+      <CompactButton variant="ghost" icon={<RotateCcw size={14} aria-hidden />} onClick={() => onPatch({ appearance: undefined, fill: undefined, textureSrc: undefined })}>跟随整体地图</CompactButton>
       {message && <p className="panel-note" role="status">{message}</p>}
     </section>
   );

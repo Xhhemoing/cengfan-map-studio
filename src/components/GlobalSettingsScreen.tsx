@@ -1,4 +1,4 @@
-import { ArrowLeft, LayoutPanelTop, Map, Redo2, RectangleHorizontal, Settings2, Type, Undo2, Wallpaper } from "lucide-react";
+import { ArrowLeft, Database, LayoutPanelTop, Map, Redo2, RectangleHorizontal, Settings2, Type, Undo2, Wallpaper } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 import type { ProjectDocument } from "../lib/project-document";
 import type { UserFont } from "../lib/fonts";
@@ -11,10 +11,12 @@ import { DataWorkspace } from "./DataWorkspace";
 import type { DataViewId, MapTemplateId, Student } from "../lib/project-data";
 import { TypographyPanel } from "./TypographyPanel";
 import type { TypographyTarget } from "../lib/typography";
-import { WorkflowGuide } from "./WorkflowGuide";
 import type { WorkflowProgress, WorkflowStepId, WorkflowStepStatus } from "../lib/workflow-progress";
 import { TemplatePicker } from "./TemplatePicker";
 import { CardPresentationSettings } from "./CardPresentationSettings";
+import { ThemeToggle } from "./ThemeToggle";
+import type { ResolvedTheme, ThemeMode } from "../lib/theme";
+import { ActionGroup, CompactButton, IconButton, SegmentedControl } from "./StudioUi";
 
 export type GlobalSettingsSection = "canvas" | "map" | "cards" | "guests" | "typography" | "advanced";
 
@@ -70,6 +72,14 @@ const workflowStepDescriptions: Record<WorkflowStepId, string> = {
   export: "检查未匹配或隐藏名单后导出海报与工程",
 };
 
+const workflowStepLabels: Record<WorkflowStepId, string> = {
+  roster: "准备名单",
+  presentation: "地图呈现",
+  layout: "全局布局",
+  local: "局部调整",
+  export: "检查导出",
+};
+
 export function GlobalSettingsScreen({
   project,
   userFonts = [],
@@ -99,14 +109,16 @@ export function GlobalSettingsScreen({
   onDeleteUserFont,
   workflowProgress,
   workflowActiveStep,
-  workflowDataViewLabel,
-  onWorkflowStep,
   templates,
   currentTemplateId,
   customTemplates,
   onApplyTemplate,
   onApplyCustomTemplate,
   onSaveTemplate,
+  onOpenGlobalData,
+  themeMode,
+  resolvedTheme,
+  onThemeChange,
 }: {
   project: ProjectDocument;
   userFonts?: UserFont[];
@@ -136,37 +148,22 @@ export function GlobalSettingsScreen({
   onDeleteUserFont?: (fontId: string) => void;
   workflowProgress: WorkflowProgress;
   workflowActiveStep: WorkflowStepId;
-  workflowDataViewLabel: string;
-  onWorkflowStep: (step: WorkflowStepId) => void;
   templates: Array<{ id: MapTemplateId; name: string }>;
   currentTemplateId: string;
   customTemplates: Array<{ id: string; name: string; scope: "visual" | "layout" }>;
   onApplyTemplate: (id: MapTemplateId) => void;
   onApplyCustomTemplate: (record: { id: string; name: string; scope: "visual" | "layout" }) => void;
   onSaveTemplate: () => void;
+  onOpenGlobalData?: () => void;
+  themeMode?: ThemeMode;
+  resolvedTheme?: ResolvedTheme;
+  onThemeChange?: (mode: ThemeMode) => void;
 }) {
   const [activeSection, setActiveSection] = useState<GlobalSettingsSection>(initialSection);
   const [dataView, setDataView] = useState<"people" | "cards">("people");
 
-  const handleWorkflowStep = (step: WorkflowStepId) => {
-    if (step === "roster" || step === "presentation") {
-      setActiveSection("cards");
-      if (step === "roster") setDataView("people");
-      if (step === "presentation") setDataView("cards");
-    }
-    if (step === "layout") {
-      // 回到「全局设计」组：已在组内保持当前分区，否则默认画布设置
-      const inGlobalDesign = sectionGroups[0]!.sections.some((section) => section.id === activeSection);
-      if (!inGlobalDesign) setActiveSection("canvas");
-    }
-    if (step === "local" || step === "export") onClose();
-    onWorkflowStep(step);
-  };
-
   const handleSectionClick = (section: GlobalSettingsSection) => {
     setActiveSection(section);
-    // 全局设置是「全局布局」步骤的工作台：手动切换分区时把引导步骤同步为 layout
-    onWorkflowStep("layout");
   };
   const active = allSections.find((section) => section.id === activeSection) ?? allSections[0]!;
 
@@ -184,39 +181,23 @@ export function GlobalSettingsScreen({
   return (
     <main className="global-settings-screen" aria-label="全局设置">
       <header className="global-settings-header">
-        <button type="button" className="global-settings-back" aria-label="返回编辑器" onClick={onClose}>
-          <ArrowLeft size={18} aria-hidden />
-          <span>返回编辑器</span>
-        </button>
+        <CompactButton className="global-settings-back" aria-label="返回编辑器" icon={<ArrowLeft size={17} aria-hidden />} onClick={onClose}><span>返回编辑器</span></CompactButton>
         <div className="global-settings-title">
           <h1>全局设置</h1>
           <p>配置当前作品的画布与整体布局</p>
         </div>
-        <div className="global-settings-history" role="group" aria-label="全局设置历史">
-          <button type="button" aria-label={undoLabel} title={undoLabel} disabled={!canUndo} onClick={onUndo}>
-            <Undo2 size={17} aria-hidden />
-            <span>撤销</span>
-          </button>
-          <button type="button" aria-label={redoLabel} title={redoLabel} disabled={!canRedo} onClick={onRedo}>
-            <Redo2 size={17} aria-hidden />
-            <span>重做</span>
-          </button>
-          <button type="button" className="global-settings-done" onClick={onClose}>完成</button>
-        </div>
+        <ActionGroup label="全局设置历史" className="global-settings-history">
+          <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
+          <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
+          {themeMode && resolvedTheme && onThemeChange && (
+            <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={onThemeChange} />
+          )}
+          <CompactButton className="global-settings-done" onClick={onClose}>完成</CompactButton>
+        </ActionGroup>
       </header>
 
-      <div className="global-settings-guide">
-        <WorkflowGuide
-          progress={workflowProgress}
-          activeStep={workflowActiveStep}
-          dataViewLabel={workflowDataViewLabel}
-          variant="fullscreen"
-          showStepPanel={false}
-          globalSections={allSections.map(({ id, label }) => ({ id, label }))}
-          activeSection={activeSection}
-          onOpenGlobalSettings={(section) => handleSectionClick(section)}
-          onSelectStep={handleWorkflowStep}
-        />
+      <div className="global-settings-guide" role="status">
+        <strong className="global-settings-guide__step">当前流程：{workflowStepLabels[workflowActiveStep]}</strong>
         <p className="global-settings-guide__note">
           {workflowStepDescriptions[workflowActiveStep]}。
         </p>
@@ -291,10 +272,23 @@ export function GlobalSettingsScreen({
             )}
             {activeSection === "cards" && (
               <>
-                <div className="global-settings-data-nav" role="group" aria-label="数据板块内容">
-                  <button type="button" aria-pressed={dataView === "people"} className={dataView === "people" ? "is-active" : undefined} onClick={() => setDataView("people")}>人员数据</button>
-                  <button type="button" aria-label="数据展示设置" aria-pressed={dataView === "cards"} className={dataView === "cards" ? "is-active" : undefined} onClick={() => setDataView("cards")}>数据展示</button>
-                </div>
+                {onOpenGlobalData && (
+                  <CompactButton
+                    className="global-settings-open-data"
+                    icon={<Database size={14} aria-hidden />}
+                    aria-label="打开全局数据"
+                    onClick={onOpenGlobalData}
+                  >
+                    打开全局数据
+                  </CompactButton>
+                )}
+                <SegmentedControl
+                  label="数据板块内容"
+                  activeId={dataView}
+                  items={[{ id: "people", label: "人员数据" }, { id: "cards", label: "数据展示", ariaLabel: "数据展示设置" }]}
+                  onChange={setDataView}
+                  className="global-settings-data-nav"
+                />
                 {dataView === "people" ? (
                   <DataWorkspace
                     students={project.students}
@@ -318,9 +312,7 @@ export function GlobalSettingsScreen({
                     onApplyCustomTemplate={onApplyCustomTemplate}
                     onSaveTemplate={onSaveTemplate}
                   />
-                  <button type="button" className="global-settings-arrange" aria-label="一键智能排版" onClick={onArrangeCards}>
-                    一键智能排版
-                  </button>
+                  <CompactButton className="global-settings-arrange" icon={<LayoutPanelTop size={14} aria-hidden />} aria-label="一键智能排版" onClick={onArrangeCards}>一键智能排版</CompactButton>
                   <CardsInspector
                     cards={project.cards}
                     userFonts={userFonts}

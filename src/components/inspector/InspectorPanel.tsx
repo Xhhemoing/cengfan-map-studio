@@ -12,6 +12,8 @@ import { AssetInspector } from "./AssetInspector";
 import { ProvinceInspector } from "./ProvinceInspector";
 import { TypographyPanel } from "../TypographyPanel";
 import type { ReactNode } from "react";
+import { LayoutDashboard, Settings2 } from "lucide-react";
+import { CompactButton } from "../StudioUi";
 
 /** 全局设置分区（与 GlobalSettingsScreen.sections 保持一致）。 */
 export type GlobalSettingsSectionId = "canvas" | "map" | "cards" | "guests" | "typography" | "advanced";
@@ -71,9 +73,7 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
   } else if (selection.type === "cards") {
     panel = <>
       {onArrangeCards && (
-        <button type="button" className="wide-button inspector-arrange-cards" aria-label="一键智能排版" onClick={onArrangeCards}>
-          一键智能排版
-        </button>
+        <CompactButton className="wide-button inspector-arrange-cards" icon={<LayoutDashboard size={14} aria-hidden />} aria-label="一键智能排版" onClick={onArrangeCards}>一键智能排版</CompactButton>
       )}
       <CardsInspector
         cards={project.cards}
@@ -107,14 +107,12 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
   return (
     <>
       {onOpenGlobalSettings && (
-        <button
-          type="button"
+        <CompactButton
           className="inspector-global-entry"
+          icon={<Settings2 size={14} aria-hidden />}
           aria-label="打开全局设置"
           onClick={() => onOpenGlobalSettings("canvas")}
-        >
-          全局设置（画布 · 地图 · 字体排版）
-        </button>
+        >全局设置（画布 · 地图 · 字体排版）</CompactButton>
       )}
       {panel}
       {onApplyFont && (
