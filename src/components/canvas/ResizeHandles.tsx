@@ -42,12 +42,15 @@ export function ResizeHandles({
   edges = true,
 }: ResizeHandlesProps) {
   const dragRef = useRef<{ handle: ResizeHandle; start: ResizeHandleRect } | null>(null);
+  const previewFrameRef = useRef<number | null>(null);
   const previewTimerRef = useRef<number | null>(null);
   const pendingPreviewRef = useRef<ResizeHandleRect | null>(null);
   const [preview, setPreview] = useState<ResizeHandleRect | null>(null);
   const shown = preview ?? rect;
 
   const clearScheduledPreview = () => {
+    if (previewFrameRef.current !== null) window.cancelAnimationFrame(previewFrameRef.current);
+    previewFrameRef.current = null;
     if (previewTimerRef.current !== null) window.clearTimeout(previewTimerRef.current);
     previewTimerRef.current = null;
     pendingPreviewRef.current = null;
@@ -55,8 +58,16 @@ export function ResizeHandles({
 
   const schedulePreview = (next: ResizeHandleRect) => {
     if (renderIntervalMs <= 0) {
-      setPreview(next);
-      onChange(next);
+      pendingPreviewRef.current = next;
+      if (previewFrameRef.current !== null) return;
+      previewFrameRef.current = window.requestAnimationFrame(() => {
+        previewFrameRef.current = null;
+        const pending = pendingPreviewRef.current;
+        pendingPreviewRef.current = null;
+        if (!pending) return;
+        setPreview(pending);
+        onChange(pending);
+      });
       return;
     }
     pendingPreviewRef.current = next;

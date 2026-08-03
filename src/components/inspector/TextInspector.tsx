@@ -1,7 +1,9 @@
+import { Eye, EyeOff, Trash2 } from "lucide-react";
 import type { CanvasText } from "../../lib/scene-document";
 import { DEFAULT_FONT_ID, type UserFont } from "../../lib/fonts";
 import { DeferredInput, DeferredTextarea } from "../DeferredInput";
 import { FontEditor } from "../FontEditor";
+import { IconButton, InspectorHeader } from "../StudioUi";
 
 export function TextInspector({ text, userFonts = [], onPatch, onDelete }: {
   text: CanvasText;
@@ -16,7 +18,10 @@ export function TextInspector({ text, userFonts = [], onPatch, onDelete }: {
     }} /></label>
   );
   const deletable = text.role === "custom" || text.role === "note";
-  return <section className="property-panel"><header><h2>文本属性</h2>{deletable ? <button type="button" onClick={onDelete}>删除文本</button> : <button type="button" onClick={() => onPatch({ visibility: !text.visibility })}>{text.visibility ? "隐藏文本" : "显示文本"}</button>}</header>
+  return <section className="property-panel"><InspectorHeader title="文本属性" actions={deletable
+    ? <IconButton label="删除文本" text="删除文本" icon={<Trash2 size={15} />} variant="danger" onClick={onDelete} />
+    : <IconButton label={text.visibility ? "隐藏文本" : "显示文本"} text={text.visibility ? "隐藏文本" : "显示文本"} icon={text.visibility ? <EyeOff size={15} /> : <Eye size={15} />} variant="ghost" onClick={() => onPatch({ visibility: !text.visibility })} />}
+  />
     <label htmlFor="text-content">内容<DeferredTextarea id="text-content" value={text.content} onCommit={(content) => onPatch({ content })} /></label>
     {number("x", text.x, 0, 6000, "X", "text-x")}{number("y", text.y, 0, 6000, "Y", "text-y")}
     <label htmlFor="text-color">颜色<DeferredInput id="text-color" type="color" value={text.color} onCommit={(color) => onPatch({ color })} /></label>

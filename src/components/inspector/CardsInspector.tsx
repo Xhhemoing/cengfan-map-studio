@@ -1,9 +1,11 @@
+import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, RotateCcw } from "lucide-react";
 import type { CardFontField, CardSettings } from "../../lib/scene-document";
 import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { DEFAULT_FONT_ID, type UserFont } from "../../lib/fonts";
 import { DeferredInput } from "../DeferredInput";
 import { FontEditor } from "../FontEditor";
+import { ActionGroup, IconButton, InspectorHeader } from "../StudioUi";
 
 const fields: Array<{ id: "name" | "university" | "city"; label: string }> = [
   { id: "name", label: "姓名" },
@@ -91,17 +93,17 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
           if (Number.isFinite(next)) onPatch({ zIndex: Math.floor(next) });
         }} />
       </label>
-      <div className="inspector-actions">
-        <button type="button" aria-label="数据框上移" onClick={() => onPatch({ zIndex: Math.min(CANVAS_LAYER_Z_RANGE.max, (cards.zIndex ?? CANVAS_LAYER_Z.cards) + 1) })}>上移</button>
-        <button type="button" aria-label="数据框下移" onClick={() => onPatch({ zIndex: Math.max(CANVAS_LAYER_Z_RANGE.min, (cards.zIndex ?? CANVAS_LAYER_Z.cards) - 1) })}>下移</button>
-        <button type="button" aria-label="数据框置顶" onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.max })}>置顶</button>
-        <button type="button" aria-label="数据框置底" onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.min })}>置底</button>
-      </div>
+      <ActionGroup label="数据框层级" className="inspector-actions">
+        <IconButton label="数据框上移" text="上移" icon={<ArrowUp size={14} />} onClick={() => onPatch({ zIndex: Math.min(CANVAS_LAYER_Z_RANGE.max, (cards.zIndex ?? CANVAS_LAYER_Z.cards) + 1) })} />
+        <IconButton label="数据框下移" text="下移" icon={<ArrowDown size={14} />} onClick={() => onPatch({ zIndex: Math.max(CANVAS_LAYER_Z_RANGE.min, (cards.zIndex ?? CANVAS_LAYER_Z.cards) - 1) })} />
+        <IconButton label="数据框置顶" text="置顶" icon={<ChevronsUp size={14} />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.max })} />
+        <IconButton label="数据框置底" text="置底" icon={<ChevronsDown size={14} />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.min })} />
+      </ActionGroup>
       <p className="property-panel__hint">数值越大越靠上。参照：地图 0 · 嘉宾面板 20 · 装饰素材 30 · 文本 40。置顶/置底即相对全部画布层。</p>
     </>
   );
 
-  if (mode === "placement") return <section className="property-panel"><header><h2>数据框位置与尺寸</h2></header>{number("x", cards.x, 0, 6000, "X")}{number("y", cards.y, 0, 6000, "Y")}{number("maxWidth", cards.maxWidth, 80, 6000, "卡片宽度（画布像素）")}{layerControl()}</section>;
+  if (mode === "placement") return <section className="property-panel"><InspectorHeader title="数据框位置与尺寸" />{number("x", cards.x, 0, 6000, "X")}{number("y", cards.y, 0, 6000, "Y")}{number("maxWidth", cards.maxWidth, 80, 6000, "卡片宽度（画布像素）")}{layerControl()}</section>;
 
   const advancedControls = (
     <>
@@ -119,7 +121,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     </>
   );
 
-  return <section className="property-panel"><header><h2>卡片属性</h2><button type="button" onClick={onReset}>重置</button></header>
+  return <section className="property-panel"><InspectorHeader title="卡片属性" actions={<IconButton label="重置卡片" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} />} />
     <label htmlFor="cards-preset">视觉样式<select id="cards-preset" value={cards.preset === "compact" ? "standard" : cards.preset} onChange={(event) => onPatch({ preset: event.target.value as CardSettings["preset"] })}><option value="standard">标准</option><option value="ticket">票券</option><option value="photo">照片</option><option value="borderless">无边框</option></select></label>
     <label htmlFor="cards-compact-layout" className="checkbox-row"><input id="cards-compact-layout" type="checkbox" checked={cards.compactLayout === true || cards.preset === "compact"} onChange={(event) => onPatch({ compactLayout: event.target.checked })} />紧凑排版</label>
     <label htmlFor="cards-show-count" className="checkbox-row"><input id="cards-show-count" type="checkbox" checked={cards.showCount !== false} onChange={(event) => onPatch({ showCount: event.target.checked })} />显示人数</label>

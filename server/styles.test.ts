@@ -10,6 +10,17 @@ describe("data workspace responsive controls", () => {
     expect(styles).not.toMatch(/\.data-workspace \.import-box,\s*\.data-workspace \.import-review \{ display: none; \}/);
   });
 
+  it("gives the global data workbench a full-height layout with an internal content scroller", () => {
+    expect(styles).toMatch(/\.global-data-screen\s*\{[^}]*min-height:\s*100dvh;/);
+    expect(styles).toMatch(/\.global-data-layout\s*\{[^}]*display:\s*grid;/);
+    expect(styles).toMatch(/\.global-data-content\s*\{[^}]*overflow-y:\s*auto;/);
+  });
+
+  it("switches the global data workbench to a single column on narrow screens", () => {
+    expect(styles).toMatch(/@media[^{}]*max-width:\s*620px[\s\S]*\.global-data-layout\s*\{[^}]*grid-template-columns:\s*1fr;/);
+    expect(styles).toMatch(/@media[^{}]*max-width:\s*620px[\s\S]*\.global-data-nav\s*\{[^}]*overflow-x:\s*auto;/);
+  });
+
   it("keeps collaboration reachable and lets the canvas toolbar wrap on mobile", () => {
     expect(styles).toMatch(/\.topbar-actions \.collaboration-button \{[^}]*display: inline-flex;/);
     expect(styles).toMatch(/\.collaboration-popover \{[^}]*position: fixed;[^}]*max-width: calc\(100vw - 16px\);/);

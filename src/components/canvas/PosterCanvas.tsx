@@ -284,6 +284,8 @@ export function PosterCanvas({
   const resolvedGridSize = clampGridSize(gridSize);
   const cardDrag = useRef<{ id: string; offsetX: number; offsetY: number; width: number; height: number; x: number; y: number } | null>(null);
   const guestDrag = useRef<{ offsetX: number; offsetY: number; x: number; y: number } | null>(null);
+  const cardPreviewFrame = useRef<number | null>(null);
+  const guestPreviewFrame = useRef<number | null>(null);
   const cardPreviewTimer = useRef<number | null>(null);
   const guestPreviewTimer = useRef<number | null>(null);
   const pendingCardPreview = useRef<{ id: string; x: number; y: number } | null>(null);
@@ -292,12 +294,16 @@ export function PosterCanvas({
   const [guestPreview, setGuestPreview] = useState<{ x: number; y: number } | null>(null);
 
   const clearCardPreview = () => {
+    if (cardPreviewFrame.current !== null) window.cancelAnimationFrame(cardPreviewFrame.current);
+    cardPreviewFrame.current = null;
     if (cardPreviewTimer.current !== null) window.clearTimeout(cardPreviewTimer.current);
     cardPreviewTimer.current = null;
     pendingCardPreview.current = null;
   };
 
   const clearGuestPreview = () => {
+    if (guestPreviewFrame.current !== null) window.cancelAnimationFrame(guestPreviewFrame.current);
+    guestPreviewFrame.current = null;
     if (guestPreviewTimer.current !== null) window.clearTimeout(guestPreviewTimer.current);
     guestPreviewTimer.current = null;
     pendingGuestPreview.current = null;
@@ -305,7 +311,14 @@ export function PosterCanvas({
 
   const scheduleCardPreview = (next: { id: string; x: number; y: number }) => {
     if (renderIntervalMs <= 0) {
-      setDragPreview(next);
+      pendingCardPreview.current = next;
+      if (cardPreviewFrame.current !== null) return;
+      cardPreviewFrame.current = window.requestAnimationFrame(() => {
+        cardPreviewFrame.current = null;
+        const pending = pendingCardPreview.current;
+        pendingCardPreview.current = null;
+        if (pending) setDragPreview(pending);
+      });
       return;
     }
     pendingCardPreview.current = next;
@@ -320,7 +333,14 @@ export function PosterCanvas({
 
   const scheduleGuestPreview = (next: { x: number; y: number }) => {
     if (renderIntervalMs <= 0) {
-      setGuestPreview(next);
+      pendingGuestPreview.current = next;
+      if (guestPreviewFrame.current !== null) return;
+      guestPreviewFrame.current = window.requestAnimationFrame(() => {
+        guestPreviewFrame.current = null;
+        const pending = pendingGuestPreview.current;
+        pendingGuestPreview.current = null;
+        if (pending) setGuestPreview(pending);
+      });
       return;
     }
     pendingGuestPreview.current = next;

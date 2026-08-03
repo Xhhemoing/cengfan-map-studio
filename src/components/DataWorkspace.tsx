@@ -15,7 +15,7 @@ import { resolveStudentLocation } from "../lib/student-data";
 import { searchCities, searchProvinces, searchUniversities } from "../lib/search-catalog";
 import { SearchCombobox, type SearchComboboxOption } from "./SearchCombobox";
 import { FileDropzone } from "./FileDropzone";
-import { ActionButton, PanelHeader } from "./StudioUi";
+import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, SegmentedControl } from "./StudioUi";
 
 function universityOptions(query: string): SearchComboboxOption[] {
   return searchUniversities(query).map((university) => ({
@@ -297,26 +297,19 @@ export function DataWorkspace({
 
       <section className="data-expression" aria-labelledby="data-expression-title">
         <PanelHeader id="data-expression-title" title="地图呈现方式" meta="同一份名单，实时切换" />
-        <div className="data-expression__grid">
-          {([
-            ["pins", "地图图钉"],
-            ["province", "省份汇总"],
-            ["city", "城市汇总"],
-            ["university", "学校汇总"],
-            ["heat", "人数热力"],
-          ] as const).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={dataView === id ? "is-selected" : ""}
-              aria-label={`切换为${label}`}
-              aria-pressed={dataView === id}
-              onClick={() => onChangeDataView(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          label="地图呈现方式"
+          activeId={dataView}
+          items={[
+            { id: "pins", label: "图钉", ariaLabel: "切换为地图图钉" },
+            { id: "province", label: "省份", ariaLabel: "切换为省份汇总" },
+            { id: "city", label: "城市", ariaLabel: "切换为城市汇总" },
+            { id: "university", label: "学校", ariaLabel: "切换为学校汇总" },
+            { id: "heat", label: "热力", ariaLabel: "切换为人数热力" },
+          ]}
+          onChange={onChangeDataView}
+          className="data-expression__control"
+        />
       </section>
 
       <div className="data-summary">
@@ -399,20 +392,16 @@ export function DataWorkspace({
               placeholder={"林舟 北京大学 北京\n周晴，哈佛大学，美国·波士顿，海外"}
               rows={5}
             />
-            <div className="review-actions">
-              <ActionButton onClick={prepareImport}>
-                <FileUp size={16} /> 识别文本
-              </ActionButton>
-              <ActionButton className="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing}>
+            <ActionGroup label="导入处理" className="review-actions">
+              <CompactButton icon={<FileUp size={14} aria-hidden />} onClick={prepareImport}>识别文本</CompactButton>
+              <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing}>
                 {isAiParsing ? "智能识别中..." : "智能识别名单"}
-              </ActionButton>
-              <ActionButton className="secondary" onClick={prepareOcrImport}>
-                识别 OCR 文本
-              </ActionButton>
+              </CompactButton>
+              <CompactButton variant="secondary" onClick={prepareOcrImport}>识别 OCR 文本</CompactButton>
               <ActionButton onClick={importDirectly} disabled={isAiParsing}>
                 {isAiParsing ? "识别并导入中..." : "一键识别并导入"}
               </ActionButton>
-            </div>
+            </ActionGroup>
             <div className="file-import-row">
               <FileDropzone
                 id="data-excel-upload"
@@ -465,14 +454,14 @@ export function DataWorkspace({
               </label>
             ))}
           </div>
-          <div className="review-actions">
+          <ActionGroup label="确认导入" className="review-actions">
             <ActionButton onClick={() => applyImport("append")}>
               追加导入
             </ActionButton>
-            <ActionButton className="secondary" onClick={() => applyImport("replace")}>
+            <CompactButton variant="secondary" onClick={() => applyImport("replace")}>
               替换全部
-            </ActionButton>
-          </div>
+            </CompactButton>
+          </ActionGroup>
         </div>
       )}
 
@@ -485,19 +474,17 @@ export function DataWorkspace({
           onChange={(event) => setFilter(event.target.value)}
           placeholder="筛选姓名、就读院校或城市"
         />
-        <div>
-          <button type="button" aria-label="全部显示" onClick={() => onSetStudentsVisibility(true)}>
+        <ActionGroup label="名单批量操作">
+          <CompactButton aria-label="全部显示" icon={<Eye size={14} aria-hidden />} onClick={() => onSetStudentsVisibility(true)}>
             全部显示
-          </button>
-          <button type="button" aria-label="全部隐藏" onClick={() => onSetStudentsVisibility(false)}>
+          </CompactButton>
+          <CompactButton aria-label="全部隐藏" icon={<EyeOff size={14} aria-hidden />} onClick={() => onSetStudentsVisibility(false)}>
             全部隐藏
-          </button>
+          </CompactButton>
           {filter && (
-            <button type="button" onClick={() => setFilter("")}>
-              清空筛选
-            </button>
+            <CompactButton icon={<X size={14} aria-hidden />} variant="ghost" onClick={() => setFilter("")}>清空筛选</CompactButton>
           )}
-        </div>
+        </ActionGroup>
       </div>
 
       <div className="data-list data-table-wrap">
@@ -539,8 +526,8 @@ export function DataWorkspace({
                         {editingDraft.locationScope !== "international" && <SearchCombobox label="编辑省份" value={editingDraft.province ?? ""} allowFreeInput onChange={(value) => setEditingDraft(updateStudentDraft(editingDraft, "province", value))} searchOptions={provinceOptions} />}
                       </td>
                       <td><div className="student-row__buttons">
-                        <button type="button" aria-label={`保存 ${student.name}`} title="保存" onClick={(event) => { event.stopPropagation(); saveEditing(student); }}><Check size={14} /></button>
-                        <button type="button" aria-label={`取消编辑 ${student.name}`} title="取消" onClick={(event) => { event.stopPropagation(); setEditingStudentId(null); }}><X size={14} /></button>
+                        <IconButton label={`保存 ${student.name}`} icon={<Check size={14} />} onClick={(event) => { event.stopPropagation(); saveEditing(student); }} />
+                        <IconButton label={`取消编辑 ${student.name}`} icon={<X size={14} />} variant="ghost" onClick={(event) => { event.stopPropagation(); setEditingStudentId(null); }} />
                       </div></td>
                     </>
                   ) : (
@@ -550,9 +537,9 @@ export function DataWorkspace({
                       <td>{student.city}</td>
                       <td className={student.locationScope === "international" ? "" : location.status === "unresolved" ? "is-unresolved" : ""}>{student.locationScope === "international" ? "海外" : student.province || location.province || "未匹配"}</td>
                       <td><div className="student-row__buttons">
-                        <button type="button" aria-label={`编辑 ${student.name}`} title="编辑" onClick={(event) => { event.stopPropagation(); startEditing(student); }}><Pencil size={14} /></button>
-                        <button type="button" aria-label={`${isVisible ? "隐藏" : "显示"} ${student.name}`} title={isVisible ? "隐藏" : "显示"} onClick={(event) => { event.stopPropagation(); onToggleVisibility(student.id); }}>{isVisible ? <EyeOff size={14} /> : <Eye size={14} />}</button>
-                        <button type="button" aria-label={`删除 ${student.name}`} title="删除" onClick={(event) => { event.stopPropagation(); if (confirmDelete(student)) onDeleteStudent(student.id); }}><Trash2 size={14} /></button>
+                        <IconButton label={`编辑 ${student.name}`} icon={<Pencil size={14} />} onClick={(event) => { event.stopPropagation(); startEditing(student); }} />
+                        <IconButton label={`${isVisible ? "隐藏" : "显示"} ${student.name}`} icon={isVisible ? <EyeOff size={14} /> : <Eye size={14} />} onClick={(event) => { event.stopPropagation(); onToggleVisibility(student.id); }} />
+                        <IconButton label={`删除 ${student.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={(event) => { event.stopPropagation(); if (confirmDelete(student)) onDeleteStudent(student.id); }} />
                       </div></td>
                     </>
                   )}

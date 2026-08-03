@@ -1,5 +1,7 @@
+import { ArrowDown, ArrowUp, Copy, Trash2 } from "lucide-react";
 import type { AssetElement } from "../../lib/scene-document";
 import { DeferredInput } from "../DeferredInput";
+import { ActionGroup, IconButton, InspectorHeader } from "../StudioUi";
 
 function numberControl(
   asset: AssetElement,
@@ -49,13 +51,11 @@ export function AssetInspector({
 
   return (
     <section className="property-panel">
-      <header>
-        <div>
-          <h2>素材属性</h2>
-          <small>{kindLabel} · {label}</small>
-        </div>
-        <button type="button" aria-label="删除素材" onClick={() => onDelete(id)}>删除</button>
-      </header>
+      <InspectorHeader
+        title="素材属性"
+        meta={`${kindLabel} · ${label}`}
+        actions={<IconButton label="删除素材" icon={<Trash2 size={15} />} variant="danger" onClick={() => onDelete(id)} />}
+      />
       {isTexture && (
         <p className="panel-note">
           省份贴图已改为地图底纹（右侧省份属性 / 左侧素材库）。此旧实例可删除；请用「省份素材」重新应用。
@@ -83,11 +83,11 @@ export function AssetInspector({
         显示
         <input id="asset-visible" type="checkbox" checked={visibility} onChange={(event) => onPatch({ visibility: event.target.checked })} />
       </label>
-      <div className="inspector-actions">
-        <button type="button" aria-label="素材上移" onClick={() => onLayerChange(1)}>上移</button>
-        <button type="button" aria-label="素材下移" onClick={() => onLayerChange(-1)}>下移</button>
-        <button type="button" aria-label="复制素材" onClick={() => onDuplicate(id)}>复制</button>
-      </div>
+      <ActionGroup label="素材操作" className="inspector-actions">
+        <IconButton label="素材上移" icon={<ArrowUp size={14} />} onClick={() => onLayerChange(1)} />
+        <IconButton label="素材下移" icon={<ArrowDown size={14} />} onClick={() => onLayerChange(-1)} />
+        <IconButton label="复制素材" icon={<Copy size={14} />} onClick={() => onDuplicate(id)} />
+      </ActionGroup>
     </section>
   );
 }
