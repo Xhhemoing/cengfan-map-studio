@@ -17,7 +17,12 @@ import {
 } from "./ai/schemas";
 import { CollaborationError, createRoomStore } from "./collaboration";
 
-const PORT = 8787;
+export const DEFAULT_PORT = 8787;
+
+export function resolvePort(value: string | undefined = process.env.PORT): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : DEFAULT_PORT;
+}
 const DEFAULT_DATA_DIR = fileURLToPath(new URL("../.data", import.meta.url));
 const VISIT_LOG_LIMIT = 5000;
 
@@ -42,10 +47,14 @@ interface LegacyVisitRecord {
   path?: string;
 }
 
-function clientIp(request: http.IncomingMessage): string {
-  const forwarded = request.headers["x-forwarded-for"];
-  const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  return (value?.split(",")[0]?.trim() || request.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
+function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
+  if (trustProxy) {
+    const forwarded = request.headers["x-forwarded-for"];
+    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    const firstIp = value?.split(",")[0]?.trim();
+    if (firstIp) return firstIp;
+  }
+  return (request.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
 }
 
 function isLoopbackRequest(request: http.IncomingMessage): boolean {
@@ -127,6 +136,7 @@ export interface AiServerOptions {
   maxRooms?: number;
   maxRoomSubscribers?: number;
   roomTtlMs?: number;
+  trustProxy?: boolean;
 }
 
 const DEFAULT_MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
@@ -180,8 +190,12 @@ function requestApiAuth(
 }
 
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function isWorkspaceSnapshot(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!isRecord(value)) return false;
   const record = value as Record<string, unknown>;
   return record.kind === "cengfan-workspace"
     && record.version === 1
@@ -337,6 +351,7 @@ export function createAiServer(options: AiServerOptions = {}) {
   const corsOrigins = options.corsOrigins ?? (process.env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
   const maxJsonBodyBytes = options.maxJsonBodyBytes ?? DEFAULT_MAX_JSON_BODY_BYTES;
   const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
+  const trustProxy = options.trustProxy ?? process.env.TRUST_PROXY === "1";
   const workspaceFile = join(dataDir, "workspace.json");
   const visitsFile = join(dataDir, "visits.json");
   const roomStore = createRoomStore({
@@ -353,7 +368,7 @@ export function createAiServer(options: AiServerOptions = {}) {
     const visit: VisitRecord = {
       id: createVisitId(),
       occurredAt: new Date().toISOString(),
-      ip: clientIp(request),
+      ip: clientIp(request, trustProxy),
       method: request.method || "GET",
       path,
       status,
@@ -444,8 +459,8 @@ export function createAiServer(options: AiServerOptions = {}) {
       }
 
       if (request.method === "POST" && pathname === "/api/rooms") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES)) as { clientId?: unknown; snapshot?: unknown };
-        if (typeof body.clientId !== "string" || !body.clientId) {
+        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
+        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId) {
           send( 400, { error: { code: "VALIDATION_ERROR", message: "clientId 必填" } });
           return;
         }
@@ -480,7 +495,11 @@ export function createAiServer(options: AiServerOptions = {}) {
 
       const transactionMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/transactions$/);
       if (request.method === "POST" && transactionMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES)) as { txId?: unknown; clientId?: unknown; baseVersion?: unknown; snapshot?: unknown; operations?: unknown };
+        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
+        if (!isRecord(body)) {
+          send( 400, { error: { code: "VALIDATION_ERROR", message: "请求体必须是对象" } });
+          return;
+        }
         try {
           const room = roomStore.apply(transactionMatch[1]!, {
             txId: typeof body.txId === "string" ? body.txId : "",
@@ -590,11 +609,8 @@ export function createAiServer(options: AiServerOptions = {}) {
       }
 
       if (request.method === "POST" && url === "/api/ai/explain") {
-        const body = (await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES))) as {
-          message?: string;
-          studentCount?: number;
-        };
-        if (!body.message?.trim()) {
+        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
+        if (!isRecord(body) || typeof body.message !== "string" || !body.message.trim()) {
           send( 400, {
             error: { code: "VALIDATION_ERROR", message: "message 不能为空" },
           });
@@ -659,9 +675,10 @@ if (isDirectRun) {
     process.env.STATIC_DIR ||
     (existsSync(resolve("dist/index.html")) ? resolve("dist") : undefined);
   const server = createAiServer({ staticDir });
-  server.listen(PORT, "0.0.0.0", () => {
+  const port = resolvePort();
+  server.listen(port, "0.0.0.0", () => {
     console.log(
-      `Cengfan studio listening on http://0.0.0.0:${PORT}${staticDir ? ` (static: ${staticDir})` : ""}`,
+      `Cengfan studio listening on http://0.0.0.0:${port}${staticDir ? ` (static: ${staticDir})` : ""}`,
     );
   });
 }

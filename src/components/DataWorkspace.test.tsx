@@ -161,6 +161,49 @@ describe("DataWorkspace", () => {
     });
   });
 
+  it("clears an international location scope when an edited record is set to China", () => {
+    const onUpdateStudent = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={[{ ...students[0]!, locationScope: "international" }]}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={onUpdateStudent}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    const locationScope = container.querySelector<HTMLSelectElement>('select[aria-label="编辑学生去向类型"]')!;
+    flushSync(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(locationScope, "china");
+      locationScope.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+
+    expect(onUpdateStudent).toHaveBeenCalledWith("student-1", expect.objectContaining({ locationScope: undefined }));
+  });
+
+  it("keeps pasted OCR text parsing available without advertising image OCR", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    expect(container.textContent).toContain("识别 OCR 文本");
+    expect(container.textContent).not.toContain("选择名单图片");
+  });
+
   it("creates international students without reporting an unresolved China city", () => {
     const onAppendStudents = vi.fn();
     const container = render(

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import type http from "node:http";
-import { createAiServer } from "./index";
+import { createAiServer, DEFAULT_PORT, resolvePort } from "./index";
 
 async function startServer(server: http.Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -62,6 +62,51 @@ describe("unified application server", () => {
     );
     servers.length = 0;
     directories.length = 0;
+  });
+
+  it.each([
+    ["room creation", "/api/rooms", null],
+    ["AI explanation", "/api/ai/explain", "not-an-object"],
+  ])("rejects a non-object JSON body for %s", async (_name, path, body) => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await fetch(`${origin}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "VALIDATION_ERROR" } });
+  });
+
+  it("rejects an array transaction body before attempting to find the room", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await fetch(`${origin}/api/rooms`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "client-a", snapshot: { title: "initial" } }),
+    }).then((response) => response.json()) as { id: string };
+
+    const response = await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify([]),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "VALIDATION_ERROR" } });
+  });
+
+  it("uses the default port for malformed values and accepts valid ports", () => {
+    expect(resolvePort(undefined)).toBe(DEFAULT_PORT);
+    expect(resolvePort("0")).toBe(DEFAULT_PORT);
+    expect(resolvePort("not-a-port")).toBe(DEFAULT_PORT);
+    expect(resolvePort("8790")).toBe(8790);
   });
 
   it("does not expose the global workspace API unless an explicit token is configured", async () => {
@@ -502,7 +547,7 @@ describe("unified application server", () => {
   it("records visits with request details and exposes aggregate analytics", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "cengfan-visits-"));
     directories.push(dataDir);
-    const server = createAiServer({ dataDir });
+    const server = createAiServer({ dataDir, trustProxy: true });
     servers.push(server);
     const origin = await startServer(server);
 
@@ -522,6 +567,21 @@ describe("unified application server", () => {
     expect(body.total).toBe(1);
     expect(body.uniqueIps).toBe(1);
     expect(body.visits[0]).toMatchObject({ ip: "203.0.113.42", method: "GET", path: "/dashboard", status: 404, referer: "https://example.com/source", userAgent: "Test Browser" });
+  });
+
+  it("ignores spoofed forwarded IP headers unless the proxy is trusted", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-visits-untrusted-"));
+    directories.push(dataDir);
+    const server = createAiServer({ dataDir });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    await fetch(`${origin}/dashboard`, { headers: { "X-Forwarded-For": "203.0.113.42" } });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const analytics = await fetch(`${origin}/api/admin/visits`, adminRequestInit());
+    const body = await analytics.json() as { visits: Array<{ ip: string }> };
+    expect(body.visits[0]?.ip).not.toBe("203.0.113.42");
   });
 
   it("reads legacy visit records without losing their history", async () => {

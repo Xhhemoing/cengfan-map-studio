@@ -1,4 +1,4 @@
-import { Check, Eye, EyeOff, FileUp, Image as ImageIcon, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   confirmImportCandidates,
@@ -166,7 +166,7 @@ export function DataWorkspace({
       city: editingDraft.city.trim(),
       // Empty province clears override so city auto-match is used again.
       province: editingDraft.province?.trim() || undefined,
-      ...(editingDraft.locationScope === "international" ? { locationScope: "international" as const } : {}),
+      locationScope: editingDraft.locationScope === "international" ? "international" as const : undefined,
     };
     if (!next.name || !next.university || !next.city) {
       setMessage("学生姓名、就读院校和城市不能为空");
@@ -228,20 +228,6 @@ export function DataWorkspace({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Excel 解析失败");
     }
-  };
-
-  const handleImageOcrStub = async (file: File | null) => {
-    if (!file) return;
-    // Lightweight OCR path: use filename + optional pasted text as a practical adapter
-    // until a real OCR backend is configured. Prefer paste box for recognized text.
-    if (importText.trim()) {
-      prepareOcrImport();
-      setMessage((current) => `${current}（已结合图片 ${file.name} 的 OCR 文本框内容）`);
-      return;
-    }
-    setMessage(
-      `已选择图片 ${file.name}。请把 OCR 识别文本粘贴到上方文本框后点击“识别 OCR 文本”，或直接粘贴名单。`,
-    );
   };
 
   const applyImport = (mode: "append" | "replace") => {
@@ -385,7 +371,7 @@ export function DataWorkspace({
         </button>
         {showImport && (
           <>
-            <PanelHeader title="导入文本 / OCR" meta="学生姓名 · 就读院校 · 城市 · 去向类型（可选：海外）" />
+            <PanelHeader title="导入文本" meta="可粘贴 OCR 识别文字；学生姓名 · 就读院校 · 城市 · 去向类型（可选：海外）" />
             <textarea
               value={importText}
               onChange={(event) => setImportText(event.target.value)}
@@ -411,15 +397,6 @@ export function DataWorkspace({
                 variant="secondary"
                 icon={<FileUp size={16} aria-hidden />}
                 onFile={(file) => { void handleExcelFile(file); }}
-              />
-              <FileDropzone
-                id="data-ocr-image-upload"
-                label="选择名单图片"
-                hint="PNG / JPG · 点击或拖拽"
-                accept="image/*"
-                variant="secondary"
-                icon={<ImageIcon size={16} aria-hidden />}
-                onFile={(file) => { void handleImageOcrStub(file); }}
               />
             </div>
           </>

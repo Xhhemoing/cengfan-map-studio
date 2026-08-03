@@ -151,6 +151,7 @@ import {
 import {
   createBrowserWorkspaceStores,
   loadBrowserWorkspaceMirror,
+  loadLatestBrowserWorkspace,
   saveBrowserWorkspaceSnapshot,
 } from "./lib/browser-workspace-store";
 import {
@@ -188,47 +189,43 @@ const dataViews: Array<{ id: DataViewId; name: string; description: string }> = 
 ];
 
 
+function createInitialProject(): ProjectDocument {
+  return createProjectDocument({
+    students: sampleStudents,
+    templateId: "original",
+    dataView: "province",
+    textElements: [
+      {
+        id: "text-wish",
+        content: "山高水长，来日再聚",
+        x: 745,
+        y: 905,
+        fontSize: 20,
+        color: "#c85d4b",
+      },
+    ],
+  });
+}
+
 function loadInitialProject(): ProjectDocument {
-  if (typeof window === "undefined") {
-    return createProjectDocument({
-      students: sampleStudents,
-      templateId: "original",
-      dataView: "province",
-      textElements: [
-        {
-          id: "text-wish",
-          content: "山高水长，来日再聚",
-          x: 745,
-          y: 905,
-          fontSize: 20,
-          color: "#c85d4b",
-        },
-      ],
-    });
+  if (typeof window === "undefined") return createInitialProject();
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return createInitialProject();
+    const restored = restoreProjectDocument(raw);
+    if (restored.students.length === 0) restored.students = sampleStudents;
+    return restored;
+  } catch {
+    return createInitialProject();
   }
-  const raw = window.localStorage.getItem(DRAFT_KEY);
-  if (!raw) {
-    return createProjectDocument({
-      students: sampleStudents,
-      templateId: "original",
-      dataView: "province",
-      textElements: [
-        {
-          id: "text-wish",
-          content: "山高水长，来日再聚",
-          x: 745,
-          y: 905,
-          fontSize: 20,
-          color: "#c85d4b",
-        },
-      ],
-    });
+}
+
+function loadBrowserValue<T>(load: () => T, fallback: T): T {
+  try {
+    return load();
+  } catch {
+    return fallback;
   }
-  const restored = restoreProjectDocument(raw);
-  if (restored.students.length === 0) {
-    restored.students = sampleStudents;
-  }
-  return restored;
 }
 
 export function App() {
@@ -250,14 +247,14 @@ export function App() {
 
   const [includeResourcesInProjectExport, setIncludeResourcesInProjectExport] = useState(true);
   const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(() =>
-    initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadCustomTemplates()),
+    initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
   );
   const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
   const [userFonts, setUserFonts] = useState<UserFont[]>(() =>
-    initialWorkspace?.fonts ?? (typeof window === "undefined" ? [] : loadUserFonts()),
+    initialWorkspace?.fonts ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserFonts(), [])),
   );
   const [userAssets, setUserAssets] = useState<UserAsset[]>(() =>
-    initialWorkspace?.assets ?? (typeof window === "undefined" ? [] : loadUserAssets()),
+    initialWorkspace?.assets ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserAssets(), [])),
   );
   const [showGrid, setShowGrid] = useState(false);
   const [snapToGridEnabled, setSnapToGridEnabled] = useState(true);
@@ -280,6 +277,7 @@ export function App() {
   const [collaborationMessage, setCollaborationMessage] = useState("未连接时不会上传或覆盖工程");
   const [collaborationClientId] = useState(() => createId("collab-client"));
 
+  const hasLocalWorkspaceEditsRef = useRef(false);
   const [workspaceSync] = useState(() => new LocalWorkspaceOverwrite({
     saveLocal: async (pack) => {
       try {
@@ -295,6 +293,8 @@ export function App() {
   }));
   const latestWorkspaceRef = useRef({ project, assets: userAssets, fonts: userFonts, customTemplates, renderSettings });
   const workspaceStateInitializedRef = useRef(false);
+  const workspaceHydratedRef = useRef(false);
+  const skipNextWorkspacePendingRef = useRef(false);
   const collaborationBaselineRef = useRef<ProjectPackage | null>(null);
   const collaborationVersionRef = useRef(0);
   const collaborationRoomRef = useRef<string | null>(null);
@@ -366,7 +366,11 @@ export function App() {
   }, [themeMode]);
 
   useEffect(() => {
-    writeEditorPanelLayout(window.localStorage, panelLayout, window.innerWidth);
+    try {
+      writeEditorPanelLayout(window.localStorage, panelLayout, window.innerWidth);
+    } catch {
+      // Panel sizing remains usable when browser storage is unavailable.
+    }
   }, [panelLayout]);
 
   useEffect(() => {
@@ -453,8 +457,37 @@ export function App() {
       workspaceStateInitializedRef.current = true;
       return;
     }
+    if (skipNextWorkspacePendingRef.current) {
+      skipNextWorkspacePendingRef.current = false;
+      return;
+    }
+    if (!workspaceHydratedRef.current) hasLocalWorkspaceEditsRef.current = true;
     workspaceSync.markPending();
   }, [customTemplates, project, renderSettings, userAssets, userFonts, workspaceSync]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadLatestBrowserWorkspace(browserStores).then((pack) => {
+      if (cancelled || !pack || hasLocalWorkspaceEditsRef.current) return;
+      const initialTime = Date.parse(initialWorkspace?.exportedAt ?? "");
+      const restoredTime = Date.parse(pack.exportedAt);
+      if (initialWorkspace && (!Number.isFinite(restoredTime) || restoredTime <= initialTime)) return;
+      const restored = restoreProjectPackage(pack);
+      workspaceHydratedRef.current = true;
+      skipNextWorkspacePendingRef.current = true;
+      setProject(restored.project);
+      setUserAssets(restored.assets);
+      setUserFonts(restored.fonts);
+      setCustomTemplates(restored.customTemplates);
+      setRenderSettings(restored.renderSettings);
+      setPreviewCommands([]);
+      setSyncState({ status: "saved", savedAt: pack.exportedAt });
+      setStatusMessage("已从浏览器本地完整工作区恢复");
+    }).catch(() => undefined).finally(() => {
+      workspaceHydratedRef.current = true;
+    });
+    return () => { cancelled = true; };
+  }, [browserStores, initialWorkspace]);
 
   const currentCollaborationPackage = (exportedAt = new Date().toISOString()): ProjectPackage => {
     const pack = createProjectPackageEnvelope(latestWorkspaceRef.current);
@@ -1161,9 +1194,19 @@ export function App() {
         students: current.students.map((student) => {
           if (student.id !== id) return student;
           const next = { ...student, ...patch };
-          if (!("province" in patch) || patch.province) return next;
-          const { province: _cleared, ...rest } = next;
-          return rest;
+          if ("province" in patch && !patch.province) {
+            const { province: _cleared, ...withoutProvince } = next;
+            if ("locationScope" in patch && !patch.locationScope) {
+              const { locationScope: _locationScope, ...withoutLocationScope } = withoutProvince;
+              return withoutLocationScope;
+            }
+            return withoutProvince;
+          }
+          if ("locationScope" in patch && !patch.locationScope) {
+            const { locationScope: _cleared, ...rest } = next;
+            return rest;
+          }
+          return next;
         }),
       }),
     }),

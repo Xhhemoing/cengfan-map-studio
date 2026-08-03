@@ -86,7 +86,12 @@ export function normalizeEditorPanelLayout(
 }
 
 function defaultStorage(): Storage | null {
-  return typeof window === "undefined" ? null : window.localStorage;
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 export function readEditorPanelLayout(

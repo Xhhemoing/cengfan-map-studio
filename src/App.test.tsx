@@ -76,6 +76,20 @@ afterEach(() => {
 });
 
 describe("App student editing", () => {
+  it("mounts with defaults when localStorage access is blocked", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get: () => { throw new DOMException("Storage blocked", "SecurityError"); },
+    });
+    try {
+      const container = renderApp(false);
+      expect(container.textContent).toContain("林舟");
+    } finally {
+      if (originalDescriptor) Object.defineProperty(window, "localStorage", originalDescriptor);
+    }
+  });
+
   it("opens the rebuilt student data center from fullscreen data settings and exposes map expressions", () => {
     const container = renderApp();
     openPeopleData(container);
@@ -86,6 +100,24 @@ describe("App student editing", () => {
     click(container.querySelector<HTMLButtonElement>('button[aria-label="切换为地图图钉"]')!);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
     expect(container.querySelectorAll("[data-student-pin]")).toHaveLength(12);
+  });
+
+  it("removes an international scope from the project when editing a student back to China", () => {
+    const internationalProject = createProjectDocument({
+      students: [{ ...sampleStudents[0], locationScope: "international" }],
+      templateId: "original",
+      dataView: "province",
+    });
+    window.localStorage.setItem("cengfan-map-studio:draft", serializeProjectDocument(internationalProject));
+    const container = renderApp(false);
+    openPeopleData(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    changeSelect(container.querySelector<HTMLSelectElement>('select[aria-label="编辑学生去向类型"]')!, "china");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+
+    expect(container.querySelector('[data-student-row="student-1"]')?.textContent).not.toContain("海外");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+    expect(container.querySelector("[data-destination-card]")?.textContent).not.toContain("海外");
   });
 
   it("applies an edited record to the project and active poster", () => {

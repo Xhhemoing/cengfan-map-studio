@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n web,api -c cyan,magenta \"vite\" \"tsx server/index.ts\"",
+    "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "dev:ai": "tsx server/index.ts",
-    "build": "bash scripts/run-heavy.sh bash -c 'tsc -b && vite build'",
-    "start": "STATIC_DIR=dist tsx server/index.ts",
-    "test": "bash scripts/run-heavy.sh vitest run",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/start.mjs",
+    "test": "node scripts/run-heavy.mjs vitest run",
     "test:watch": "vitest",
-    "lint": "bash scripts/run-heavy.sh eslint .",
+    "lint": "node scripts/run-heavy.mjs eslint .",
     "preview": "npm run start"
   },
   "dependencies": {

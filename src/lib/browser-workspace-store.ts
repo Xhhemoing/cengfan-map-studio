@@ -46,6 +46,19 @@ export function createLocalStorageMirror(storage: Storage = localStorage): SyncW
   };
 }
 
+export function createSafeLocalStorageMirror(): SyncWorkspaceStore {
+  return {
+    get: () => {
+      try {
+        return localStorage.getItem(MIRROR_KEY);
+      } catch {
+        return null;
+      }
+    },
+    set: (value) => localStorage.setItem(MIRROR_KEY, value),
+  };
+}
+
 function openWorkspaceDatabase(factory: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = factory.open(DATABASE_NAME, DATABASE_VERSION);
@@ -93,7 +106,7 @@ export function createIndexedDbWorkspaceStore(factory: IDBFactory = indexedDB): 
 export function createBrowserWorkspaceStores(): BrowserWorkspaceStores {
   const factory = globalThis.indexedDB;
   return {
-    mirror: createLocalStorageMirror(),
+    mirror: createSafeLocalStorageMirror(),
     durable: factory
       ? createIndexedDbWorkspaceStore(factory)
       : {
