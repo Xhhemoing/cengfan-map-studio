@@ -10,9 +10,23 @@ function extractRule(css: string, selector: string, mediaMaxWidth?: number): str
   const source = mediaMaxWidth === undefined ? css : (css.split(`@media (max-width: ${mediaMaxWidth}px)`)[1] ?? "");
   const start = source.indexOf(`${selector} {`);
   if (start < 0) return "";
-  const end = source.indexOf("}", start);
-  return end < 0 ? "" : source.slice(start + selector.length + 2, end);
+  const bodyStart = start + selector.length + 2;
+  let depth = 1;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") depth -= 1;
+    if (depth === 0) return source.slice(bodyStart, index);
+  }
+  return "";
 }
+
+describe("extractRule", () => {
+  it("extracts only the requested nested selector block", () => {
+    const css = ".target { color: red; @media (hover: hover) { color: blue; } } .later { color: green; }";
+
+    expect(extractRule(css, ".target")).toBe(" color: red; @media (hover: hover) { color: blue; } ");
+  });
+});
 
 describe("workflow workspace responsive contract", () => {
   it("defines tokenized template and delivery surfaces", () => {

@@ -161,7 +161,6 @@ describe("App student editing", () => {
   });
 
   it("keeps the export stage and current configuration when SVG export fails", () => {
-    const originalCreateObjectURL = URL.createObjectURL;
     vi.spyOn(URL, "createObjectURL").mockImplementation(() => {
       throw new Error("下载不可用");
     });
@@ -175,7 +174,53 @@ describe("App student editing", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("下载不可用");
     expect(scale.value).toBe("3");
     expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();
-    URL.createObjectURL = originalCreateObjectURL;
+  });
+
+  it("keeps the export stage and current configuration when PNG export fails", async () => {
+    const originalCreateElement = document.createElement.bind(document);
+    class ReadyImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    }
+    vi.stubGlobal("Image", ReadyImage);
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+      if (tagName !== "canvas") return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({ fillStyle: "", fillRect: vi.fn(), drawImage: vi.fn() }),
+        toDataURL: () => { throw new Error("PNG 下载不可用"); },
+      } as unknown as HTMLCanvasElement;
+    });
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="最终导出"]')!);
+    const scale = container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')!;
+    changeSelect(scale, "3");
+    click(Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "PNG")!);
+
+    await vi.waitFor(() => {
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain("PNG 下载不可用");
+    });
+    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(scale.value).toBe("3");
+    expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();
+  });
+
+  it("keeps the export stage and current configuration when project package export fails", () => {
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => {
+      throw new Error("工程包下载不可用");
+    });
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="最终导出"]')!);
+    const scale = container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')!;
+    changeSelect(scale, "3");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="导出工程包"]')!);
+
+    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("工程包下载不可用");
+    expect(scale.value).toBe("3");
+    expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();
   });
 
   it("mounts with defaults when localStorage access is blocked", () => {
