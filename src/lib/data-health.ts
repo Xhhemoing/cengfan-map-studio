@@ -1,6 +1,7 @@
 import type { ProjectDocument } from "./project-document";
 import type { Student } from "./project-data";
 import { resolveStudentLocation } from "./student-data";
+import { duplicateStudentIds } from "./data-duplicate";
 
 export interface DataHealthSummary {
   total: number;
@@ -9,6 +10,7 @@ export interface DataHealthSummary {
   international: number;
   unresolved: number;
   missingRequired: number;
+  duplicate: number;
 }
 
 export type DataIssueKind =
@@ -16,7 +18,8 @@ export type DataIssueKind =
   | "unresolved-location"
   | "manual-province"
   | "international"
-  | "hidden";
+  | "hidden"
+  | "duplicate";
 
 export interface DataIssue {
   studentId: string;
@@ -39,6 +42,7 @@ export function buildDataHealthSummary(project: ProjectDocument): DataHealthSumm
   let international = 0;
   let unresolved = 0;
   let missingRequired = 0;
+  const duplicateIds = duplicateStudentIds(project.students);
 
   for (const student of project.students) {
     if (student.visibility === false) {
@@ -61,6 +65,7 @@ export function buildDataHealthSummary(project: ProjectDocument): DataHealthSumm
     international,
     unresolved,
     missingRequired,
+    duplicate: duplicateIds.size,
   };
 }
 
@@ -70,6 +75,8 @@ export function listDataIssues(project: ProjectDocument): DataIssue[] {
   const manualProvince: DataIssue[] = [];
   const international: DataIssue[] = [];
   const hidden: DataIssue[] = [];
+  const duplicate: DataIssue[] = [];
+  const duplicateIds = duplicateStudentIds(project.students);
 
   for (const student of project.students) {
     const fields = missingFields(student);
@@ -109,6 +116,15 @@ export function listDataIssues(project: ProjectDocument): DataIssue[] {
         severity: "info",
       });
     }
+    if (duplicateIds.has(student.id)) {
+      duplicate.push({
+        studentId: student.id,
+        studentName: student.name || "未命名学生",
+        kind: "duplicate",
+        detail: "姓名、院校、城市和去向类型与其他记录一致",
+        severity: "warning",
+      });
+    }
     if (student.visibility === false) {
       hidden.push({
         studentId: student.id,
@@ -120,5 +136,5 @@ export function listDataIssues(project: ProjectDocument): DataIssue[] {
     }
   }
 
-  return [...missing, ...unresolved, ...manualProvince, ...international, ...hidden];
+  return [...missing, ...unresolved, ...manualProvince, ...international, ...hidden, ...duplicate];
 }

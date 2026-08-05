@@ -185,6 +185,38 @@ describe("unified application server", () => {
     expect(JSON.parse(response.body)).toMatchObject({ error: { code: "FORBIDDEN" } });
   });
 
+  it("validates the agent endpoint request shape", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const response = await fetch(`${origin}/api/ai/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userMessage: "测试", digest: {} }),
+    });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "VALIDATION_ERROR" } });
+  });
+
+  it("uses the local agent fallback when no AI key is configured", async () => {
+    const server = createAiServer({ agentConfig: {
+      apiKey: undefined,
+      baseUrl: "https://llm.example/v1",
+      model: "deepseek-v4-flash",
+      timeoutMs: 1000,
+      maxTokens: 4000,
+    } });
+    servers.push(server);
+    const origin = await startServer(server);
+    const response = await fetch(`${origin}/api/ai/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userMessage: "地图缩小一点", digest: { map: { scale: 1 } }, messages: [{ role: "user", content: "地图缩小一点" }] }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ kind: "tool-call", provider: "local-fallback" });
+  });
+
   it("rejects JSON bodies above the configured request limit", async () => {
     const server = createAiServer({ maxJsonBodyBytes: 64 });
     servers.push(server);

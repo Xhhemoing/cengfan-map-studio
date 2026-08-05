@@ -1,4 +1,3 @@
-
 import {
   Download,
   FolderOpen,
@@ -36,23 +35,35 @@ import {
 } from "./lib/project-data";
 import { createId } from "./lib/ids";
 
-import { AiAssistant } from "./components/AiAssistant";
+import { AgentAssistant } from "./components/AgentAssistant";
 
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
-import { GlobalDataScreen, type GlobalDataView } from "./components/GlobalDataScreen";
 import "./components/workflow-workspaces.css";
 import { GlobalSettingsScreen, type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
+import { TemplateWorkspace } from "./components/workspaces/TemplateWorkspace";
+import { DataUploadWorkspace } from "./components/workspaces/DataUploadWorkspace";
+import { MapStyleWorkspace, type MapStyleAssetPanelProps } from "./components/workspaces/MapStyleWorkspace";
+import { DisplayFrameWorkspace } from "./components/workspaces/DisplayFrameWorkspace";
+import { ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
+import { DeliveryWorkspace, type DeliveryExportState, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
 
 import { ActionGroup, CompactButton, ControlCluster, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
 import { WorkflowGuide } from "./components/WorkflowGuide";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
+import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
+import {
+  LEGACY_PANEL_TO_WORKFLOW_STAGE,
+  WORKFLOW_STAGE_TO_LEGACY_PANEL,
+  type WorkflowStageId,
+} from "./lib/workflow-stages";
+import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
+import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
 import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
 import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
 import {
-  applyEditorCommands,
   previewEditorCommands,
   type EditorCommand,
 } from "./lib/editor-commands";
@@ -135,6 +146,8 @@ import {
   type EditorPanelLayout,
   type PanelSide,
 } from "./lib/editor-layout";
+import { checkLayoutHealth } from "./lib/layout-health";
+import { listResourceHealthIssues } from "./lib/resource-health";
 
 import {
   clampGridSize,
@@ -156,6 +169,7 @@ import {
 } from "./lib/browser-workspace-store";
 import {
   LocalWorkspaceOverwrite,
+  type LocalOverwriteStatus,
   type LocalWorkspaceOverwriteState,
 } from "./lib/incremental-workspace-sync";
 import {
@@ -228,18 +242,167 @@ function loadBrowserValue<T>(load: () => T, fallback: T): T {
   }
 }
 
+type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error";
+
+interface ProjectMenuProps {
+  roomId: string | null;
+  roomVersion: number;
+  roomInput: string;
+  collaborationStatus: CollaborationStatus;
+  collaborationMessage: string;
+  collaborationOpen: boolean;
+  pngScale: number;
+  transparentExport: boolean;
+  syncStatus: LocalOverwriteStatus;
+  onSetCollaborationOpen: (open: boolean) => void;
+  onRoomInputChange: (value: string) => void;
+  onLeaveRoom: () => void;
+  onStartRoom: () => void;
+  onJoinRoom: () => void;
+  onNewProject: () => void;
+  onRestoreLocal: () => void;
+  onSaveLocal: () => void;
+  onPngScaleChange: (scale: number) => void;
+  onTransparentChange: (checked: boolean) => void;
+  onExportSvg: () => void;
+  onExportProject: () => void;
+  onImportProject: (file: File | null) => void;
+}
+
+function ProjectMenu({
+  roomId,
+  roomVersion,
+  roomInput,
+  collaborationStatus,
+  collaborationMessage,
+  collaborationOpen,
+  pngScale,
+  transparentExport,
+  syncStatus,
+  onSetCollaborationOpen,
+  onRoomInputChange,
+  onLeaveRoom,
+  onStartRoom,
+  onJoinRoom,
+  onNewProject,
+  onRestoreLocal,
+  onSaveLocal,
+  onPngScaleChange,
+  onTransparentChange,
+  onExportSvg,
+  onExportProject,
+  onImportProject,
+}: ProjectMenuProps) {
+  return (
+    <details className="project-menu">
+      <summary className="secondary-button" aria-label="打开项目菜单">
+        <FolderOpen size={16} /> <span>项目</span>
+      </summary>
+      <div className="project-menu__popover">
+        <section>
+          <strong>项目管理</strong>
+          <button type="button" aria-label="新建项目" onClick={onNewProject}><Plus size={16} /> 新建项目</button>
+          <button type="button" aria-label="恢复本机最近项目" onClick={onRestoreLocal}><FolderOpen size={16} /> 恢复最近项目</button>
+          <button type="button" aria-label="保存项目到本机" onClick={onSaveLocal}><Save size={16} /> 保存到本机</button>
+        </section>
+        <section>
+          <strong>导出海报</strong>
+          <label>PNG 倍率
+            <select aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}>
+              <option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option>
+            </select>
+          </label>
+          <label className="project-menu__check boolean-control checkbox-row"><input type="checkbox" checked={transparentExport} onChange={(event) => onTransparentChange(event.target.checked)} />透明背景</label>
+          <button type="button" onClick={onExportSvg}><Download size={16} /> 导出 SVG</button>
+        </section>
+        <section>
+          <strong>在线协作</strong>
+          <div className="collaboration-control project-menu__collaboration">
+            <button
+              type="button"
+              className={`secondary-button collaboration-button ${roomId ? "is-connected" : ""}`}
+              aria-label="增量在线协作"
+              aria-expanded={collaborationOpen}
+              onClick={() => onSetCollaborationOpen(!collaborationOpen)}
+            >
+              <Share2 size={16} /> <span>{roomId ? roomId : "增量协作"}</span>
+            </button>
+            {collaborationOpen && (
+              <section className="collaboration-popover" aria-label="增量协作设置">
+                <header>
+                  <strong>在线协作</strong>
+                  <span>v{roomVersion} · 增量同步</span>
+                </header>
+                {roomId ? (
+                  <>
+                    <div className="collaboration-room-code">
+                      <b>{roomId}</b>
+                      <button type="button" aria-label="复制房间码" onClick={() => void navigator.clipboard?.writeText(roomId)}><Copy size={15} /></button>
+                    </div>
+                    <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
+                    <button type="button" className="collaboration-leave" onClick={onLeaveRoom}><LogOut size={14} /> 断开房间</button>
+                  </>
+                ) : (
+                  <>
+                    <p>未连接时不会上传或覆盖工程。创建或加入后，仅发送变化字段；同一路径冲突会暂停上传。</p>
+                    <button type="button" className="collaboration-create" disabled={collaborationStatus === "connecting"} onClick={onStartRoom}><Share2 size={14} /> 创建房间</button>
+                    <div className="collaboration-join">
+                      <input aria-label="协作房间码" value={roomInput} maxLength={12} placeholder="输入房间码" onChange={(event) => onRoomInputChange(event.target.value.toUpperCase())} />
+                      <button type="button" disabled={!roomInput.trim() || collaborationStatus === "connecting"} onClick={onJoinRoom}>加入</button>
+                    </div>
+                    <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
+                  </>
+                )}
+              </section>
+            )}
+          </div>
+        </section>
+        <section>
+          <strong>工程文件</strong>
+          <button
+            type="button"
+            aria-label="强制保存到浏览器本地"
+            title="立即将当前工程、素材、字体、模板和渲染设置覆盖到浏览器本地存储"
+            disabled={syncStatus === "saving"}
+            onClick={onSaveLocal}
+          >
+            <Save size={16} /> {syncStatus === "saving" ? "保存中" : "保存到本机"}
+          </button>
+          <button type="button" onClick={onExportProject}><PackageOpen size={16} /> 导出工程</button>
+          <label className="project-menu__file"><PackageOpen size={16} /> 导入工程
+            <input type="file" accept="application/json,.json" aria-label="导入完整工程包" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
+          </label>
+        </section>
+      </div>
+    </details>
+  );
+}
+
 export function App() {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
   const [initialWorkspace] = useState(() => loadBrowserWorkspaceMirror(browserStores.mirror));
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
   const [previewCommands, setPreviewCommands] = useState<EditorCommand[]>([]);
-  const [selection, setSelection] = useState<SceneSelection>({ type: "text", id: "text-note" });
+  const [agentPreview, setAgentPreview] = useState<ProjectDocument | null>(null);
+  const [workspaceSession] = useState(() => typeof window === "undefined"
+    ? loadWorkspaceSession(null)
+    : loadBrowserValue(() => loadWorkspaceSession(window.localStorage), loadWorkspaceSession(null)));
+  const [selection, setSelection] = useState<SceneSelection>(() => {
+    if (workspaceSession.selectedProvince) return { type: "province", province: workspaceSession.selectedProvince };
+    if (workspaceSession.selectedObject === "cards") return { type: "cards" };
+    if (workspaceSession.selectedObject === "guests") return { type: "guests" };
+    if (workspaceSession.selectedObject) return { type: "asset", id: workspaceSession.selectedObject };
+    return { type: "text", id: "text-note" };
+  });
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [syncState, setSyncState] = useState<LocalWorkspaceOverwriteState>({
     status: initialWorkspace ? "saved" : "idle",
     savedAt: initialWorkspace?.exportedAt ?? null,
   });
   const [exportingPng, setExportingPng] = useState(false);
+  const [exportState, setExportState] = useState<DeliveryExportState>("idle");
+  const [exportError, setExportError] = useState<string>();
+  const lastExportRef = useRef<"png" | "svg" | "project">("png");
   const [pngScale, setPngScale] = useState(1);
   const [transparentExport, setTransparentExport] = useState(false);
   const [showProjectExportDialog, setShowProjectExportDialog] = useState(false);
@@ -304,13 +467,15 @@ export function App() {
 
   const posterRef = useRef<SVGSVGElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const [activePanel, setActivePanel] = useState<ActivePanel>("roster");
+  const [activePanel, setActivePanel] = useState<ActivePanel>(() => WORKFLOW_STAGE_TO_LEGACY_PANEL[workspaceSession.stage] ?? "roster");
+  const [legacyEditorEnabled] = useState(() => typeof window !== "undefined"
+    && loadBrowserValue(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false));
+  const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => legacyEditorEnabled ? "content" : workspaceSession.stage);
+  const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "template" || activeStage === "data" ? "content" : activeStage);
   const [contentView, setContentView] = useState<"layers" | "assistant">("layers");
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
-  const [globalDataOpen, setGlobalDataOpen] = useState(false);
-  const [globalDataInitialView, setGlobalDataInitialView] = useState<GlobalDataView>("overview");
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => typeof window === "undefined" ? "system" : loadThemeMode());
   const [prefersDark, setPrefersDark] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true);
   const [panelLayout, setPanelLayout] = useState<EditorPanelLayout>(() => readEditorPanelLayout());
@@ -318,9 +483,28 @@ export function App() {
 
   const resolvedRenderInterval = renderIntervalMs(renderSettings);
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storage = loadBrowserValue(() => window.localStorage, null);
+    if (!storage) return;
+    const selectedProvince = selection.type === "province" ? selection.province : undefined;
+    const selectedObject = selection.type === "asset" ? selection.id : selection.type === "cards" || selection.type === "guests" ? selection.type : undefined;
+    const { selectedProvince: _savedProvince, selectedObject: _savedObject, ...sessionBase } = workspaceSession;
+    saveWorkspaceSession(storage, {
+      ...sessionBase,
+      stage: activeStage,
+      ...(selectedProvince ? { selectedProvince } : {}),
+      ...(selectedObject ? { selectedObject } : {}),
+      savedAt: new Date().toISOString(),
+    });
+  }, [activeStage, selection, workspaceSession]);
   const dataHealth = useMemo(() => buildDataHealthSummary(project), [project]);
   const dataIssues = useMemo(() => listDataIssues(project), [project]);
   const exportWarnings = useMemo(() => listStudentWarnings(project), [project]);
+  const resourceHealthIssues = useMemo(
+    () => listResourceHealthIssues(project, userAssets, userFonts),
+    [project, userAssets, userFonts],
+  );
   const resolvedTheme = resolveTheme(themeMode, prefersDark);
   const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
   const sidebarBounds = getPanelWidthBounds("sidebar", viewportWidth, panelLayout.inspectorWidth);
@@ -405,13 +589,14 @@ export function App() {
   }, [userFonts]);
 
   const renderProject = useMemo(() => {
+    if (agentPreview) return agentPreview;
     if (previewCommands.length === 0) return project;
     try {
       return previewEditorCommands(project, previewCommands);
     } catch {
       return project;
     }
-  }, [project, previewCommands]);
+  }, [agentPreview, project, previewCommands]);
 
   const template = renderProject.templateId;
   const dataView = renderProject.dataView;
@@ -653,6 +838,7 @@ export function App() {
       return next;
     });
     setPreviewCommands([]);
+    setAgentPreview(null);
     workspaceSync.markPending();
   };
 
@@ -734,17 +920,42 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const arrangeCards = () => {
+  const arrangeCards = (mode: "untouched" | "all" = "untouched") => {
+    if (mode === "all" && typeof window !== "undefined" && !window.confirm("全部重新排版会清除所有数据框手动位置并重新计算，是否继续？")) return;
     commitProjectTransaction({
-      id: createId("tx-smart-card-layout"),
-      label: "一键智能排版数据框",
+      id: createId(`tx-smart-card-layout-${mode}`),
+      label: mode === "all" ? "全部重新排版数据框" : "排版未手调数据框",
       source: "manual",
       apply: (current) => ({
         ...current,
-        cards: { ...current.cards, positions: {} },
+        cards: { ...current.cards, positions: mode === "all" ? {} : current.cards.positions },
       }),
     });
-    setStatusMessage("已按地图位置重新智能排版");
+    setStatusMessage(mode === "all" ? "已清除手动位置并重新智能排版" : "已智能排版未手调数据框，手动位置保持不变");
+  };
+
+  const restoreCardPosition = (id: string) => {
+    if (!project.cards.positions?.[id]) return;
+    commitProjectTransaction({
+      id: createId(`tx-card-position-reset-${id}`),
+      label: `恢复自动位置：${id}`,
+      source: "manual",
+      apply: (current) => {
+        const positions = { ...(current.cards.positions ?? {}) };
+        delete positions[id];
+        return { ...current, cards: { ...current.cards, positions } };
+      },
+    });
+  };
+
+  const restoreAllCardPositions = () => {
+    if (Object.keys(project.cards.positions ?? {}).length === 0) return;
+    commitProjectTransaction({
+      id: createId("tx-card-position-reset-all"),
+      label: "恢复全部自动位置",
+      source: "manual",
+      apply: (current) => ({ ...current, cards: { ...current.cards, positions: {} } }),
+    });
   };
 
   const patchScene = (target: SceneSelection, patch: Record<string, unknown>) => {
@@ -771,10 +982,22 @@ export function App() {
   };
 
   const exportSvg = () => {
-    const svg = posterRef.current;
-    if (!svg) return;
-    const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
-    downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
+    lastExportRef.current = "svg";
+    setExportState("exporting");
+    setExportError(undefined);
+    try {
+      const svg = posterRef.current;
+      if (!svg) throw new Error("海报预览尚未准备好");
+      const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
+      downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
+      setExportState("success");
+      setStatusMessage("SVG 已导出");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "SVG 导出失败";
+      setExportState("error");
+      setExportError(message);
+      setStatusMessage(message);
+    }
   };
 
   const openProjectExportDialog = () => {
@@ -783,19 +1006,30 @@ export function App() {
   };
 
   const exportProjectPackage = () => {
-    const exportedAssets = includeResourcesInProjectExport ? userAssets : [];
-    const exportedFonts = includeResourcesInProjectExport ? userFonts : [];
-    downloadProjectPackage(createProjectPackage({
-      project,
-      assets: exportedAssets,
-      fonts: exportedFonts,
-      customTemplates,
-      renderSettings,
-    }));
-    setShowProjectExportDialog(false);
-    setStatusMessage(includeResourcesInProjectExport
-      ? `完整工程包已导出：${project.students.length} 条名单、${exportedAssets.length} 个素材、${exportedFonts.length} 个字体、${customTemplates.length} 个模板`
-      : `工程已导出（未包含资源包）：${project.students.length} 条名单、${customTemplates.length} 个模板`);
+    lastExportRef.current = "project";
+    setExportState("exporting");
+    setExportError(undefined);
+    try {
+      const exportedAssets = includeResourcesInProjectExport ? userAssets : [];
+      const exportedFonts = includeResourcesInProjectExport ? userFonts : [];
+      downloadProjectPackage(createProjectPackage({
+        project,
+        assets: exportedAssets,
+        fonts: exportedFonts,
+        customTemplates,
+        renderSettings,
+      }));
+      setShowProjectExportDialog(false);
+      setExportState("success");
+      setStatusMessage(includeResourcesInProjectExport
+        ? `完整工程包已导出：${project.students.length} 条名单、${exportedAssets.length} 个素材、${exportedFonts.length} 个字体、${customTemplates.length} 个模板`
+        : `工程已导出（未包含资源包）：${project.students.length} 条名单、${customTemplates.length} 个模板`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "工程包导出失败";
+      setExportState("error");
+      setExportError(message);
+      setStatusMessage(message);
+    }
   };
 
   const overwriteBrowserStorage = async () => {
@@ -949,14 +1183,89 @@ export function App() {
 
   const handleSceneSelect = (next: SceneSelection) => {
     setSelection(next);
-    if (next.type === "province") setActivePanel("assets");
+  };
+
+  const locateLayoutIssue = (issue: { id: string }) => {
+    const target = issue.id.split(":").find((id) => (
+      id === "map"
+      || id === "cards"
+      || id === "guests"
+      || Boolean(project.cards.positions?.[id])
+      || project.textElements.some((text) => text.id === id)
+      || project.assetElements.some((asset) => asset.id === id)
+    ));
+    if (!target) return;
+    if (target === "map") setSelection({ type: "map" });
+    else if (target === "cards" || project.cards.positions?.[target]) setSelection({ type: "cards" });
+    else if (target === "guests") setSelection({ type: "guests" });
+    else if (project.textElements.some((text) => text.id === target)) setSelection({ type: "text", id: target });
+    else if (project.assetElements.some((asset) => asset.id === target)) setSelection({ type: "asset", id: target });
+  };
+
+  const locateDeliveryIssue = (item: DeliveryIssue) => {
+    if (item.kind === "data") {
+      setSelectedStudentId(item.issue.studentId);
+      setActiveStage("data");
+      setActivePanel("roster");
+      return;
+    }
+    if (item.kind === "layout") {
+      locateLayoutIssue(item.issue);
+      setActiveStage("content");
+      setActivePanel("content");
+      return;
+    }
+    const target = item.issue.target;
+    const location = resolveDeliveryIssueLocation(target);
+    if (!location) return;
+    if (location.selectionKind === "map") setSelection({ type: "map" });
+    else if (location.selectionKind === "province") setSelection({ type: "province", province: location.province! });
+    else if (location.selectionKind === "guests") setSelection({ type: "guests" });
+    else if (location.selectionKind === "cards") setSelection({ type: "cards" });
+    else if (location.selectionKind === "text" || location.selectionKind === "asset") {
+      setSelection({ type: location.selectionKind, id: location.id! });
+    }
+    setActiveStage(location.stage);
+    setActivePanel(location.stage === "frame" ? "layout" : location.stage === "map" ? "map" : "content");
+  };
+
+  const contentLayoutIssues = useMemo(() => checkLayoutHealth({
+    canvas: { width: project.canvas.width, height: project.canvas.height, safeMargin: project.canvas.safeMargin },
+    cardsPositions: project.cards.positions,
+    objects: [
+      { id: "map", kind: "map", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
+      ...Object.keys(project.cards.positions ?? {}).map((id) => ({ id, kind: "card" as const, positionKey: id, zIndex: project.cards.zIndex, bounds: { x: 0, y: 0, width: project.cards.maxWidth, height: 180 } })),
+      ...(Object.keys(project.cards.positions ?? {}).length === 0 ? [{ id: "cards", kind: "card" as const, zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } }] : []),
+      ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
+      ...project.textElements.map((text) => ({
+        id: text.id,
+        kind: "text" as const,
+        zIndex: 40,
+        bounds: { x: text.textAlign === "right" ? text.x - text.maxWidth : text.textAlign === "center" ? text.x - text.maxWidth / 2 : text.x, y: text.y - text.fontSize, width: text.maxWidth, height: text.fontSize * 1.3 },
+        visible: text.visibility,
+        content: text.content,
+        textColor: text.color,
+        backgroundColor: project.canvas.backgroundColor,
+      })),
+      ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
+    ],
+  }), [project]);
+
+  const handleLegacySceneSelect = (next: SceneSelection) => {
+    handleSceneSelect(next);
+    // Keep the legacy content editor's material context available without letting
+    // the dedicated map stage leave its own workflow context.
+    if (activeStage === "content" && next.type === "province") setActivePanel("assets");
   };
 
   const exportPng = async () => {
-    const svg = posterRef.current;
-    if (!svg) return;
+    lastExportRef.current = "png";
     setExportingPng(true);
+    setExportState("exporting");
+    setExportError(undefined);
     try {
+      const svg = posterRef.current;
+      if (!svg) throw new Error("海报预览尚未准备好");
       await ensureUserFontsLoaded(userFonts);
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
       const dataUrl = await svgToPngDataUrl(source, {
@@ -965,12 +1274,22 @@ export function App() {
         transparentBackground: transparentExport,
       });
       downloadDataUrl(dataUrl, "我的毕业去向图.png");
+      setExportState("success");
       setStatusMessage("PNG 已导出");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "PNG 导出失败");
+      const message = error instanceof Error ? error.message : "PNG 导出失败";
+      setExportState("error");
+      setExportError(message);
+      setStatusMessage(message);
     } finally {
       setExportingPng(false);
     }
+  };
+
+  const retryLastExport = () => {
+    if (lastExportRef.current === "svg") exportSvg();
+    else if (lastExportRef.current === "project") exportProjectPackage();
+    else void exportPng();
   };
 
   const addText = () => {
@@ -1143,6 +1462,7 @@ export function App() {
     setSelectedStudentId(null);
     setActivePanel("roster");
     setActiveWorkflowStep("roster");
+    setActiveStage("template");
     setStatusMessage("已新建空项目");
   };
 
@@ -1153,15 +1473,33 @@ export function App() {
     setSelection({ type: "canvas" });
     setActivePanel("roster");
     setActiveWorkflowStep("roster");
+    setActiveStage("template");
     setStatusMessage("已恢复本机最近项目");
   };
 
-  const openGlobalData = (initialView: GlobalDataView = "overview") => {
-    setGlobalDataInitialView(initialView);
-    setGlobalDataOpen(true);
+  const openGlobalData = () => {
+    if (activeStage !== "data" && activeStage !== "template") lastNonTemplateStageRef.current = activeStage;
     setGlobalSettingsSection(null);
     setActivePanel("roster");
     setActiveWorkflowStep("roster");
+    setActiveStage("data");
+  };
+
+  const handleWorkflowStageChange = (stage: WorkflowStageId) => {
+    if (stage !== "template" && stage !== "data") lastNonTemplateStageRef.current = stage;
+    setActiveStage(stage);
+    if (stage === "template") {
+      setGlobalSettingsSection(null);
+      return;
+    }
+    if (stage === "data") {
+      openGlobalData();
+      return;
+    }
+    const legacyPanel = WORKFLOW_STAGE_TO_LEGACY_PANEL[stage];
+    if (!legacyPanel) return;
+    setActivePanel(legacyPanel);
+    setActiveWorkflowStep(stage === "map" ? "presentation" : stage === "frame" ? "layout" : stage === "export" ? "export" : "local");
   };
 
   const dataWorkspaceProps = {
@@ -1235,9 +1573,63 @@ export function App() {
     onSelectStudent: setSelectedStudentId,
   };
 
+  const mapStyleAssetPanelProps: MapStyleAssetPanelProps = {
+    instances: project.assetElements
+      .filter((element) => element.kind !== "province-texture")
+      .map((element) => ({ id: element.id, assetId: element.assetId, label: element.label, kind: element.kind })),
+    provinces: provinceNames,
+    dataProvinces: summary.map((item) => item.province),
+    provinceStyles: project.map.provinceStyles,
+    provinceAdjacency: CHINA_PROVINCE_ADJACENCY,
+    mapBaseColor: project.map.landColor,
+    posterBackground: project.canvas.backgroundColor,
+    userAssets,
+    assetUsageById,
+    onApplyBackground: (asset) => {
+      commitProject(applyTransaction(project, {
+        id: createId("tx-bg"),
+        label: `应用背景：${asset.label}`,
+        source: "manual",
+        apply: (current) => ({
+          ...current,
+          canvas: { ...current.canvas, backgroundImageSrc: asset.src },
+          style: { ...current.style, backgroundImageSrc: asset.src },
+        }),
+      }));
+    },
+    onSelectInstance: (id) => setSelection({ type: "asset", id }),
+    onPatchProvinceTextureUniformSize: (next) => patchScene({ type: "map" }, { provinceTextureUniformSize: next }),
+    onApplyProvinceAppearance: (province, appearance, fill) => {
+      setSelection({ type: "province", province });
+      commitProjectTransaction(createSceneTransaction({ type: "province", province }, { appearance, ...(fill ? { fill } : {}) }));
+      setStatusMessage(`已应用到地图：${province}`);
+    },
+    onApplyProvinceThemes: (themes) => {
+      const entries = Object.entries(themes);
+      if (entries.length === 0) return;
+      commitProjectTransaction(createProvinceThemeTransaction(themes));
+      setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
+    },
+    onResetProvinceAppearance: (province) => {
+      setSelection({ type: "province", province });
+      commitProjectTransaction(createSceneTransaction(
+        { type: "province", province },
+        { appearance: undefined, fill: undefined, textureSrc: undefined },
+      ));
+      setStatusMessage(`已恢复系统默认：${province}`);
+    },
+    onAddUserAsset: addUserAsset,
+    onReplaceUserAsset: replaceUserAsset,
+    onDeleteUserAsset: deleteUserAsset,
+    onExportResourcePack: exportResourcePack,
+    onImportResourcePack: importResourcePack,
+  };
+
   const handleWorkflowStepChange = (id: WorkflowPanelId) => {
+    const nextStage = LEGACY_PANEL_TO_WORKFLOW_STAGE[id];
+    setActiveStage(nextStage);
     if (id === "roster") {
-      openGlobalData("overview");
+      openGlobalData();
       return;
     }
     setActivePanel(id);
@@ -1251,39 +1643,344 @@ export function App() {
     setActiveWorkflowStep(workflowId);
   };
 
-  if (globalDataOpen) {
+  const systemTemplateIds = ["original", "cartoon", "grain", "q", "scenery", "regional"] as const;
+  const templateOptions = systemTemplateIds.map((templateId) => ({
+    id: templateId,
+    name: createSystemTemplate(templateId).name,
+  }));
+
+  if (activeStage === "template") {
     return (
       <div className="app-shell" data-editor-theme={resolvedTheme}>
-        <GlobalDataScreen
+        <header className="topbar">
+          <div className="brand">
+            <MapPinned size={24} />
+            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
+            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
+            <em>Beta</em>
+          </div>
+          <div className="topbar-workflow" aria-hidden="false">
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          </div>
+          <div className="topbar-actions">
+            <ToolbarGroup label="界面主题">
+              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+            </ToolbarGroup>
+          </div>
+        </header>
+        <TemplateWorkspace
           project={project}
-          initialView={globalDataInitialView}
-          summary={dataHealth}
-          issues={dataIssues}
-          dataViewLabel={dataViewLabel}
-          selectedStudentId={selectedStudentId}
-          onSelectStudent={setSelectedStudentId}
-          onClose={() => setGlobalDataOpen(false)}
-          onChangeDataView={dataWorkspaceProps.onChangeDataView}
-          templates={( ["original", "cartoon", "grain", "q", "scenery"] as const).map((templateId) => ({
-            id: templateId,
-            name: createSystemTemplate(templateId).name,
-          }))}
-          currentTemplateId={template}
-          customTemplates={customTemplates.map(({ id, name, scope }) => ({ id, name, scope }))}
+          templates={templateOptions}
+          customTemplates={customTemplates}
           onApplyTemplate={applySystemTemplate}
-          onApplyCustomTemplate={(record) => {
-            const full = customTemplates.find((item) => item.id === record.id);
-            if (full) applyCustomTemplateRecord(full);
+          onApplyCustomTemplate={applyCustomTemplateRecord}
+          onClose={() => {
+            setActiveStage(lastNonTemplateStageRef.current);
+            setActivePanel(WORKFLOW_STAGE_TO_LEGACY_PANEL[lastNonTemplateStageRef.current] ?? "content");
           }}
-          onSaveTemplate={saveCurrentTemplate}
-          onOpenGlobalSettings={() => {
-            setGlobalDataOpen(false);
-            setActiveWorkflowStep("layout");
-            setGlobalSettingsSection("canvas");
-          }}
-          dataWorkspaceProps={dataWorkspaceProps}
         />
       </div>
+    );
+  }
+
+  if (activeStage === "data") {
+    return (
+      <div className="app-shell" data-editor-theme={resolvedTheme}>
+        <header className="topbar">
+          <div className="brand">
+            <MapPinned size={24} />
+            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
+            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
+            <em>Beta</em>
+          </div>
+          <div className="topbar-workflow" aria-hidden="false">
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          </div>
+          <div className="topbar-actions">
+            <ToolbarGroup label="界面主题">
+              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+            </ToolbarGroup>
+          </div>
+        </header>
+        <DataUploadWorkspace
+          project={project}
+          summary={dataHealth}
+          issues={dataIssues}
+          dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
+          onSelectStudent={setSelectedStudentId}
+          onClose={() => {
+            setActiveStage(lastNonTemplateStageRef.current);
+            setActivePanel(WORKFLOW_STAGE_TO_LEGACY_PANEL[lastNonTemplateStageRef.current] ?? "content");
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (activeStage === "map") {
+    return (
+      <main className="app-shell" data-editor-theme={resolvedTheme}>
+        <header className="topbar">
+          <div className="brand">
+            <MapPinned size={24} />
+            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
+            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
+            <em>Beta</em>
+          </div>
+          <div className="topbar-workflow" aria-hidden="false">
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          </div>
+          <div className="topbar-actions">
+            <ToolbarGroup label="界面主题">
+              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+            </ToolbarGroup>
+          </div>
+        </header>
+        <MapStyleWorkspace
+          project={project}
+          selectedProvince={selection.type === "province" ? selection.province : null}
+          userFonts={userFonts}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          undoLabel={undoLabel}
+          redoLabel={redoLabel}
+          onChangeDataView={dataWorkspaceProps.onChangeDataView}
+          onPatchMap={(patch) => patchScene({ type: "map" }, patch)}
+          onResetMap={() => resetSceneTarget({ type: "map" })}
+          onPatchProvince={(province, patch) => patchScene({ type: "province", province }, patch as Record<string, unknown>)}
+          onSelect={handleSceneSelect}
+          onMoveProvinceTexture={(province, offsetX, offsetY) => {
+            const appearance = project.map.provinceStyles?.[province]?.appearance;
+            if (!appearance || appearance.kind === "manual-color") return;
+            commitProject(applyTransaction(project, createSceneTransaction(
+              { type: "province", province },
+              { appearance: { ...appearance, offsetX, offsetY } },
+            )));
+          }}
+          onResizeMapImage={(alignment) => {
+            const source = project.map.renderSource;
+            if (source?.kind !== "image" || !source.alignment) return;
+            commitProject(applyTransaction(project, createSceneTransaction({ type: "map" }, {
+              renderSource: { ...source, alignment: { ...source.alignment, ...alignment } },
+            })));
+          }}
+          onAddUserAsset={addUserAsset}
+          assetPanelProps={mapStyleAssetPanelProps}
+          onClose={() => {
+            setActiveStage("content");
+            setActivePanel("content");
+            setSelection(selection.type === "province" ? selection : { type: "canvas" });
+          }}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+        />
+      </main>
+    );
+  }
+
+  if (activeStage === "frame") {
+    return (
+      <main className="app-shell" data-editor-theme={resolvedTheme}>
+        <header className="topbar">
+          <div className="brand">
+            <MapPinned size={24} />
+            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
+            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
+            <em>Beta</em>
+          </div>
+          <div className="topbar-workflow" aria-hidden="false">
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          </div>
+          <div className="topbar-actions">
+            <ToolbarGroup label="历史与缩放">
+              <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
+              <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
+            </ToolbarGroup>
+            <ToolbarGroup label="导出与工程">
+              <ProjectMenu
+                roomId={roomId}
+                roomVersion={roomVersion}
+                roomInput={roomInput}
+                collaborationStatus={collaborationStatus}
+                collaborationMessage={collaborationMessage}
+                collaborationOpen={collaborationOpen}
+                pngScale={pngScale}
+                transparentExport={transparentExport}
+                syncStatus={syncState.status}
+                onSetCollaborationOpen={setCollaborationOpen}
+                onRoomInputChange={setRoomInput}
+                onLeaveRoom={leaveCollaborationRoom}
+                onStartRoom={() => void startCollaborationRoom()}
+                onJoinRoom={joinCollaborationRoom}
+                onNewProject={createNewProject}
+                onRestoreLocal={restoreLocalProject}
+                onSaveLocal={() => void overwriteBrowserStorage()}
+                onPngScaleChange={setPngScale}
+                onTransparentChange={setTransparentExport}
+                onExportSvg={exportSvg}
+                onExportProject={openProjectExportDialog}
+                onImportProject={importProjectPackage}
+              />
+            </ToolbarGroup>
+            <ToolbarGroup label="界面主题">
+              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+            </ToolbarGroup>
+          </div>
+        </header>
+        <DisplayFrameWorkspace
+          cards={project.cards}
+          userFonts={userFonts}
+          onPatch={(patch) => patchScene({ type: "cards" }, patch)}
+        />
+      </main>
+    );
+  }
+
+  if (activeStage === "export") {
+    return (
+      <main className="app-shell" data-editor-theme={resolvedTheme}>
+        <header className="topbar">
+          <div className="brand">
+            <MapPinned size={24} />
+            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
+            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
+            <em>Beta</em>
+          </div>
+          <div className="topbar-workflow" aria-hidden="false">
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          </div>
+          <div className="topbar-actions">
+            <ToolbarGroup label="界面主题">
+              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+            </ToolbarGroup>
+          </div>
+        </header>
+        <DeliveryWorkspace
+          project={renderProject}
+          posterRef={posterRef}
+          userFonts={userFonts}
+          dataIssues={dataIssues}
+          layoutIssues={contentLayoutIssues}
+          resourceIssues={resourceHealthIssues.filter((issue) => issue.kind === "resource")}
+          fontIssues={resourceHealthIssues.filter((issue) => issue.kind === "font")}
+          pngScale={pngScale}
+          transparentExport={transparentExport}
+          includeResources={includeResourcesInProjectExport}
+          exportState={exportState}
+          exportError={exportError}
+          onPngScaleChange={setPngScale}
+          onTransparentExportChange={setTransparentExport}
+          onIncludeResourcesChange={setIncludeResourcesInProjectExport}
+          onLocate={locateDeliveryIssue}
+          onExportPng={() => void exportPng()}
+          onExportSvg={exportSvg}
+          onExportProjectPackage={exportProjectPackage}
+          onRetry={retryLastExport}
+          onBack={() => {
+            setActiveStage("content");
+            setActivePanel("content");
+          }}
+        />
+      </main>
+    );
+  }
+
+  if (activeStage === "content" && !legacyEditorEnabled) {
+    return (
+      <main className="app-shell" data-editor-theme={resolvedTheme}>
+        <header className="topbar">
+          <div className="brand">
+            <MapPinned size={24} />
+            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
+            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
+            <em>Beta</em>
+          </div>
+          <div className="topbar-workflow" aria-hidden="false">
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          </div>
+          <div className="topbar-actions">
+            <ToolbarGroup label="界面主题">
+              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+            </ToolbarGroup>
+          </div>
+        </header>
+        <ContentLayoutWorkspace
+          project={renderProject}
+          selection={selection}
+          userAssets={userAssets}
+          userFonts={userFonts}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          undoLabel={undoLabel}
+          redoLabel={redoLabel}
+          layoutIssues={contentLayoutIssues}
+          assetPanelProps={mapStyleAssetPanelProps as ContentAssetPanelProps}
+          onSelect={handleSceneSelect}
+          onPatch={patchScene}
+          onReset={resetSceneTarget}
+          onArrangeCards={arrangeCards}
+          onLocateLayoutIssue={locateLayoutIssue}
+          onRestoreCardPosition={restoreCardPosition}
+          onRestoreAllCardPositions={restoreAllCardPositions}
+          onClose={() => {
+            setActiveStage("map");
+            setActivePanel("map");
+          }}
+          onBackToMap={() => {
+            setActiveStage("map");
+            setActivePanel("map");
+          }}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          selectedStudentId={selectedStudentId}
+          onSelectStudent={setSelectedStudentId}
+          onApplyFont={applyFont}
+          onUploadFont={(font) => {
+            setUserFonts((current) => [...current, font]);
+            setStatusMessage(`已上传字体：${font.label}`);
+          }}
+          onDeleteUserFont={deleteUserFont}
+          onMoveText={(id, x, y) => {
+            const point = maybeSnap(x, y);
+            commitProject(applyTransaction(project, createSceneTransaction({ type: "text", id }, point)));
+          }}
+          onMoveAsset={(id, x, y) => {
+            const point = maybeSnap(x, y);
+            const current = project.assetElements.find((asset) => asset.id === id);
+            if (!current || (current.x === point.x && current.y === point.y)) return;
+            commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, point)));
+          }}
+          onResizeAsset={(id, x, y, width, height) => {
+            const point = maybeSnap(x, y);
+            const current = project.assetElements.find((asset) => asset.id === id);
+            if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
+            commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height })));
+          }}
+          onMoveProvinceTexture={(province, offsetX, offsetY) => {
+            const appearance = project.map.provinceStyles?.[province]?.appearance;
+            if (!appearance || appearance.kind === "manual-color") return;
+            commitProject(applyTransaction(project, createSceneTransaction({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } })));
+          }}
+          onResizeMapImage={(alignment) => {
+            const source = project.map.renderSource;
+            if (source?.kind !== "image" || !source.alignment) return;
+            commitProject(applyTransaction(project, createSceneTransaction({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } })));
+          }}
+          onMoveCard={(id, x, y) => {
+            const point = maybeSnap(x, y);
+            commitProject(applyTransaction(project, {
+              id: createId(`tx-card-position-${id}`),
+              label: "调整数据框位置",
+              source: "manual",
+              apply: (current) => ({ ...current, cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } } }),
+            }));
+          }}
+          onMoveGuests={(x, y) => {
+            const point = maybeSnap(x, y);
+            commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, point)));
+          }}
+        />
+      </main>
     );
   }
 
@@ -1298,7 +1995,10 @@ export function App() {
             <em>Beta</em>
           </div>
           <div className="topbar-workflow" aria-hidden="false">
-            <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+            <div className="topbar-workflow__legacy" aria-hidden="true">
+              <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
+            </div>
           </div>
           <div className="topbar-actions" />
         </header>
@@ -1346,7 +2046,7 @@ export function App() {
           if (full) applyCustomTemplateRecord(full);
         }}
           onSaveTemplate={saveCurrentTemplate}
-          onOpenGlobalData={() => openGlobalData("roster")}
+          onOpenGlobalData={openGlobalData}
           themeMode={themeMode}
           resolvedTheme={resolvedTheme}
           onThemeChange={setThemeMode}
@@ -1365,7 +2065,10 @@ export function App() {
           <em>Beta</em>
         </div>
         <div className="topbar-workflow" aria-hidden="false">
-          <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
+          <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          <div className="topbar-workflow__legacy" aria-hidden="true">
+            <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
+          </div>
           <div className="topbar-workflow__legacy" aria-hidden="true">
           <ToolbarGroup label="制作流程">
             <WorkflowGuide
@@ -1471,87 +2174,30 @@ export function App() {
             <button className="primary-button" onClick={exportPng} disabled={exportingPng}>
               <ImageDown size={16} /> {exportingPng ? "导出中..." : "导出 PNG"}
             </button>
-            <details className="project-menu">
-              <summary className="secondary-button" aria-label="打开项目菜单">
-                <FolderOpen size={16} /> <span>项目</span>
-              </summary>
-              <div className="project-menu__popover">
-                <section>
-                  <strong>项目管理</strong>
-                  <button type="button" aria-label="新建项目" onClick={createNewProject}><Plus size={16} /> 新建项目</button>
-                  <button type="button" aria-label="恢复本机最近项目" onClick={restoreLocalProject}><FolderOpen size={16} /> 恢复最近项目</button>
-                  <button type="button" aria-label="保存项目到本机" onClick={() => void overwriteBrowserStorage()}><Save size={16} /> 保存到本机</button>
-                </section>
-                <section>
-                  <strong>导出海报</strong>
-                  <label>PNG 倍率
-                    <select aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => setPngScale(Number(event.target.value))}>
-                      <option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option>
-                    </select>
-                  </label>
-                  <label className="project-menu__check"><input type="checkbox" checked={transparentExport} onChange={(event) => setTransparentExport(event.target.checked)} />透明背景</label>
-                  <button type="button" onClick={exportSvg}><Download size={16} /> 导出 SVG</button>
-                </section>
-                <section>
-                  <strong>在线协作</strong>
-                  <div className="collaboration-control project-menu__collaboration">
-                    <button
-                      type="button"
-                      className={`secondary-button collaboration-button ${roomId ? "is-connected" : ""}`}
-                      aria-label="增量在线协作"
-                      aria-expanded={collaborationOpen}
-                      onClick={() => setCollaborationOpen((open) => !open)}
-                    >
-                      <Share2 size={16} /> <span>{roomId ? roomId : "增量协作"}</span>
-                    </button>
-                    {collaborationOpen && (
-                      <section className="collaboration-popover" aria-label="增量协作设置">
-                        <header>
-                          <strong>在线协作</strong>
-                          <span>v{roomVersion} · 增量同步</span>
-                        </header>
-                        {roomId ? (
-                          <>
-                            <div className="collaboration-room-code">
-                              <b>{roomId}</b>
-                              <button type="button" aria-label="复制房间码" onClick={() => void navigator.clipboard?.writeText(roomId)}><Copy size={15} /></button>
-                            </div>
-                            <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
-                            <button type="button" className="collaboration-leave" onClick={leaveCollaborationRoom}><LogOut size={14} /> 断开房间</button>
-                          </>
-                        ) : (
-                          <>
-                            <p>未连接时不会上传或覆盖工程。创建或加入后，仅发送变化字段；同一路径冲突会暂停上传。</p>
-                            <button type="button" className="collaboration-create" disabled={collaborationStatus === "connecting"} onClick={() => void startCollaborationRoom()}><Share2 size={14} /> 创建房间</button>
-                            <div className="collaboration-join">
-                              <input aria-label="协作房间码" value={roomInput} maxLength={12} placeholder="输入房间码" onChange={(event) => setRoomInput(event.target.value.toUpperCase())} />
-                              <button type="button" disabled={!roomInput.trim() || collaborationStatus === "connecting"} onClick={() => void joinCollaborationRoom()}>加入</button>
-                            </div>
-                            <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
-                          </>
-                        )}
-                      </section>
-                    )}
-                  </div>
-                </section>
-                <section>
-                  <strong>工程文件</strong>
-                  <button
-                    type="button"
-                    aria-label="强制保存到浏览器本地"
-                    title="立即将当前工程、素材、字体、模板和渲染设置覆盖到浏览器本地存储"
-                    disabled={syncState.status === "saving"}
-                    onClick={() => void overwriteBrowserStorage()}
-                  >
-                    <Save size={16} /> {syncState.status === "saving" ? "保存中" : "保存到本机"}
-                  </button>
-                  <button type="button" onClick={openProjectExportDialog}><PackageOpen size={16} /> 导出工程</button>
-                  <label className="project-menu__file"><PackageOpen size={16} /> 导入工程
-                    <input type="file" accept="application/json,.json" aria-label="导入完整工程包" onChange={(event) => importProjectPackage(event.target.files?.[0] ?? null)} />
-                  </label>
-                </section>
-              </div>
-            </details>
+            <ProjectMenu
+              roomId={roomId}
+              roomVersion={roomVersion}
+              roomInput={roomInput}
+              collaborationStatus={collaborationStatus}
+              collaborationMessage={collaborationMessage}
+              collaborationOpen={collaborationOpen}
+              pngScale={pngScale}
+              transparentExport={transparentExport}
+              syncStatus={syncState.status}
+              onSetCollaborationOpen={setCollaborationOpen}
+              onRoomInputChange={setRoomInput}
+              onLeaveRoom={leaveCollaborationRoom}
+              onStartRoom={() => void startCollaborationRoom()}
+              onJoinRoom={joinCollaborationRoom}
+              onNewProject={createNewProject}
+              onRestoreLocal={restoreLocalProject}
+              onSaveLocal={() => void overwriteBrowserStorage()}
+              onPngScaleChange={setPngScale}
+              onTransparentChange={setTransparentExport}
+              onExportSvg={exportSvg}
+              onExportProject={openProjectExportDialog}
+              onImportProject={importProjectPackage}
+            />
           </ToolbarGroup>
         </div>
       </header>
@@ -1573,7 +2219,7 @@ export function App() {
               </div>
               <button type="button" aria-label="关闭导出工程确认" onClick={() => setShowProjectExportDialog(false)}>×</button>
             </header>
-            <label className="export-resource-option">
+            <label className="export-resource-option boolean-control checkbox-row">
               <input
                 type="checkbox"
                 aria-label="导出时包含资源包"
@@ -1883,21 +2529,12 @@ export function App() {
                 </>
               ) : (
                 <>
-                  <div className="panel-heading"><span>AI 助手</span><small>可预览后应用</small></div>
-                  <AiAssistant
-                    studentCount={project.students.length}
-                    templateId={project.templateId}
-                    dataView={project.dataView}
-                    onPreview={setPreviewCommands}
-                    onApply={(commands, label) => {
-                      commitProject(applyEditorCommands(project, commands, label));
-                    }}
+                  <AgentAssistant
+                    project={project}
+                    assets={userAssets}
+                    onPreview={setAgentPreview}
+                    onCommit={commitProjectTransaction}
                   />
-                  {isPreviewing && (
-                    <p className="panel-note">
-                      正在预览 {previewCommands.length} 条 AI 命令，尚未写入项目。
-                    </p>
-                  )}
                 </>
               )}
             </div>
@@ -1970,8 +2607,8 @@ export function App() {
                     id="editor-render-fps"
                     aria-label="自定义预览帧率"
                     type="number"
-                    min={0.2}
-                    max={30}
+                    min={5}
+                    max={60}
                     step={0.1}
                     value={renderSettings.fixedFps}
                     onChange={(event) => setRenderSettings((current) => normalizeRenderSettings({ ...current, fixedFps: event.target.value }))}
@@ -2008,7 +2645,7 @@ export function App() {
                   showGrid={showGrid}
                   gridSize={gridSize}
                   renderIntervalMs={resolvedRenderInterval}
-                  onSelect={handleSceneSelect}
+                  onSelect={handleLegacySceneSelect}
                   onMoveText={(id, x, y) => {
                     const point = maybeSnap(x, y);
                     commitProject(

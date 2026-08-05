@@ -7,10 +7,14 @@ import { fileURLToPath } from "node:url";
 import { createGzip } from "node:zlib";
 
 import {
-  localExplain,
-  localParseData,
-  localProposeEdits,
-} from "./ai/local-fallback";
+  createAiBackend,
+  resolveAiConfig,
+  type AiBackend,
+  type AiConfig,
+} from "./ai/llm-client";
+import { createAgentLoopBackend, resolveAgentConfig } from "./ai/agent-routing";
+import { buildSystemMessage } from "./ai/agent-loop";
+import type { ChatMessage } from "./ai/agent-types";
 import {
   parseDataRequestSchema,
   proposeEditsRequestSchema,
@@ -131,6 +135,8 @@ export interface AiServerOptions {
   dataDir?: string;
   workspaceApiToken?: string;
   corsOrigins?: string[];
+  aiConfig?: AiConfig;
+  agentConfig?: AiConfig;
   maxJsonBodyBytes?: number;
   maxWorkspaceBytes?: number;
   maxRooms?: number;
@@ -349,6 +355,9 @@ export function createAiServer(options: AiServerOptions = {}) {
   const dataDir = resolve(options.dataDir ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
   const workspaceApiToken = options.workspaceApiToken ?? process.env.WORKSPACE_API_TOKEN;
   const corsOrigins = options.corsOrigins ?? (process.env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
+  const aiConfig = options.aiConfig ?? resolveAiConfig();
+  const ai: AiBackend = createAiBackend(aiConfig);
+  const agent = createAgentLoopBackend(options.agentConfig ?? resolveAgentConfig());
   const maxJsonBodyBytes = options.maxJsonBodyBytes ?? DEFAULT_MAX_JSON_BODY_BYTES;
   const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
   const trustProxy = options.trustProxy ?? process.env.TRUST_PROXY === "1";
@@ -397,7 +406,7 @@ export function createAiServer(options: AiServerOptions = {}) {
       const pathname = new URL(url, "http://localhost").pathname;
 
       if (request.method === "GET" && url === "/api/health") {
-        send( 200, { ok: true, provider: "local-fallback" });
+        send( 200, { ok: true, provider: ai.provider, aiEnabled: ai.isConfigured });
         return;
       }
 
@@ -582,6 +591,28 @@ export function createAiServer(options: AiServerOptions = {}) {
         return;
       }
 
+      if (request.method === "POST" && url === "/api/ai/agent") {
+        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
+        if (!isRecord(body) || typeof body.userMessage !== "string" || !body.userMessage.trim()) {
+          send(400, { error: { code: "VALIDATION_ERROR", message: "userMessage 不能为空" } });
+          return;
+        }
+        if (!isRecord(body.digest) || !Array.isArray(body.messages)) {
+          send(400, { error: { code: "VALIDATION_ERROR", message: "digest 必须是对象，messages 必须是数组" } });
+          return;
+        }
+        const messages = body.messages as ChatMessage[];
+        const outcome = await agent.runTurn({
+          userMessage: body.userMessage,
+          digest: body.digest,
+          messages: messages.some((message) => message?.role === "system")
+            ? messages
+            : [buildSystemMessage(), ...messages],
+        });
+        send(200, { ...outcome, provider: agent.provider });
+        return;
+      }
+
       if (request.method === "POST" && url === "/api/ai/parse-data") {
         const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
         const parsed = parseDataRequestSchema(body);
@@ -591,7 +622,7 @@ export function createAiServer(options: AiServerOptions = {}) {
           });
           return;
         }
-        send( 200, localParseData(parsed.value));
+        send( 200, await ai.parseData(parsed.value));
         return;
       }
 
@@ -604,7 +635,7 @@ export function createAiServer(options: AiServerOptions = {}) {
           });
           return;
         }
-        send( 200, localProposeEdits(parsed.value));
+        send( 200, await ai.proposeEdits(parsed.value));
         return;
       }
 
@@ -618,7 +649,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         }
         send(
           200,
-          localExplain(body.message, Number(body.studentCount ?? 0)),
+          await ai.explain(body.message, Number(body.studentCount ?? 0)),
         );
         return;
       }
@@ -671,14 +702,24 @@ const isDirectRun =
   normalize(process.argv[1]).includes(`${normalize("server")}${normalize("/")}index`);
 
 if (isDirectRun) {
+  // 加载项目根目录的 .env（若存在），使 AI_API_KEY 等配置生效。
+  const envFile = resolve(".env");
+  if (existsSync(envFile)) {
+    try {
+      process.loadEnvFile(envFile);
+    } catch (error) {
+      console.warn("Failed to load .env", error);
+    }
+  }
   const staticDir =
     process.env.STATIC_DIR ||
     (existsSync(resolve("dist/index.html")) ? resolve("dist") : undefined);
-  const server = createAiServer({ staticDir });
+  const server = createAiServer({ staticDir, aiConfig: resolveAiConfig() });
   const port = resolvePort();
   server.listen(port, "0.0.0.0", () => {
     console.log(
       `Cengfan studio listening on http://0.0.0.0:${port}${staticDir ? ` (static: ${staticDir})` : ""}`,
     );
+    console.log(`AI provider: ${resolveAgentConfig().model || "local-fallback"}`);
   });
 }

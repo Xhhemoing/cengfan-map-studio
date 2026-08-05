@@ -23,6 +23,7 @@ describe("project data health", () => {
       international: 1,
       unresolved: 2,
       missingRequired: 1,
+      duplicate: 0,
     });
   });
 
@@ -39,6 +40,24 @@ describe("project data health", () => {
     expect(listDataIssues(project)).toEqual([
       expect.objectContaining({ studentId: "student-1", kind: "unresolved-location" }),
       expect.objectContaining({ studentId: "student-2", kind: "hidden" }),
+    ]);
+  });
+
+  it("counts and lists duplicate records as locatable warnings", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "student-1", name: " 林舟 ", university: "北京 大学", city: "北京市", visibility: false },
+        { id: "student-2", name: "林舟", university: "北京大学", city: " 北京市 ", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project).duplicate).toBe(2);
+    expect(listDataIssues(project).map((issue) => `${issue.studentId}:${issue.kind}`)).toEqual([
+      "student-1:hidden",
+      "student-1:duplicate",
+      "student-2:duplicate",
     ]);
   });
 });

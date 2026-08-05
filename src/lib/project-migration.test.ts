@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { migrateProjectPayload } from "./project-migration";
+import { deriveFixedDisplayFrameFromCardSettings } from "./display-frame";
 
 const legacyDraft = {
   templateId: "regional",
@@ -317,5 +318,33 @@ describe("project migration", () => {
     expect(migrated.cards.preset).toBe("standard");
     expect(migrated.cards.compactLayout).toBe(true);
     expect(migrated.cards.visibleFields).toEqual(["name"]);
+  });
+
+  it("keeps schema v2 compatible while deriving an old card frame without persisting it", () => {
+    const legacy = migrateProjectPayload({ ...legacyDraft, cards: { positions: { 北京市: { x: 777, y: 333 } } } });
+    expect(legacy.schemaVersion).toBe(2);
+    expect(legacy.cards.displayFrame).toBeUndefined();
+    expect(deriveFixedDisplayFrameFromCardSettings(legacy.cards).style).toMatchObject({
+      background: legacy.cards.background,
+      opacity: legacy.cards.opacity,
+      fontSize: legacy.cards.fontSize,
+    });
+    expect(legacy.cards.positions).toEqual({ 北京市: { x: 777, y: 333 } });
+
+    const explicit = migrateProjectPayload({
+      schemaVersion: 2,
+      cards: {
+        visibleFields: ["name"],
+        displayFrame: {
+          mode: "flow",
+          style: { fontSize: 18, color: "#123456", background: "#ffffff", padding: 16, align: "center" },
+          fieldOrder: ["title", "name"],
+          fixed: { items: [] },
+          flow: { blocks: [{ id: "name", kind: "field", field: "name", order: 0, spacing: 12, lineHeight: 1.4 }] },
+        },
+      },
+    });
+    expect(explicit.schemaVersion).toBe(2);
+    expect(explicit.cards.displayFrame).toMatchObject({ mode: "flow", style: { fontSize: 18 }, fieldOrder: ["title", "name"] });
   });
 });

@@ -16,6 +16,7 @@ const summary: DataHealthSummary = {
   international: 0,
   unresolved: 0,
   missingRequired: 0,
+  duplicate: 0,
 };
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 

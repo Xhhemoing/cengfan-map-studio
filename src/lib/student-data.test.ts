@@ -58,6 +58,23 @@ describe("student data", () => {
     });
   });
 
+  it("keeps a custom manual province resolved with its original name", () => {
+    const student: Student = {
+      id: "student-1",
+      name: "林舟",
+      university: "北京大学",
+      city: "火星市",
+      province: "火星省",
+      visibility: true,
+    };
+
+    expect(resolveStudentLocation(student)).toMatchObject({
+      city: "火星市",
+      province: "火星省",
+      status: "resolved",
+    });
+  });
+
   it("builds student records and flags unresolved cities and duplicates", () => {
     const inputs: StudentInput[] = [
       { name: "林舟", university: "北京大学", city: "北京" },

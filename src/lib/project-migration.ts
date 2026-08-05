@@ -13,6 +13,7 @@ import {
 import type { DataViewId, MapTemplateId, Student } from "./project-data";
 import type { CardGrouping, CardPreset, VisibleField } from "./template-document";
 import { normalizeEdgeStyle, type EdgeStyle } from "./edge-styles";
+import { normalizeDisplayFrame } from "./display-frame";
 
 export interface ProvincePosition {
   x: number;
@@ -552,12 +553,18 @@ export function migrateProjectPayload(
     },
     cards: {
       ...defaults.cards,
-      ...(isV2 && cardsInput ? cardsInput : {}),
+      ...(cardsInput ? cardsInput : {}),
+      ...(cardsInput?.positions && typeof cardsInput.positions === "object" && !Array.isArray(cardsInput.positions)
+        ? { positions: cardsInput.positions as Record<string, { x: number; y: number }> }
+        : {}),
       preset: cardPreset,
       grouping,
       visibleFields,
       noWrapFields: migratedNoWrapFields,
       connectorDash: isV2 && cardsInput ? getEdgeStyle(cardsInput.connectorDash ?? defaults.cards.connectorDash) : defaults.cards.connectorDash,
+      ...(isV2 && cardsInput?.displayFrame !== undefined
+        ? { displayFrame: normalizeDisplayFrame(cardsInput.displayFrame, defaults.cards.displayFrame) }
+        : {}),
     },
     guests: {
       ...defaults.guests,

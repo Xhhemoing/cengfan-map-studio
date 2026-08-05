@@ -63,9 +63,11 @@ function cityOptions(query: string): SearchComboboxOption[] {
 function ComboboxHarness({
   label,
   options,
+  portal = false,
 }: {
   label: string;
   options: (query: string) => SearchComboboxOption[];
+  portal?: boolean;
 }) {
   const [value, setValue] = useState("");
   return (
@@ -75,6 +77,7 @@ function ComboboxHarness({
         value={value}
         placeholder={label}
         searchOptions={options}
+        portal={portal}
         onChange={setValue}
       />
       <output data-testid="selected-value">{value}</output>
@@ -121,5 +124,44 @@ describe("SearchCombobox", () => {
     expect(input.value).toBe("自定义学院");
     await pressKey(input, "Escape");
     expect(input.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("mounts portal suggestions outside the combobox clipping context", async () => {
+    const container = render(<ComboboxHarness label="城市" options={cityOptions} portal />);
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="城市"]')!;
+
+    await changeInput(input, "杭州");
+
+    const list = document.body.querySelector<HTMLElement>(".search-combobox__list--portal");
+    expect(list).not.toBeNull();
+    expect(container.contains(list)).toBe(false);
+    expect(list?.getAttribute("role")).toBe("listbox");
+  });
+
+  it("caps portal height to the available viewport space", async () => {
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 80 });
+    const container = render(<ComboboxHarness label="城市" options={cityOptions} portal />);
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="城市"]')!;
+    Object.defineProperty(input, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        bottom: 30,
+        height: 20,
+        left: 20,
+        right: 180,
+        top: 10,
+        width: 160,
+        x: 20,
+        y: 10,
+        toJSON: () => ({}),
+      }),
+    });
+
+    await changeInput(input, "杭州");
+
+    const list = document.body.querySelector<HTMLElement>(".search-combobox__list--portal");
+    expect(Number.parseFloat(list?.style.maxHeight ?? "0")).toBeLessThanOrEqual(42);
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight });
   });
 });

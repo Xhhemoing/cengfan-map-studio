@@ -48,6 +48,8 @@ describe("CardsInspector", () => {
     const presets = container.querySelector("#cards-preset") as HTMLSelectElement;
     expect(Array.from(presets.options).map((option) => option.value)).toEqual(["standard", "ticket", "photo", "borderless"]);
     const compact = container.querySelector("#cards-compact-layout") as HTMLInputElement;
+    expect(compact.closest("label")?.classList).toContain("boolean-control");
+    expect(compact.closest("label")?.classList).toContain("checkbox-row");
     expect(compact.checked).toBe(false);
     flushSync(() => compact.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ compactLayout: true });
@@ -280,6 +282,8 @@ describe("CardsInspector", () => {
 
     const name = container.querySelector("#cards-nowrap-name") as HTMLInputElement;
     const city = container.querySelector("#cards-nowrap-city") as HTMLInputElement;
+    expect(name.closest("label")?.classList).toContain("boolean-control");
+    expect(city.closest("label")?.classList).toContain("boolean-control");
     expect(name.checked).toBe(true);
     expect(city.disabled).toBe(true);
 

@@ -129,7 +129,7 @@ export function applyDataViewChange(
     cards: {
       ...project.cards,
       grouping,
-      positions: {},
+      positions: project.cards.positions,
     },
   };
 }

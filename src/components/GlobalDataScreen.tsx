@@ -89,11 +89,6 @@ export function GlobalDataScreen({
         >
           返回编辑器
         </CompactButton>
-        <div className="global-data-header__title">
-          <span className="global-data-header__eyebrow">当前工程 · {project.students.length} 条记录</span>
-          <h1>全局数据工作台</h1>
-          <p>维护一份名单，统一控制地图、卡片和导出结果</p>
-        </div>
         <div className="global-data-header__status" aria-label="工程数据状态">
           <span><strong>{summary.visible}</strong> 可见</span>
           <span><strong>{summary.unresolved}</strong> 未匹配</span>

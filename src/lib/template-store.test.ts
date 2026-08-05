@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSystemTemplate } from "./template-document";
+import { createDefaultDisplayFrame } from "./display-frame";
 import { createProjectDocument } from "./project-document";
 import {
   applyCustomTemplateToProject,
@@ -224,6 +225,34 @@ describe("template store", () => {
     const next = applyCustomTemplateToProject(project, custom);
 
     expect(next.map.renderSource).toEqual(scene.map.renderSource);
+  });
+
+  it("preserves display frame variants when saving and applying a scene template", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const frame = createDefaultDisplayFrame();
+    frame.mode = "flow";
+    project.cards = {
+      ...project.cards,
+      positions: { 浙江省: { x: 640, y: 280 } },
+      displayFrame: frame,
+    };
+    const custom = createCustomTemplateFromProject({
+      name: "展示框模板",
+      baseTemplateId: "original",
+      scope: "layout",
+      overrides: {},
+      scene: project,
+      students: [],
+    });
+    const storage = new Map<string, string>();
+    const adapter = { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) };
+    saveCustomTemplates([custom], adapter);
+    const loaded = loadCustomTemplates(adapter);
+    const applied = applyCustomTemplateToProject(createProjectDocument({ students: [], templateId: "q", dataView: "province" }), loaded[0]!);
+
+    expect(loaded[0]?.scene?.cards.displayFrame?.mode).toBe("flow");
+    expect(applied.cards.displayFrame?.mode).toBe("flow");
+    expect(applied.cards.positions).toEqual({ 浙江省: { x: 640, y: 280 } });
   });
 
   it("maps legacy custom templates into canonical visual fields when applying", () => {

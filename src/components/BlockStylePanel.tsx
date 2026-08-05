@@ -36,19 +36,19 @@ export function BlockStylePanel({ cards, onPatch, onArrange }: {
             <option value="borderless">无边框</option>
           </select>
         </label>
-        <label htmlFor="block-card-compact" className="checkbox-row">
+        <label htmlFor="block-card-compact" className="boolean-control checkbox-row">
           <input id="block-card-compact" type="checkbox" checked={cards.compactLayout === true || cards.preset === "compact"} onChange={(event) => onPatch({ compactLayout: event.target.checked })} />
           紧凑排版
         </label>
-        <label htmlFor="block-card-allow-map-overlap" className="checkbox-row">
+        <label htmlFor="block-card-allow-map-overlap" className="boolean-control checkbox-row">
           <input id="block-card-allow-map-overlap" type="checkbox" checked={cards.allowMapOverlap === true} onChange={(event) => onPatch({ allowMapOverlap: event.target.checked })} />
           允许卡片覆盖地图
         </label>
-        <label htmlFor="block-card-show-province-texture" className="checkbox-row">
+        <label htmlFor="block-card-show-province-texture" className="boolean-control checkbox-row">
           <input id="block-card-show-province-texture" type="checkbox" checked={cards.showProvinceTexture === true} onChange={(event) => onPatch({ showProvinceTexture: event.target.checked })} />
           数据框显示省份贴图
         </label>
-        <label htmlFor="block-card-show-count" className="checkbox-row">
+        <label htmlFor="block-card-show-count" className="boolean-control checkbox-row">
           <input id="block-card-show-count" type="checkbox" checked={cards.showCount !== false} onChange={(event) => onPatch({ showCount: event.target.checked })} />
           显示人数
         </label>

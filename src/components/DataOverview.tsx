@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Eye, EyeOff, Globe2, MapPin } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, Eye, EyeOff, Globe2, MapPin } from "lucide-react";
 import type { DataHealthSummary, DataIssueKind } from "../lib/data-health";
 import { PanelHeader } from "./StudioUi";
 
@@ -7,6 +7,7 @@ const actionableIssues: Partial<Record<keyof DataHealthSummary, { kind: DataIssu
   international: { kind: "international", label: "查看海外去向" },
   unresolved: { kind: "unresolved-location", label: "查看未匹配城市" },
   missingRequired: { kind: "missing-field", label: "查看缺失字段" },
+  duplicate: { kind: "duplicate", label: "查看重复记录" },
 };
 
 export function DataOverview({
@@ -25,6 +26,7 @@ export function DataOverview({
     { id: "unresolved", label: "未匹配城市", value: summary.unresolved, icon: AlertTriangle },
     { id: "international", label: "海外去向", value: summary.international, icon: Globe2 },
     { id: "missingRequired", label: "缺失字段", value: summary.missingRequired, icon: AlertTriangle },
+    { id: "duplicate", label: "重复记录", value: summary.duplicate ?? 0, icon: Copy },
   ];
 
   return (
@@ -57,11 +59,11 @@ export function DataOverview({
           );
         })}
       </div>
-      <div className="data-overview__status" data-status={summary.unresolved || summary.missingRequired ? "warning" : "ready"}>
-        {summary.unresolved || summary.missingRequired ? <AlertTriangle size={16} aria-hidden /> : <CheckCircle2 size={16} aria-hidden />}
+      <div className="data-overview__status" data-status={summary.unresolved || summary.missingRequired || (summary.duplicate ?? 0) ? "warning" : "ready"}>
+        {summary.unresolved || summary.missingRequired || (summary.duplicate ?? 0) ? <AlertTriangle size={16} aria-hidden /> : <CheckCircle2 size={16} aria-hidden />}
         <span>
-          {summary.unresolved || summary.missingRequired
-            ? `还有 ${summary.unresolved + summary.missingRequired} 项数据需要检查`
+          {summary.unresolved || summary.missingRequired || (summary.duplicate ?? 0)
+            ? `还有 ${summary.unresolved + summary.missingRequired + (summary.duplicate ?? 0)} 项数据需要检查`
             : "数据状态良好，可以继续编辑"}
         </span>
       </div>

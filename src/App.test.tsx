@@ -2,16 +2,17 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { createProjectDocument, serializeProjectDocument } from "./lib/project-document";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
 import { sampleStudents } from "./lib/project-data";
 import { createProjectPackage } from "./lib/project-package";
 import { createCustomTemplateFromProject, saveCustomTemplates } from "./lib/template-store";
+import { LEGACY_EDITOR_STORAGE_KEY, WORKSPACE_SESSION_STORAGE_KEY } from "./lib/workspace-session";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
-function renderApp(clearStorage = true): HTMLDivElement {
-  if (clearStorage) window.localStorage.clear();
+function mountApp(): HTMLDivElement {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -20,13 +21,32 @@ function renderApp(clearStorage = true): HTMLDivElement {
   return container;
 }
 
+function renderApp(clearStorage = true): HTMLDivElement {
+  return renderLegacyApp({ clearStorage });
+}
+
+function renderPublicApp({ clearStorage = true } = {}): HTMLDivElement {
+  if (clearStorage) window.localStorage.clear();
+  return mountApp();
+}
+
+function renderLegacyApp({ clearStorage = true } = {}): HTMLDivElement {
+  try {
+    if (clearStorage) window.localStorage.clear();
+    window.localStorage.setItem(LEGACY_EDITOR_STORAGE_KEY, "1");
+  } catch {
+    // Storage-failure tests intentionally exercise the public fallback.
+  }
+  return mountApp();
+}
+
 function click(element: Element): void {
   flushSync(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
 function openDesignTool(container: HTMLElement, label: string): void {
-  if (label !== "模板") throw new Error(`Unsupported legacy design tool: ${label}`);
-  click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="版式"]')!);
+  if (label !== "模板") throw new Error(`Unsupported design tool: ${label}`);
+  click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="选择模板"]')!);
 }
 
 function openWorkflowGuide(container: HTMLElement): void {
@@ -75,7 +95,89 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("delivery issue target locations", () => {
+  it.each([
+    ["map-labels", { stage: "map", selectionKind: "map" }],
+    ["map-label:广东", { stage: "map", selectionKind: "province", province: "广东" }],
+    ["guests:title", { stage: "content", selectionKind: "guests" }],
+    ["guests:people", { stage: "content", selectionKind: "guests" }],
+    ["guest:student-1", { stage: "content", selectionKind: "guests" }],
+    ["display-frame:style", { stage: "frame", selectionKind: "cards" }],
+    ["cards:layout", { stage: "content", selectionKind: "cards" }],
+    ["text:title", { stage: "content", selectionKind: "text", id: "title" }],
+    ["asset:logo", { stage: "content", selectionKind: "asset", id: "logo" }],
+  ] as const)("resolves %s", (target, expected) => {
+    expect(resolveDeliveryIssueLocation(target)).toEqual(expected);
+  });
+});
+
 describe("App student editing", () => {
+  it.each([
+    ["absent", undefined],
+    ["zero", "0"],
+    ["true", "true"],
+  ] as const)("isolates public template mode when legacy flag is %s", (_label, flag) => {
+    window.localStorage.clear();
+    if (flag !== undefined) window.localStorage.setItem(LEGACY_EDITOR_STORAGE_KEY, flag);
+    const container = renderPublicApp({ clearStorage: false });
+
+    expect(container.querySelector('main[aria-label="模板选择工作台"]')).not.toBeNull();
+    expect(container.querySelector(".workspace")).toBeNull();
+    expect(container.querySelector(".workflow-guide")).toBeNull();
+    expect(container.querySelector('[aria-label="打开全局设置"]')).toBeNull();
+    expect(container.querySelector(".workflow-stepper")).toBeNull();
+  });
+
+  it("opens the template workspace by default without the legacy compatibility flag", () => {
+    const container = renderPublicApp();
+
+    expect(container.querySelector('main[aria-label="模板选择工作台"]')).not.toBeNull();
+    expect(container.querySelector(".workspace")).toBeNull();
+  });
+
+  it("enables the legacy workspace only for flag 1", () => {
+    const container = renderLegacyApp();
+    expect(container.querySelector(".workspace")).not.toBeNull();
+  });
+
+  it("opens the content and layout workspace when the saved stage is content", () => {
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+      stage: "content",
+      savedAt: "2026-08-04T00:00:00.000Z",
+    }));
+
+    const container = renderLegacyApp({ clearStorage: false });
+
+    expect(container.querySelector(".workspace")).not.toBeNull();
+  });
+
+  it("opens the full-screen final export workspace from the workflow stage", () => {
+    const container = renderPublicApp();
+
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="最终导出"]')!);
+
+    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('select[aria-label="PNG 导出倍率"]')).not.toBeNull();
+  });
+
+  it("keeps the export stage and current configuration when SVG export fails", () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => {
+      throw new Error("下载不可用");
+    });
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="最终导出"]')!);
+    const scale = container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')!;
+    changeSelect(scale, "3");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="导出 SVG"]')!);
+
+    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("下载不可用");
+    expect(scale.value).toBe("3");
+    expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();
+    URL.createObjectURL = originalCreateObjectURL;
+  });
+
   it("mounts with defaults when localStorage access is blocked", () => {
     const originalDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
     Object.defineProperty(window, "localStorage", {
@@ -413,6 +515,7 @@ describe("App student editing", () => {
   });
 
   it("replaces the project dataset with confirmed import candidates", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const container = renderApp();
     openPeopleData(container);
     changeInput(container.querySelector("textarea")!, "新同学 北京大学 北京");
@@ -441,9 +544,10 @@ describe("App student editing", () => {
     saveCustomTemplates([template]);
     const container = renderApp(false);
     openDesignTool(container, "模板");
-    const templateButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("可应用场景"));
-    expect(templateButton).not.toBeUndefined();
+    const templateButton = container.querySelector<HTMLButtonElement>('button[aria-label="选择可应用场景"]');
+    expect(templateButton).not.toBeNull();
     click(templateButton!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="应用模板"]')!);
 
     expect(container.textContent).toContain("模板标题");
     expect(container.textContent).toContain("林舟");
@@ -591,68 +695,260 @@ describe("App student editing", () => {
     expect(container.querySelectorAll("[data-destination-card]")).toHaveLength(2);
   });
 
-  it("clears manual card placements when smart layout is requested", () => {
+  it("keeps manual card placements when full smart layout is cancelled", () => {
     const project = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, positions: { 北京市: { x: 50, y: 50 } } };
     window.localStorage.setItem("cengfan-map-studio:draft", serializeProjectDocument(project));
-    const container = renderApp(false);
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({ stage: "content", savedAt: "2026-08-04T00:00:00.000Z" }));
+    const container = renderPublicApp({ clearStorage: false });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 
-    openGlobalSettingsSection(container, "cards");
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="一键智能排版"]')!);
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="全部重新排版"]')!);
 
-    expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform")).not.toContain("translate(50 50)");
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform")).toMatch(/^translate\(50 /);
+    expect(container.querySelector('button[aria-label="撤销：全部重新排版数据框"]')).toBeNull();
   });
 
-  it("opens the project-level global data workbench from the roster workflow step", () => {
+  it("locates a text layout issue without leaving the content stage", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.textElements = project.textElements.map((element) => element.id === "text-title"
+      ? { ...element, color: "#ffffff" }
+      : element);
+    window.localStorage.setItem("cengfan-map-studio:draft", serializeProjectDocument(project));
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({ stage: "content", savedAt: "2026-08-04T00:00:00.000Z" }));
+    const container = renderPublicApp({ clearStorage: false });
+
+    const issue = Array.from(container.querySelectorAll<HTMLButtonElement>('section[aria-label="排版问题提示"] button'))
+      .find((button) => button.textContent?.includes("text-title"));
+    expect(issue).not.toBeUndefined();
+    click(issue!);
+
+    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
+    expect(container.querySelector('[data-text-id="text-title"]')?.classList.contains("is-selected")).toBe(true);
+  });
+
+  it("opens the upload workbench for the data stage without template or map presentation controls", () => {
     const container = renderApp();
     openGlobalData(container);
 
-    expect(container.querySelector('main[aria-label="全局数据工作台"]')).not.toBeNull();
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(5);
-    expect(container.textContent).toContain("数据总览");
+    expect(container.querySelector('main[aria-label="上传数据工作台"]')).not.toBeNull();
+    expect(container.querySelector(".student-table")).not.toBeNull();
+    expect(container.textContent).not.toContain("地图呈现方式");
+    expect(container.textContent).not.toContain("模板应用");
+    expect(container.textContent).not.toContain("模板列表");
   });
 
-  it("applies a presentation change from the global data workbench to the poster", () => {
-    const container = renderApp();
-    openGlobalData(container);
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="数据呈现"]')!);
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="切换为地图图钉"]')!);
+  it("restores the upload workbench when the saved stage is data", () => {
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+      stage: "data",
+      savedAt: "2026-08-05T10:00:00.000Z",
+    }));
+    const container = renderPublicApp({ clearStorage: false });
+
+    expect(container.querySelector('main[aria-label="上传数据工作台"]')).not.toBeNull();
+    expect(container.querySelector(".student-table")).not.toBeNull();
     click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
 
-    expect(container.querySelectorAll("[data-student-pin]")).toHaveLength(12);
+    expect(container.querySelector('main[aria-label="上传数据工作台"]')).toBeNull();
+    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
   });
 
-  it("opens the same global data workbench from global settings", () => {
+  it("returns from the upload stage to the previous editor stage", () => {
     const container = renderApp();
+    openGlobalData(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+
+    expect(container.querySelector('main[aria-label="上传数据工作台"]')).toBeNull();
+    expect(container.querySelector(".workspace")).not.toBeNull();
+    expect(container.querySelector('.topbar .workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("内容与排版");
+  });
+
+  it("connects upload row selection to the active poster marker", () => {
+    const container = renderApp();
+    openGlobalData(container);
+    click(container.querySelector('[data-student-row="student-1"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+
+    expect(container.querySelector('[data-student-pin="student-1"]')?.getAttribute("data-selected")).toBe("true");
+  });
+
+  it("opens the upload workbench from the legacy global settings entry without exposing old navigation", () => {
+    const container = renderLegacyApp();
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
     click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-cards"]')!);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局数据"]')!);
 
-    expect(container.querySelector('main[aria-label="全局数据工作台"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="上传数据工作台"]')).not.toBeNull();
     expect(container.querySelector(".student-table")).not.toBeNull();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+  });
+
+  it("restores the latest workspace stage from a valid browser session", () => {
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+      stage: "content",
+      selectedProvince: "北京市",
+      selectedObject: "cards",
+      savedAt: "2026-08-05T10:00:00.000Z",
+    }));
+
+    const container = renderApp(false);
+
+    expect(container.querySelector('.topbar .workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("内容与排版");
+    expect(container.querySelector(".workflow-panel--content")).not.toBeNull();
+  });
+
+  it("does not restore a stale province after the canvas selection is cleared", () => {
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+      stage: "content",
+      selectedProvince: "北京市",
+      savedAt: "2026-08-05T10:00:00.000Z",
+    }));
+
+    const container = renderApp(false);
+    click(container.querySelector<SVGSVGElement>("svg.poster")!);
+
+    expect(JSON.parse(window.localStorage.getItem(WORKSPACE_SESSION_STORAGE_KEY) ?? "{}")).not.toHaveProperty("selectedProvince");
+  });
+
+  it("opens the full-screen template workbench as the first workflow stage", () => {
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('[aria-label="选择模板"]')!);
+
+    expect(container.querySelector('main[aria-label="模板选择工作台"]')).not.toBeNull();
+    expect(container.textContent).toContain("选择模板");
+    expect(container.textContent).toContain("1500 × 1000 px");
+    expect(container.querySelector("svg[data-template-preview]")).not.toBeNull();
+  });
+
+  it("keeps temporary template selection out of the project until apply", () => {
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('[aria-label="选择模板"]')!);
+    const before = container.querySelector("svg[data-template-preview]")?.getAttribute("data-template-id");
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="选择卡通画风"]')!);
+
+    expect(container.textContent).toContain("将应用：卡通画风");
+    expect(container.querySelector("svg[data-template-preview]")?.getAttribute("data-template-id")).toBe("cartoon");
+    expect(before).toBe("original");
+    expect(container.querySelector(".template-workspace__history")?.textContent).toContain("尚未写入工程");
+  });
+
+  it("applies a selected template while retaining student data", () => {
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('[aria-label="选择模板"]')!);
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="选择卡通画风"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="应用模板"]')!);
+
+    expect(container.querySelector('main[aria-label="模板选择工作台"]')).toBeNull();
+    expect(container.textContent).toContain("林舟");
+    click(container.querySelector<HTMLButtonElement>('[aria-label="选择模板"]')!);
+    expect(container.querySelector(".template-workspace__history")?.textContent).toContain("已写入 1 步");
+    expect(container.textContent).toContain("卡通画风");
+  });
+
+  it("opens the display frame stage as a dedicated workbench with topbar undo/redo and project menu", () => {
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('[aria-label="展示框样式"]')!);
+
+    expect(container.querySelector('main[aria-label="展示框样式"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="固定自由排布"]')).not.toBeNull();
+    expect(container.querySelector(".workspace")).toBeNull();
+    expect(container.querySelector('main[aria-label="展示框样式"] .display-frame-workspace__header')).toBeNull();
+
+    const topbar = container.querySelector(".topbar-actions")!;
+    expect(topbar.querySelector('[aria-label="历史与缩放"]')).not.toBeNull();
+    expect(topbar.querySelector('[aria-label="导出与工程"]')).not.toBeNull();
+    const projectMenu = topbar.querySelector(".project-menu")!;
+    expect(projectMenu).not.toBeNull();
+    expect(projectMenu.textContent).toContain("导入工程");
+
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="内容与排版"]')!);
+    expect(container.querySelector('main[aria-label="展示框样式"]')).toBeNull();
+    expect(container.querySelector(".workspace")).not.toBeNull();
+  });
+
+  it("keeps the unified topbar with six-stage navigation while editing data", () => {
+    const container = renderApp();
+    openGlobalData(container);
+
+    expect(container.querySelector('main[aria-label="上传数据工作台"]')).not.toBeNull();
+    expect(container.querySelector('.topbar .workflow-stage-stepper')).not.toBeNull();
+    expect(container.querySelector('.topbar .brand')).not.toBeNull();
+    expect(container.querySelector('.topbar .workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("上传数据");
+    // 工作台内部不再重复渲染步骤条
+    expect(container.querySelector('main[aria-label="上传数据工作台"] .workflow-stage-stepper')).toBeNull();
+
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="地图样式"]')!);
+    expect(container.querySelector('main[aria-label="地图样式"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="上传数据工作台"]')).toBeNull();
+  });
+
+  it("opens the map style stage as a dedicated workbench", () => {
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('[aria-label="地图样式"]')!);
+
+    expect(container.querySelector('main[aria-label="地图样式"]')).not.toBeNull();
+    expect(container.querySelectorAll('[role="group"][aria-label="地图表达"] button')).toHaveLength(5);
+    expect(container.querySelector(".workflow-panel--map")).toBeNull();
+    expect(container.querySelector("main[aria-label=\"全局设置\"]")).toBeNull();
+  });
+
+  it("keeps province selection and styling inside the map stage", () => {
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('[aria-label="地图样式"]')!);
+    click(container.querySelector<SVGPathElement>("[data-province-hit]")!);
+
+    expect(container.querySelector('.topbar .workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("地图样式");
+    expect(container.querySelector('main[aria-label="地图样式"]')).not.toBeNull();
+    expect(container.querySelector(".province-inspector")?.textContent).toContain("北京市");
+    expect(container.querySelector('.topbar .workflow-stepper button[aria-label="素材"]')).toBeNull();
+  });
+
+  it("keeps map style patches undoable in the map stage", () => {
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('[aria-label="地图样式"]')!);
+    const collapse = container.querySelector<HTMLInputElement>("#map-collapse-south-sea")!;
+    click(collapse);
+
+    expect(collapse.checked).toBe(true);
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label^="撤销：更新地图"]')!;
+    expect(undo).not.toBeNull();
+    click(undo);
+
+    expect(container.querySelector<HTMLInputElement>("#map-collapse-south-sea")?.checked).toBe(false);
   });
 
   it("organizes the actual editor into six user workflow workspaces", () => {
     const container = renderApp();
-    const tabs = container.querySelector(".topbar .workflow-stepper")!;
+    const tabs = container.querySelector(".topbar .workflow-stage-stepper")!;
     expect(tabs.querySelectorAll("button")).toHaveLength(6);
+    expect(Array.from(tabs.querySelectorAll("button")).map((button) => button.textContent?.trim())).toEqual([
+      "1选择模板",
+      "2上传数据",
+      "3地图样式",
+      "4展示框样式",
+      "5内容与排版",
+      "6最终导出",
+    ]);
     expect(container.querySelector(".workspace-nav")).toBeNull();
 
-    click(tabs.querySelector<HTMLButtonElement>('[aria-label="名单"]')!);
-    expect(container.querySelector('main[aria-label="全局数据工作台"]')).not.toBeNull();
+    click(tabs.querySelector<HTMLButtonElement>('[aria-label="上传数据"]')!);
+    expect(container.querySelector('main[aria-label="上传数据工作台"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("地图呈现方式");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
 
-    const editorTabs = container.querySelector(".topbar .workflow-stepper")!;
-    click(editorTabs.querySelector<HTMLButtonElement>('[aria-label="地图"]')!);
+    const editorTabs = container.querySelector(".topbar .workflow-stage-stepper")!;
+    click(editorTabs.querySelector<HTMLButtonElement>('[aria-label="地图样式"]')!);
     expect(container.textContent).toContain("地图表达");
 
-    click(editorTabs.querySelector<HTMLButtonElement>('[aria-label="交付"]')!);
+    click(editorTabs.querySelector<HTMLButtonElement>('[aria-label="最终导出"]')!);
     expect(container.textContent).toContain("交付检查");
   });
 
   it("opens global settings as a standalone fullscreen screen and returns to the editor", () => {
-    const container = renderApp();
+    const container = renderLegacyApp();
 
     expect(container.querySelector(".topbar")).not.toBeNull();
     expect(container.querySelector(".workspace")).not.toBeNull();
@@ -661,7 +957,7 @@ describe("App student editing", () => {
 
     expect(container.querySelector('main[aria-label="全局设置"]')).not.toBeNull();
     expect(container.querySelector(".topbar")).not.toBeNull();
-    expect(container.querySelectorAll(".topbar .workflow-stepper button")).toHaveLength(6);
+    expect(container.querySelectorAll(".topbar .workflow-stage-stepper button")).toHaveLength(6);
     expect(container.querySelector(".workspace")).toBeNull();
     expect(container.querySelector(".sidebar")).toBeNull();
     expect(container.querySelector(".inspector")).toBeNull();
@@ -807,7 +1103,7 @@ describe("App student editing", () => {
     expect(projectMenu.textContent).toContain("导入工程");
     expect(projectMenu.textContent).toContain("在线协作");
 
-    expect(container.querySelectorAll<HTMLButtonElement>(".topbar .workflow-stepper button")).toHaveLength(6);
+    expect(container.querySelectorAll<HTMLButtonElement>(".topbar .workflow-stage-stepper button")).toHaveLength(6);
     expect(topbar.querySelector('[aria-label="打开全局设置"]')).not.toBeNull();
   });
 
@@ -928,12 +1224,12 @@ describe("App student editing", () => {
 
     changeSelect(container.querySelector<HTMLSelectElement>("#editor-render-mode")!, "fixed");
     const fpsInput = container.querySelector<HTMLInputElement>("#editor-render-fps")!;
-    expect(fpsInput.min).toBe("0.2");
-    expect(fpsInput.max).toBe("30");
+    expect(fpsInput.min).toBe("5");
+    expect(fpsInput.max).toBe("60");
     expect(fpsInput.step).toBe("0.1");
-    changeInput(fpsInput, "0.2");
+    changeInput(fpsInput, "5");
 
-    expect(poster.getAttribute("data-render-interval-ms")).toBe("5000");
+    expect(poster.getAttribute("data-render-interval-ms")).toBe("200");
   });
 });
 
@@ -942,7 +1238,7 @@ describe("App workflow guidance", () => {
     const container = renderApp();
 
     expect(container.querySelector(".workspace-nav")).toBeNull();
-    expect(container.querySelectorAll(".topbar .workflow-stepper button")).toHaveLength(6);
+    expect(container.querySelectorAll(".topbar .workflow-stage-stepper button")).toHaveLength(6);
   });
 
   it("switches the editor theme without changing poster data or viewBox", () => {
@@ -961,7 +1257,7 @@ describe("App workflow guidance", () => {
   });
 
   it("renders the workflow guide in the topbar with roster as the initial step", () => {
-    const container = renderApp();
+    const container = renderLegacyApp();
     openWorkflowGuide(container);
     const steps = Array.from(container.querySelectorAll(".workflow-nav button"));
 

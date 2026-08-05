@@ -8,6 +8,7 @@ const issueLabels: Record<DataIssueKind, string> = {
   "manual-province": "省份覆盖",
   international: "海外去向",
   hidden: "隐藏记录",
+  duplicate: "重复记录",
 };
 
 export function DataQualityPanel({

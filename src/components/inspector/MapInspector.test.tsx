@@ -90,18 +90,22 @@ describe("MapInspector", () => {
     ));
 
     expect(container.textContent).toContain("省界线纹理");
-    expect(container.querySelector("#map-edge-style")).not.toBeNull();
-    expect(container.textContent).toContain("柔光");
-    expect(container.textContent).toContain("饰边");
-    expect(container.textContent).toContain("轨道");
+    expect(container.querySelector("#map-edge-style")).toBeNull();
+    expect(container.querySelector('button[aria-label="打开边界风格选择器"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="边界风格圆盘"]')).toBeNull();
     expect(container.querySelector("#map-collapse-south-sea")).not.toBeNull();
     expect(container.querySelector("#map-opacity[type=\"range\"]")).not.toBeNull();
 
-    const wave = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("水纹"))!;
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="打开边界风格选择器"]')?.click());
+    expect(container.querySelector('[aria-label="边界风格圆盘"]')).not.toBeNull();
+    const wave = container.querySelector<HTMLButtonElement>('button[aria-label="选择水纹边界风格"]')!;
     flushSync(() => wave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ edgeStyle: "wave" });
+    expect(container.querySelector('[aria-label="边界风格圆盘"]')).toBeNull();
 
     const collapse = container.querySelector("#map-collapse-south-sea") as HTMLInputElement;
+    expect(collapse.closest("label")?.classList.contains("boolean-control")).toBe(true);
+    expect(collapse.closest("label")?.firstElementChild).toBe(collapse);
     expect(collapse.checked).toBe(false);
     flushSync(() => collapse.click());
     expect(onPatch).toHaveBeenCalledWith({ collapseSouthChinaSea: true });
@@ -208,6 +212,9 @@ describe("MapInspector", () => {
     expect(container.querySelector("#map-image-clip")).not.toBeNull();
     expect(container.querySelector("#map-align-x")).not.toBeNull();
     expect(container.querySelector("#map-align-rotation")).not.toBeNull();
+    const clip = container.querySelector("#map-image-clip") as HTMLInputElement;
+    expect(clip.closest("label")?.classList.contains("boolean-control")).toBe(true);
+    expect(clip.closest("label")?.firstElementChild).toBe(clip);
 
     const composition = container.querySelector("#map-image-composition") as HTMLSelectElement;
     flushSync(() => {
@@ -247,10 +254,15 @@ describe("MapInspector", () => {
     expect(details?.querySelector(".heat-scale-control")).not.toBeNull();
     expect(details?.querySelector(".province-color-control")).not.toBeNull();
     expect(details?.querySelector("#map-collapse-south-sea")).not.toBeNull();
+    expect(details?.querySelector("summary")?.textContent).toContain("热力变色、单独省份颜色、南海诸岛");
+    expect(details?.querySelector(".property-panel__advanced-title")?.textContent).toContain("高级设置");
     // 核心控件保持在折叠之外
     expect(container.querySelector(".property-panel__advanced #map-land-color")).toBeNull();
     expect(container.querySelector("#map-land-color")).not.toBeNull();
     expect(container.querySelector(".property-panel__advanced #map-edge-style")).toBeNull();
+    const labels = container.querySelector("#map-labels") as HTMLInputElement;
+    expect(labels.closest("label")?.classList.contains("boolean-control")).toBe(true);
+    expect(labels.closest("label")?.firstElementChild).toBe(labels);
 
     root.unmount();
   });

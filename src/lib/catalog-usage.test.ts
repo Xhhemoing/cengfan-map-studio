@@ -107,7 +107,7 @@ describe("catalog usage helpers", () => {
     const city = applyDataViewChange(project, "city");
     expect(city.dataView).toBe("city");
     expect(city.cards.grouping).toBe("city");
-    expect(city.cards.positions).toEqual({});
+    expect(city.cards.positions).toEqual({ 北京市: { x: 10, y: 20 } });
     expect(city.map.fillMode).toBe("manual");
 
     const heat = applyDataViewChange(project, "heat");

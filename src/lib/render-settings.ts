@@ -5,13 +5,16 @@ export interface RenderSettings {
   fixedFps: number;
 }
 
-export const DEFAULT_RENDER_SETTINGS: RenderSettings = { mode: "normal", fixedFps: 20 };
+export const DEFAULT_RENDER_SETTINGS: RenderSettings = { mode: "normal", fixedFps: 30 };
 
 const MODE_FPS: Record<Exclude<RenderMode, "fixed">, number> = {
-  high: 30,
-  normal: 20,
+  high: 60,
+  normal: 30,
   low: 10,
 };
+
+const MIN_FIXED_FPS = 5;
+const MAX_FIXED_FPS = 60;
 
 export function normalizeRenderSettings(value: unknown): RenderSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { ...DEFAULT_RENDER_SETTINGS };
@@ -22,7 +25,7 @@ export function normalizeRenderSettings(value: unknown): RenderSettings {
   const mode: RenderMode = record.mode;
   const numericFps = Number(record.fixedFps);
   const fixedFps = Number.isFinite(numericFps)
-    ? Math.min(30, Math.max(0.2, Math.round(numericFps * 10) / 10))
+    ? Math.min(MAX_FIXED_FPS, Math.max(MIN_FIXED_FPS, Math.round(numericFps * 10) / 10))
     : DEFAULT_RENDER_SETTINGS.fixedFps;
   return { mode, fixedFps };
 }

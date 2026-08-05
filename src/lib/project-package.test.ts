@@ -9,6 +9,7 @@ import {
   serializeProjectPackage,
 } from "./project-package";
 import { DEFAULT_RENDER_SETTINGS } from "./render-settings";
+import { createDefaultDisplayFrame } from "./display-frame";
 import { createSystemTemplate } from "./template-document";
 
 const asset = {
@@ -130,6 +131,24 @@ describe("project package", () => {
     expect(parsed.project.schemaVersion).toBe(project.schemaVersion);
     expect(parsed.assets).toEqual([]);
     expect(parsed.fonts).toEqual([]);
+  });
+
+  it("round-trips display frame variants without changing final card positions", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const frame = createDefaultDisplayFrame();
+    frame.mode = "flow";
+    frame.flow.blocks = frame.flow.blocks.map((block) => block.id === "name" ? { ...block, spacing: 24 } : block);
+    project.cards = {
+      ...project.cards,
+      positions: { 北京市: { x: 901, y: 402 } },
+      displayFrame: frame,
+    };
+
+    const parsed = parseProjectPackage(serializeProjectPackage(createProjectPackage({ project, assets: [], fonts: [] })));
+
+    expect(parsed.project.cards.displayFrame?.mode).toBe("flow");
+    expect(parsed.project.cards.displayFrame?.flow.blocks.find((block) => block.id === "name")?.spacing).toBe(24);
+    expect(parsed.project.cards.positions).toEqual({ 北京市: { x: 901, y: 402 } });
   });
 
   it("wraps immutable editor state without cloning it for collaboration transport", () => {

@@ -32,6 +32,7 @@ describe("DataOverview", () => {
       international: 1,
       unresolved: 3,
       missingRequired: 1,
+      duplicate: 0,
     };
     const container = document.createElement("div");
     document.body.append(container);
@@ -48,7 +49,7 @@ describe("DataOverview", () => {
   });
 
   it("shows the active presentation mode", () => {
-    const container = render({ total: 2, visible: 2, hidden: 0, international: 0, unresolved: 0, missingRequired: 0 });
+    const container = render({ total: 2, visible: 2, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 });
     expect(container.textContent).toContain("当前呈现");
     expect(container.textContent).toContain("省份卡片");
   });

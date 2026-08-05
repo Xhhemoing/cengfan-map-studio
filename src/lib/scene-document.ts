@@ -5,6 +5,7 @@ import type { MapTemplateId } from "./project-data";
 import { createSystemTemplate, type CardGrouping, type CardPreset, type VisibleField } from "./template-document";
 import { normalizeCardExpressionTemplates, type CardExpressionTemplates } from "./card-expression";
 import { DEFAULT_NAME_FORMAT, normalizeNameFormat } from "./name-format";
+import { normalizeDisplayFrame, type DisplayFrameDefinition } from "./display-frame";
 
 export type CanvasTextRole =
   | "eyebrow"
@@ -181,6 +182,8 @@ export interface TextStyleOverride {
 
 export interface CardSettings {
   preset: CardPreset;
+  /** Local display-frame definition; final card placement remains in positions. */
+  displayFrame?: DisplayFrameDefinition;
   /** Reduce card row spacing without changing its visual preset. */
   compactLayout?: boolean;
   grouping: CardGrouping;
@@ -614,6 +617,9 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       autoBalance: scene.cards.autoBalance !== false,
       allowMapOverlap: scene.cards.allowMapOverlap === true,
       showProvinceTexture: scene.cards.showProvinceTexture === true,
+      ...(scene.cards.displayFrame !== undefined
+        ? { displayFrame: normalizeDisplayFrame(scene.cards.displayFrame, fallback.cards.displayFrame) }
+        : {}),
     },
     guests: normalizeGuestPanel(scene.guests, canvasWidth, canvasHeight),
     textElements: scene.textElements.map(normalizeText),

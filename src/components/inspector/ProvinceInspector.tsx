@@ -185,6 +185,7 @@ export function ProvinceInspector({ province, style, onPatch, onAddUserAsset, un
         return (
           <details className="province-inspector__texture-layout province-inspector__advanced" aria-label="贴图比例调节">
             <summary>高级贴图设置</summary>
+            <div className="property-panel__advanced-title">高级贴图设置<small>位置 · 比例依据 · 适配方式 · 统一尺寸 · 透明度</small></div>
             <div className="province-inspector__texture-position">
               <span>位置 X {Math.round(layout.offsetX ?? 0)} · Y {Math.round(layout.offsetY ?? 0)}</span>
               <CompactButton icon={<RotateCcw size={14} aria-hidden />} variant="ghost" onClick={() => onPatch({
@@ -220,7 +221,7 @@ export function ProvinceInspector({ province, style, onPatch, onAddUserAsset, un
                 appearance: withTextureLayout(appearance, { scale: value / 100 }),
               })}
             />
-            <label className="asset-panel__matting" htmlFor="province-texture-uniform-enabled">
+            <label className="boolean-control checkbox-row" htmlFor="province-texture-uniform-enabled">
               <input
                 id="province-texture-uniform-enabled"
                 type="checkbox"
@@ -269,7 +270,7 @@ export function ProvinceInspector({ province, style, onPatch, onAddUserAsset, un
                 }}
               />
             </label>
-            <label className="asset-panel__matting" htmlFor="province-texture-overflow">
+            <label className="boolean-control checkbox-row" htmlFor="province-texture-overflow">
               <input
                 id="province-texture-overflow"
                 type="checkbox"

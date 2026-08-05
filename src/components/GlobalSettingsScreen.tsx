@@ -182,10 +182,6 @@ export function GlobalSettingsScreen({
     <main className="global-settings-screen" aria-label="全局设置">
       <header className="global-settings-header">
         <CompactButton className="global-settings-back" aria-label="返回编辑器" icon={<ArrowLeft size={17} aria-hidden />} onClick={onClose}><span>返回编辑器</span></CompactButton>
-        <div className="global-settings-title">
-          <h1>全局设置</h1>
-          <p>配置当前作品的画布与整体布局</p>
-        </div>
         <ActionGroup label="全局设置历史" className="global-settings-history">
           <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
           <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />

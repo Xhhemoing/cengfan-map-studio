@@ -1,4 +1,4 @@
-import { Check, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, Download, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   confirmImportCandidates,
@@ -8,10 +8,17 @@ import {
   type StudentDraft,
 } from "../lib/data-workspace";
 import { parseStudentText } from "../lib/import-data";
-import { parseExcelWorkbookRows, parseOcrLikeText } from "../lib/binary-import";
+import {
+  createImportTemplateSheets,
+  parseExcelWorkbookRows,
+  parseOcrLikeText,
+  type ExcelImportResult,
+  type StudentColumn,
+} from "../lib/binary-import";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
+import { findDuplicateStudentGroups } from "../lib/data-duplicate";
 import { searchCities, searchProvinces, searchUniversities } from "../lib/search-catalog";
 import { SearchCombobox, type SearchComboboxOption } from "./SearchCombobox";
 import { FileDropzone } from "./FileDropzone";
@@ -40,6 +47,13 @@ function provinceOptions(query: string): SearchComboboxOption[] {
   }));
 }
 
+const studentColumnLabels: Record<StudentColumn, string> = {
+  name: "学生姓名",
+  university: "录取院校",
+  city: "城市",
+  locationScope: "去向类型",
+};
+
 export function DataWorkspace({
   students,
   onReplaceStudents,
@@ -54,6 +68,9 @@ export function DataWorkspace({
   onChangeDataView = () => {},
   requestAiParse = requestAiParseData,
   confirmDelete = (student) => window.confirm(`确认删除 ${student.name} 吗？`),
+  confirmReplace = ({ currentCount, nextCount }) => window.confirm(`确认替换全部名单？当前 ${currentCount} 条 -> 新 ${nextCount} 条`),
+  hideDataExpression = false,
+  hideTemplateDownload = false,
 }: {
   students: Student[];
   onReplaceStudents: (students: Student[]) => void;
@@ -68,15 +85,23 @@ export function DataWorkspace({
   onChangeDataView?: (view: DataViewId) => void;
   requestAiParse?: (input: { text: string; source: "paste" | "ocr" }) => Promise<ParseDataResult>;
   confirmDelete?: (student: Student) => boolean;
+  confirmReplace?: (input: { currentCount: number; nextCount: number }) => boolean;
+  hideDataExpression?: boolean;
+  hideTemplateDownload?: boolean;
 }) {
   const [draft, setDraft] = useState<StudentDraft>(createEmptyStudentDraft());
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<StudentDraft>(createEmptyStudentDraft());
+  const [provinceEditingId, setProvinceEditingId] = useState<string | null>(null);
+  const [provinceDraft, setProvinceDraft] = useState("");
   const [filter, setFilter] = useState("");
   const [importText, setImportText] = useState("");
   const [reviewRows, setReviewRows] = useState<ImportReviewRow[]>([]);
+  const [excelRecognition, setExcelRecognition] = useState<Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> | null>(null);
   const [message, setMessage] = useState("");
   const [isAiParsing, setIsAiParsing] = useState(false);
+  const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
+  const [unparsedCount, setUnparsedCount] = useState(0);
 
   const filteredStudents = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
@@ -96,6 +121,21 @@ export function DataWorkspace({
     () => filteredStudents.filter((student) => student.visibility !== false).length,
     [filteredStudents],
   );
+  const candidateSummary = useMemo(() => {
+    const duplicateIds = new Set(findDuplicateStudentGroups(reviewRows.map((row, index) => ({
+      id: `${row.sourceLine}-${index}`,
+      name: row.name,
+      university: row.university,
+      city: row.city,
+      locationScope: row.locationScope,
+    }))).flatMap((group) => group.studentIds));
+    const valid = reviewRows.filter((row) => row.name.trim() && row.university.trim() && row.city.trim());
+    return {
+      valid: valid.length,
+      missing: reviewRows.length - valid.length,
+      duplicate: reviewRows.filter((_, index) => duplicateIds.has(`${reviewRows[index]!.sourceLine}-${index}`)).length,
+    };
+  }, [reviewRows]);
 
 
   const [showImport, setShowImport] = useState(true);
@@ -105,12 +145,16 @@ export function DataWorkspace({
       name: string;
       university: string;
       city: string;
+      locationScope?: "china" | "international";
       sourceLine: number;
       rawLine: string;
     }>,
     unparsedCount: number,
     sourceLabel: string,
+    recognition?: Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields">,
   ) => {
+    setExcelRecognition(recognition?.headerRowIndex !== undefined ? recognition : null);
+    setUnparsedCount(unparsedCount);
     if (candidates.length === 0) {
       setMessage(`没有从${sourceLabel}识别到可导入数据`);
       setReviewRows([]);
@@ -143,7 +187,10 @@ export function DataWorkspace({
       setMessage(result.issues[0]?.message || "请填写学生姓名、就读院校和城市");
       return;
     }
-    onAppendStudents(result.students);
+    onAppendStudents(result.students.map((student) => ({
+      ...student,
+      province: draft.locationScope === "international" ? undefined : draft.province?.trim() || undefined,
+    })));
     setDraft(createEmptyStudentDraft());
     setMessage("已新增 1 名学生");
   };
@@ -183,6 +230,20 @@ export function DataWorkspace({
     setCandidates(parsed.candidates, parsed.unparsed.length, "文本");
   };
 
+  const downloadImportTemplate = async () => {
+    try {
+      const XLSX = await import("xlsx");
+      const template = createImportTemplateSheets();
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(template.data), "学生数据");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(template.guide), "填写说明");
+      XLSX.writeFile(workbook, "蹭饭图-学生数据导入模板.xlsx");
+      setMessage("已下载学生数据导入模板");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "模板下载失败");
+    }
+  };
+
   const prepareOcrImport = () => {
     const parsed = parseOcrLikeText(importText);
     setCandidates(parsed.candidates, parsed.unparsed.length, "OCR 文本");
@@ -206,6 +267,7 @@ export function DataWorkspace({
 
   const handleExcelFile = async (file: File | null) => {
     if (!file) return;
+    setExcelRecognition(null);
     try {
       const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
@@ -224,7 +286,7 @@ export function DataWorkspace({
         (Array.isArray(row) ? row : []).map((cell) => String(cell ?? "").trim()),
       );
       const parsed = parseExcelWorkbookRows(matrix);
-      setCandidates(parsed.candidates, parsed.unparsed.length, `Excel（${file.name}）`);
+      setCandidates(parsed.candidates, parsed.unparsed.length, `Excel（${file.name}）`, parsed);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Excel 解析失败");
     }
@@ -237,9 +299,15 @@ export function DataWorkspace({
       setMessage(`没有可导入的有效记录，${result.issues.length} 条校验问题`);
       return;
     }
+    if (mode === "replace") {
+      const confirmation = { currentCount: students.length, nextCount: next.length };
+      setReplaceConfirmation(confirmation);
+      if (!confirmReplace(confirmation)) return;
+    } else onAppendStudents(next);
     if (mode === "replace") onReplaceStudents(next);
-    else onAppendStudents(next);
     setReviewRows([]);
+    setExcelRecognition(null);
+    setUnparsedCount(0);
     setImportText("");
     setMessage(`已${mode === "replace" ? "替换" : "追加"} ${next.length} 条学生数据`);
   };
@@ -249,6 +317,7 @@ export function DataWorkspace({
       setMessage("请先粘贴名单");
       return;
     }
+    setExcelRecognition(null);
     setIsAiParsing(true);
     let parsed;
     let sourceLabel: string;
@@ -281,7 +350,7 @@ export function DataWorkspace({
     <div className="data-workspace">
       <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />
 
-      <section className="data-expression" aria-labelledby="data-expression-title">
+      {!hideDataExpression && <section className="data-expression" aria-labelledby="data-expression-title">
         <PanelHeader id="data-expression-title" title="地图呈现方式" meta="同一份名单，实时切换" />
         <SegmentedControl
           label="地图呈现方式"
@@ -296,7 +365,7 @@ export function DataWorkspace({
           onChange={onChangeDataView}
           className="data-expression__control"
         />
-      </section>
+      </section>}
 
       <div className="data-summary">
         <div>
@@ -356,6 +425,19 @@ export function DataWorkspace({
             searchOptions={draft.locationScope === "international" ? () => [] : cityOptions}
           />
         </label>
+        {draft.locationScope !== "international" && (
+          <label>
+            省份
+            <SearchCombobox
+              label="新增省份"
+              value={draft.province ?? ""}
+              allowFreeInput
+              onChange={(value) => setDraft(updateStudentDraft(draft, "province", value))}
+              placeholder="浙江省"
+              searchOptions={provinceOptions}
+            />
+          </label>
+        )}
         <ActionButton onClick={addDraftStudent}>
           <Plus size={16} /> 新增学生
         </ActionButton>
@@ -398,14 +480,43 @@ export function DataWorkspace({
                 icon={<FileUp size={16} aria-hidden />}
                 onFile={(file) => { void handleExcelFile(file); }}
               />
+              {!hideTemplateDownload && <CompactButton
+                variant="secondary"
+                aria-label="下载学生数据 XLSX 模板"
+                icon={<Download size={16} aria-hidden />}
+                onClick={() => { void downloadImportTemplate(); }}
+              >
+                下载 XLSX 模板
+              </CompactButton>}
             </div>
           </>
         )}
       </div>
 
+      {excelRecognition?.headerRowIndex !== undefined && (
+        <section className="import-recognition" aria-label="Excel 表头识别结果">
+          <PanelHeader title="表头识别" meta={`第 ${excelRecognition.headerRowIndex + 1} 行`} />
+          <div className="import-recognition__grid">
+            {excelRecognition.columnMappings.map((mapping) => (
+              <div key={mapping.field} className="import-recognition__row">
+                <span>{mapping.sourceHeader}</span>
+                <strong>{studentColumnLabels[mapping.field]}</strong>
+                <small>{mapping.samples.length > 0 ? mapping.samples.join("、") : "暂无代表数据"}</small>
+              </div>
+            ))}
+          </div>
+          {excelRecognition.unmappedHeaders.length > 0 && (
+            <p className="import-recognition__note">未使用：{excelRecognition.unmappedHeaders.join("、")}</p>
+          )}
+          {excelRecognition.missingRequiredFields.length > 0 && (
+            <p className="import-recognition__warning">缺少必填列：{excelRecognition.missingRequiredFields.map((field) => studentColumnLabels[field]).join("、")}</p>
+          )}
+        </section>
+      )}
+
       {reviewRows.length > 0 && (
         <div className="import-review">
-          <PanelHeader title="确认候选" meta={`${reviewRows.filter((row) => row.accepted).length} 条勾选`} />
+          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedCount} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}`} />
           <div className="review-list">
             {reviewRows.map((row, index) => (
               <label key={`${row.sourceLine}-${index}`} className="review-row">
@@ -442,6 +553,7 @@ export function DataWorkspace({
         </div>
       )}
 
+      {replaceConfirmation && <p className="panel-note data-message">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</p>}
       {message && <p className="panel-note data-message">{message}</p>}
 
       <div className="student-actions">
@@ -494,13 +606,13 @@ export function DataWorkspace({
                     <>
                       <td><input aria-label="编辑学生名称" value={editingDraft.name} placeholder="姓名" onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "name", event.target.value))} /></td>
                       <td><input aria-label="编辑就读院校" value={editingDraft.university} placeholder="就读院校" onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "university", event.target.value))} /></td>
-                      <td><SearchCombobox label="编辑城市" value={editingDraft.city} allowFreeInput onChange={(value) => setEditingDraft(updateStudentDraft(editingDraft, "city", value))} searchOptions={cityOptions} /></td>
+                      <td><SearchCombobox label="编辑城市" value={editingDraft.city} allowFreeInput portal onChange={(value) => setEditingDraft(updateStudentDraft(editingDraft, "city", value))} searchOptions={cityOptions} /></td>
                       <td>
                         <select aria-label="编辑学生去向类型" value={editingDraft.locationScope ?? "china"} onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "locationScope", event.target.value))}>
                           <option value="china">中国</option>
                           <option value="international">海外</option>
                         </select>
-                        {editingDraft.locationScope !== "international" && <SearchCombobox label="编辑省份" value={editingDraft.province ?? ""} allowFreeInput onChange={(value) => setEditingDraft(updateStudentDraft(editingDraft, "province", value))} searchOptions={provinceOptions} />}
+                        {editingDraft.locationScope !== "international" && <SearchCombobox label="编辑省份" value={editingDraft.province ?? ""} allowFreeInput portal onChange={(value) => setEditingDraft(updateStudentDraft(editingDraft, "province", value))} searchOptions={provinceOptions} />}
                       </td>
                       <td><div className="student-row__buttons">
                         <IconButton label={`保存 ${student.name}`} icon={<Check size={14} />} onClick={(event) => { event.stopPropagation(); saveEditing(student); }} />
@@ -512,7 +624,48 @@ export function DataWorkspace({
                       <td>{student.name}</td>
                       <td>{student.university}</td>
                       <td>{student.city}</td>
-                      <td className={student.locationScope === "international" ? "" : location.status === "unresolved" ? "is-unresolved" : ""}>{student.locationScope === "international" ? "海外" : student.province || location.province || "未匹配"}</td>
+                      <td className={student.locationScope === "international" ? "" : location.status === "unresolved" ? "is-unresolved" : ""}>
+                        {student.locationScope === "international" ? "海外" : provinceEditingId === student.id ? (
+                          <div className="student-province-editor">
+                            <SearchCombobox
+                              label={`编辑 ${student.name} 的省份`}
+                              value={provinceDraft}
+                              allowFreeInput
+                              portal
+                              onChange={setProvinceDraft}
+                              searchOptions={provinceOptions}
+                            />
+                            <IconButton label={`保存 ${student.name} 省份`} icon={<Check size={14} />} onClick={(event) => {
+                              event.stopPropagation();
+                              onUpdateStudent(student.id, { province: provinceDraft.trim() || undefined });
+                              setProvinceEditingId(null);
+                              setProvinceDraft("");
+                            }} />
+                            <IconButton label={`取消编辑 ${student.name} 省份`} icon={<X size={14} />} variant="ghost" onClick={(event) => {
+                              event.stopPropagation();
+                              setProvinceEditingId(null);
+                              setProvinceDraft("");
+                            }} />
+                          </div>
+                        ) : (
+                          <span className="student-province-value">
+                            {student.province || location.province || "未匹配"}
+                            <button
+                              type="button"
+                              className="student-province-edit"
+                              aria-label={`修改 ${student.name} 省份`}
+                              title="修改省份（支持自定义省份名）"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setProvinceDraft(student.province ?? "");
+                                setProvinceEditingId(student.id);
+                              }}
+                            >
+                              <Pencil size={11} aria-hidden />
+                            </button>
+                          </span>
+                        )}
+                      </td>
                       <td><div className="student-row__buttons">
                         <IconButton label={`编辑 ${student.name}`} icon={<Pencil size={14} />} onClick={(event) => { event.stopPropagation(); startEditing(student); }} />
                         <IconButton label={`${isVisible ? "隐藏" : "显示"} ${student.name}`} icon={isVisible ? <EyeOff size={14} /> : <Eye size={14} />} onClick={(event) => { event.stopPropagation(); onToggleVisibility(student.id); }} />

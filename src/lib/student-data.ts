@@ -78,8 +78,10 @@ export function resolveStudentLocation(student: Student): {
     const province = resolveProvinceName(student.province);
     return {
       city: student.city,
-      province,
-      status: province ? "resolved" : "unresolved",
+      // 手动指定省份视为已定位：已知别名归一化为标准省名，自定义省份保留原名称，
+      // 使其可以正常进入省份卡片等数据视图，而不是一直标记为未匹配。
+      province: province || student.province.trim(),
+      status: "resolved",
     };
   }
   return resolveCityLocation(student.city);

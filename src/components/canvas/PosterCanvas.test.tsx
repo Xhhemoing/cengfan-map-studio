@@ -1,16 +1,57 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { PosterCanvas } from "./PosterCanvas";
 import { createProjectDocument } from "../../lib/project-document";
 import { sampleStudents, type Student } from "../../lib/project-data";
+import { cardLayoutCache } from "../../lib/card-layout-cache";
+import { createDefaultDisplayFrame } from "../../lib/display-frame";
 
 const students: Student[] = [
   { id: "visible", name: "可见", university: "北京大学", city: "北京市", visibility: true },
   { id: "hidden", name: "隐藏", university: "清华大学", city: "北京市", visibility: false },
 ];
 
+class CanvasFakeWorker {
+  static instances: CanvasFakeWorker[] = [];
+
+  onmessage: ((event: MessageEvent) => void) | null = null;
+
+  onerror: ((event: ErrorEvent) => void) | null = null;
+
+  constructor() {
+    CanvasFakeWorker.instances.push(this);
+  }
+
+  postMessage(): void {}
+
+  terminate(): void {}
+}
+
+const globalWithWorker = globalThis as unknown as { Worker?: unknown };
+const originalWorker = globalWithWorker.Worker;
+
 describe("PosterCanvas", () => {
+  afterEach(() => {
+    globalWithWorker.Worker = originalWorker;
+    cardLayoutCache.clear();
+  });
+
+  it("keeps cards present in the initial browser-worker export state", () => {
+    globalWithWorker.Worker = CanvasFakeWorker;
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
+
+    expect(container.querySelectorAll("[data-destination-card]")).toHaveLength(1);
+    expect(container.textContent).toContain("可见");
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("renders the project canvas dimensions and visible student data", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const container = document.createElement("div");
@@ -290,6 +331,30 @@ describe("PosterCanvas", () => {
     container.remove();
   });
 
+  it("uses display-frame local coordinates without changing final card placement", () => {
+    const base = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const frame = createDefaultDisplayFrame();
+    frame.fixed.items = frame.fixed.items.map((item) => item.id === "name" ? { ...item, x: 88, y: 74 } : item);
+    base.cards = { ...base.cards, positions: { 北京市: { x: 700, y: 260 } }, displayFrame: frame };
+    const moved = { ...base, cards: { ...base.cards, displayFrame: { ...frame, fixed: { items: frame.fixed.items.map((item) => item.id === "name" ? { ...item, x: 132, y: 92 } : item) } } } };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<PosterCanvas project={base} exportMode />));
+    const firstCard = container.querySelector('[data-destination-card="北京市"]')!;
+    const firstTransform = firstCard.getAttribute("transform");
+    const firstNameY = firstCard.querySelector('[data-card-row-line]')?.getAttribute("y");
+
+    flushSync(() => root.render(<PosterCanvas project={moved} exportMode />));
+    const secondCard = container.querySelector('[data-destination-card="北京市"]')!;
+    expect(secondCard.getAttribute("transform")).toBe(firstTransform);
+    expect(secondCard.querySelector('[data-card-row-line]')?.getAttribute("y")).not.toBe(firstNameY);
+    expect(secondCard.querySelector("rect")?.getAttribute("data-display-frame-mode")).toBe("fixed");
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("wraps overflowing card rows and grows the card to contain every line", () => {
     const project = createProjectDocument({
       students: [{
@@ -349,6 +414,35 @@ describe("PosterCanvas", () => {
 
     flushSync(() => root.unmount());
     container.remove();
+  });
+
+  it("reuses the layout result for cosmetic changes but invalidates geometry changes", () => {
+    cardLayoutCache.clear();
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
+    expect(cardLayoutCache.size).toBe(1);
+
+    const cosmetic = {
+      ...project,
+      canvas: { ...project.canvas, backgroundColor: "#f7f2e8" },
+      cards: { ...project.cards, connectorColor: "#123456" },
+    };
+    flushSync(() => root.render(<PosterCanvas project={cosmetic} exportMode />));
+    expect(cardLayoutCache.size).toBe(1);
+
+    const geometry = {
+      ...cosmetic,
+      cards: { ...cosmetic.cards, maxWidth: cosmetic.cards.maxWidth + 20 },
+    };
+    flushSync(() => root.render(<PosterCanvas project={geometry} exportMode />));
+    expect(cardLayoutCache.size).toBe(2);
+
+    flushSync(() => root.unmount());
+    container.remove();
+    cardLayoutCache.clear();
   });
 
   it("switches cards to the selected university data expression", () => {

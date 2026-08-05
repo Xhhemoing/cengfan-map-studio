@@ -499,6 +499,7 @@ export function AssetPanel({
             <p className="panel-note">从贴图标志色生成低色度浅背景，并自动避开相邻省份近似颜色；手动纯色不会被覆盖。</p>
             <details className="asset-panel__texture-layout asset-panel__advanced" aria-label="省份贴图比例">
               <summary>高级贴图设置</summary>
+              <div className="property-panel__advanced-title">高级贴图设置<small>位置 · 比例依据 · 适配方式 · 统一尺寸 · 透明度</small></div>
               <div className="province-inspector__texture-position">
                 <span>位置 X {Math.round(layout.offsetX ?? 0)} · Y {Math.round(layout.offsetY ?? 0)}</span>
                 <CompactButton icon={<RotateCcw size={14} aria-hidden />} variant="ghost" disabled={!activeTexture} onClick={() => patchActiveTextureLayout({ offsetX: 0, offsetY: 0 })}>恢复居中</CompactButton>
@@ -526,7 +527,7 @@ export function AssetPanel({
                 disabled={!activeTexture}
                 onCommit={(value) => patchActiveTextureLayout({ scale: value / 100 })}
               />
-              <label className="asset-panel__matting" htmlFor="asset-texture-uniform-enabled">
+              <label className="boolean-control checkbox-row" htmlFor="asset-texture-uniform-enabled">
                 <input
                   id="asset-texture-uniform-enabled"
                   type="checkbox"
@@ -572,7 +573,7 @@ export function AssetPanel({
                   onChange={(event) => patchActiveTextureLayout({ opacity: Number(event.target.value) / 100 })}
                 />
               </label>
-              <label className="asset-panel__matting" htmlFor="asset-texture-overflow">
+              <label className="boolean-control checkbox-row" htmlFor="asset-texture-overflow">
                 <input
                   id="asset-texture-overflow"
                   type="checkbox"

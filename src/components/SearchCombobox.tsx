@@ -1,4 +1,5 @@
-import { type KeyboardEvent, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { type CSSProperties, type KeyboardEvent, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 export interface SearchComboboxOption {
   value: string;
@@ -12,6 +13,7 @@ export function SearchCombobox({
   placeholder,
   searchOptions,
   allowFreeInput,
+  portal = false,
   onChange,
 }: {
   label: string;
@@ -19,18 +21,53 @@ export function SearchCombobox({
   placeholder?: string;
   searchOptions: (query: string) => SearchComboboxOption[];
   allowFreeInput?: boolean;
+  portal?: boolean;
   onChange: (value: string) => void;
 }) {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  const [portalStyle, setPortalStyle] = useState<CSSProperties | null>(null);
   const options = useMemo(() => (value.trim() ? searchOptions(value) : []), [searchOptions, value]);
   const displayOptions = useMemo(() => {
     if (!allowFreeInput || !value.trim()) return options;
     if (options.some((option) => option.value === value)) return options;
     return [{ value, label: value, detail: "使用自定义" }, ...options];
   }, [options, value, allowFreeInput]);
+
+  const updatePortalPosition = useCallback(() => {
+    const input = inputRef.current;
+    if (!portal || !isOpen || displayOptions.length === 0 || !input) return;
+    const rect = input.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    const spaceBelow = Math.max(0, viewportHeight - rect.bottom - 8);
+    const spaceAbove = Math.max(0, rect.top - 8);
+    const placeAbove = spaceAbove > spaceBelow && spaceBelow < 120;
+    const availableSpace = placeAbove ? spaceAbove : spaceBelow;
+    const maxHeight = Math.max(1, Math.min(168, availableSpace));
+    const top = placeAbove ? Math.max(8, rect.top - maxHeight - 4) : rect.bottom + 4;
+    setPortalStyle({
+      left: Math.max(8, rect.left),
+      maxHeight,
+      top,
+      width: rect.width,
+    });
+  }, [displayOptions.length, isOpen, portal]);
+
+  useLayoutEffect(() => {
+    if (!portal || !isOpen || displayOptions.length === 0) {
+      return;
+    }
+    updatePortalPosition();
+    const handleViewportChange = () => updatePortalPosition();
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [displayOptions.length, isOpen, portal, updatePortalPosition]);
 
 
   const selectOption = (option: SearchComboboxOption) => {
@@ -76,6 +113,31 @@ export function SearchCombobox({
     }
   };
 
+  const listbox = (
+    <div
+      id={listId}
+      className={`search-combobox__list${portal ? " search-combobox__list--portal" : ""}`}
+      role="listbox"
+      style={portal ? portalStyle ?? undefined : undefined}
+    >
+      {displayOptions.map((option, index) => (
+        <button
+          id={`${listId}-option-${index}`}
+          key={option.value}
+          type="button"
+          role="option"
+          aria-selected={activeIndex === index}
+          className={activeIndex === index ? "is-active" : undefined}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => selectOption(option)}
+        >
+          <span>{option.label}</span>
+          {option.detail && <small> · {option.detail}</small>}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div className="search-combobox">
       <input
@@ -99,25 +161,7 @@ export function SearchCombobox({
         }}
         onKeyDown={handleKeyDown}
       />
-      {isOpen && displayOptions.length > 0 && (
-        <div id={listId} className="search-combobox__list" role="listbox">
-          {displayOptions.map((option, index) => (
-            <button
-              id={`${listId}-option-${index}`}
-              key={option.value}
-              type="button"
-              role="option"
-              aria-selected={activeIndex === index}
-              className={activeIndex === index ? "is-active" : undefined}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => selectOption(option)}
-            >
-              <span>{option.label}</span>
-              {option.detail && <small> · {option.detail}</small>}
-            </button>
-          ))}
-        </div>
-      )}
+      {isOpen && displayOptions.length > 0 && (portal ? portalStyle ? createPortal(listbox, document.body) : null : listbox)}
     </div>
   );
 }

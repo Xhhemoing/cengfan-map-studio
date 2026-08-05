@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, Maximize2, RotateCcw } from "lucide-react";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { createId } from "../../lib/ids";
 import { autoFitAlignment } from "../../lib/map-alignment";
 import type { MapImageAlignment, MapSettings, MapRenderSource } from "../../lib/scene-document";
@@ -27,6 +27,23 @@ function loadImageSize(src: string): Promise<{ width: number; height: number }> 
   });
 }
 
+function EdgeStylePreview({ style, className }: { style: EdgeStyle; className?: string }) {
+  return (
+    <svg viewBox="0 0 72 18" aria-hidden="true" className={className}>
+      {style === "solid" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
+      {style === "dashed" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.2" fill="none" strokeDasharray="8 5" strokeLinecap="round" />}
+      {style === "dotted" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.6" fill="none" strokeDasharray="0.1 5" strokeLinecap="round" />}
+      {style === "double" && <><path d="M4 9 H68" stroke="currentColor" strokeWidth="5" fill="none" opacity="0.28" strokeLinecap="round" /><path d="M4 9 H68" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" /></>}
+      {style === "soft-glow" && <><path d="M4 9 H68" stroke="currentColor" strokeWidth="6" fill="none" opacity="0.25" strokeLinecap="round" /><path d="M4 9 H68" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" /></>}
+      {style === "stitch" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.1" fill="none" strokeDasharray="3 4 1 4" strokeLinecap="round" />}
+      {style === "rail" && <><path d="M4 9 H68" stroke="currentColor" strokeWidth="5" fill="none" opacity="0.3" /><path d="M4 9 H68" stroke="currentColor" strokeWidth="1.5" fill="none" strokeDasharray="7 4" /></>}
+      {style === "wave" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.1" fill="none" strokeDasharray="4 2 1 2" strokeLinecap="round" />}
+      {style === "ornament" && <><path d="M4 9 H68" stroke="currentColor" strokeWidth="4.5" fill="none" opacity="0.22" strokeLinecap="round" /><path d="M4 9 H68" stroke="currentColor" strokeWidth="2" fill="none" strokeDasharray="10 3 2 3" strokeLinecap="round" /></>}
+      {style === "ink" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.4" fill="none" strokeDasharray="12 1.5 4 1.5" strokeLinecap="round" />}
+    </svg>
+  );
+}
+
 export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible = false }: {
   map: MapSettings;
   onPatch: (patch: Partial<MapSettings>) => void;
@@ -50,6 +67,7 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
   const selectedEdge = EDGE_STYLE_OPTIONS.find((option) => option.id === edgeStyle) ?? EDGE_STYLE_OPTIONS[0]!;
   const provinceNames = getProvinceNames();
   const [selectedProvince, setSelectedProvince] = useState("");
+  const [isEdgeStylePickerOpen, setIsEdgeStylePickerOpen] = useState(false);
   const heatScale = normalizeHeatScale(map.heatScale);
   const heatPreview = heatPreviewSteps(heatScale);
   const patchHeatScale = (patch: Partial<typeof heatScale>) => {
@@ -219,13 +237,14 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
         </div>}
         <p className="property-panel__hint">单独颜色优先于热力变色；也可直接点击画布省份进入更完整的贴图设置。</p>
       </fieldset>
-      <label htmlFor="map-collapse-south-sea">南海诸岛折叠成框
+      <label htmlFor="map-collapse-south-sea" className="boolean-control checkbox-row">
         <input
           id="map-collapse-south-sea"
           type="checkbox"
           checked={map.collapseSouthChinaSea === true}
           onChange={(event) => onPatch({ collapseSouthChinaSea: event.target.checked })}
         />
+        <span>南海诸岛折叠成框</span>
       </label>
     </>
   );
@@ -280,73 +299,69 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
         </label>
         <div className="map-edge-styles" aria-label="省界线纹理">
         <div className="asset-section__heading"><strong>省界线纹理</strong><small>{selectedEdge.description}</small></div>
-        <label htmlFor="map-edge-style">边界风格
-          <select
-            id="map-edge-style"
-            value={edgeStyle}
-            onChange={(event) => onPatch({ edgeStyle: event.target.value as EdgeStyle })}
-          >
-            {EDGE_STYLE_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <div className="map-edge-style-grid" role="listbox" aria-label="快速选择省界纹理">
-          {EDGE_STYLE_OPTIONS.map((option) => (
+        <div className="map-edge-style-control map-edge-style-control--style">
+          <span className="map-edge-style-control__label">边界风格</span>
+          <div className="map-edge-style-control__value">
             <button
-              key={option.id}
               type="button"
-              role="option"
-              aria-selected={edgeStyle === option.id}
-              className={edgeStyle === option.id ? "map-edge-style-chip is-active" : "map-edge-style-chip"}
-              title={option.description}
-              onClick={() => onPatch({ edgeStyle: option.id })}
+              className="map-edge-style-trigger"
+              aria-label="打开边界风格选择器"
+              aria-expanded={isEdgeStylePickerOpen}
+              aria-controls="map-edge-style-dial"
+              title={selectedEdge.description}
+              onClick={() => setIsEdgeStylePickerOpen((open) => !open)}
             >
-              <svg viewBox="0 0 72 18" aria-hidden="true" className="map-edge-style-chip__preview">
-                {option.id === "solid" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.2" fill="none" strokeLinecap="round" />}
-                {option.id === "dashed" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.2" fill="none" strokeDasharray="8 5" strokeLinecap="round" />}
-                {option.id === "dotted" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.6" fill="none" strokeDasharray="0.1 5" strokeLinecap="round" />}
-                {option.id === "double" && (
-                  <>
-                    <path d="M4 9 H68" stroke="currentColor" strokeWidth="5" fill="none" opacity="0.28" strokeLinecap="round" />
-                    <path d="M4 9 H68" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" />
-                  </>
-                )}
-                {option.id === "soft-glow" && (
-                  <>
-                    <path d="M4 9 H68" stroke="currentColor" strokeWidth="6" fill="none" opacity="0.25" strokeLinecap="round" />
-                    <path d="M4 9 H68" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
-                  </>
-                )}
-                {option.id === "stitch" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.1" fill="none" strokeDasharray="3 4 1 4" strokeLinecap="round" />}
-                {option.id === "rail" && (
-                  <>
-                    <path d="M4 9 H68" stroke="currentColor" strokeWidth="5" fill="none" opacity="0.3" />
-                    <path d="M4 9 H68" stroke="currentColor" strokeWidth="1.5" fill="none" strokeDasharray="7 4" />
-                  </>
-                )}
-                {option.id === "wave" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.1" fill="none" strokeDasharray="4 2 1 2" strokeLinecap="round" />}
-                {option.id === "ornament" && (
-                  <>
-                    <path d="M4 9 H68" stroke="currentColor" strokeWidth="4.5" fill="none" opacity="0.22" strokeLinecap="round" />
-                    <path d="M4 9 H68" stroke="currentColor" strokeWidth="2" fill="none" strokeDasharray="10 3 2 3" strokeLinecap="round" />
-                  </>
-                )}
-                {option.id === "ink" && <path d="M4 9 H68" stroke="currentColor" strokeWidth="2.4" fill="none" strokeDasharray="12 1.5 4 1.5" strokeLinecap="round" />}
-              </svg>
-              <span>{option.label}</span>
+              <EdgeStylePreview style={edgeStyle} className="map-edge-style-trigger__preview" />
             </button>
-          ))}
+            <span className="map-edge-style-control__name">{selectedEdge.label}</span>
+          </div>
+          {isEdgeStylePickerOpen && <div id="map-edge-style-dial" className="map-edge-style-dial" role="listbox" aria-label="边界风格圆盘">
+            {EDGE_STYLE_OPTIONS.map((option, index) => (
+              <button
+                key={option.id}
+                type="button"
+                role="option"
+                aria-label={`选择${option.label}边界风格`}
+                aria-selected={edgeStyle === option.id}
+                className={edgeStyle === option.id ? "map-edge-style-dial__option is-active" : "map-edge-style-dial__option"}
+                data-edge-style-index={index}
+                style={{ "--edge-style-index": index, "--edge-style-count": EDGE_STYLE_OPTIONS.length } as CSSProperties}
+                title={option.description}
+                onClick={() => {
+                  onPatch({ edgeStyle: option.id });
+                  setIsEdgeStylePickerOpen(false);
+                }}
+              >
+                <EdgeStylePreview style={option.id} className="map-edge-style-dial__preview" />
+                <span>{option.label}</span>
+              </button>
+            ))}
+          </div>}
         </div>
-        {number("edgeWidth", map.edgeWidth ?? 1, 0, 20, 0.5, "边界粗细")}
-        <label htmlFor="map-edge-color">边界色
+        <label htmlFor="map-edgeWidth" className="map-edge-style-control">
+          <span className="map-edge-style-control__label">边界粗细</span>
+          <DeferredInput
+            id="map-edgeWidth"
+            type="number"
+            min={0}
+            max={20}
+            step={0.5}
+            value={map.edgeWidth ?? 1}
+            onCommit={(draft) => {
+              const next = Number(draft);
+              if (Number.isFinite(next) && next >= 0 && next <= 20) onPatch({ edgeWidth: next });
+            }}
+          />
+        </label>
+        <label htmlFor="map-edge-color" className="map-edge-style-control">
+          <span className="map-edge-style-control__label">边界色</span>
           <DeferredInput id="map-edge-color" type="color" value={map.edgeColor} onCommit={(edgeColor) => onPatch({ edgeColor })} />
         </label>
       </div></>}
 
       {showGlobal && <>
         {collapsible
-          ? <details className="property-panel__advanced"><summary>高级设置</summary>{advancedGlobalControls}</details>
+          ? <details className="property-panel__advanced"><summary>高级设置：热力变色、单独省份颜色、南海诸岛</summary><div className="property-panel__advanced-title">高级设置<small>热力变色 · 单独省份颜色 · 南海诸岛折叠</small></div>{advancedGlobalControls}</details>
           : advancedGlobalControls}
         <label htmlFor="map-land-color">底图色
         <DeferredInput id="map-land-color" type="color" value={map.landColor} onCommit={(landColor) => onPatch({ landColor })} />
@@ -354,8 +369,9 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
       <label htmlFor="map-active-color">强调色
         <DeferredInput id="map-active-color" type="color" value={map.activeColor} onCommit={(activeColor) => onPatch({ activeColor })} />
       </label>
-      <label htmlFor="map-labels">省份标签
+      <label htmlFor="map-labels" className="boolean-control checkbox-row">
         <input id="map-labels" type="checkbox" checked={map.showProvinceLabels} onChange={(event) => onPatch({ showProvinceLabels: event.target.checked })} />
+        <span>省份标签</span>
       </label>
       <label htmlFor="map-render-source">地图显示
         <select id="map-render-source" value={renderSource.kind} onChange={(event) => {
@@ -388,13 +404,14 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
               <option value="overlay">覆盖叠加</option>
             </select>
           </label>
-          <label htmlFor="map-image-clip">裁剪到省界
+          <label htmlFor="map-image-clip" className="boolean-control checkbox-row">
             <input
               id="map-image-clip"
               type="checkbox"
               checked={renderSource.clipToMap === true}
               onChange={(event) => patchImage({ clipToMap: event.target.checked })}
             />
+            <span>裁剪到省界</span>
           </label>
           <label htmlFor="map-image-fit">图片填充
             <select
