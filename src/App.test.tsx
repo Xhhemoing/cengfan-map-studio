@@ -920,6 +920,35 @@ describe("App student editing", () => {
     expect(container.querySelector<HTMLInputElement>("#map-collapse-south-sea")?.checked).toBe(false);
   });
 
+  it("opens the project-level global data workbench from the roster workflow step", () => {
+    const container = renderApp();
+    openGlobalData(container);
+
+    expect(container.querySelector('main[aria-label="全局数据工作台"]')).not.toBeNull();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(5);
+    expect(container.textContent).toContain("数据总览");
+  });
+
+  it("applies a presentation change from the global data workbench to the poster", () => {
+    const container = renderApp();
+    openGlobalData(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="数据呈现"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="切换为地图图钉"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+
+    expect(container.querySelectorAll("[data-student-pin]")).toHaveLength(12);
+  });
+
+  it("opens the same global data workbench from global settings", () => {
+    const container = renderApp();
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
+    click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-cards"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局数据"]')!);
+
+    expect(container.querySelector('main[aria-label="全局数据工作台"]')).not.toBeNull();
+    expect(container.querySelector(".student-table")).not.toBeNull();
+  });
+
   it("organizes the actual editor into six user workflow workspaces", () => {
     const container = renderApp();
     const tabs = container.querySelector(".topbar .workflow-stage-stepper")!;
