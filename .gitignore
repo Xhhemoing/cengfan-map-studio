@@ -8,6 +8,7 @@ coverage/
 .DS_Store
 .data/
 .codebase-memory/
+.worktrees/
 
 # Local agent state, transient probes, and development-server output.
 .pi/
