@@ -72,7 +72,7 @@ AI 端点上限 512KB（`server/index.ts:147`），而 `AssetElement.src`、`Pro
 
 目标体积 < 8KB（实测约 1.5KB），并使 system prompt 与 digest 高度可缓存。
 
-## 工具集（14 个）4 个只读 + 10 个写入）
+## 工具集（15 个）4 个只读 + 11 个写入）
 
 采用粗粒度 + 自描述 schema：属性名**不写进**工具定义，由模型按需用 `describe_capability` 查询。这使得工具定义小、缓存友好，同时天然覆盖数百个属性——因为补丁直接进 `updateSceneTarget`。
 
@@ -90,6 +90,7 @@ AI 端点上限 512KB（`server/index.ts:147`），而 `AssetElement.src`、`Pro
 | 工具 | 映射 |
 |---|---|
 | `update_canvas` / `update_map` / `update_province` / `update_cards` / `update_guests` / `update_text` / `update_asset` | 全部落到现有 `updateSceneTarget` |
+| `set_data_view` | 映射到 `applyDataViewChange`（`catalog-usage.ts`），而非 `update_cards`。`dataView` 字段挂在 `ProjectDocument` 上，不在 `SceneDocument` 七域内，`updateSceneTarget` 触不到它；直接改 `cards.grouping` 会绕过 `applyDataViewChange` 里“保留 positions”的特殊逻辑。取值：`province / pins / heat / city / university` |
 | `auto_layout` | `solveCardLayout`；**唯一**允许影响 `cards.positions` 的工具 |
 | `manage_students` | 显隐、去重、改写事实字段（见风险分级） |
 | `finish` | 交回中文总结 |
