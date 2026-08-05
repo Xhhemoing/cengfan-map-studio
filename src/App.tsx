@@ -39,7 +39,6 @@ import { AgentAssistant } from "./components/AgentAssistant";
 
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
-import { GlobalDataScreen, type GlobalDataView } from "./components/GlobalDataScreen";
 import "./components/workflow-workspaces.css";
 import { GlobalSettingsScreen, type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
 import { TemplateWorkspace } from "./components/workspaces/TemplateWorkspace";
