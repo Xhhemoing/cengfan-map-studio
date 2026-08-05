@@ -85,12 +85,12 @@
 
 ## 已知限制与后续优先级
 
-1. **导出失败集成覆盖**：当前 App 级失败回归以 SVG 为主；PNG 异步转换失败和工程包下载失败仍应各补一条集成测试。生产实现已有 try/catch 和统一状态，但这是覆盖风险，不记录为已验证完成。
+1. **导出失败集成覆盖**：App 级回归现在覆盖 SVG 下载、PNG 转换和工程包下载失败；三者都会保留最终导出工作区、当前设置和重试入口。
 2. **测试 helper 命名**：`src/App.test.tsx` 中大量历史测试仍通过兼容 helper 覆盖旧编辑器。后续应将所有旧调用显式改名为 `renderLegacyApp`，避免未来测试误以为覆盖了公共路径。
-3. **CSS 测试工具**：`extractRule` 足以验证当前格式，但不是完整 CSS parser；后续格式化 CSS 时应增强 brace-depth/whitespace 处理。
+3. **CSS 测试工具**：`extractRule` 已改为 brace-depth 解析以正确覆盖嵌套规则；它仍不是完整 CSS parser，后续涉及注释、字符串或复杂 at-rule 的测试应改用 CSS parser。
 4. **App 结构**：六个阶段的 topbar 仍有重复。可在独立任务中提取共享 workspace shell，但不应与业务行为改动同时进行。
 5. **包体积**：生产构建仍有约 1.54 MB 主 chunk 警告。建议后续独立进行路由/工作区动态加载和 XLSX 分包，不在本轮稳定化中扩大范围。
-6. **浏览器 E2E**：未安装 `@playwright/test`，因此没有声明 Playwright 覆盖。需要用户明确批准安装依赖后再增加真实浏览器窄屏与导出冒烟测试。
+6. **浏览器 E2E**：未安装 `@playwright/test`，因此没有声明 Playwright 覆盖；本次也未添加依赖。隔离 worktree 的 `npm install` 无法解析配置的 `mirrors.tencentyun.com`，网络恢复并获准安装依赖后，应增加真实浏览器的窄屏与导出冒烟测试。
 
 ## 工作区保护
 

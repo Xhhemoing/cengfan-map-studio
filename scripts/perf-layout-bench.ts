@@ -1,6 +1,6 @@
 /**
  * Micro-benchmark for the card auto-layout solver (P2-4).
- * Run with: npx tsx scripts/perf-layout-bench.ts
+ * Run with: npm run perf:layout
  */
 import { solveCardLayout, type CardLayoutInput, type CardLayoutBounds } from "../src/lib/card-layout";
 

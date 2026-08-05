@@ -12,6 +12,7 @@
     "test": "node scripts/run-heavy.mjs vitest run",
     "test:watch": "vitest",
     "lint": "node scripts/run-heavy.mjs eslint .",
+    "perf:layout": "tsx scripts/perf-layout-bench.ts",
     "preview": "npm run start"
   },
   "dependencies": {
