@@ -72,7 +72,7 @@ AI 端点上限 512KB（`server/index.ts:147`），而 `AssetElement.src`、`Pro
 
 目标体积 < 8KB（实测约 1.5KB），并使 system prompt 与 digest 高度可缓存。
 
-## 工具集（12 个）
+## 工具集（14 个）4 个只读 + 10 个写入）
 
 采用粗粒度 + 自描述 schema：属性名**不写进**工具定义，由模型按需用 `describe_capability` 查询。这使得工具定义小、缓存友好，同时天然覆盖数百个属性——因为补丁直接进 `updateSceneTarget`。
 
