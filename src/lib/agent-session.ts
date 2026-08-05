@@ -10,6 +10,63 @@ import type { ProjectDocument, ProjectTransaction } from "./project-document";
 import { updateSceneTarget, type SceneSelection } from "./scene-document";
 import type { DataViewId, Student } from "./project-data";
 import { buildProvinceSummary } from "./project-data";
+
+const MAX_TOOL_RESULT_BYTES = 16 * 1024;
+const MAX_CONVERSATION_MESSAGES = 24;
+const CLIENT_ROUND_TIMEOUT_MS = 70_000;
+const MAX_HEALTH_ISSUES = 20;
+const MAX_ASSET_RESULTS = 20;
+const MAX_LAYOUT_SAMPLES = 10;
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (utf8Bytes(value) <= maxBytes) return value;
+  let result = "";
+  for (const character of value) {
+    if (utf8Bytes(result + character) > maxBytes) break;
+    result += character;
+  }
+  return result;
+}
+
+export function compactAgentToolResult(callName: string, content: string): string {
+  let compact: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(content);
+    compact = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { ok: false, value: parsed };
+    if (callName === "auto_layout" && Array.isArray(compact.placements)) {
+      const placements = compact.placements as unknown[];
+      compact = { ok: compact.ok, placementCount: placements.length, samples: placements.slice(0, MAX_LAYOUT_SAMPLES), lostManualLayout: compact.lostManualLayout };
+    } else if (callName === "check_health" && Array.isArray(compact.issues)) {
+      const issues = compact.issues as unknown[];
+      compact = { ok: compact.ok, issueCount: issues.length, issues: issues.slice(0, MAX_HEALTH_ISSUES) };
+    } else if (callName === "find_assets" && Array.isArray(compact.assets)) {
+      compact = { ok: compact.ok, assets: compact.assets.slice(0, MAX_ASSET_RESULTS) };
+    }
+  } catch {
+    compact = { ok: false, code: "TOOL_RESULT_INVALID_JSON" };
+  }
+  const base = JSON.stringify(compact);
+  if (utf8Bytes(base) <= MAX_TOOL_RESULT_BYTES) return base;
+  const makeTruncated = (preview: string) => JSON.stringify({ ok: false, code: "TOOL_RESULT_TRUNCATED", preview });
+  let low = 0;
+  let high = base.length;
+  let best = makeTruncated("");
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = makeTruncated(truncateUtf8(base, middle));
+    if (utf8Bytes(candidate) <= MAX_TOOL_RESULT_BYTES) {
+      best = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return best;
+}
 type SceneDomain = "canvas" | "map" | "province" | "cards" | "guests" | "text" | "asset";
 
 const SCENE_DOMAIN_PROPS: Record<SceneDomain, readonly string[]> = {
@@ -68,6 +125,8 @@ interface AgentApiOutcome {
   assistantMessage?: Record<string, unknown>;
   summary?: string;
   error?: string;
+  meta?: { requestId?: string; provider?: string; model?: string; route?: "primary" | "fallback" | "local"; latencyMs?: number; attempts?: number; usage?: { totalTokens?: number }; fallbackReason?: string };
+  budget?: { usedTokens: number; maxTokens: number; rounds: number; maxRounds: number };
 }
 
 function cloneProject(project: ProjectDocument): ProjectDocument {
@@ -170,6 +229,13 @@ export class AgentSession {
   private readonly options: AgentSessionOptions;
   private readonly conversation: Array<Record<string, unknown>> = [];
   private _steps: AgentStep[] = [];
+  private activeController: AbortController | null = null;
+  private activeRun: Promise<{ kind: "finish" | "tool-rejected" | "failed" | "cancelled"; summary?: string; error?: string }> | null = null;
+  private completed = false;
+  private budget = { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: 20 };
+  private taskId: string | undefined;
+  private budgetReceipt: string | undefined;
+  private _metrics = { rounds: 0, usedTokens: 0, route: undefined as "primary" | "fallback" | "local" | undefined, provider: undefined as string | undefined, fallbackReason: undefined as string | undefined };
 
   constructor(project: ProjectDocument, options: AgentSessionOptions) {
     this.shadow = cloneProject(project);
@@ -184,13 +250,65 @@ export class AgentSession {
     return [...this._steps];
   }
 
+  get metrics() {
+    return { ...this._metrics };
+  }
+
+  get canContinue(): boolean {
+    return this.completed && !this.activeRun;
+  }
+
+  cancel(): void {
+    this.activeController?.abort();
+  }
+
   private validateClientCall(call: AgentToolCall): string | null {
+    if (call.name === "manage_students" && call.arguments.action === "update_fact") {
+      const fields = call.arguments.fields;
+      if (!fields || typeof fields !== "object" || Array.isArray(fields)) return JSON.stringify({ ok: false, code: "TOOL_ARGUMENTS_INVALID", tool: call.name, message: "fields 必须是对象" });
+      const fieldRecord = fields as Record<string, unknown>;
+      const unknownProps = Object.keys(fieldRecord).filter((key) => !["name", "university", "city"].includes(key));
+      if (unknownProps.length > 0) return JSON.stringify({ ok: false, code: "TOOL_ARGUMENTS_INVALID", tool: call.name, unknownProps, allowedProps: ["name", "university", "city"], message: "update_fact 只允许修改 name、university、city" });
+      if (Object.values(fieldRecord).some((value) => typeof value !== "string" || !value.trim() || value.trim().length > 200)) return JSON.stringify({ ok: false, code: "TOOL_ARGUMENTS_INVALID", tool: call.name, message: "update_fact 字段值必须是非空字符串且 trim 后不超过 200 个字符" });
+    }
     const patch = patchForTool(call.name, call.arguments);
     if (!patch) return null;
     const validation = validateScenePatch(patch.domain, patch.patch);
     if (!validation.ok) return JSON.stringify({ ok: false, code: "PATCH_REJECTED", ...validation.error });
     if (call.name === "update_asset" && "src" in patch.patch) return JSON.stringify({ ok: false, code: "PROTECTED_FIELD", field: "src" });
     return null;
+  }
+
+  private compactToolResult(callName: string, content: string): string {
+    return compactAgentToolResult(callName, content);
+  }
+
+  private compactConversation(): void {
+    if (this.conversation.length <= MAX_CONVERSATION_MESSAGES) return;
+    const groups: Array<{ start: number; end: number }> = [];
+    for (let index = 0; index < this.conversation.length; index += 1) {
+      const message = this.conversation[index];
+      if (message?.role !== "assistant" || !Array.isArray(message.tool_calls)) continue;
+      const ids = new Set(message.tool_calls.map((call) => (call as { id?: unknown }).id).filter((id): id is string => typeof id === "string"));
+      let end = index + 1;
+      while (end < this.conversation.length && this.conversation[end]?.role === "tool") {
+        ids.delete(String(this.conversation[end]?.tool_call_id ?? ""));
+        end += 1;
+      }
+      if (ids.size === 0) groups.push({ start: index, end });
+      index = end - 1;
+    }
+    const keepCount = MAX_CONVERSATION_MESSAGES - 1;
+    const minimumCut = Math.max(1, this.conversation.length - keepCount);
+    const preferredCut = groups.length > 4 ? groups[groups.length - 4]!.start : minimumCut;
+    const cut = Array.from({ length: this.conversation.length - preferredCut + 1 }, (_, offset) => preferredCut + offset)
+      .find((candidate) => groups.every((group) => candidate <= group.start || candidate >= group.end))
+      ?? this.conversation.length;
+    const removed = this.conversation.slice(0, cut);
+    this.conversation.splice(0, cut, {
+      role: "user",
+      content: `会话摘要：已压缩 ${removed.length} 条较早消息${groups.length > 0 ? "与完整工具回合" : "连续对话"}，当前影子工程状态保持不变。`,
+    });
   }
 
   private execute(call: AgentToolCall): AgentToolResult {
@@ -269,48 +387,112 @@ export class AgentSession {
     }
   }
 
-  async run(message: string): Promise<{ kind: "finish" | "tool-rejected" | "failed"; summary?: string; error?: string }> {
-    this.conversation.length = 0;
+  async run(message: string, options: { signal?: AbortSignal; continue?: boolean } = {}): Promise<{ kind: "finish" | "tool-rejected" | "failed" | "cancelled"; summary?: string; error?: string }> {
+    if (this.activeRun) throw new Error("Agent 会话正在进行中");
+    if (options.signal?.aborted) return { kind: "cancelled" };
+    if (!options.continue) {
+      this.conversation.length = 0;
+      this.completed = false;
+      this.budget = { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: 20 };
+      this.taskId = undefined;
+      this.budgetReceipt = undefined;
+    }
     this.conversation.push({ role: "user", content: message });
-    for (let round = 0; round < MAX_ROUNDS; round += 1) {
-      const response = await fetch(this.options.endpoint ?? "/api/ai/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation }),
-      });
-      if (!response.ok) return { kind: "failed", error: `Agent 接口错误：${response.status}` };
-      const outcome = await response.json() as AgentApiOutcome;
-      if (outcome.kind === "failed") return { kind: "failed", error: outcome.error ?? "Agent 失败" };
-      if (outcome.kind === "finish") return { kind: "finish", summary: outcome.summary ?? "已完成。" };
-      if (outcome.assistantMessage) this.conversation.push(outcome.assistantMessage);
-      if (outcome.kind === "tool-rejected") {
-        const assistantToolCalls = Array.isArray(outcome.assistantMessage?.tool_calls)
-          ? outcome.assistantMessage.tool_calls as Array<{ id?: unknown }>
-          : [];
-        if (assistantToolCalls.length === 0) {
-          this.conversation.push({ role: "tool", tool_call_id: "rejected", content: outcome.error ?? "工具参数被拒绝" });
-        } else {
-          for (const toolCall of assistantToolCalls) {
-            this.conversation.push({
-              role: "tool",
-              tool_call_id: typeof toolCall.id === "string" ? toolCall.id : "rejected",
-              content: outcome.error ?? "工具参数被拒绝",
+    const controller = new AbortController();
+    this.activeController = controller;
+    const onAbort = () => controller.abort();
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    const work = (async () => {
+      try {
+        for (let round = 0; round < MAX_ROUNDS; round += 1) {
+          if (controller.signal.aborted) return { kind: "cancelled" as const };
+          this.compactConversation();
+          const roundController = new AbortController();
+          let timedOut = false;
+          const abortRound = () => roundController.abort();
+          controller.signal.addEventListener("abort", abortRound, { once: true });
+          const timeout = setTimeout(() => {
+            timedOut = true;
+            roundController.abort();
+          }, CLIENT_ROUND_TIMEOUT_MS);
+          let response: Response;
+          try {
+            response = await fetch(this.options.endpoint ?? "/api/ai/agent", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation, budget: this.budget, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
+              signal: roundController.signal,
             });
+          } catch (cause) {
+            if (timedOut) return { kind: "failed" as const, error: "AI 请求超时，请稍后重试。" };
+            throw cause;
+          } finally {
+            clearTimeout(timeout);
+            controller.signal.removeEventListener("abort", abortRound);
+          }
+          if (!response.ok) {
+            const data = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+            const code = data?.error?.code;
+            const messageByCode: Record<string, string> = {
+              AI_RATE_LIMITED: "请求过于频繁，请稍后重试。",
+              AI_VALIDATION_ERROR: "请求内容未通过校验，请重新开始当前 AI 任务。",
+              AI_UPSTREAM_UNAVAILABLE: "AI 服务暂时不可用，请稍后重试。",
+              AI_TIMEOUT: "AI 请求超时，请稍后重试。",
+            };
+            return { kind: "failed" as const, error: messageByCode[code ?? ""] ?? data?.error?.message ?? `Agent 接口错误：${response.status}` };
+          }
+          const outcome = await response.json() as AgentApiOutcome & { taskId?: string; budgetReceipt?: string };
+          this.taskId = outcome.taskId ?? this.taskId;
+          this.budgetReceipt = outcome.budgetReceipt ?? this.budgetReceipt;
+          if (outcome.meta) {
+            this._metrics = { ...this._metrics, rounds: this._metrics.rounds + 1, usedTokens: this._metrics.usedTokens + (outcome.meta.usage?.totalTokens ?? 0), route: outcome.meta.route, provider: outcome.meta.provider ?? outcome.meta.model, fallbackReason: outcome.meta.fallbackReason };
+          }
+          if (outcome.budget) this.budget = outcome.budget;
+          if (outcome.kind === "failed") return { kind: "failed" as const, error: outcome.error ?? "Agent 失败" };
+          if (outcome.kind === "finish") { this.completed = true; return { kind: "finish" as const, summary: outcome.summary ?? "已完成。" }; }
+          if (outcome.kind === "tool-rejected") {
+            const assistantToolCalls = Array.isArray(outcome.assistantMessage?.tool_calls) ? outcome.assistantMessage.tool_calls as Array<{ id?: unknown }> : [];
+            if (assistantToolCalls.length > 0) {
+              this.conversation.push(outcome.assistantMessage!);
+              for (const toolCall of assistantToolCalls) {
+                if (typeof toolCall.id === "string" && toolCall.id) this.conversation.push({ role: "tool", tool_call_id: toolCall.id, content: outcome.error ?? "工具参数被拒绝" });
+              }
+            } else {
+              this.conversation.push({ role: "assistant", content: outcome.assistantMessage?.content ?? "模型工具调用未通过校验。" });
+              this.conversation.push({ role: "user", content: "请不要调用无效工具；请根据上一条拒绝原因重新规划，并只使用合法工具或直接用中文总结。" });
+            }
+            continue;
+          }
+          if (outcome.assistantMessage) this.conversation.push(outcome.assistantMessage);
+          for (const call of outcome.calls ?? []) {
+            const risk = classifyAgentCall(this.shadow, call);
+            this.options.onProgress?.({ round: round + 1, name: call.name, status: "running" });
+            const rawToolResult = this.execute(call);
+        const toolResult = { ...rawToolResult, content: this.compactToolResult(call.name, rawToolResult.content) };
+            let lostManualLayout = false;
+            try { lostManualLayout = call.name === "auto_layout" && Boolean(JSON.parse(toolResult.content).lostManualLayout); } catch { /* result is already represented as a tool error */ }
+            this._steps.push({ id: call.id, name: call.name, arguments: call.arguments, result: toolResult, risk: lostManualLayout ? "high" : risk.level, lostManualLayout });
+            this.options.onProgress?.({ round: round + 1, name: call.name, status: toolResult.ok ? "done" : "rejected" });
+            this.conversation.push({ role: "tool", tool_call_id: call.id, content: toolResult.content });
           }
         }
-        continue;
+        this.completed = true;
+        return { kind: "finish" as const, summary: "已达到 20 轮上限，已交付当前完成的修改。" };
+      } catch (cause) {
+        if (controller.signal.aborted || cause instanceof DOMException && cause.name === "AbortError") return { kind: "cancelled" as const };
+        return { kind: "failed" as const, error: cause instanceof Error ? cause.message : "AI 会话失败" };
+      } finally {
+        options.signal?.removeEventListener("abort", onAbort);
+        this.activeController = null;
       }
-      for (const call of outcome.calls ?? []) {
-        const risk = classifyAgentCall(this.shadow, call);
-        this.options.onProgress?.({ round: round + 1, name: call.name, status: "running" });
-        const toolResult = this.execute(call);
-        const lostManualLayout = call.name === "auto_layout" && Boolean(JSON.parse(toolResult.content).lostManualLayout);
-        this._steps.push({ id: call.id, name: call.name, arguments: call.arguments, result: toolResult, risk: lostManualLayout ? "high" : risk.level, lostManualLayout });
-        this.options.onProgress?.({ round: round + 1, name: call.name, status: toolResult.ok ? "done" : "rejected" });
-        this.conversation.push({ role: "tool", tool_call_id: call.id, content: toolResult.content });
-      }
-    }
-    return { kind: "finish", summary: "已达到 20 轮上限，已交付当前完成的修改。" };
+    })();
+    this.activeRun = work;
+    try { return await work; } finally { this.activeRun = null; }
+  }
+
+  continue(message: string, options: { signal?: AbortSignal } = {}) {
+    if (!this.canContinue) return Promise.reject(new Error("当前会话不能继续"));
+    return this.run(message, { ...options, continue: true });
   }
 
   landingPreview(): { steps: AgentStep[]; needsConfirmation: boolean; highestRisk: RiskLevel } {
@@ -319,18 +501,34 @@ export class AgentSession {
     return { steps, needsConfirmation: this.options.mode === "conservative" || level === "high", highestRisk: level };
   }
 
-  transaction(): ProjectTransaction {
-    const stepCount = this._steps.filter((step) => !READ_ONLY_TOOLS.has(step.name)).length;
-    const finalSnapshot = cloneProject(this.shadow);
+  transactionForSteps(stepIds: ReadonlySet<string>): ProjectTransaction | null {
+    const selectedSteps = this._steps.filter((step) =>
+      stepIds.has(step.id) && !READ_ONLY_TOOLS.has(step.name) && step.result.ok,
+    );
+    if (selectedSteps.length === 0) return null;
+
     return {
       id: createId("tx-ai-agent"),
-      label: `AI 助手：${stepCount} 项改动`,
+      label: `AI 助手：${selectedSteps.length} 项改动`,
       source: "ai",
-      apply: (current) => ({
-        ...finalSnapshot,
-        history: current.history,
-        version: current.version,
-      }),
+      apply: (current) => {
+        const replay = new AgentSession(current, { ...this.options, onProgress: undefined });
+        for (const step of selectedSteps) {
+          replay.execute({ id: step.id, name: step.name, arguments: structuredClone(step.arguments) });
+        }
+        const finalSnapshot = cloneProject(replay.shadowProject);
+        return { ...finalSnapshot, history: current.history, version: current.version };
+      },
+    };
+  }
+
+  transaction(): ProjectTransaction {
+    const stepIds = new Set(this._steps.filter((step) => !READ_ONLY_TOOLS.has(step.name)).map((step) => step.id));
+    return this.transactionForSteps(stepIds) ?? {
+      id: createId("tx-ai-agent"),
+      label: "AI 助手：0 项改动",
+      source: "ai",
+      apply: (current) => current,
     };
   }
 }

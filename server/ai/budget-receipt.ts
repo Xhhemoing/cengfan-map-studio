@@ -1,0 +1,246 @@
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+export const BUDGET_RECEIPT_VERSION = 1;
+export const MAX_BUDGET_RECEIPT_LENGTH = 2048;
+
+export interface BudgetReceiptPayload {
+  version: typeof BUDGET_RECEIPT_VERSION;
+  taskId: string;
+  usedTokens: number;
+  rounds: number;
+  maxTokens: number;
+  maxRounds: number;
+  sequence: number;
+  issuedAt: number;
+  historyHash?: string;
+}
+
+function encode(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function decode(value: string): string | null {
+  try {
+    return Buffer.from(value, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function validPayload(value: unknown): value is BudgetReceiptPayload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const payload = value as Record<string, unknown>;
+  return payload.version === BUDGET_RECEIPT_VERSION
+    && typeof payload.taskId === "string"
+    && /^[A-Za-z0-9._:-]{1,128}$/.test(payload.taskId)
+    && ["usedTokens", "rounds", "maxTokens", "maxRounds"].every((key) => {
+      const number = payload[key];
+      return typeof number === "number" && Number.isSafeInteger(number) && number >= 0;
+    })
+    && typeof payload.sequence === "number" && Number.isSafeInteger(payload.sequence) && payload.sequence >= 1
+    && typeof payload.issuedAt === "number" && Number.isSafeInteger(payload.issuedAt) && payload.issuedAt >= 0
+    && (payload.historyHash === undefined || (typeof payload.historyHash === "string" && payload.historyHash.length <= 128));
+}
+
+export interface BudgetReceiptSigner {
+  readonly secretConfigured: boolean;
+  issue(input: Omit<BudgetReceiptPayload, "version">): string;
+  verify(receipt: unknown, taskId: string): BudgetReceiptPayload | null;
+}
+
+export function createBudgetReceiptSigner(secret?: string): BudgetReceiptSigner {
+  const secretConfigured = Boolean(secret?.trim());
+  const key = Buffer.from(secretConfigured ? secret!.trim() : randomBytes(32).toString("base64url"), "utf8");
+  const sign = (payload: string) => createHmac("sha256", key).update(payload).digest("base64url");
+  return {
+    secretConfigured,
+    issue(input: Omit<BudgetReceiptPayload, "version">): string {
+      const payload: BudgetReceiptPayload = { version: BUDGET_RECEIPT_VERSION, ...input };
+      const encoded = encode(JSON.stringify(payload));
+      return `v${BUDGET_RECEIPT_VERSION}.${encoded}.${sign(encoded)}`;
+    },
+    verify(receipt: unknown, taskId: string): BudgetReceiptPayload | null {
+      if (typeof receipt !== "string" || receipt.length === 0 || receipt.length > MAX_BUDGET_RECEIPT_LENGTH) return null;
+      const parts = receipt.split(".");
+      if (parts.length !== 3 || parts[0] !== `v${BUDGET_RECEIPT_VERSION}`) return null;
+      const [, encoded, providedSignature] = parts;
+      if (!encoded || !providedSignature) return null;
+      const expectedSignature = sign(encoded);
+      const providedBytes = Buffer.from(providedSignature, "base64url");
+      const expectedBytes = Buffer.from(expectedSignature, "base64url");
+      if (providedBytes.length !== expectedBytes.length || !timingSafeEqual(providedBytes, expectedBytes)) return null;
+      const decoded = decode(encoded);
+      if (!decoded) return null;
+      try {
+        const payload = JSON.parse(decoded) as unknown;
+        return validPayload(payload) && payload.taskId === taskId ? payload : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+interface BudgetReceiptLedgerEntry {
+  taskId: string;
+  sequence: number;
+  receiptDigest: string;
+  usedTokens: number;
+  rounds: number;
+  updatedAt: number;
+  consumed: boolean;
+  claimId?: string;
+}
+
+export interface BudgetReceiptClaim {
+  readonly taskId: string;
+  readonly sequence: number;
+  readonly receiptDigest: string;
+  readonly payload: BudgetReceiptPayload;
+  readonly claimId: string;
+}
+
+export interface BudgetReceiptLedgerOptions {
+  maxEntries?: number;
+  ttlMs?: number;
+  now?: () => number;
+}
+
+export interface BudgetReceiptLedger {
+  readonly size: number;
+  recordIssued(receipt: string, payload: BudgetReceiptPayload): void;
+  beginConsume(receipt: unknown, taskId: string): BudgetReceiptClaim | null;
+  commit(claim: BudgetReceiptClaim, receipt?: string, payload?: BudgetReceiptPayload): boolean;
+  rollback(claim: BudgetReceiptClaim): boolean;
+  verifyAndConsume(receipt: unknown, taskId: string): BudgetReceiptPayload | null;
+  hasTask(taskId: string): boolean;
+  reserveInitial(taskId: string): BudgetReceiptClaim | null;
+  cleanup(): void;
+}
+
+export function budgetReceiptDigest(receipt: string): string {
+  return createHash("sha256").update(receipt, "utf8").digest("hex");
+}
+
+export function createBudgetReceiptLedger(
+  signer: BudgetReceiptSigner,
+  options: BudgetReceiptLedgerOptions = {},
+): BudgetReceiptLedger {
+  const entries = new Map<string, BudgetReceiptLedgerEntry>();
+  const maxEntries = Math.max(1, Math.floor(Number.isFinite(options.maxEntries) ? options.maxEntries! : 10_000));
+  const ttlMs = Math.max(1, Math.floor(Number.isFinite(options.ttlMs) ? options.ttlMs! : 30 * 60 * 1000));
+  const now = options.now ?? Date.now;
+
+  const cleanup = () => {
+    const cutoff = now() - ttlMs;
+    for (const [taskId, entry] of entries) {
+      if (entry.updatedAt < cutoff && entry.claimId) {
+        if (entry.sequence === 0 && entry.receiptDigest === "") entries.delete(taskId);
+        else {
+          delete entry.claimId;
+          entry.consumed = false;
+          entry.updatedAt = now();
+        }
+      } else if (entry.updatedAt < cutoff) {
+        entries.delete(taskId);
+      }
+    }
+    while (entries.size > maxEntries) {
+      const oldest = entries.keys().next().value as string | undefined;
+      if (!oldest) break;
+      entries.delete(oldest);
+    }
+  };
+
+  const claimId = () => randomBytes(16).toString("base64url");
+  const matchesClaim = (entry: BudgetReceiptLedgerEntry | undefined, claim: BudgetReceiptClaim) => Boolean(
+    entry
+      && entry.claimId === claim.claimId
+      && entry.taskId === claim.taskId
+      && entry.sequence === claim.sequence
+      && entry.receiptDigest === claim.receiptDigest,
+  );
+  const claimFor = (entry: BudgetReceiptLedgerEntry, payload: BudgetReceiptPayload): BudgetReceiptClaim => ({
+    taskId: entry.taskId,
+    sequence: entry.sequence,
+    receiptDigest: entry.receiptDigest,
+    payload,
+    claimId: entry.claimId!,
+  });
+
+  return {
+    get size() { return entries.size; },
+    recordIssued(receipt, payload) {
+      cleanup();
+      entries.set(payload.taskId, {
+        taskId: payload.taskId,
+        sequence: payload.sequence,
+        receiptDigest: budgetReceiptDigest(receipt),
+        usedTokens: payload.usedTokens,
+        rounds: payload.rounds,
+        updatedAt: now(),
+        consumed: false,
+      });
+      cleanup();
+    },
+    beginConsume(receipt, taskId) {
+      cleanup();
+      const payload = signer.verify(receipt, taskId);
+      if (!payload || typeof receipt !== "string") return null;
+      const entry = entries.get(taskId);
+      if (!entry || entry.consumed || entry.claimId || entry.sequence !== payload.sequence || entry.receiptDigest !== budgetReceiptDigest(receipt)) return null;
+      entry.claimId = claimId();
+      entry.updatedAt = now();
+      return claimFor(entry, payload);
+    },
+    commit(claim, receipt, payload) {
+      cleanup();
+      const entry = entries.get(claim.taskId);
+      if (!entry || !matchesClaim(entry, claim)) return false;
+      if (receipt !== undefined || payload !== undefined) {
+        if (typeof receipt !== "string" || !payload || payload.taskId !== claim.taskId) return false;
+        entry.sequence = payload.sequence;
+        entry.receiptDigest = budgetReceiptDigest(receipt);
+        entry.usedTokens = payload.usedTokens;
+        entry.rounds = payload.rounds;
+        entry.consumed = false;
+      } else {
+        entry.consumed = true;
+      }
+      delete entry.claimId;
+      entry.updatedAt = now();
+      cleanup();
+      return true;
+    },
+    rollback(claim) {
+      cleanup();
+      const entry = entries.get(claim.taskId);
+      if (!entry || !matchesClaim(entry, claim)) return false;
+      if (claim.sequence === 0 && claim.receiptDigest === "") entries.delete(claim.taskId);
+      else {
+        delete entry.claimId;
+        entry.consumed = false;
+        entry.updatedAt = now();
+      }
+      return true;
+    },
+    verifyAndConsume(receipt, taskId) {
+      const claim = this.beginConsume(receipt, taskId);
+      return claim && this.commit(claim) ? claim.payload : null;
+    },
+    hasTask(taskId) {
+      cleanup();
+      return entries.has(taskId);
+    },
+    reserveInitial(taskId) {
+      cleanup();
+      if (entries.has(taskId)) return null;
+      const payload: BudgetReceiptPayload = { version: BUDGET_RECEIPT_VERSION, taskId, usedTokens: 0, rounds: 0, maxTokens: 0, maxRounds: 0, sequence: 0, issuedAt: now() };
+      const entry: BudgetReceiptLedgerEntry = { taskId, sequence: 0, receiptDigest: "", usedTokens: 0, rounds: 0, updatedAt: now(), consumed: true, claimId: claimId() };
+      entries.set(taskId, entry);
+      cleanup();
+      return entries.get(taskId) === entry ? claimFor(entry, payload) : null;
+    },
+    cleanup,
+  };
+}

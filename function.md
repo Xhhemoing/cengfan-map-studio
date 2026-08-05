@@ -400,9 +400,11 @@
 ### 8.4 AI、协作和后台管理
 
 **AI 助手**
+- `/api/ai/agent`：多轮工具调用，默认保守预览；前端支持取消，取消或失败不会自动提交工程。
 - `/api/ai/parse-data`：将文本转为学生导入候选。
 - `/api/ai/propose-edits`：将自然语言转为可勾选的编辑命令，并支持画布预览后应用。
-- 当前 provider 是 `local-fallback` 规则实现：可切换城市/院校分组、紧凑卡片、地图缩放、风景模板、字段可见性和按人数建议；问句返回解释。
+- `/api/ai/explain`：回答编辑器相关问题。
+- 配置 `AI_PRIMARY_*` 后使用外部 OpenAI 兼容 LLM；主模型失败可切换 `AI_FALLBACK_*`，两层不可用时回退本地确定性规则。`GET /api/health` 报告配置状态、实际 route/provider、回执持久化范围与限制，不返回密钥。配置 `AI_BUDGET_RECEIPT_SECRET` 可稳定签名，但不能替代共享 ledger。
 
 **在线协作**
 - 创建/加入 12 位大写房间码，初始上传工程快照。
@@ -426,11 +428,12 @@
 | GET | `/api/rooms/:id` | 读取协作房间 | 无 |
 | POST | `/api/rooms/:id/transactions` | 提交快照或增量操作 | 无 |
 | GET | `/api/rooms/:id/events` | SSE 实时事件流（20 秒心跳） | 无 |
+| POST | `/api/ai/agent` | 多轮 AI 工具调用与预览 | 无 |
 | POST | `/api/ai/parse-data` | AI 名单解析 | 无 |
 | POST | `/api/ai/propose-edits` | AI 修改建议 | 无 |
 | POST | `/api/ai/explain` | AI 解释 | 无 |
 
-服务端具备请求体限制（AI 512KB / 协作 8MB / 工作区 64MB）、gzip、哈希静态资源长缓存、路径穿越防护、安全响应头与 `CORS_ORIGINS` 白名单。
+服务端具备请求体限制（AI 512KB / 协作 8MB / 工作区 64MB）、AI requestId、固定窗口 IP 限流、任务轮次/token 预算、预算回执序列与进程内防重放 ledger、gzip、哈希静态资源长缓存、路径穿越防护、安全响应头与 `CORS_ORIGINS` 白名单。AI 取消、超时、备选模型和本地降级均不会自动提交工程。预算回执 ledger 只保留 taskId、sequence、receipt digest、usage/rounds 和时间，支持数量/TTL 清理，不存工程或 prompt；重启后进程内状态丢失，多实例需共享 ledger。
 
 ### 8.6 核心实现模块
 
@@ -458,6 +461,6 @@
 
 - 本机保存为手动覆盖模式：编辑后显示待保存，点击保存才写入本地工作区。
 - 协作房间只存在于内存，30 分钟无活动自动清理；冲突需要重新加入房间确认最新版本。
-- AI 目前不调用外部 LLM，而是本地规则回退；请求 schema 已保留真实模型接入空间。
+- AI 未配置主模型时使用本地规则回退；配置 `AI_PRIMARY_*` 后可调用外部 OpenAI 兼容 LLM。预算回执重启续聊和多实例防重放受进程内 ledger 限制。
 - 导出 PNG 依赖浏览器 Canvas；超大画布或 3× 导出可能受浏览器内存限制。
 - 访问统计只可通过受保护的 `/admin` 查看，不能在主站或公开 API 中暴露。

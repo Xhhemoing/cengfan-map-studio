@@ -1107,22 +1107,11 @@ describe("App student editing", () => {
     expect(topbar.querySelector('[aria-label="打开全局设置"]')).not.toBeNull();
   });
 
-  it("splits the editor toolbar into view and preview clusters", () => {
+  it("removes legacy toolbar action clusters while keeping the canvas rendered", () => {
     const container = renderApp();
-    const actions = container.querySelector(".editor-toolbar-actions")!;
-
-    const view = actions.querySelector('[aria-label="视图"]')!;
-    const preview = actions.querySelector('[aria-label="预览设置"]')!;
-    expect(view).not.toBeNull();
-    expect(preview).not.toBeNull();
-    expect(Array.from(actions.children).filter((child) => child.classList.contains("control-cluster"))).toHaveLength(2);
-
-    expect(view.querySelector('button[aria-label="适应画布"]')).not.toBeNull();
-    expect(view.querySelector("#editor-grid-size")).not.toBeNull();
-    expect(preview.querySelector("#editor-render-mode")).not.toBeNull();
-
-    click(view.querySelector<HTMLButtonElement>('button[aria-label="打开网格"]')!);
-    expect(container.querySelector("[data-editor-grid]")).not.toBeNull();
+    expect(container.querySelector(".editor-toolbar-actions")).toBeNull();
+    expect(container.querySelectorAll(".control-cluster")).toHaveLength(0);
+    expect(container.querySelector(".canvas-stage .poster")).not.toBeNull();
   });
 
   it("opens global typography settings and applies one province font to the live map", () => {
@@ -1203,11 +1192,6 @@ describe("App student editing", () => {
     expect(container.querySelector<HTMLInputElement>("#cards-compact-layout")?.checked).toBe(true);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
 
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开网格"]')!);
-    expect(container.querySelector("[data-editor-grid]")).not.toBeNull();
-    changeInput(container.querySelector<HTMLInputElement>("#editor-grid-size")!, "40");
-    expect(container.querySelector("[data-editor-grid]")?.getAttribute("data-grid-size")).toBe("40");
-
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
     changeSelect(container.querySelector<HTMLSelectElement>("#canvas-size-preset")!, "square-1080");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
@@ -1222,14 +1206,9 @@ describe("App student editing", () => {
 
     expect(poster.getAttribute("data-render-interval-ms")).toBe("100");
 
-    changeSelect(container.querySelector<HTMLSelectElement>("#editor-render-mode")!, "fixed");
-    const fpsInput = container.querySelector<HTMLInputElement>("#editor-render-fps")!;
-    expect(fpsInput.min).toBe("5");
-    expect(fpsInput.max).toBe("60");
-    expect(fpsInput.step).toBe("0.1");
-    changeInput(fpsInput, "5");
-
-    expect(poster.getAttribute("data-render-interval-ms")).toBe("200");
+    expect(container.querySelector("#editor-render-mode")).toBeNull();
+    expect(container.querySelector("#editor-grid-size")).toBeNull();
+    expect(poster.getAttribute("data-render-interval-ms")).toBe("100");
   });
 });
 
@@ -1369,6 +1348,37 @@ describe("App workflow guidance", () => {
     expect(badge).not.toBeNull();
     expect(badge?.getAttribute("data-status")).toBe("ready");
     expect(badge?.textContent).toBe("✓");
+  });
+});
+
+describe("Floating AI assistant integration", () => {
+  it("removes the legacy editor toolbar and old AI sidebar tab", () => {
+    const container = renderLegacyApp();
+    expect(container.querySelector(".editor-toolbar")).toBeNull();
+    expect(container.querySelector('[aria-label="打开 AI 助手"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("画布图层AI 助手");
+    expect(container.querySelector(".content-tool-tabs")).toBeNull();
+  });
+
+  it("mounts the floating assistant in the standard content workspace", () => {
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({ stage: "content", savedAt: "2026-08-06T00:00:00.000Z" }));
+    const container = renderPublicApp({ clearStorage: false });
+    expect(container.querySelector('[aria-label="打开 AI 助手"]')).not.toBeNull();
+    click(container.querySelector<HTMLButtonElement>('[aria-label="打开 AI 助手"]')!);
+    expect(container.querySelector('[role="dialog"][aria-label="AI 助手"]')).not.toBeNull();
+  });
+
+  it("keeps assistant history when switching stages and returning to content", () => {
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({ stage: "content", savedAt: "2026-08-06T00:00:00.000Z" }));
+    const container = renderLegacyApp({ clearStorage: false });
+    click(container.querySelector<HTMLButtonElement>('[aria-label="打开 AI 助手"]')!);
+    expect(container.querySelector('.agent-assistant-history button')).not.toBeNull();
+
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="地图样式"]')!);
+    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="内容与排版"]')!);
+
+    expect(container.querySelector('[role="dialog"][aria-label="AI 助手"]')).not.toBeNull();
+    expect(container.querySelectorAll('.agent-assistant-history button')).toHaveLength(1);
   });
 });
 

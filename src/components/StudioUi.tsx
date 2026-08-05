@@ -24,22 +24,6 @@ export function ToolbarGroup({
   );
 }
 
-export function ControlCluster({
-  label,
-  children,
-  className = "",
-}: {
-  label: string;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={["control-cluster", className].filter(Boolean).join(" ")} role="group" aria-label={label}>
-      {children}
-    </div>
-  );
-}
-
 export function PanelHeader({
   title,
   meta,

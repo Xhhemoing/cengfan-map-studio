@@ -56,6 +56,13 @@ describe("extractJsonObject", () => {
   });
 });
 
+describe("resolveAiConfig", () => {
+  it("clamps non-finite timeout and token configuration", async () => {
+    const { resolveAiConfig } = await import("./llm-client");
+    expect(resolveAiConfig({ AI_TIMEOUT_MS: "NaN", AI_MAX_TOKENS: "Infinity" })).toMatchObject({ timeoutMs: 60000, maxTokens: 4000 });
+  });
+});
+
 describe("createAiBackend without API key", () => {
   it("falls back to local rules without calling the network", async () => {
     const fetchMock = vi.fn();
@@ -159,5 +166,15 @@ describe("createAiBackend with LLM", () => {
     expect(result.provider).toBe(PROVIDER_NAME);
     expect(result.explanation).toBe("因为人数多，建议使用紧凑卡片。");
     expect(result.commands).toEqual([]);
+  });
+
+  it("propagates cancellation instead of returning a local single-turn fallback", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      controller.abort();
+      throw new DOMException("aborted", "AbortError");
+    }));
+    const backend = createAiBackend(TEST_CONFIG);
+    await expect(backend.explain("为什么这么挤", 30, { signal: controller.signal })).rejects.toMatchObject({ code: "AI_ABORTED" });
   });
 });

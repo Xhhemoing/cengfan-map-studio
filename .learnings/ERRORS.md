@@ -1,4 +1,34 @@
 
+## [ERR-20260803-LOCAL-RSYNC]
+
+**Logged**: 2026-08-03T16:00:00Z
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+The local deployment environment has no `rsync` executable.
+
+### Error
+`rsync: command not found`
+
+### Context
+- Deployment to the configured Hermes server initially used an rsync transfer.
+- No remote files were modified because the command failed before connecting for transfer.
+
+### Suggested Fix
+Use the available `tar | ssh` streaming transfer with explicit exclusions for runtime data and environment files.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `.hermes.md`
+
+### Resolution
+- **Resolved**: 2026-08-03T16:00:00Z
+- **Notes**: Switched to the verified tar-over-SSH deployment path.
+
+---
+
 ## [ERR-20260802-NPM]
 
 **Logged**: 2026-08-02T18:40:00+08:00
@@ -141,6 +171,32 @@ Run the installed Vitest binary directly on Windows, then run TypeScript and Vit
 
 ---
 
+## [ERR-20260804-MEMORY-WRITE]
+
+**Logged**: 2026-08-04T00:00:00+08:00
+**Priority**: low
+**Status**: pending
+**Area**: infra
+
+### Summary
+Global memory rule write was rejected by the automatic approval service.
+
+### Error
+The memory patch was rejected because the configured automatic review model returned `404 Not Found`.
+
+### Context
+- The user explicitly requested a global rule forbidding Codex from creating branches without confirmation.
+- No workaround or indirect write was attempted.
+
+### Suggested Fix
+Retry the approved memory-note write when the automatic approval service is available.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: `C:\Users\86080\.codex\memories\extensions\ad_hoc\notes\20260804-no-autonomous-branch-creation.md`
+
+---
+
 ## [ERR-20260803-VITEST-BASELINE]
 
 **Logged**: 2026-08-03T10:38:00+08:00
@@ -249,3 +305,197 @@ Investigate the repository's full-suite worker hang independently; use focused V
 ### Metadata
 - Reproducible: yes
 - Related Files: `package.json`, `scripts/run-heavy.sh`
+
+---
+
+## [ERR-20260804-GRAPHIFY-PYTHON]
+
+**Logged**: 2026-08-04T00:30:00+08:00
+**Priority**: low
+**Status**: pending
+**Area**: tooling
+
+### Summary
+The existing Graphify launcher cannot query the repository graph because its Python interpreter no longer exists.
+
+### Error
+`graphify query` failed because the launcher points to a removed WindowsApps Python 3.13 executable.
+
+### Context
+- `graphify-out/graph.json` already exists, so the normal fast path is a direct query.
+- The failure is limited to the local Graphify runtime; source inspection remains available.
+
+### Suggested Fix
+Reinstall Graphify against an available Python runtime or refresh its launcher and `.graphify_python` path.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `graphify-out/.graphify_python`, `graphify-out/graph.json`
+
+---
+
+## [ERR-20260804-RG-POWERSHELL-GLOB]
+
+**Logged**: 2026-08-04T00:32:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+PowerShell passed an unexpanded recursive wildcard path to ripgrep, which Windows rejected.
+
+### Error
+`rg ... src/**/*.test.ts*` and `rg ... src/components/canvas/*.tsx` returned OS error 123.
+
+### Context
+- The commands were read-only canvas performance inventory checks.
+- PowerShell does not expand these path patterns the same way as Bash.
+
+### Suggested Fix
+Search the directory and use ripgrep's `-g` filters for file patterns.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `src/components/canvas`
+
+### Resolution
+- **Resolved**: 2026-08-04T00:32:00+08:00
+- **Notes**: Subsequent searches use directory arguments with `-g '*.tsx'` and `-g '*.ts'`.
+
+---
+
+## [ERR-20260804-POWERSHELL-QUOTE]
+
+**Logged**: 2026-08-04T00:45:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+A nested quoted ripgrep pattern made PowerShell reject a read-only render-settings command before execution.
+
+### Error
+`The string is missing the terminator: "`.
+
+### Context
+- The command only intended to read `src/lib/render-settings.ts` and its tests.
+- No process started and no project file was changed.
+
+### Suggested Fix
+Use direct `Get-Content -Raw` reads when a separate pattern search is unnecessary.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `src/lib/render-settings.ts`
+
+### Resolution
+- **Resolved**: 2026-08-04T00:45:00+08:00
+- **Notes**: Re-ran the inspection with direct file reads.
+
+---
+
+## [ERR-20260804-GRAPHIFY-RUNTIME]
+
+**Logged**: 2026-08-04T00:50:00+08:00
+**Priority**: low
+**Status**: unresolved
+**Area**: tooling
+
+### Summary
+The repository's Graphify launcher points to a missing Python 3.13 WindowsApps runtime.
+
+### Error
+`graphify query` failed because the executable was not found at the recorded WindowsApps Python path.
+
+### Context
+- The existing `graphify-out/.graphify_python` contains the same unavailable runtime path.
+- The failure occurred before any repository source was read or changed by Graphify.
+
+### Suggested Fix
+Repair or reinstall the Graphify runtime entry, then refresh `graphify-out/.graphify_python`.
+
+---
+
+## [ERR-20260804-START-PROCESS-PATH]
+
+**Logged**: 2026-08-04T10:08:00+08:00
+**Priority**: low
+**Status**: unresolved
+**Area**: tooling
+
+### Summary
+PowerShell `Start-Process` could not launch the local Vite server because its inherited environment contained a duplicate `PATH` key.
+
+### Error
+`Item has already been added. Key in dictionary: 'Path' Key being added: 'PATH'`
+
+### Context
+- The command was only intended to start Vite on port 4173 for browser validation.
+- The server did not start and no application file was changed.
+
+### Suggested Fix
+Run Vite in a foreground terminal session or start it through a shell without rebuilding the environment dictionary.
+
+## [ERR-20260805-001] subagent-run-file-write
+
+**Logged**: 2026-08-05
+**Priority**: medium
+
+子智能体调度失败：运行记录临时文件重命名返回 EPERM，未开始实现。当前工作区保持原状。
+
+## [ERR-20260806-001] tokenfree_luna_subagent_spawn
+
+**Logged**: 2026-08-06T00:00:00Z
+**Priority**: high
+**Status**: in_progress
+**Area**: infra
+
+### Summary
+Specified tokenfree Luna subagent process failed to spawn.
+
+### Error
+```
+Failed to spawn subagent process
+```
+
+### Context
+- Attempted `subagent_spawn` with model `tokenfree/gpt-5.6-luna`, project cwd, clean built-in tools, and direct workspace writes.
+- No child run id was created.
+- No credentials or prompt bodies are recorded here.
+
+### Suggested Fix
+Inspect configured Pi model aliases/provider mappings, then retry with an available exact Luna model identifier.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: docs/superpowers/plans/2026-08-06-ai-calling-platform-hardening.md
+
+---
+
+## [ERR-20260805-BROWSER-SKILL-PATH] browser skill startup
+
+**Logged**: 2026-08-05T00:00:00Z
+**Priority**: low
+**Status**: pending
+**Area**: infra
+
+### Summary
+Browser skill documentation referenced a script path that is absent from the installed skill directory.
+
+### Error
+```
+Cannot find module 'C:\\Users\\86080\\.agents\\skills\\browser\\scripts\\start.js'
+```
+
+### Context
+- Attempted to start Chrome through the browser skill while refining a local design prototype.
+- No application files were changed by the failed command.
+
+### Suggested Fix
+Use the installed `.cjs` script names rather than the stale `.js` names in the skill text. The local Chrome path is also absent, so browser automation requires a configured Chrome/Edge executable; use a foreground static server for visual-companion previews when no browser is available.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `C:\\Users\\86080\\.agents\\skills\\browser\\SKILL.md`
+
+---

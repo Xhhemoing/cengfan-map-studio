@@ -11,7 +11,9 @@ import {
   localParseData,
   localProposeEdits,
 } from "./local-fallback";
-import type { ChatMessage, ToolDefinition } from "./agent-types";
+import type { AiCallMeta, AiRoute, ChatMessage, ToolDefinition } from "./agent-types";
+import { AiCallError } from "./ai-errors";
+import { requestChatCompletion } from "./ai-transport";
 
 export const PROVIDER_NAME = "tokenfree";
 export const DEFAULT_AI_BASE_URL = "https://tokenfreevip.cc.cd/v1";
@@ -28,6 +30,8 @@ export interface AiConfig {
   /** Agent 备选模型（tokenfree/luna）使用的独立密钥。 */
   fallbackApiKey?: string;
   fallbackBaseUrl?: string;
+  retryMaxAttempts?: number;
+  retryBaseDelayMs?: number;
 }
 
 export function resolveAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
@@ -76,40 +80,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * 调用 OpenAI 兼容的原生工具调用接口。
  * 与 chatJson 分开，保留 assistant 的 tool_calls 与 reasoning_content，供下一轮继续对话。
  */
+export interface AiRequestContext {
+  requestId?: string;
+  route?: AiRoute;
+  signal?: AbortSignal;
+}
+
+function transportConfig(config: AiConfig) {
+  return {
+    apiKey: config.apiKey!,
+    baseUrl: config.baseUrl,
+    model: config.model,
+    timeoutMs: config.timeoutMs,
+    maxAttempts: config.retryMaxAttempts ?? 1,
+    retryBaseDelayMs: config.retryBaseDelayMs ?? 0,
+  };
+}
+
 export async function chatWithTools(
   config: AiConfig,
   messages: ChatMessage[],
   tools: ToolDefinition[],
   maxTokens?: number,
-): Promise<ChatMessage> {
+  context: AiRequestContext = {},
+): Promise<ChatMessage & { meta?: AiCallMeta }> {
   if (!config.apiKey) throw new Error("未配置 AI API Key");
-  const baseUrl = config.baseUrl.replace(/\/+$/, "");
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+  const result = await requestChatCompletion({
+    config: transportConfig(config),
+    requestId: context.requestId ?? "ai-request",
+    route: context.route ?? "primary",
+    signal: context.signal,
+    body: { messages, tools, tool_choice: "auto", temperature: 0.2, max_tokens: maxTokens ?? Math.max(config.maxTokens, 4000) },
+    parse: (payload) => {
+      const message = (payload as { choices: Array<{ message?: ChatMessage }> }).choices[0]?.message;
+      if (!message) throw new AiCallError("AI_INVALID_RESPONSE", "LLM 未返回 assistant 消息");
+      return message;
     },
-    body: JSON.stringify({
-      model: config.model,
-      messages,
-      tools,
-      tool_choice: "auto",
-      temperature: 0.2,
-      max_tokens: maxTokens ?? Math.max(config.maxTokens, 4000),
-    }),
-    signal: AbortSignal.timeout(config.timeoutMs),
   });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`LLM API ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
-  }
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: ChatMessage }>;
-  };
-  const message = payload.choices?.[0]?.message;
-  if (!message) throw new Error("LLM 未返回 assistant 消息");
-  return message;
+  return { ...result.value, meta: result.meta };
 }
 
 /**
@@ -148,36 +156,21 @@ export function extractJsonObject(content: string): unknown {
 const JSON_ONLY_SYSTEM =
   "你是一个严格的 JSON 输出引擎。只输出合法 JSON，禁止输出 JSON 之外的任何文字、代码块标记或解释。你的整个回复必须能被 JSON.parse 直接解析。";
 
-async function chatJson(config: AiConfig, system: string, user: string, maxTokens?: number): Promise<unknown> {
+async function chatJson(config: AiConfig, system: string, user: string, maxTokens?: number, context: AiRequestContext = {}): Promise<unknown> {
   if (!config.apiKey) throw new Error("未配置 AI API Key");
-  const baseUrl = config.baseUrl.replace(/\/+$/, "");
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+  const result = await requestChatCompletion({
+    config: transportConfig(config),
+    requestId: context.requestId ?? "ai-request",
+    route: context.route ?? "primary",
+    signal: context.signal,
+    body: { messages: [{ role: "system", content: system }, { role: "user", content: user }], temperature: 0.2, max_tokens: maxTokens ?? config.maxTokens },
+    parse: (payload) => {
+      const content = (payload as { choices: Array<{ message?: { content?: string } }> }).choices[0]?.message?.content;
+      if (typeof content !== "string" || !content.trim()) throw new AiCallError("AI_INVALID_RESPONSE", "LLM 未返回内容");
+      return extractJsonObject(content);
     },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      temperature: 0.2,
-      max_tokens: maxTokens ?? config.maxTokens,
-    }),
-    signal: AbortSignal.timeout(config.timeoutMs),
   });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`LLM API ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
-  }
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = payload.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) throw new Error("LLM 未返回内容");
-  return extractJsonObject(content);
+  return result.value;
 }
 
 /** 与前端 import-data 的 splitLines 保持一致的行切分，保证行号对应。 */
@@ -189,13 +182,13 @@ function splitLines(text: string): string[] {
     .filter((line) => line.length > 0);
 }
 
-async function parseDataWithLlm(config: AiConfig, request: ParseDataRequest) {
+async function parseDataWithLlm(config: AiConfig, request: ParseDataRequest, context: AiRequestContext = {}) {
   const lines = splitLines(request.text);
   if (lines.length === 0) throw new Error("没有可解析的数据行");
   const numbered = lines.map((line, index) => `第 ${index + 1} 行：${line}`).join("\n");
   const userPrompt = `以下是学生去向数据的每一行（行号已标注，来源类型：${request.source}）：\n\n${numbered}\n\n请解析每一行，提取：姓名/学生名称、录取院校、所在城市。\n只输出 JSON，格式：\n{"candidates":[{"lineIndex":1,"name":"姓名","university":"院校","city":"城市"}],"unparsed":[{"lineIndex":2,"reason":"无法识别原因"}]}\n要求：\n1. lineIndex 必须引用上面标注的行号。\n2. 无法提取出完整三要素（姓名、院校、城市）的行放入 unparsed 并给出中文原因。\n3. 保持真实数据，不要编造；一行只能对应一条记录。`;
 
-  const data = await chatJson(config, JSON_ONLY_SYSTEM, userPrompt, 3000);
+  const data = await chatJson(config, JSON_ONLY_SYSTEM, userPrompt, 3000, context);
   if (!isRecord(data)) throw new Error("LLM 解析结果不是对象");
   const candidates: ImportCandidate[] = [];
   const unparsed: UnparsedLine[] = [];
@@ -232,7 +225,7 @@ const COMMAND_VALUES = {
   cardPreset: ["standard", "compact", "ticket", "photo"],
 } as const;
 
-async function proposeEditsWithLlm(config: AiConfig, request: ProposeEditsRequest) {
+async function proposeEditsWithLlm(config: AiConfig, request: ProposeEditsRequest, context: AiRequestContext = {}) {
   const summary = request.projectSummary;
   const userPrompt =
     `当前项目状态：\n` +
@@ -251,7 +244,7 @@ async function proposeEditsWithLlm(config: AiConfig, request: ProposeEditsReques
     `如果用户是在提问（包含“为什么/怎么/是否/可不可以/吗/？/?”，且没有明确的修改指令），返回 {"mode":"explain","explanation":"用中文简洁回答用户问题","commands":[]}。\n\n` +
     `只输出 JSON：{"mode":"proposal"|"explain","explanation":"中文说明","commands":[...]}`;
 
-  const data = await chatJson(config, PROPOSE_SYSTEM, userPrompt);
+  const data = await chatJson(config, PROPOSE_SYSTEM, userPrompt, undefined, context);
   if (!isRecord(data)) throw new Error("LLM 返回结果不是对象");
   const mode: "proposal" | "explain" = data.mode === "explain" ? "explain" : "proposal";
   const explanation =
@@ -269,12 +262,13 @@ async function proposeEditsWithLlm(config: AiConfig, request: ProposeEditsReques
   return { mode, explanation, commands };
 }
 
-async function explainWithLlm(config: AiConfig, message: string, studentCount: number) {
+async function explainWithLlm(config: AiConfig, message: string, studentCount: number, context: AiRequestContext = {}) {
   const data = await chatJson(
     config,
     JSON_ONLY_SYSTEM,
     `当前学生人数：${studentCount}\n用户问题：${message}\n\n只输出 JSON：{"explanation":"用中文回答用户的问题，不超过 200 字，语气简洁友好"}`,
     500,
+    context,
   );
   if (!isRecord(data)) throw new Error("LLM 返回结果不是对象");
   const explanation =
@@ -287,9 +281,9 @@ async function explainWithLlm(config: AiConfig, message: string, studentCount: n
 export interface AiBackend {
   provider: string;
   isConfigured: boolean;
-  parseData(request: ParseDataRequest): Promise<ParseDataResult>;
-  proposeEdits(request: ProposeEditsRequest): Promise<ProposalResult>;
-  explain(message: string, studentCount: number): Promise<ExplainResult>;
+  parseData(request: ParseDataRequest, context?: AiRequestContext): Promise<ParseDataResult>;
+  proposeEdits(request: ProposeEditsRequest, context?: AiRequestContext): Promise<ProposalResult>;
+  explain(message: string, studentCount: number, context?: AiRequestContext): Promise<ExplainResult>;
 }
 
 /**
@@ -304,32 +298,35 @@ export function createAiBackend(config: AiConfig = resolveAiConfig()): AiBackend
   return {
     provider: configured ? PROVIDER_NAME : "local-fallback",
     isConfigured: configured,
-    async parseData(request) {
+    async parseData(request, context = {}) {
       if (!configured) return localParseData(request);
       try {
-        const { candidates, unparsed } = await parseDataWithLlm(config, request);
+        const { candidates, unparsed } = await parseDataWithLlm(config, request, context);
         return { provider: PROVIDER_NAME, source: request.source, candidates, unparsed };
       } catch (error) {
+        if (error instanceof AiCallError && error.code === "AI_ABORTED") throw error;
         fallbackReason("parse-data", error);
         return localParseData(request);
       }
     },
-    async proposeEdits(request) {
+    async proposeEdits(request, context = {}) {
       if (!configured) return localProposeEdits(request);
       try {
-        const { mode, explanation, commands } = await proposeEditsWithLlm(config, request);
+        const { mode, explanation, commands } = await proposeEditsWithLlm(config, request, context);
         return { provider: PROVIDER_NAME, mode, explanation, commands };
       } catch (error) {
+        if (error instanceof AiCallError && error.code === "AI_ABORTED") throw error;
         fallbackReason("propose-edits", error);
         return localProposeEdits(request);
       }
     },
-    async explain(message, studentCount) {
+    async explain(message, studentCount, context = {}) {
       if (!configured) return localExplain(message, studentCount);
       try {
-        const { explanation } = await explainWithLlm(config, message, studentCount);
+        const { explanation } = await explainWithLlm(config, message, studentCount, context);
         return { provider: PROVIDER_NAME, mode: "explain" as const, explanation, commands: [] as EditorCommandPayload[] };
       } catch (error) {
+        if (error instanceof AiCallError && error.code === "AI_ABORTED") throw error;
         fallbackReason("explain", error);
         return localExplain(message, studentCount);
       }

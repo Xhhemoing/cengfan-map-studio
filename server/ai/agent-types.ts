@@ -1,3 +1,39 @@
+export type AiErrorCode =
+  | "AI_ABORTED"
+  | "AI_TIMEOUT"
+  | "AI_RATE_LIMITED"
+  | "AI_UPSTREAM_UNAVAILABLE"
+  | "AI_UPSTREAM_REJECTED"
+  | "AI_INVALID_RESPONSE"
+  | "AI_BUDGET_EXCEEDED"
+  | "AI_VALIDATION_ERROR";
+
+export type AiRoute = "primary" | "fallback" | "local";
+
+export interface AiUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface AiCallMeta {
+  requestId: string;
+  provider: string;
+  model: string;
+  route: AiRoute;
+  latencyMs: number;
+  attempts: number;
+  usage?: AiUsage;
+  fallbackReason?: string;
+}
+
+export interface AgentBudgetState {
+  usedTokens: number;
+  maxTokens: number;
+  rounds: number;
+  maxRounds: number;
+}
+
 export interface ChatToolCall {
   id: string;
   type: "function";

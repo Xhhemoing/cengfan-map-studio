@@ -1,5 +1,10 @@
 import type { ToolDefinition } from "./agent-types";
 
+export const MAX_TOOL_RESULT_BYTES = 16 * 1024;
+export const MAX_HEALTH_ISSUES = 20;
+export const MAX_ASSET_RESULTS = 20;
+export const MAX_LAYOUT_SAMPLES = 10;
+
 const objectParameters = (description: string, properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> => ({
   type: "object",
   description,

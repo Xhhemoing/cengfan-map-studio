@@ -82,13 +82,13 @@ describe("data workspace responsive controls", () => {
     expect(styles).toMatch(/@media[^{}]*max-width:\s*620px[\s\S]*\.global-data-nav\s*\{[^}]*overflow-x:\s*auto;/);
   });
 
-  it("keeps collaboration reachable and lets the canvas toolbar wrap on mobile", () => {
+  it("keeps collaboration reachable without legacy canvas toolbar", () => {
     expect(styles).toMatch(/\.topbar-actions \.collaboration-button \{[^}]*display: inline-flex;/);
     expect(styles).toMatch(/\.collaboration-popover \{[^}]*position: fixed;[^}]*max-width: calc\(100vw - 16px\);/);
     expect(styles).toMatch(/\.brand-label__full \{ display: none; \}\.brand-label__compact \{ display: inline; \}/);
     expect(styles).toMatch(/\.brand \{[^}]*flex: 0 0 auto;[^}]*white-space: nowrap;/);
     expect(styles).toMatch(/\.brand > svg \{ display: none; \}/);
-    expect(styles).toMatch(/\.editor-toolbar \{[^}]*height: auto;[^}]*flex-wrap: wrap;/);
-    expect(styles).toMatch(/\.editor-toolbar-actions \{[^}]*width: 100%;[^}]*overflow-x: auto;/);
+    expect(styles).not.toMatch(/\.editor-toolbar(?:\s|[,{])/);
+    expect(styles).not.toMatch(/\.editor-toolbar-actions(?:\s|[,{])/);
   });
 });

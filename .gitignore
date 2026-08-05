@@ -8,3 +8,19 @@ coverage/
 .DS_Store
 .data/
 .codebase-memory/
+
+# Local agent state, transient probes, and development-server output.
+.pi/
+.superpowers/
+.tmp-*
+.tmp-append
+.tmp-review-focused.log
+dev-server*.log
+tmp-shot*.png
+nul
+
+# Generated graph cache; keep the tracked report and graph artifacts only.
+graphify-out/cache/ast/
+graphify-out/.graphify_labels.json
+graphify-out/.graphify_labels.json.sig
+graphify-out/graph.html

@@ -16,6 +16,8 @@ cp .env.example .env        # 配置 API/LLM 密钥等
 npm run dev                 # 同时启动 Vite(5173)与 API(8787)
 ```
 
+AI agent 使用 OpenAI 兼容接口。旧变量 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL` 继续可用；生产环境建议使用 `AI_PRIMARY_API_KEY`、`AI_PRIMARY_BASE_URL`、`AI_PRIMARY_MODEL` 和可选的 `AI_FALLBACK_*`。未配置主模型时 agent 使用本地确定性规则。可配置 `AI_BUDGET_RECEIPT_SECRET` 让预算回执签名在进程重启后保持稳定；回执防重放 ledger 仍是有界进程内内存，多实例必须共享 ledger 才能提供跨实例防重放，当前重启续聊会失效。运行中的配置状态、路由与任务限制可通过 `GET /api/health` 查看，健康响应不会暴露密钥。
+
 ## 常用命令
 
 | 命令 | 说明 |
@@ -33,7 +35,7 @@ npm run dev                 # 同时启动 Vite(5173)与 API(8787)
 ## 目录结构
 
 - `src/` — React 前端(`App.tsx` 主画布,`Admin.tsx` 管理,`components/` 组件,`lib/` 工具与 AI 客户端,`data/` 静态数据)
-- `src/server/` — Node API(认证、协作、AI agent 循环、导入导出)
+- `server/` — Node API(认证、协作、AI agent 循环、导入导出)
 - `scripts/` — dev/build/start 与重任务包装
 - `docs/` — 设计规格与需求文档
 - `.data/` — 运行时数据(不入库)

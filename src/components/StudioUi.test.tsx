@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
 import { Palette, Users } from "lucide-react";
-import { ActionButton, ControlCluster, PanelHeader, PanelSection, SegmentedNav, ToolbarGroup, WorkspaceNav } from "./StudioUi";
+import { ActionButton, PanelHeader, PanelSection, SegmentedNav, ToolbarGroup, WorkspaceNav } from "./StudioUi";
 
 describe("StudioUi primitives", () => {
   it("renders reusable editor chrome with stable classes and accessible labels", () => {
@@ -31,7 +31,6 @@ describe("StudioUi primitives", () => {
           items={[{ id: "templates", label: "模板" }, { id: "cards", label: "卡片" }]}
           onChange={onClick}
         />
-        <ControlCluster label="视图"><button type="button">适应画布</button></ControlCluster>
       </>,
     ));
 
@@ -42,7 +41,6 @@ describe("StudioUi primitives", () => {
     expect(Array.from(container.querySelectorAll(".workspace-nav button")).map((button) => button.textContent)).toEqual(["数据", "设计"]);
     expect(container.querySelector('.workspace-nav button[aria-selected="true"]')?.textContent).toBe("数据");
     expect(container.querySelector('.segmented-nav button[aria-pressed="true"]')?.textContent).toBe("卡片");
-    expect(container.querySelector(".control-cluster")?.getAttribute("aria-label")).toBe("视图");
     const action = container.querySelector<HTMLButtonElement>(".wide-button")!;
     flushSync(() => action.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onClick).toHaveBeenCalledOnce();

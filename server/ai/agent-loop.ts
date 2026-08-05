@@ -1,6 +1,8 @@
 import type { AiConfig } from "./llm-client";
 import { chatWithTools } from "./llm-client";
-import type { ChatMessage } from "./agent-types";
+import type { AgentBudgetState, AiCallMeta, ChatMessage } from "./agent-types";
+import { AiCallError } from "./ai-errors";
+import { validateAgentToolBatch } from "./agent-request";
 import { AGENT_TOOLS, READ_ONLY_TOOLS } from "./tool-registry";
 import { isSceneDomain, validateScenePatch } from "./patch-validator";
 
@@ -13,6 +15,12 @@ export interface AgentLoopRequest {
   userMessage: string;
   digest: Record<string, unknown>;
   messages: ChatMessage[];
+  budget?: AgentBudgetState;
+  requestId?: string;
+  signal?: AbortSignal;
+  route?: "primary" | "fallback";
+  retryMaxAttempts?: number;
+  retryBaseDelayMs?: number;
 }
 
 export type AgentToolCall = {
@@ -22,10 +30,10 @@ export type AgentToolCall = {
 };
 
 export type AgentLoopOutcome =
-  | { kind: "tool-call"; calls: AgentToolCall[]; assistantMessage: ChatMessage }
-  | { kind: "tool-rejected"; error: string; assistantMessage: ChatMessage }
-  | { kind: "finish"; summary: string; assistantMessage?: ChatMessage }
-  | { kind: "failed"; error: string };
+  | { kind: "tool-call"; calls: AgentToolCall[]; assistantMessage: ChatMessage; meta?: AiCallMeta; budget?: AgentBudgetState }
+  | { kind: "tool-rejected"; error: string; assistantMessage: ChatMessage; meta?: AiCallMeta; budget?: AgentBudgetState }
+  | { kind: "finish"; summary: string; assistantMessage?: ChatMessage; meta?: AiCallMeta; budget?: AgentBudgetState }
+  | { kind: "failed"; error: string; code?: string };
 
 const SYSTEM_PROMPT = `你是“蹭饭图”毕业去向海报编辑器的 AI 助手。你要理解中文自然语言需求，自主规划多步修改，并尽可能不破坏用户原有画布。
 
@@ -60,6 +68,8 @@ function rejectedCount(messages: ChatMessage[]): number {
 }
 
 function parseArguments(name: string, raw: string): Record<string, unknown> {
+  if (Buffer.byteLength(raw, "utf8") > 16 * 1024) throw new Error(`工具 ${name} 的 arguments 超过 16KiB`);
+  if (/data:[^\s]{257,}/i.test(raw)) throw new Error(`工具 ${name} 的 arguments 不得包含超长 data URL`);
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -84,7 +94,18 @@ function patchForCall(name: string, args: Record<string, unknown>): { domain: Pa
 }
 
 function validateCalls(calls: AgentToolCall[]): string | null {
+  const ids = new Set<string>();
   for (const call of calls) {
+    if (ids.has(call.id)) return JSON.stringify({ code: "TOOL_ARGUMENTS_INVALID", message: "tool_call_id 必须唯一" });
+    ids.add(call.id);
+    if (call.name === "manage_students" && call.arguments.action === "update_fact") {
+      const fields = call.arguments.fields;
+      if (!fields || typeof fields !== "object" || Array.isArray(fields)) return JSON.stringify({ code: "TOOL_ARGUMENTS_INVALID", tool: call.name, message: "fields 必须是对象" });
+      const fieldRecord = fields as Record<string, unknown>;
+      const unknown = Object.keys(fieldRecord).filter((key) => !["name", "university", "city"].includes(key));
+      if (unknown.length > 0) return JSON.stringify({ code: "TOOL_ARGUMENTS_INVALID", tool: call.name, field: "fields", unknownProps: unknown, allowedProps: ["name", "university", "city"], message: "update_fact 只允许修改 name、university、city" });
+      if (Object.values(fieldRecord).some((value) => typeof value !== "string" || !value.trim() || value.trim().length > 200)) return JSON.stringify({ code: "TOOL_ARGUMENTS_INVALID", tool: call.name, field: "fields", message: "update_fact 字段值必须是非空字符串且 trim 后不超过 200 个字符" });
+    }
     const target = patchForCall(call.name, call.arguments);
     if (!target) continue;
     const validation = validateScenePatch(target.domain, target.patch);
@@ -147,8 +168,12 @@ export async function runAgentTurn(
   config: AiConfig,
   request: AgentLoopRequest,
 ): Promise<AgentLoopOutcome> {
+  const budget = request.budget ?? { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: MAX_TURNS };
+  if (budget.rounds >= budget.maxRounds || budget.usedTokens >= budget.maxTokens) {
+    return { kind: "finish", summary: "已达到 AI 任务预算，保留当前预览结果。", budget };
+  }
   if (assistantTurnCount(request.messages) >= MAX_TURNS) {
-    return { kind: "finish", summary: `已达 ${MAX_TURNS} 轮上限，先交付已完成的部分。` };
+    return { kind: "finish", summary: `已达 ${MAX_TURNS} 轮上限，先交付已完成的部分。`, budget };
   }
   if (readOnlyStreak(request.messages) >= MAX_READ_ONLY_STREAK) {
     return { kind: "finish", summary: "连续多轮只读未动手，任务无进展，已交回当前结论。" };
@@ -158,44 +183,66 @@ export async function runAgentTurn(
   }
 
   const digestMessage: ChatMessage = {
-    role: "system",
+    role: "user",
     content: `当前工程精简投影（只读；不要把它当作可直接写回的完整工程）：${JSON.stringify(request.digest)}`,
   };
+  const history = request.messages.filter((message) => message.role !== "system");
+  const lastHistoryMessage = history.at(-1);
+  const currentUserMessage = lastHistoryMessage?.role === "user" && lastHistoryMessage.content === request.userMessage
+    ? []
+    : [{ role: "user" as const, content: request.userMessage }];
   const messages = [
-    ...(request.messages.some((message) => message.role === "system") ? [] : [buildSystemMessage()]),
+    buildSystemMessage(),
     digestMessage,
-    ...request.messages,
+    ...history,
+    ...currentUserMessage,
   ];
-  let assistantMessage: ChatMessage;
+  let assistantMessage: ChatMessage & { meta?: AiCallMeta };
   try {
-    assistantMessage = await chatWithTools(config, messages, AGENT_TOOLS, AGENT_MAX_TOKENS);
+    assistantMessage = await chatWithTools({ ...config, retryMaxAttempts: request.retryMaxAttempts, retryBaseDelayMs: request.retryBaseDelayMs }, messages, AGENT_TOOLS, AGENT_MAX_TOKENS, {
+      requestId: request.requestId,
+      route: request.route,
+      signal: request.signal,
+    });
   } catch (error) {
+    if (error instanceof AiCallError) throw error;
     return { kind: "failed", error: error instanceof Error ? error.message : String(error) };
   }
+  const nextBudget: AgentBudgetState = {
+    ...budget,
+    rounds: budget.rounds + 1,
+    usedTokens: Math.min(budget.maxTokens, budget.usedTokens + (assistantMessage.meta?.usage?.totalTokens ?? 0)),
+  };
+  const meta = assistantMessage.meta;
 
   const rawCalls = assistantMessage.tool_calls ?? [];
   if (rawCalls.length === 0) {
-    return { kind: "finish", summary: assistantMessage.content?.trim() || "已完成。", assistantMessage };
-  }
-  const finishCall = rawCalls.find((call) => call.function.name === "finish");
-  if (finishCall) {
-    try {
-      const args = parseArguments("finish", finishCall.function.arguments);
-      return { kind: "finish", summary: typeof args.summary === "string" && args.summary.trim() ? args.summary.trim() : "已完成。", assistantMessage };
-    } catch {
-      return { kind: "finish", summary: "已完成。", assistantMessage };
-    }
+    return { kind: "finish", summary: assistantMessage.content?.trim() || "已完成。", assistantMessage, meta, budget: nextBudget };
   }
 
   const calls: AgentToolCall[] = [];
   try {
     for (const call of rawCalls) {
+      if (!call.id || calls.some((existing) => existing.id === call.id)) throw new Error("tool_call_id 必须唯一");
+      if (!call.function || !call.function.name || !AGENT_TOOLS.some((tool) => tool.function.name === call.function.name)) throw new Error(`工具 ${call.function?.name ?? "unknown"} 不存在`);
       calls.push({ id: call.id, name: call.function.name, arguments: parseArguments(call.function.name, call.function.arguments) });
     }
   } catch (error) {
-    return { kind: "tool-rejected", error: error instanceof Error ? error.message : String(error), assistantMessage };
+    return { kind: "tool-rejected", error: error instanceof Error ? error.message : String(error), assistantMessage: { role: "assistant", content: `模型请求的工具无效：${error instanceof Error ? error.message : String(error)}` }, meta, budget: nextBudget };
+  }
+  const batch = validateAgentToolBatch(calls);
+  if (!batch.ok) return { kind: "tool-rejected", error: batch.error, assistantMessage: { role: "assistant", content: `模型工具调用未通过校验：${batch.error}` }, meta, budget: nextBudget };
+  const finishCall = calls.find((call) => call.name === "finish");
+  if (finishCall) {
+    const summary = typeof finishCall.arguments.summary === "string" && finishCall.arguments.summary.trim()
+      ? finishCall.arguments.summary.trim()
+      : "已完成。";
+    return { kind: "finish", summary, assistantMessage, meta, budget: nextBudget };
   }
   const validationError = validateCalls(calls);
-  if (validationError) return { kind: "tool-rejected", error: validationError, assistantMessage };
-  return { kind: "tool-call", calls, assistantMessage };
+  if (validationError) {
+    const legalCallShape = calls.every((call) => AGENT_TOOLS.some((tool) => tool.function.name === call.name));
+    return { kind: "tool-rejected", error: validationError, assistantMessage: legalCallShape ? assistantMessage : { role: "assistant", content: `模型工具调用未通过校验：${validationError}` }, meta, budget: nextBudget };
+  }
+  return { kind: "tool-call", calls, assistantMessage, meta, budget: nextBudget };
 }

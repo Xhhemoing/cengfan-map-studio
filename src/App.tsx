@@ -35,7 +35,7 @@ import {
 } from "./lib/project-data";
 import { createId } from "./lib/ids";
 
-import { AgentAssistant } from "./components/AgentAssistant";
+import { AgentAssistant, AssistantConversationProvider } from "./components/AgentAssistant";
 
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
@@ -48,7 +48,7 @@ import { DisplayFrameWorkspace } from "./components/workspaces/DisplayFrameWorks
 import { ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
 import { DeliveryWorkspace, type DeliveryExportState, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
 
-import { ActionGroup, CompactButton, ControlCluster, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
+import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
 import { WorkflowGuide } from "./components/WorkflowGuide";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
 import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
@@ -150,7 +150,6 @@ import { checkLayoutHealth } from "./lib/layout-health";
 import { listResourceHealthIssues } from "./lib/resource-health";
 
 import {
-  clampGridSize,
   DEFAULT_GRID_SIZE,
   fitZoomPercent,
   snapPoint,
@@ -378,7 +377,7 @@ function ProjectMenu({
   );
 }
 
-export function App() {
+function StudioApp() {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
   const [initialWorkspace] = useState(() => loadBrowserWorkspaceMirror(browserStores.mirror));
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
@@ -419,9 +418,8 @@ export function App() {
   const [userAssets, setUserAssets] = useState<UserAsset[]>(() =>
     initialWorkspace?.assets ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserAssets(), [])),
   );
-  const [showGrid, setShowGrid] = useState(false);
-  const [snapToGridEnabled, setSnapToGridEnabled] = useState(true);
-  const [gridSize, setGridSize] = useState(DEFAULT_GRID_SIZE);
+  const [showGrid] = useState(false);
+  const [gridSize] = useState(DEFAULT_GRID_SIZE);
   const [renderSettings, setRenderSettings] = useState<RenderSettings>(() => {
     if (initialWorkspace) return initialWorkspace.renderSettings;
     if (typeof window === "undefined") return { ...DEFAULT_RENDER_SETTINGS };
@@ -472,7 +470,6 @@ export function App() {
     && loadBrowserValue(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false));
   const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => legacyEditorEnabled ? "content" : workspaceSession.stage);
   const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "template" || activeStage === "data" ? "content" : activeStage);
-  const [contentView, setContentView] = useState<"layers" | "assistant">("layers");
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
@@ -606,7 +603,6 @@ export function App() {
   const style = renderProject.style;
   const selectedTextId = selection.type === "text" ? selection.id : null;
   const summary = buildProvinceSummary(students);
-  const isPreviewing = previewCommands.length > 0;
   const resolvedTemplate = useMemo(() => {
     const base = createSystemTemplate(template);
     return mergeTemplateDocuments(base, {
@@ -861,21 +857,6 @@ export function App() {
     commitProject(redoTransaction(project));
   };
 
-  const fitCanvasToStage = () => {
-    const stage = stageRef.current;
-    if (!stage) {
-      setZoomPercent(100);
-      return;
-    }
-    const next = fitZoomPercent({
-      stageWidth: stage.clientWidth,
-      stageHeight: stage.clientHeight,
-      canvasWidth: project.canvas.width,
-      canvasHeight: project.canvas.height,
-    });
-    setZoomPercent(next);
-  };
-
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia?.("(max-width: 1120px)").matches) return;
     const timer = window.setTimeout(() => {
@@ -892,7 +873,7 @@ export function App() {
   }, [project.canvas.height, project.canvas.width]);
 
   const maybeSnap = (x: number, y: number) => {
-    if (!showGrid || !snapToGridEnabled) return { x: Math.round(x), y: Math.round(y) };
+    if (!showGrid) return { x: Math.round(x), y: Math.round(y) };
     return snapPoint({ x, y }, gridSize);
   };
 
@@ -1980,6 +1961,7 @@ export function App() {
             commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, point)));
           }}
         />
+        <AgentAssistant project={project} assets={userAssets} onPreview={setAgentPreview} onCommit={commitProjectTransaction} />
       </main>
     );
   }
@@ -2473,15 +2455,7 @@ export function App() {
 
           {activePanel === "content" && (
             <div className="panel-content workflow-panel workflow-panel--content">
-              <SegmentedControl
-                label="内容工具"
-                activeId={contentView}
-                items={[{ id: "layers", label: "画布图层" }, { id: "assistant", label: "AI 助手" }]}
-                onChange={setContentView}
-                className="content-tool-tabs"
-              />
-              {contentView === "layers" ? (
-                <>
+              <>
                   <div className="panel-heading">
                     <span>画布元素</span>
                     <small>可编辑图层</small>
@@ -2527,97 +2501,11 @@ export function App() {
                     {resolvedTemplate.visibleFields.join("/")}
                   </p>
                 </>
-              ) : (
-                <>
-                  <AgentAssistant
-                    project={project}
-                    assets={userAssets}
-                    onPreview={setAgentPreview}
-                    onCommit={commitProjectTransaction}
-                  />
-                </>
-              )}
             </div>
           )}
         </aside>
 
         <section className="editor-area">
-          <div className="editor-toolbar">
-            <span>
-              <b>毕业去向图</b>
-              <small>
-                {" "}
-                · {isPreviewing ? "AI 预览中" : "手动保存模式"} · 同源 API
-              </small>
-            </span>
-            <div className="editor-toolbar-actions">
-              <ControlCluster label="视图">
-              <button type="button" aria-label="适应画布" onClick={fitCanvasToStage}>适应画布</button>
-              <button
-                type="button"
-                aria-label={showGrid ? "关闭网格" : "打开网格"}
-                aria-pressed={showGrid}
-                className={showGrid ? "is-active" : undefined}
-                onClick={() => setShowGrid((value) => !value)}
-              >
-                网格
-              </button>
-              <button
-                type="button"
-                aria-label={snapToGridEnabled ? "关闭吸附" : "打开吸附"}
-                aria-pressed={snapToGridEnabled}
-                className={snapToGridEnabled ? "is-active" : undefined}
-                disabled={!showGrid}
-                onClick={() => setSnapToGridEnabled((value) => !value)}
-              >
-                吸附
-              </button>
-              <label className="grid-size-control" htmlFor="editor-grid-size">
-                间距
-                <input
-                  id="editor-grid-size"
-                  type="number"
-                  min={4}
-                  max={200}
-                  value={gridSize}
-                  disabled={!showGrid}
-                  onChange={(event) => setGridSize(clampGridSize(event.target.value))}
-                />
-              </label>
-              </ControlCluster>
-              <ControlCluster label="预览设置">
-              <label className="render-mode-control" htmlFor="editor-render-mode">
-                预览
-                <select
-                  id="editor-render-mode"
-                  aria-label="预览帧率模式"
-                  value={renderSettings.mode}
-                  onChange={(event) => setRenderSettings((current) => normalizeRenderSettings({ ...current, mode: event.target.value }))}
-                >
-                  <option value="high">高帧</option>
-                  <option value="normal">标准</option>
-                  <option value="low">省电</option>
-                  <option value="fixed">自定义</option>
-                </select>
-              </label>
-              {renderSettings.mode === "fixed" && (
-                <label className="render-mode-control" htmlFor="editor-render-fps">
-                  FPS
-                  <input
-                    id="editor-render-fps"
-                    aria-label="自定义预览帧率"
-                    type="number"
-                    min={5}
-                    max={60}
-                    step={0.1}
-                    value={renderSettings.fixedFps}
-                    onChange={(event) => setRenderSettings((current) => normalizeRenderSettings({ ...current, fixedFps: event.target.value }))}
-                  />
-                </label>
-              )}
-              </ControlCluster>
-            </div>
-          </div>
           <div className="canvas-stage" ref={stageRef}>
             <div
               className="canvas-zoom-shell"
@@ -2715,6 +2603,7 @@ export function App() {
             </div>
           </div>
         </section>
+        <AgentAssistant project={project} assets={userAssets} onPreview={setAgentPreview} onCommit={commitProjectTransaction} />
 
         <aside id="editor-inspector" className={`inspector${mobileInspectorOpen ? " is-open" : ""}`}>
           <InspectorPanel
@@ -2780,4 +2669,8 @@ export function App() {
       </section>
     </main>
   );
+}
+
+export function App() {
+  return <AssistantConversationProvider><StudioApp /></AssistantConversationProvider>;
 }
