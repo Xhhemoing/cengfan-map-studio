@@ -72,14 +72,6 @@ async function rawPost(origin: string, path: string, body: unknown, headers: Rec
   });
 }
 
-function adminRequestInit(): RequestInit {
-  const password = process.env.ADMIN_PASSWORD;
-  if (!password) return {};
-  const username = process.env.ADMIN_USERNAME || "admin";
-  const authorization = Buffer.from(`${username}:${password}`).toString("base64");
-  return { headers: { Authorization: `Basic ${authorization}` } };
-}
-
 function workspaceRequestInit(token = "workspace-test-token"): RequestInit {
   return {
     headers: {
@@ -762,56 +754,6 @@ describe("unified application server", () => {
     expect(denied.status).toBe(403);
   });
 
-  it("records visits with request details and exposes aggregate analytics", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-visits-"));
-    directories.push(dataDir);
-    const server = createAiServer({ dataDir, trustProxy: true });
-    servers.push(server);
-    const origin = await startServer(server);
-
-    const page = await fetch(`${origin}/dashboard?tab=map`, {
-      headers: {
-        "X-Forwarded-For": "203.0.113.42",
-        Referer: "https://example.com/source",
-        "User-Agent": "Test Browser",
-      },
-    });
-    expect(page.status).toBe(404);
-    await new Promise((resolve) => setTimeout(resolve, 25));
-
-    const analytics = await fetch(`${origin}/api/admin/visits`, adminRequestInit());
-    expect(analytics.status).toBe(200);
-    const body = await analytics.json() as { total: number; uniqueIps: number; visits: Array<Record<string, unknown>> };
-    expect(body.total).toBe(1);
-    expect(body.uniqueIps).toBe(1);
-    expect(body.visits[0]).toMatchObject({ ip: "203.0.113.42", method: "GET", path: "/dashboard", status: 404, referer: "https://example.com/source", userAgent: "Test Browser" });
-  });
-
-  it("ignores spoofed forwarded IP headers unless the proxy is trusted", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-visits-untrusted-"));
-    directories.push(dataDir);
-    const server = createAiServer({ dataDir });
-    servers.push(server);
-    const origin = await startServer(server);
-
-    await fetch(`${origin}/dashboard`, { headers: { "X-Forwarded-For": "203.0.113.42" } });
-    await new Promise((resolve) => setTimeout(resolve, 25));
-
-    const analytics = await fetch(`${origin}/api/admin/visits`, adminRequestInit());
-    const body = await analytics.json() as { visits: Array<{ ip: string }> };
-    expect(body.visits[0]?.ip).not.toBe("203.0.113.42");
-  });
-
-  it("reads legacy visit records without losing their history", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-legacy-visits-"));
-    directories.push(dataDir);
-    await writeFile(join(dataDir, "visits.json"), JSON.stringify([{ id: "old", occurredAt: "2026-01-01T00:00:00.000Z", path: "/" }]));
-    const server = createAiServer({ dataDir });
-    servers.push(server);
-    const origin = await startServer(server);
-    const analytics = await fetch(`${origin}/api/admin/visits`, adminRequestInit());
-    await expect(analytics.json()).resolves.toMatchObject({ total: 1, uniqueIps: 1 });
-  });
   it("returns the full snapshot when an authorized member reconnects from a stale version", async () => {
     const server = createAiServer();
     servers.push(server);

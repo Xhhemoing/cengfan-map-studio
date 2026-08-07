@@ -33,31 +33,8 @@ export function resolvePort(value: string | undefined = process.env.PORT): numbe
   return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : DEFAULT_PORT;
 }
 const DEFAULT_DATA_DIR = fileURLToPath(new URL("../.data", import.meta.url));
-const VISIT_LOG_LIMIT = 5000;
-
-function createVisitId(): string {
-  return `visit-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 function createAgentTaskId(): string {
   return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-}
-
-export interface VisitRecord {
-  id: string;
-  occurredAt: string;
-  ip: string;
-  method: string;
-  path: string;
-  status: number;
-  referer: string;
-  userAgent: string;
-}
-
-interface LegacyVisitRecord {
-  id?: string;
-  occurredAt?: string;
-  path?: string;
 }
 
 function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
@@ -68,75 +45,6 @@ function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
     if (firstIp) return firstIp;
   }
   return (request.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
-}
-
-function isLoopbackRequest(request: http.IncomingMessage): boolean {
-  const address = request.socket.remoteAddress?.replace(/^::ffff:/, "");
-  return address === "127.0.0.1" || address === "::1";
-}
-
-function hasAdminAccess(request: http.IncomingMessage): boolean {
-  const password = process.env.ADMIN_PASSWORD;
-  if (!password) return isLoopbackRequest(request);
-  const authorization = request.headers.authorization;
-  if (!authorization?.startsWith("Basic ")) return false;
-  try {
-    const [username, providedPassword] = Buffer.from(authorization.slice(6), "base64").toString("utf8").split(":");
-    return username === (process.env.ADMIN_USERNAME || "admin") && providedPassword === password;
-  } catch {
-    return false;
-  }
-}
-
-function requestAdminAuth(response: http.ServerResponse) {
-  response.writeHead(401, { ...securityHeaders(), "WWW-Authenticate": 'Basic realm="Cengfan Admin", charset="UTF-8"' });
-  response.end();
-}
-
-function normalizeVisitRecord(value: unknown): VisitRecord | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as LegacyVisitRecord & Partial<VisitRecord>;
-  if (!record.path || !record.occurredAt) return null;
-  return {
-    id: record.id || createVisitId(),
-    occurredAt: record.occurredAt,
-    ip: record.ip || "unknown",
-    method: record.method || "GET",
-    path: record.path,
-    status: typeof record.status === "number" && Number.isInteger(record.status) ? record.status : 200,
-    referer: record.referer || "",
-    userAgent: record.userAgent || "",
-  };
-}
-
-function parseVisitLog(raw: string): VisitRecord[] {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? parsed.map(normalizeVisitRecord).filter((record): record is VisitRecord => Boolean(record)) : [];
-  } catch {
-    // Recover arrays appended by the previous asynchronous recorder implementation.
-    const arrays = raw.split(/\]\s*\[/).map((part, index, parts) => {
-      const prefix = index === 0 ? part : `[${part}`;
-      return index === parts.length - 1 ? prefix : `${prefix}]`;
-    });
-    return arrays.flatMap((array) => {
-      try {
-        const parsed = JSON.parse(array) as unknown;
-        return Array.isArray(parsed) ? parsed.map(normalizeVisitRecord).filter((record): record is VisitRecord => Boolean(record)) : [];
-      } catch {
-        return [];
-      }
-    });
-  }
-}
-
-async function readVisitLog(file: string): Promise<VisitRecord[]> {
-  try {
-    return parseVisitLog(await readFile(file, "utf8")).slice(0, VISIT_LOG_LIMIT);
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return [];
-    throw error;
-  }
 }
 
 export interface AiServerOptions {
@@ -440,7 +348,6 @@ export function createAiServer(options: AiServerOptions = {}) {
   const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
   const trustProxy = options.trustProxy ?? process.env.TRUST_PROXY === "1";
   const workspaceFile = join(dataDir, "workspace.json");
-  const visitsFile = join(dataDir, "visits.json");
   const roomStore = createRoomStore({
     maxRooms: options.maxRooms ?? Number(process.env.MAX_ROOMS ?? DEFAULT_MAX_ROOMS),
     maxSubscribers: options.maxRoomSubscribers ?? Number(process.env.MAX_ROOM_SUBSCRIBERS ?? DEFAULT_MAX_ROOM_SUBSCRIBERS),
@@ -467,7 +374,6 @@ export function createAiServer(options: AiServerOptions = {}) {
     roomEventsTickets.set(ticket, record);
     return true;
   };
-  let visitWriteChain = Promise.resolve();
   const flushAiState = async () => {
     try {
       await stateStore.flush();
@@ -477,31 +383,7 @@ export function createAiServer(options: AiServerOptions = {}) {
     }
   };
 
-  const recordVisit = (request: http.IncomingMessage, status: number) => {
-    const requestUrl = request.url || "/";
-    const path = new URL(requestUrl, "http://localhost").pathname;
-    if (request.method !== "GET" || path.startsWith("/api/") || path === "/favicon.ico") return;
-    const visit: VisitRecord = {
-      id: createVisitId(),
-      occurredAt: new Date().toISOString(),
-      ip: clientIp(request, trustProxy),
-      method: request.method || "GET",
-      path,
-      status,
-      referer: typeof request.headers.referer === "string" ? request.headers.referer : "",
-      userAgent: typeof request.headers["user-agent"] === "string" ? request.headers["user-agent"] : "",
-    };
-    visitWriteChain = visitWriteChain.then(async () => {
-      const visits = await readVisitLog(visitsFile);
-      await mkdir(dataDir, { recursive: true });
-      const temporaryFile = `${visitsFile}.${process.pid}.tmp`;
-      await writeFile(temporaryFile, `${JSON.stringify([visit, ...visits].slice(0, VISIT_LOG_LIMIT))}\n`, "utf8");
-      await rename(temporaryFile, visitsFile);
-    }).catch((error) => console.error("Failed to persist visit record", error));
-  };
-
   const server = http.createServer(async (request, response) => {
-    response.once("finish", () => recordVisit(request, response.statusCode));
     const send = (status: number, body: unknown) => sendJson(request, response, status, body, corsOrigins);
     const url = request.url || "/";
     const pathname = new URL(url, "http://localhost").pathname;
@@ -567,22 +449,6 @@ export function createAiServer(options: AiServerOptions = {}) {
             },
           },
         });
-        return;
-      }
-
-      if (request.method === "GET" && pathname === "/api/admin/visits") {
-        if (!hasAdminAccess(request)) {
-          requestAdminAuth(response);
-          return;
-        }
-        await visitWriteChain;
-        const visits = await readVisitLog(visitsFile);
-        const uniqueIps = new Set(visits.map((visit) => visit.ip));
-        const paths = visits.reduce<Record<string, number>>((counts, visit) => {
-          counts[visit.path] = (counts[visit.path] || 0) + 1;
-          return counts;
-        }, {});
-        send( 200, { total: visits.length, uniqueIps: uniqueIps.size, paths, visits: visits.slice(0, 100) });
         return;
       }
 
@@ -1006,14 +872,6 @@ export function createAiServer(options: AiServerOptions = {}) {
           error: { code: "NOT_FOUND", message: "接口不存在" },
         });
         return;
-      }
-
-      if (request.method === "GET" && pathname === "/admin") {
-        if (!hasAdminAccess(request)) {
-          requestAdminAuth(response);
-          return;
-        }
-        if (staticDir && serveStatic(request, response, staticDir, url, corsOrigins)) return;
       }
 
       if (request.method === "GET" && staticDir) {
