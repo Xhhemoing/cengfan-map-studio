@@ -16,6 +16,8 @@ cp .env.example .env        # 配置 API/LLM 密钥等
 npm run dev                 # 同时启动 Vite(5173)与 API(8787)
 ```
 
+打开 `http://localhost:5173/` 先进入**项目工作台**(项目列表),点「新建项目」或项目卡片进入编辑器;支持多项目新建/复制/重命名/删除/导出/导入,编辑内容自动保存到浏览器本地。
+
 AI agent 使用 OpenAI 兼容接口。旧变量 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL` 继续可用；生产环境建议使用 `AI_PRIMARY_API_KEY`、`AI_PRIMARY_BASE_URL`、`AI_PRIMARY_MODEL` 和可选的 `AI_FALLBACK_*`。未配置主模型时 agent 使用本地确定性规则。生产部署、状态文件、启动门禁、`/api/live`、`/api/ready` 与回滚流程见 [AI 生产部署手册](docs/deployment/ai-production.md)。运行中的配置状态、路由与任务限制可通过 `GET /api/health` 查看，健康响应不会暴露密钥。
 
 ## 常用命令
@@ -34,7 +36,7 @@ AI agent 使用 OpenAI 兼容接口。旧变量 `AI_API_KEY`、`AI_BASE_URL`、`
 
 ## 目录结构
 
-- `src/` — React 前端(`App.tsx` 主画布,`Admin.tsx` 管理,`components/` 组件,`lib/` 工具与 AI 客户端,`data/` 静态数据)
+- `src/` — React 前端(`App.tsx` 编辑器画布,`components/ProjectWorkbench.tsx` 项目工作台,`components/` 组件,`lib/` 工具与 AI 客户端(含 IndexedDB 项目存储),`data/` 静态数据)
 - `server/` — Node API(认证、协作、AI agent 循环、导入导出)
 - `scripts/` — dev/build/start 与重任务包装
 - `docs/` — 设计规格与需求文档

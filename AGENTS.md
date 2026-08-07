@@ -4,7 +4,7 @@
 
 ## 结构与所有权
 
-- `src/App.tsx` 主画布、`src/Admin.tsx` 管理、`src/components/*` 组件、`src/lib/*` 工具与 AI 客户端、`src/data/*` 静态数据。
+- `src/App.tsx` 编辑器画布、`src/components/ProjectWorkbench.tsx` 项目工作台、`src/components/*` 组件、`src/lib/*` 工具与 AI 客户端(含 IndexedDB 项目存储)、`src/data/*` 静态数据。
 - `src/server/*` Node API(认证、协作、AI agent 循环、导入导出)。
 - 前端视觉问题优先定位 `App.tsx` 与对应组件;数据流问题定位 `src/lib` 与 `src/server`。
 
