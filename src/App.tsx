@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Download,
   FolderOpen,
   ImageDown,
@@ -34,6 +35,7 @@ import {
   type MapTemplateId,
 } from "./lib/project-data";
 import { createId } from "./lib/ids";
+import { editorProjectStore } from "./lib/editor-project-store";
 
 import { AssistantConversationProvider } from "./components/AgentAssistant";
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
@@ -434,8 +436,15 @@ function StudioStageShell({
   );
 }
 
+function WorkbenchBackButton() {
+  return (
+    <button type="button" className="secondary-button" aria-label="返回项目列表" onClick={() => { window.location.hash = "#/"; }}>
+      <ArrowLeft size={16} /> 返回列表
+    </button>
+  );
+}
+
 function StudioApp({ projectId }: { projectId?: string }) {
-  void projectId; // Task 4 按 projectId 从工作台加载/保存项目；当前保持现有本地草稿行为
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
   const [initialWorkspace] = useState(() => loadBrowserWorkspaceMirror(browserStores.mirror));
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
@@ -470,6 +479,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
   );
   const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
+  const [projectMissing, setProjectMissing] = useState(false);
   const [userFonts, setUserFonts] = useState<UserFont[]>(() =>
     initialWorkspace?.fonts ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserFonts(), [])),
   );
@@ -505,7 +515,13 @@ function StudioApp({ projectId }: { projectId?: string }) {
     null,
   ));
 
+  const projectIdRef = useRef<string | null>(projectId ?? null);
+  const projectNameRef = useRef<string | null>(null);
+  const projectCreatedAtRef = useRef<string>(new Date(0).toISOString());
   const hasLocalWorkspaceEditsRef = useRef(false);
+  // saveLocal 只在事件处理器(强制保存按钮)经 LocalWorkspaceOverwrite.drain() 触发,属于渲染期之后;
+  // 此处 ref 读取发生在保存时刻而非渲染期,react-hooks/refs 无法穿透类间接层,故按行豁免。
+  // eslint-disable-next-line react-hooks/refs
   const [workspaceSync] = useState(() => new LocalWorkspaceOverwrite({
     saveLocal: async (pack) => {
       try {
@@ -516,6 +532,15 @@ function StudioApp({ projectId }: { projectId?: string }) {
       }
       const result = await saveBrowserWorkspaceSnapshot(pack, browserStores);
       if (result.durable === "failed" && result.mirror === "failed") throw new Error("浏览器本地存储不可写");
+      if (projectIdRef.current) {
+        await editorProjectStore.put({
+          id: projectIdRef.current,
+          name: projectNameRef.current ?? "未命名项目",
+          createdAt: projectCreatedAtRef.current,
+          updatedAt: new Date().toISOString(),
+          pack,
+        });
+      }
     },
     onStateChange: setSyncState,
   }));
@@ -703,6 +728,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   }, [customTemplates, project, renderSettings, userAssets, userFonts, workspaceSync]);
 
   useEffect(() => {
+    if (projectId) return; // 项目模式以 IndexedDB 中的项目为准,不覆盖浏览器本地镜像
     let cancelled = false;
     void loadLatestBrowserWorkspace(browserStores).then((pack) => {
       if (cancelled || !pack || hasLocalWorkspaceEditsRef.current) return;
@@ -724,7 +750,33 @@ function StudioApp({ projectId }: { projectId?: string }) {
       workspaceHydratedRef.current = true;
     });
     return () => { cancelled = true; };
-  }, [browserStores, initialWorkspace]);
+  }, [browserStores, initialWorkspace, projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    projectIdRef.current = projectId;
+    void editorProjectStore.get(projectId).then((record) => {
+      if (cancelled) return;
+      if (!record) {
+        setProjectMissing(true);
+        return;
+      }
+      const restored = restoreProjectPackage(record.pack);
+      projectNameRef.current = record.name;
+      projectCreatedAtRef.current = record.createdAt;
+      workspaceHydratedRef.current = true;
+      skipNextWorkspacePendingRef.current = true;
+      setProject(restored.project);
+      setUserAssets(restored.assets);
+      setUserFonts(restored.fonts);
+      setCustomTemplates(restored.customTemplates);
+      setRenderSettings(restored.renderSettings);
+      setPreviewCommands([]);
+      setStatusMessage(`已打开项目「${record.name}」`);
+    }).catch(() => setProjectMissing(true));
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   const currentCollaborationPackage = (exportedAt = new Date().toISOString()): ProjectPackage => {
     const pack = createProjectPackageEnvelope(latestWorkspaceRef.current);
@@ -1838,6 +1890,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
     />
   );
 
+  if (projectMissing) {
+    return (
+      <main className="workbench-shell">
+        <section className="workbench-error" role="alert">
+          <strong>项目不存在或已删除</strong>
+          <button type="button" className="secondary-button" aria-label="返回项目列表" onClick={() => { window.location.hash = "#/"; }}>返回列表</button>
+        </section>
+      </main>
+    );
+  }
+
   if (activeStage === "template") {
     return (
       <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
@@ -1852,6 +1915,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectId && <WorkbenchBackButton />}
             {projectExportActions}
             <ToolbarGroup label="界面主题">
               <SkinSelector skin={skin} onChange={setSkin} />
@@ -1893,6 +1957,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectId && <WorkbenchBackButton />}
             {projectExportActions}
             <ToolbarGroup label="界面主题">
               <SkinSelector skin={skin} onChange={setSkin} />
@@ -1953,6 +2018,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectId && <WorkbenchBackButton />}
             {projectExportActions}
             <ToolbarGroup label="界面主题">
               <SkinSelector skin={skin} onChange={setSkin} />
@@ -2020,6 +2086,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectId && <WorkbenchBackButton />}
             <ToolbarGroup label="历史与缩放">
               <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
               <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
@@ -2059,6 +2126,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectId && <WorkbenchBackButton />}
             {projectExportActions}
             <ToolbarGroup label="界面主题">
               <SkinSelector skin={skin} onChange={setSkin} />
@@ -2115,6 +2183,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectId && <WorkbenchBackButton />}
             {projectExportActions}
             <ToolbarGroup label="界面主题">
               <SkinSelector skin={skin} onChange={setSkin} />
@@ -2218,7 +2287,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
               <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
             </div>
           </div>
-          <div className="topbar-actions" />
+          <div className="topbar-actions">
+            {projectId && <WorkbenchBackButton />}
+          </div>
         </header>
         <GlobalSettingsScreen
         project={project}
@@ -2289,6 +2360,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           </div>
         </div>
         <div className="topbar-actions">
+          {projectId && <WorkbenchBackButton />}
           <ToolbarGroup label="历史与缩放">
             <ToolbarButton
               label={undoLabel}
