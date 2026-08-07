@@ -1,8 +1,10 @@
 import http from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createBudgetReceiptLedger, createBudgetReceiptSigner, type BudgetReceiptLedger } from "./ai/budget-receipt";
+import { createFileAiStateStore, createMemoryAiStateStore, emptyAiRuntimeState, type AiRuntimeState, type AiStateStore } from "./ai/ai-state-store";
+import { createServerLifecycle, validateProductionConfig } from "./production";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGzip } from "node:zlib";
@@ -24,6 +26,7 @@ import {
 import { CollaborationError, createRoomStore } from "./collaboration";
 
 export const DEFAULT_PORT = 8787;
+export type AiServer = http.Server & { flushAiState?: () => Promise<void>; lifecycle?: ReturnType<typeof createServerLifecycle> };
 
 export function resolvePort(value: string | undefined = process.env.PORT): number {
   const parsed = Number(value);
@@ -153,9 +156,19 @@ export interface AiServerOptions {
   maxRooms?: number;
   maxRoomSubscribers?: number;
   roomTtlMs?: number;
+  roomInvitationTtlMs?: number;
+  roomEventsTicketTtlMs?: number;
   trustProxy?: boolean;
   budgetReceiptSecret?: string;
   budgetReceiptLedger?: BudgetReceiptLedger;
+  aiStateStore?: AiStateStore;
+  aiRuntimeState?: AiRuntimeState;
+  rateLimitOptions?: {
+    agent?: { limit: number; windowMs: number; maxEntries?: number };
+    otherAi?: { limit: number; windowMs: number; maxEntries?: number };
+  };
+  onAiStateUnavailable?: () => void;
+  productionConfig?: ReturnType<typeof validateProductionConfig>;
 }
 
 const DEFAULT_MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
@@ -165,6 +178,8 @@ const DEFAULT_MAX_AI_BODY_BYTES = 512 * 1024;
 const DEFAULT_MAX_ROOMS = 100;
 const DEFAULT_MAX_ROOM_SUBSCRIBERS = 50;
 const DEFAULT_ROOM_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_ROOM_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_ROOM_EVENTS_TICKET_TTL_MS = 60 * 1000;
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -229,7 +244,7 @@ function corsHeaders(request: http.IncomingMessage, corsOrigins: readonly string
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET,PUT,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-API-Key, Prefer",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-API-Key, Prefer, X-Cengfan-Room-Token",
     "Access-Control-Max-Age": "600",
     Vary: "Origin",
   };
@@ -328,7 +343,15 @@ function serveStatic(
   requestUrl: string,
   corsOrigins: readonly string[] = [],
 ): boolean {
-  const urlPath = decodeURIComponent((requestUrl.split("?")[0] || "/"));
+  let urlPath: string;
+  try {
+    urlPath = decodeURIComponent(requestUrl.split("?")[0] || "/");
+  } catch {
+    sendJson(request, response, 400, {
+      error: { code: "INVALID_URL_ENCODING", message: "URL 编码无效" },
+    }, corsOrigins);
+    return true;
+  }
   const relativePath = urlPath === "/" ? "index.html" : urlPath.replace(/^\//, "");
   const candidate = resolve(staticDir, relativePath);
   const root = resolve(staticDir);
@@ -367,11 +390,24 @@ export function createAiServer(options: AiServerOptions = {}) {
   const staticDir = options.staticDir ? resolve(options.staticDir) : undefined;
   const dataDir = resolve(options.dataDir ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
   const workspaceApiToken = options.workspaceApiToken ?? process.env.WORKSPACE_API_TOKEN;
+  const productionConfig = options.productionConfig ?? validateProductionConfig(process.env);
   const corsOrigins = options.corsOrigins ?? (process.env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
   const aiConfig = options.aiConfig ?? resolveAiConfig();
   const ai: AiBackend = createAiBackend(aiConfig);
   const budgetReceipts = createBudgetReceiptSigner(options.budgetReceiptSecret ?? process.env.AI_BUDGET_RECEIPT_SECRET);
-  const budgetReceiptLedger = options.budgetReceiptLedger ?? createBudgetReceiptLedger(budgetReceipts);
+  const stateStore = options.aiStateStore ?? createMemoryAiStateStore(options.aiRuntimeState ?? emptyAiRuntimeState(), { ready: true });
+  const restoredState = options.aiRuntimeState ?? emptyAiRuntimeState();
+  let aiStateUnavailable = false;
+  const enqueueStateUpdate = (mutator: (state: AiRuntimeState) => AiRuntimeState) => {
+    void stateStore.update(mutator).catch(() => {
+      aiStateUnavailable = true;
+      options.onAiStateUnavailable?.();
+    });
+  };
+  const budgetReceiptLedger = options.budgetReceiptLedger ?? createBudgetReceiptLedger(budgetReceipts, {
+    restored: restoredState.budgetLedger,
+    onChange: (snapshot) => enqueueStateUpdate((state) => ({ ...state, budgetLedger: snapshot })),
+  });
   const agentRuntime: AgentRuntimeConfig = options.agentConfig && "maxRounds" in options.agentConfig
     ? normalizeAgentRuntimeConfig(options.agentConfig)
     : options.agentConfig
@@ -385,8 +421,20 @@ export function createAiServer(options: AiServerOptions = {}) {
       })
       : resolveAgentRuntimeConfig();
   const agent = createAgentLoopBackend(agentRuntime);
-  const agentRateLimiter = options.rateLimiters?.agent ?? createRateLimiter({ limit: 30, windowMs: 60_000 });
-  const otherAiRateLimiter = options.rateLimiters?.otherAi ?? createRateLimiter({ limit: 20, windowMs: 60_000 });
+  const agentRateLimiter = options.rateLimiters?.agent ?? createRateLimiter({
+    limit: options.rateLimitOptions?.agent?.limit ?? 30,
+    windowMs: options.rateLimitOptions?.agent?.windowMs ?? 60_000,
+    maxEntries: options.rateLimitOptions?.agent?.maxEntries,
+    restored: restoredState.rateLimits.agent,
+    onChange: (snapshot) => enqueueStateUpdate((state) => ({ ...state, rateLimits: { ...state.rateLimits, agent: snapshot } })),
+  });
+  const otherAiRateLimiter = options.rateLimiters?.otherAi ?? createRateLimiter({
+    limit: options.rateLimitOptions?.otherAi?.limit ?? 20,
+    windowMs: options.rateLimitOptions?.otherAi?.windowMs ?? 60_000,
+    maxEntries: options.rateLimitOptions?.otherAi?.maxEntries,
+    restored: restoredState.rateLimits.otherAi,
+    onChange: (snapshot) => enqueueStateUpdate((state) => ({ ...state, rateLimits: { ...state.rateLimits, otherAi: snapshot } })),
+  });
   const aiLogger = options.aiLogger ?? createAiLogger();
   const maxJsonBodyBytes = options.maxJsonBodyBytes ?? DEFAULT_MAX_JSON_BODY_BYTES;
   const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
@@ -397,8 +445,37 @@ export function createAiServer(options: AiServerOptions = {}) {
     maxRooms: options.maxRooms ?? Number(process.env.MAX_ROOMS ?? DEFAULT_MAX_ROOMS),
     maxSubscribers: options.maxRoomSubscribers ?? Number(process.env.MAX_ROOM_SUBSCRIBERS ?? DEFAULT_MAX_ROOM_SUBSCRIBERS),
     roomTtlMs: options.roomTtlMs ?? Number(process.env.ROOM_TTL_MS ?? DEFAULT_ROOM_TTL_MS),
+    invitationTtlMs: options.roomInvitationTtlMs ?? DEFAULT_ROOM_INVITATION_TTL_MS,
   });
+  const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
+  const roomEventsTickets = new Map<string, { roomId: string; accessToken: string; expiresAt: number }>();
+  const MAX_ROOM_EVENTS_TICKETS = 10_000;
+  const evictExpiredTickets = () => {
+    const now = Date.now();
+    for (const [ticket, record] of roomEventsTickets) {
+      if (record.expiresAt <= now) roomEventsTickets.delete(ticket);
+    }
+  };
+  const storeRoomEventsTicket = (ticket: string, record: { roomId: string; accessToken: string; expiresAt: number }) => {
+    if (roomEventsTickets.size >= MAX_ROOM_EVENTS_TICKETS) {
+      evictExpiredTickets();
+      if (roomEventsTickets.size >= MAX_ROOM_EVENTS_TICKETS) {
+        // 拒绝新 ticket，防止内存被恶意请求撑满。
+        return false;
+      }
+    }
+    roomEventsTickets.set(ticket, record);
+    return true;
+  };
   let visitWriteChain = Promise.resolve();
+  const flushAiState = async () => {
+    try {
+      await stateStore.flush();
+    } catch (error) {
+      aiStateUnavailable = true;
+      throw error;
+    }
+  };
 
   const recordVisit = (request: http.IncomingMessage, status: number) => {
     const requestUrl = request.url || "/";
@@ -423,7 +500,7 @@ export function createAiServer(options: AiServerOptions = {}) {
     }).catch((error) => console.error("Failed to persist visit record", error));
   };
 
-  return http.createServer(async (request, response) => {
+  const server = http.createServer(async (request, response) => {
     response.once("finish", () => recordVisit(request, response.statusCode));
     const send = (status: number, body: unknown) => sendJson(request, response, status, body, corsOrigins);
     const url = request.url || "/";
@@ -433,8 +510,19 @@ export function createAiServer(options: AiServerOptions = {}) {
     const requestId = suppliedRequestId || `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const sendAi = (status: number, body: unknown) => send(status, { ...(isRecord(body) ? body : {}), requestId });
     const aiPath = pathname.startsWith("/api/ai/");
+    const aiRequiresToken = productionConfig.config?.nodeEnv === "production"
+      && !productionConfig.config?.aiPublicAccess
+      && Boolean(workspaceApiToken);
+    if (aiPath && request.method === "POST" && aiRequiresToken && !hasApiToken(request, workspaceApiToken)) {
+      requestApiAuth(request, response, corsOrigins, workspaceApiToken);
+      return;
+    }
     const aiLimiter = pathname === "/api/ai/agent" ? agentRateLimiter : otherAiRateLimiter;
     const aiLimit = aiPath && request.method === "POST" ? aiLimiter.check(clientIp(request, trustProxy)) : null;
+    if (aiPath && request.method === "POST" && aiStateUnavailable) {
+      sendAi(503, { error: { code: "AI_STATE_UNAVAILABLE", message: "AI 状态暂时不可用" } });
+      return;
+    }
     if (aiLimit && !aiLimit.allowed) {
       aiLogger.log("ai.rate_limited", { requestId, errorCode: "AI_RATE_LIMITED" });
       sendAi(429, { error: { code: "AI_RATE_LIMITED", message: "请求过于频繁，请稍后重试。" } });
@@ -443,6 +531,19 @@ export function createAiServer(options: AiServerOptions = {}) {
     try {
       if (request.method === "OPTIONS") {
         send( 204, {});
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/live") {
+        send(200, { ok: true });
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/ready") {
+        const config = productionConfig;
+        const lifecycle = (server as AiServer).lifecycle;
+        const ready = config.ok && stateStore.ready && !lifecycle?.isDraining() && !aiStateUnavailable;
+        send(ready ? 200 : 503, { ok: ready, state: ready ? "ready" : "not_ready", persistenceMode: stateStore.mode, reasonCodes: ready ? [] : [...(config.ok ? [] : config.errors), ...(stateStore.ready ? [] : ["AI_STATE_NOT_READY"]), ...(aiStateUnavailable ? ["AI_STATE_UNAVAILABLE"] : []), ...(lifecycle?.isDraining() ? ["SERVER_DRAINING"] : [])] });
         return;
       }
 
@@ -459,7 +560,10 @@ export function createAiServer(options: AiServerOptions = {}) {
               fallback: { configured: Boolean(runtime.fallback), model: runtime.fallback?.model ?? null },
               localFallback: true,
               limits: { maxRounds: runtime.maxRounds, tokenBudget: runtime.tokenBudget },
-              receiptPersistence: "process",
+              receiptPersistence: stateStore.mode,
+              persistenceMode: stateStore.mode,
+              persistenceReady: stateStore.ready,
+              stateRecovered: stateStore.recovered,
             },
           },
         });
@@ -524,19 +628,35 @@ export function createAiServer(options: AiServerOptions = {}) {
         return;
       }
 
+      const roomAccessToken = (request: http.IncomingMessage): string | null => {
+        const value = request.headers["x-cengfan-room-token"];
+        return typeof value === "string" && value.trim() ? value.trim() : null;
+      };
+      const roomErrorStatus = (error: CollaborationError): number => error.code === "VERSION_CONFLICT" ? 409
+        : error.code === "ROOM_NOT_FOUND" ? 404
+          : error.code === "ROOM_LIMIT_REACHED" || error.code === "SUBSCRIBER_LIMIT_REACHED" ? 429
+            : error.code === "ROOM_FORBIDDEN" ? 403
+              : 400;
+      const sendRoomError = (error: CollaborationError) => send(roomErrorStatus(error), {
+        error: { code: error.code, message: error.message, currentVersion: error.currentVersion },
+      });
+      const roomProjection = (room: ReturnType<typeof roomStore.get>, accessToken: string) => {
+        if (!room) return null;
+        const participant = roomStore.authorize(room.id, accessToken, "read");
+        return { ...room, role: participant.role, participants: roomStore.listParticipants(room.id, accessToken) };
+      };
+
       if (request.method === "POST" && pathname === "/api/rooms") {
         const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId) {
-          send( 400, { error: { code: "VALIDATION_ERROR", message: "clientId 必填" } });
+        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId || typeof body.displayName !== "string" || !body.displayName.trim()) {
+          send( 400, { error: { code: "VALIDATION_ERROR", message: "clientId 和 displayName 必填" } });
           return;
         }
         try {
-          send( 201, roomStore.create(body.snapshot, body.clientId));
+          send(201, roomStore.create(body.snapshot, { clientId: body.clientId, displayName: body.displayName.trim() }));
         } catch (error) {
           if (error instanceof CollaborationError) {
-            send( error.code === "ROOM_LIMIT_REACHED" ? 429 : 400, {
-              error: { code: error.code, message: error.message },
-            });
+            sendRoomError(error);
             return;
           }
           throw error;
@@ -546,96 +666,155 @@ export function createAiServer(options: AiServerOptions = {}) {
 
       const roomMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)$/);
       if (request.method === "GET" && roomMatch) {
-        const room = roomStore.get(roomMatch[1]!);
-        if (!room) {
-          send( 404, { error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } });
+        const accessToken = roomAccessToken(request);
+        if (!accessToken) {
+          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
           return;
         }
-        if (!room.ready) {
-          send( 425, { error: { code: "ROOM_INITIALIZING", message: "共享房间正在上传初始工程" } });
+        try {
+          const room = roomProjection(roomStore.get(roomMatch[1]!), accessToken);
+          if (!room) {
+            send(404, { error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } });
+            return;
+          }
+          if (!room.ready) {
+            send(425, { error: { code: "ROOM_INITIALIZING", message: "共享房间正在上传初始工程" } });
+            return;
+          }
+          send(200, room);
+        } catch (error) {
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
+        }
+        return;
+      }
+
+      const invitationMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/invitations$/);
+      if (request.method === "POST" && invitationMatch) {
+        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
+        const accessToken = roomAccessToken(request);
+        if (!accessToken) {
+          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
           return;
         }
-        send( 200, room);
+        if (!isRecord(body) || (body.role !== "editor" && body.role !== "viewer")) {
+          send(400, { error: { code: "VALIDATION_ERROR", message: "邀请角色无效" } });
+          return;
+        }
+        try {
+          send(201, roomStore.createInvitation(invitationMatch[1]!, accessToken, body.role));
+        } catch (error) {
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
+        }
+        return;
+      }
+
+      const joinMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/join$/);
+      if (request.method === "POST" && joinMatch) {
+        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
+        if (!isRecord(body) || typeof body.inviteToken !== "string" || typeof body.clientId !== "string" || typeof body.displayName !== "string") {
+          send(400, { error: { code: "VALIDATION_ERROR", message: "邀请凭证、clientId 和 displayName 必填" } });
+          return;
+        }
+        try {
+          send(200, roomStore.join(joinMatch[1]!, { inviteToken: body.inviteToken, clientId: body.clientId, displayName: body.displayName }));
+        } catch (error) {
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
+        }
         return;
       }
 
       const transactionMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/transactions$/);
       if (request.method === "POST" && transactionMatch) {
         const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
+        const accessToken = roomAccessToken(request);
+        if (!accessToken) {
+          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
+          return;
+        }
         if (!isRecord(body)) {
-          send( 400, { error: { code: "VALIDATION_ERROR", message: "请求体必须是对象" } });
+          send(400, { error: { code: "VALIDATION_ERROR", message: "请求体必须是对象" } });
           return;
         }
         try {
-          const room = roomStore.apply(transactionMatch[1]!, {
+          const room = roomStore.apply(transactionMatch[1]!, accessToken, {
             txId: typeof body.txId === "string" ? body.txId : "",
             clientId: typeof body.clientId === "string" ? body.clientId : "",
             baseVersion: Number(body.baseVersion),
             snapshot: body.snapshot,
             operations: Array.isArray(body.operations) ? body.operations : undefined,
           });
-          const prefer = Array.isArray(request.headers.prefer)
-            ? request.headers.prefer.join(",")
-            : request.headers.prefer ?? "";
-          const result = prefer.toLowerCase().includes("return=minimal")
-            ? { ...room, snapshot: undefined }
-            : room;
-          send( 200, result);
+          const prefer = Array.isArray(request.headers.prefer) ? request.headers.prefer.join(",") : request.headers.prefer ?? "";
+          const result = prefer.toLowerCase().includes("return=minimal") ? { ...room, snapshot: undefined } : room;
+          send(200, result);
         } catch (error) {
-          if (error instanceof CollaborationError) {
-            send(
-              error.code === "VERSION_CONFLICT" ? 409
-                : error.code === "ROOM_NOT_FOUND" ? 404
-                  : error.code === "ROOM_LIMIT_REACHED" || error.code === "SUBSCRIBER_LIMIT_REACHED" ? 429
-                    : 400,
-              {
-              error: { code: error.code, message: error.message, currentVersion: error.currentVersion },
-              },
-            );
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
+        }
+        return;
+      }
+
+      const eventsTicketMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/events-ticket$/);
+      if (request.method === "POST" && eventsTicketMatch) {
+        const accessToken = roomAccessToken(request);
+        if (!accessToken) {
+          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
+          return;
+        }
+        try {
+          roomStore.authorize(eventsTicketMatch[1]!, accessToken, "read");
+          const ticket = randomBytes(24).toString("base64url");
+          const expiresAt = Date.now() + roomEventsTicketTtlMs;
+          if (!storeRoomEventsTicket(ticket, { roomId: eventsTicketMatch[1]!.toUpperCase(), accessToken, expiresAt })) {
+            send(429, { error: { code: "ROOM_LIMIT_REACHED", message: "协作事件凭证过多，请稍后重试" } });
             return;
           }
-          throw error;
+          send(201, { ticket, expiresAt: new Date(expiresAt).toISOString() });
+        } catch (error) {
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
         }
         return;
       }
 
       const eventsMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/events$/);
       if (request.method === "GET" && eventsMatch) {
-        const room = roomStore.get(eventsMatch[1]!);
-        if (!room) {
-          send( 404, { error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } });
+        const eventUrl = new URL(url, "http://localhost");
+        const ticket = eventUrl.searchParams.get("ticket");
+        const ticketRecord = ticket ? roomEventsTickets.get(ticket) : undefined;
+        if (!ticketRecord || ticketRecord.roomId !== eventsMatch[1]!.toUpperCase() || ticketRecord.expiresAt <= Date.now()) {
+          if (ticket) roomEventsTickets.delete(ticket);
+          send(403, { error: { code: "ROOM_FORBIDDEN", message: "协作事件凭证无效或已过期" } });
           return;
         }
-        const eventUrl = new URL(url, "http://localhost");
-        const clientId = eventUrl.searchParams.get("clientId");
+        roomEventsTickets.delete(ticket!);
         const knownVersionParam = eventUrl.searchParams.get("version");
         const knownVersion = knownVersionParam === null ? Number.NaN : Number(knownVersionParam);
         let unsubscribe: () => void;
         try {
-          unsubscribe = roomStore.subscribe(eventsMatch[1]!, (next) => {
-            const payload = next.operations || (clientId && next.updatedBy === clientId)
-              ? { ...next, snapshot: undefined }
-              : next;
+          const room = roomStore.get(eventsMatch[1]!);
+          if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
+          const participant = roomStore.authorize(eventsMatch[1]!, ticketRecord.accessToken, "read");
+          unsubscribe = roomStore.subscribe(eventsMatch[1]!, ticketRecord.accessToken, (next) => {
+            const payload = next.operations || next.updatedBy === participant.id ? { ...next, snapshot: undefined } : next;
             response.write(`event: snapshot\ndata: ${JSON.stringify(payload)}\n\n`);
           });
-        } catch (error) {
-          if (error instanceof CollaborationError) {
-            send( error.code === "SUBSCRIBER_LIMIT_REACHED" ? 429 : 404, {
-              error: { code: error.code, message: error.message },
-            });
-            return;
+          response.writeHead(200, {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            ...corsHeaders(request, corsOrigins),
+          });
+          response.flushHeaders();
+          if (!Number.isInteger(knownVersion) || knownVersion < room.version) {
+            response.write(`event: snapshot\ndata: ${JSON.stringify(room)}\n\n`);
           }
-          throw error;
-        }
-        response.writeHead(200, {
-          "Content-Type": "text/event-stream; charset=utf-8",
-          "Cache-Control": "no-cache, no-transform",
-          "Connection": "keep-alive",
-          ...corsHeaders(request, corsOrigins),
-        });
-        response.flushHeaders();
-        if (!Number.isInteger(knownVersion) || knownVersion < room.version) {
-          response.write(`event: snapshot\ndata: ${JSON.stringify(room)}\n\n`);
+        } catch (error) {
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
+          return;
         }
         const heartbeat = setInterval(() => {
           roomStore.get(eventsMatch[1]!);
@@ -863,6 +1042,18 @@ export function createAiServer(options: AiServerOptions = {}) {
       });
     }
   });
+  Object.defineProperty(server, "flushAiState", { value: flushAiState });
+  return server as AiServer;
+}
+
+export async function createReadyAiServer(options: AiServerOptions = {}): Promise<AiServer> {
+  const config = options.productionConfig ?? validateProductionConfig(process.env);
+  if (!config.ok) throw new Error(`生产配置无效: ${config.errors.join(",")}`);
+  const dataDir = resolve(options.dataDir ?? config.config?.dataDir ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
+  const stateFile = process.env.AI_STATE_FILE ?? config.config?.aiStateFile ?? join(dataDir, "ai-runtime-state.json");
+  const store = options.aiStateStore ?? createFileAiStateStore(stateFile);
+  const state = await store.load();
+  return createAiServer({ ...options, aiStateStore: store, aiRuntimeState: state, productionConfig: config });
 }
 
 const isDirectRun =
@@ -882,12 +1073,27 @@ if (isDirectRun) {
   const staticDir =
     process.env.STATIC_DIR ||
     (existsSync(resolve("dist/index.html")) ? resolve("dist") : undefined);
-  const server = createAiServer({ staticDir, aiConfig: resolveAiConfig() });
-  const port = resolvePort();
-  server.listen(port, "0.0.0.0", () => {
-    console.log(
-      `Cengfan studio listening on http://0.0.0.0:${port}${staticDir ? ` (static: ${staticDir})` : ""}`,
-    );
-    console.log(`AI provider: ${resolveAgentConfig().model || "local-fallback"}`);
+  const productionConfig = validateProductionConfig(process.env);
+  if (!productionConfig.ok) {
+    console.error(`生产配置无效: ${productionConfig.errors.join(",")}`);
+    process.exitCode = 1;
+  }
+  const serverPromise = createReadyAiServer({ staticDir, aiConfig: resolveAiConfig(), productionConfig });
+  void serverPromise.then((server) => {
+    const lifecycle = createServerLifecycle({ server, flush: () => server.flushAiState?.() ?? Promise.resolve(), timeoutMs: productionConfig.config?.shutdownTimeoutMs, onDraining: () => undefined });
+    Object.defineProperty(server, "lifecycle", { value: lifecycle });
+    const shutdown = (signal: string) => void lifecycle.shutdown(signal).then(() => process.exit(0));
+    process.once("SIGINT", () => shutdown("SIGINT"));
+    process.once("SIGTERM", () => shutdown("SIGTERM"));
+    const port = resolvePort();
+    server.listen(port, "0.0.0.0", () => {
+      console.log(
+        `Cengfan studio listening on http://0.0.0.0:${port}${staticDir ? ` (static: ${staticDir})` : ""}`,
+      );
+      console.log(`AI provider: ${resolveAgentConfig().model || "local-fallback"}`);
+    });
+  }).catch((error) => {
+    console.error("Failed to initialize AI runtime state", error instanceof Error ? error.message : "unknown error");
+    process.exitCode = 1;
   });
 }

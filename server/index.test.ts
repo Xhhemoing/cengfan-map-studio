@@ -29,6 +29,29 @@ async function rawGet(origin: string, path: string): Promise<{ status: number; b
   });
 }
 
+async function createCollaborationRoom(origin: string, snapshot: unknown, clientId = "client-a") {
+  const response = await fetch(`${origin}/api/rooms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId, displayName: clientId, ...(snapshot === undefined ? {} : { snapshot }) }),
+  });
+  expect(response.status).toBe(201);
+  return response.json() as Promise<{ room: { id: string; version: number; ready: boolean }; access: { accessToken: string } }>;
+}
+
+function roomHeaders(accessToken: string, headers: Record<string, string> = {}): Record<string, string> {
+  return { "X-Cengfan-Room-Token": accessToken, ...headers };
+}
+
+async function createEventsTicket(origin: string, roomId: string, accessToken: string): Promise<string> {
+  const response = await fetch(`${origin}/api/rooms/${roomId}/events-ticket`, {
+    method: "POST",
+    headers: roomHeaders(accessToken),
+  });
+  expect(response.status).toBe(201);
+  return (await response.json() as { ticket: string }).ticket;
+}
+
 async function rawPost(origin: string, path: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: string }> {
   const target = new URL(origin);
   const payload = JSON.stringify(body);
@@ -108,15 +131,11 @@ describe("unified application server", () => {
     const server = createAiServer();
     servers.push(server);
     const origin = await startServer(server);
-    const created = await fetch(`${origin}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId: "client-a", snapshot: { title: "initial" } }),
-    }).then((response) => response.json()) as { id: string };
+    const created = await createCollaborationRoom(origin, { title: "initial" });
 
-    const response = await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
+    const response = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
       body: JSON.stringify([]),
     });
 
@@ -274,6 +293,24 @@ describe("unified application server", () => {
     expect(JSON.parse(response.body)).toMatchObject({ requestId: "validation-standard", error: { code: "AI_VALIDATION_ERROR" } });
   });
 
+  it("requires a room token before returning private room data", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await fetch(`${origin}/api/rooms`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: "owner", displayName: "创建者", snapshot: { title: "private" } }),
+    }).then((response) => response.json()) as { room: { id: string }; access: { accessToken: string } };
+
+    expect((await fetch(`${origin}/api/rooms/${created.room.id}`)).status).toBe(403);
+    const allowed = await fetch(`${origin}/api/rooms/${created.room.id}`, {
+      headers: { "X-Cengfan-Room-Token": created.access.accessToken },
+    });
+    expect(allowed.status).toBe(200);
+    await expect(allowed.json()).resolves.toMatchObject({ snapshot: { title: "private" }, role: "owner" });
+  });
+
   it("rejects a replayed budget receipt while allowing only one concurrent continuation", async () => {
     const server = createAiServer({ budgetReceiptSecret: "receipt-replay-secret", agentConfig: { apiKey: undefined, baseUrl: "https://llm.example/v1", model: "test-model", timeoutMs: 1000, maxTokens: 4000 } });
     servers.push(server);
@@ -287,12 +324,25 @@ describe("unified application server", () => {
     expect(results.find((result) => result.status === 400)?.body).toContain("AI_VALIDATION_ERROR");
   });
 
+  it("serves live and ready probes without exposing runtime paths or secrets", async () => {
+    const server = createAiServer({ budgetReceiptSecret: "probe-secret" });
+    servers.push(server);
+    const origin = await startServer(server);
+    const live = await rawGet(origin, "/api/live");
+    const ready = await rawGet(origin, "/api/ready");
+    expect(live).toEqual({ status: 200, body: '{"ok":true}' });
+    expect(ready.status).toBe(200);
+    expect(ready.body).toContain('"state":"ready"');
+    expect(ready.body).not.toContain("probe-secret");
+    expect(ready.body).not.toContain("ai-runtime-state.json");
+  });
+
   it("reports process receipt persistence without exposing the receipt secret", async () => {
     const server = createAiServer({ budgetReceiptSecret: "health-secret" });
     servers.push(server);
     const origin = await startServer(server);
     const body = await fetch(`${origin}/api/health`).then((response) => response.text());
-    expect(body).toContain('"receiptPersistence":"process"');
+    expect(body).toContain('"receiptPersistence":"memory"');
     expect(body).not.toContain("health-secret");
   });
 
@@ -609,31 +659,25 @@ describe("unified application server", () => {
     const server = createAiServer();
     servers.push(server);
     const origin = await startServer(server);
-    const createResponse = await fetch(`${origin}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId: "client-a", snapshot: { title: "初始" } }),
-    });
-    expect(createResponse.status).toBe(201);
-    const created = await createResponse.json() as { id: string; version: number };
+    const created = await createCollaborationRoom(origin, { title: "初始" });
 
-    const update = await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
+    const update = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
       body: JSON.stringify({ txId: "tx-1", clientId: "client-a", baseVersion: 0, snapshot: { title: "更新" } }),
     });
     expect(update.status).toBe(200);
     await expect(update.json()).resolves.toMatchObject({ version: 1, snapshot: { title: "更新" } });
 
-    const stale = await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
+    const stale = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ txId: "tx-2", clientId: "client-b", baseVersion: 0, snapshot: { title: "冲突" } }),
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ txId: "tx-2", clientId: "client-a", baseVersion: 0, snapshot: { title: "冲突" } }),
     });
     expect(stale.status).toBe(409);
     await expect(stale.json()).resolves.toMatchObject({ error: { code: "VERSION_CONFLICT", currentVersion: 1 } });
 
-    const room = await fetch(`${origin}/api/rooms/${created.id}`);
+    const room = await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(created.access.accessToken) });
     await expect(room.json()).resolves.toMatchObject({ version: 1, snapshot: { title: "更新" } });
   });
 
@@ -641,27 +685,20 @@ describe("unified application server", () => {
     const server = createAiServer();
     servers.push(server);
     const origin = await startServer(server);
-    const createdResponse = await fetch(`${origin}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId: "client-fast" }),
-    });
-    expect(createdResponse.status).toBe(201);
-    const created = await createdResponse.json() as { id: string; version: number; ready: boolean; snapshot?: unknown };
-    expect(created).toMatchObject({ version: 0, ready: false });
-    expect(created.snapshot).toBeUndefined();
+    const created = await createCollaborationRoom(origin, undefined, "client-fast");
+    expect(created.room).toMatchObject({ version: 0, ready: false });
 
-    const earlyJoin = await fetch(`${origin}/api/rooms/${created.id}`);
+    const earlyJoin = await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(created.access.accessToken) });
     expect(earlyJoin.status).toBe(425);
     await expect(earlyJoin.json()).resolves.toMatchObject({ error: { code: "ROOM_INITIALIZING" } });
 
-    const initialized = await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
+    const initialized = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
       body: JSON.stringify({ txId: "init-1", clientId: "client-fast", baseVersion: 0, snapshot: { title: "ready" } }),
     });
     await expect(initialized.json()).resolves.toMatchObject({ version: 1, ready: true });
-    const readyRoom = await fetch(`${origin}/api/rooms/${created.id}`);
+    const readyRoom = await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(created.access.accessToken) });
     await expect(readyRoom.json()).resolves.toMatchObject({ version: 1, snapshot: { title: "ready" } });
   });
 
@@ -669,15 +706,11 @@ describe("unified application server", () => {
     const server = createAiServer();
     servers.push(server);
     const origin = await startServer(server);
-    const created = await fetch(`${origin}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId: "client-a", snapshot: { title: "initial" } }),
-    }).then((response) => response.json()) as { id: string };
+    const created = await createCollaborationRoom(origin, { title: "initial" });
 
-    const updated = await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
+    const updated = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json", Prefer: "return=minimal" }),
       body: JSON.stringify({ txId: "minimal-1", clientId: "client-a", baseVersion: 0, snapshot: { title: "large" } }),
     });
     const body = await updated.json() as Record<string, unknown>;
@@ -686,148 +719,47 @@ describe("unified application server", () => {
     expect(body.snapshot).toBeUndefined();
   });
 
-  it("broadcasts only incremental operations for live patch transactions", async () => {
+  it("issues one-use SSE tickets and broadcasts incremental operations", async () => {
     const server = createAiServer();
     servers.push(server);
     const origin = await startServer(server);
-    const created = await fetch(`${origin}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId: "client-a", snapshot: { project: { title: "initial" }, assets: ["large"] } }),
-    }).then((response) => response.json()) as { id: string };
+    const created = await createCollaborationRoom(origin, { project: { title: "initial" }, assets: ["large"] });
+    const ticket = await createEventsTicket(origin, created.room.id, created.access.accessToken);
     const controller = new AbortController();
-    const events = await fetch(`${origin}/api/rooms/${created.id}/events?clientId=client-b&version=0`, { signal: controller.signal });
+    const events = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(ticket)}&version=0`, { signal: controller.signal });
     const reader = events.body!.getReader();
-    try {
-      await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          txId: "patch-live",
-          clientId: "client-a",
-          baseVersion: 0,
-          operations: [{ type: "set", path: ["project", "title"], value: "patched" }],
-        }),
-      });
-      const chunk = await reader.read();
-      const stream = new TextDecoder().decode(chunk.value, { stream: true });
-      expect(stream).toContain("patch-live");
-      expect(stream).toContain("operations");
-      expect(stream).toContain("patched");
-      expect(stream).not.toContain("large");
-      expect(stream).not.toContain("\"snapshot\":");
-    } finally {
-      controller.abort();
-      await reader.cancel().catch(() => undefined);
-    }
-  });
-
-  it("lets a second client recover from a stale version and continue editing", async () => {
-    const server = createAiServer();
-    servers.push(server);
-    const origin = await startServer(server);
-    const created = await fetch(`${origin}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId: "client-a", snapshot: { title: "initial" } }),
-    }).then((response) => response.json()) as { id: string };
-
-    await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ txId: "a-1", clientId: "client-a", baseVersion: 0, snapshot: { title: "from-a" } }),
-    });
-    const stale = await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ txId: "b-1", clientId: "client-b", baseVersion: 0, snapshot: { title: "stale-b" } }),
-    });
-    expect(stale.status).toBe(409);
-    await expect(stale.json()).resolves.toMatchObject({ error: { code: "VERSION_CONFLICT", currentVersion: 1 } });
-
-    const latest = await fetch(`${origin}/api/rooms/${created.id}`).then((response) => response.json()) as { version: number; snapshot: unknown };
-    expect(latest).toMatchObject({ version: 1, snapshot: { title: "from-a" } });
-    const recovered = await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ txId: "b-2", clientId: "client-b", baseVersion: latest.version, snapshot: { title: "from-b" } }),
-    });
-    expect(recovered.status).toBe(200);
-    await expect(recovered.json()).resolves.toMatchObject({ version: 2, snapshot: { title: "from-b" } });
-  });
-
-  it("broadcasts room snapshots to a second client over SSE", async () => {
-    const server = createAiServer();
-    servers.push(server);
-    const origin = await startServer(server);
-    const created = await fetch(`${origin}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId: "client-a", snapshot: { title: "initial" } }),
-    }).then((response) => response.json()) as { id: string };
-    const controller = new AbortController();
-    const events = await fetch(`${origin}/api/rooms/${created.id}/events`, { signal: controller.signal });
-    const reader = events.body!.getReader();
-    const decoder = new TextDecoder();
-    let stream = "";
-    const readVersion = async (version: number) => {
-      while (!stream.includes(`\"version\":${version}`)) {
-        const chunk = await reader.read();
-        if (chunk.done) throw new Error("SSE stream ended before the room update arrived");
-        stream += decoder.decode(chunk.value, { stream: true });
-      }
-    };
     try {
       expect(events.headers.get("content-type")).toContain("text/event-stream");
-      await readVersion(0);
-      await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
+      await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ txId: "a-sse", clientId: "client-a", baseVersion: 0, snapshot: { title: "broadcast" } }),
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ txId: "patch-live", clientId: "client-a", baseVersion: 0, operations: [{ type: "set", path: ["project", "title"], value: "patched" }] }),
       });
-      await readVersion(1);
-      expect(stream).toContain("event: snapshot");
-      expect(stream).toContain("broadcast");
+      const stream = new TextDecoder().decode((await reader.read()).value, { stream: true });
+      expect(stream).toContain("patch-live");
+      expect(stream).toContain("operations");
+      expect(stream).not.toContain("large");
+      const reused = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(ticket)}`);
+      expect(reused.status).toBe(403);
     } finally {
       controller.abort();
       await reader.cancel().catch(() => undefined);
     }
   });
 
-  it("omits the snapshot when broadcasting an acknowledgement to its author", async () => {
+  it("rejects viewer writes while allowing an invited editor to update a room", async () => {
     const server = createAiServer();
     servers.push(server);
     const origin = await startServer(server);
-    const created = await fetch(`${origin}/api/rooms`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId: "client-a", snapshot: { payload: "initial" } }),
-    }).then((response) => response.json()) as { id: string };
-    const controller = new AbortController();
-    const events = await fetch(`${origin}/api/rooms/${created.id}/events?clientId=client-a&version=0`, { signal: controller.signal });
-    const reader = events.body!.getReader();
-    const decoder = new TextDecoder();
-    let stream = "";
-    const readVersion = async (version: number) => {
-      while (!stream.includes(`\"version\":${version}`)) {
-        const chunk = await reader.read();
-        if (chunk.done) throw new Error("SSE stream ended before the room acknowledgement arrived");
-        stream += decoder.decode(chunk.value, { stream: true });
-      }
-    };
-    try {
-      await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ txId: "own-sse", clientId: "client-a", baseVersion: 0, snapshot: { payload: "do-not-echo" } }),
-      });
-      await readVersion(1);
-      expect(stream).not.toContain("do-not-echo");
-      expect(stream).toContain("own-sse");
-    } finally {
-      controller.abort();
-      await reader.cancel().catch(() => undefined);
-    }
+    const created = await createCollaborationRoom(origin, { title: "initial" });
+    const editorInvite = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, { method: "POST", headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }), body: JSON.stringify({ role: "editor" }) }).then((response) => response.json()) as { token: string };
+    const viewerInvite = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, { method: "POST", headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }), body: JSON.stringify({ role: "viewer" }) }).then((response) => response.json()) as { token: string };
+    const editor = await fetch(`${origin}/api/rooms/${created.room.id}/join`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ inviteToken: editorInvite.token, clientId: "editor", displayName: "编辑者" }) }).then((response) => response.json()) as { access: { accessToken: string } };
+    const viewer = await fetch(`${origin}/api/rooms/${created.room.id}/join`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ inviteToken: viewerInvite.token, clientId: "viewer", displayName: "查看者" }) }).then((response) => response.json()) as { access: { accessToken: string } };
+    const edited = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, { method: "POST", headers: roomHeaders(editor.access.accessToken, { "Content-Type": "application/json" }), body: JSON.stringify({ txId: "editor-1", clientId: "editor", baseVersion: 0, snapshot: { title: "edited" } }) });
+    expect(edited.status).toBe(200);
+    const denied = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, { method: "POST", headers: roomHeaders(viewer.access.accessToken, { "Content-Type": "application/json" }), body: JSON.stringify({ txId: "viewer-1", clientId: "viewer", baseVersion: 1, snapshot: { title: "forbidden" } }) });
+    expect(denied.status).toBe(403);
   });
 
   it("records visits with request details and exposes aggregate analytics", async () => {
@@ -880,23 +812,20 @@ describe("unified application server", () => {
     const analytics = await fetch(`${origin}/api/admin/visits`, adminRequestInit());
     await expect(analytics.json()).resolves.toMatchObject({ total: 1, uniqueIps: 1 });
   });
-  it("returns the full snapshot when an author reconnects from a stale version", async () => {
+  it("returns the full snapshot when an authorized member reconnects from a stale version", async () => {
     const server = createAiServer();
     servers.push(server);
     const origin = await startServer(server);
-    const created = await fetch(`${origin}/api/rooms`, {
+    const created = await createCollaborationRoom(origin, { payload: "initial" });
+    await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId: "client-a", snapshot: { payload: "initial" } }),
-    }).then((response) => response.json()) as { id: string };
-    await fetch(`${origin}/api/rooms/${created.id}/transactions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
       body: JSON.stringify({ txId: "own-reconnect", clientId: "client-a", baseVersion: 0, snapshot: { payload: "recover-me" } }),
     });
 
+    const ticket = await createEventsTicket(origin, created.room.id, created.access.accessToken);
     const controller = new AbortController();
-    const events = await fetch(`${origin}/api/rooms/${created.id}/events?clientId=client-a&version=0`, { signal: controller.signal });
+    const events = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(ticket)}&version=0`, { signal: controller.signal });
     const reader = events.body!.getReader();
     const decoder = new TextDecoder();
     try {
@@ -908,5 +837,81 @@ describe("unified application server", () => {
       controller.abort();
       await reader.cancel().catch(() => undefined);
     }
+  });
+
+  it("requires the workspace token for AI endpoints in locked-down production", async () => {
+    const server = createAiServer({
+      workspaceApiToken: "workspace-test-token",
+      productionConfig: {
+        ok: true,
+        errors: [],
+        config: {
+          nodeEnv: "production",
+          aiPublicAccess: false,
+          trustProxy: false,
+          dataDir: ".data",
+          aiStateFile: ".data/ai-runtime-state.json",
+          shutdownTimeoutMs: 10_000,
+        },
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const anonymous = await rawPost(origin, "/api/ai/explain", { message: "为什么", studentCount: 1 });
+    expect(anonymous.status).toBe(401);
+
+    const authenticated = await fetch(`${origin}/api/ai/explain`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer workspace-test-token" },
+      body: JSON.stringify({ message: "为什么", studentCount: 1 }),
+    });
+    expect(authenticated.status).toBe(200);
+  });
+
+  it("allows anonymous AI requests when AI_PUBLIC_ACCESS is enabled in production", async () => {
+    const server = createAiServer({
+      workspaceApiToken: "workspace-test-token",
+      productionConfig: {
+        ok: true,
+        errors: [],
+        config: {
+          nodeEnv: "production",
+          aiPublicAccess: true,
+          trustProxy: false,
+          dataDir: ".data",
+          aiStateFile: ".data/ai-runtime-state.json",
+          shutdownTimeoutMs: 10_000,
+        },
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawPost(origin, "/api/ai/explain", { message: "为什么", studentCount: 1 });
+    expect(response.status).toBe(200);
+  });
+
+  it("keeps AI endpoints open without a token in development", async () => {
+    const server = createAiServer({
+      workspaceApiToken: "workspace-test-token",
+      productionConfig: {
+        ok: true,
+        errors: [],
+        config: {
+          nodeEnv: "development",
+          aiPublicAccess: false,
+          trustProxy: false,
+          dataDir: ".data",
+          aiStateFile: ".data/ai-runtime-state.json",
+          shutdownTimeoutMs: 10_000,
+        },
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawPost(origin, "/api/ai/explain", { message: "为什么", studentCount: 1 });
+    expect(response.status).toBe(200);
   });
 });

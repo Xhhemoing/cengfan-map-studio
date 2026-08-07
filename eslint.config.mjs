@@ -7,6 +7,9 @@ import reactRefresh from "eslint-plugin-react-refresh";
 
 export default defineConfig([
   {
+    ignores: ["dist/**", "node_modules/**", ".superpowers/**", "graphify-out/**"],
+  },
+  {
     files: ["src/**/*.{ts,tsx}", "server/**/*.{ts,tsx}"],
     languageOptions: {
       ecmaVersion: 2020,
