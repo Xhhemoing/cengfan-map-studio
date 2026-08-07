@@ -434,7 +434,8 @@ function StudioStageShell({
   );
 }
 
-function StudioApp() {
+function StudioApp({ projectId }: { projectId?: string }) {
+  void projectId; // Task 4 按 projectId 从工作台加载/保存项目；当前保持现有本地草稿行为
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
   const [initialWorkspace] = useState(() => loadBrowserWorkspaceMirror(browserStores.mirror));
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
@@ -2830,6 +2831,6 @@ function StudioApp() {
   );
 }
 
-export function App() {
-  return <AssistantConversationProvider><StudioApp /></AssistantConversationProvider>;
+export function App({ projectId }: { projectId?: string }) {
+  return <AssistantConversationProvider><StudioApp projectId={projectId} /></AssistantConversationProvider>;
 }
