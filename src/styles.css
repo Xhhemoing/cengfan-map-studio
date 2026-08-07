@@ -3111,6 +3111,8 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
 .workbench-actions .secondary-button { color: var(--editor-ink); background: var(--editor-surface-raised, #ffffff); border-color: var(--editor-line, #d3dce2); }
 .workbench-actions .secondary-button:hover { background: var(--editor-accent-soft, #e7f1ef); border-color: var(--editor-accent); }
 .workbench-error { max-width: 1080px; margin: 0 auto 20px; padding: 10px 14px; color: var(--editor-danger, #c95c49); background: var(--editor-accent-soft, #e7f1ef); border: 1px solid var(--editor-danger, #c95c49); border-radius: 6px; font-size: 13px; }
+.workbench-loading { max-width: 1080px; margin: 0 auto; padding: 48px 16px; color: var(--editor-ink-muted); font-size: 14px; text-align: center; }
+.workbench-loading .brand { justify-content: center; }
 .workbench-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; max-width: 1080px; margin: 0 auto; }
 .workbench-card { position: relative; display: flex; background: var(--editor-surface-raised, #ffffff); border: 1px solid var(--editor-line, #d3dce2); border-radius: 10px; transition: box-shadow 0.15s ease, transform 0.15s ease; }
 .workbench-card:hover { box-shadow: 0 6px 18px rgb(28 49 84 / 12%); transform: translateY(-1px); }

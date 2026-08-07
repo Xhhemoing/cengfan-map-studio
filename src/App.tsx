@@ -543,7 +543,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
         // The complete mirror or IndexedDB copy can still preserve the workspace.
       }
       const result = await saveBrowserWorkspaceSnapshot(pack, browserStores);
-      if (result.durable === "failed" && result.mirror === "failed") throw new Error("浏览器本地存储不可写");
+      if (result.durable === "failed" && result.mirror === "failed") {
+        projectRecordSaveErrorRef.current = null; // put 分支不会执行,清空旧错误,避免 overwriteBrowserStorage 误报"本地已保存"
+        throw new Error("浏览器本地存储不可写");
+      }
       if (projectIdRef.current) {
         try {
           await editorProjectStore.put({

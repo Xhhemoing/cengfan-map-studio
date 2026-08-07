@@ -60,7 +60,8 @@ export class LocalWorkspaceOverwrite {
       try {
         await this.saveLocal(current);
         this.update({ status: this.queued ? "pending" : "saved", savedAt: current.exportedAt });
-      } catch {
+      } catch (reason) {
+        console.error("Failed to persist workspace", reason);
         this.update({ status: "failed" });
       }
     }
