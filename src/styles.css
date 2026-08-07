@@ -3097,3 +3097,42 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   html[data-editor-skin="atelier"] *::before,
   html[data-editor-skin="atelier"] *::after { animation-duration: .01ms !important; }
 }
+
+/* 项目工作台 */
+.workbench-shell { min-height: 100vh; padding: 32px clamp(16px, 4vw, 48px); color: var(--editor-ink); background: var(--editor-bg, #e9edf0); }
+.workbench-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1080px; margin: 0 auto 28px; }
+.workbench-brand { display: flex; align-items: center; gap: 12px; }
+.workbench-brand-mark { display: grid; width: 40px; height: 40px; color: #fff; background: var(--editor-accent); border-radius: 10px; place-items: center; }
+.workbench-brand strong { display: block; font-size: 17px; font-weight: 700; color: var(--editor-ink); letter-spacing: 0.02em; }
+.workbench-brand small { display: block; margin-top: 2px; font-size: 12px; color: var(--editor-ink-muted); }
+.workbench-actions { display: flex; align-items: center; gap: 8px; }
+.workbench-actions .primary-button { color: #fff; background: var(--editor-accent, #245d57); border-color: var(--editor-accent); }
+.workbench-actions .primary-button:hover { background: var(--editor-accent); filter: brightness(1.08); }
+.workbench-actions .secondary-button { color: var(--editor-ink); background: var(--editor-surface-raised, #ffffff); border-color: var(--editor-line, #d3dce2); }
+.workbench-actions .secondary-button:hover { background: var(--editor-accent-soft, #e7f1ef); border-color: var(--editor-accent); }
+.workbench-error { max-width: 1080px; margin: 0 auto 20px; padding: 10px 14px; color: var(--editor-danger, #c95c49); background: var(--editor-accent-soft, #e7f1ef); border: 1px solid var(--editor-danger, #c95c49); border-radius: 6px; font-size: 13px; }
+.workbench-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; max-width: 1080px; margin: 0 auto; }
+.workbench-card { position: relative; display: flex; background: var(--editor-surface-raised, #ffffff); border: 1px solid var(--editor-line, #d3dce2); border-radius: 10px; transition: box-shadow 0.15s ease, transform 0.15s ease; }
+.workbench-card:hover { box-shadow: 0 6px 18px rgb(28 49 84 / 12%); transform: translateY(-1px); }
+.workbench-card-main { display: grid; flex: 1; min-width: 0; gap: 2px; padding: 18px 44px 18px 18px; color: inherit; text-align: left; background: transparent; border: 0; border-radius: 10px; cursor: pointer; }
+.workbench-card-main:hover { background: var(--editor-accent-soft, #e7f1ef); }
+.workbench-card-main:focus-visible { outline: 2px solid var(--editor-focus, #d6b56d); outline-offset: 2px; }
+.workbench-card-preview { display: grid; width: 56px; height: 56px; margin-bottom: 12px; color: var(--editor-accent); background: var(--editor-accent-soft, #e7f1ef); border-radius: 12px; place-items: center; }
+.workbench-card-main strong { overflow: hidden; font-size: 15px; font-weight: 600; color: var(--editor-ink); text-overflow: ellipsis; white-space: nowrap; }
+.workbench-card-main small { font-size: 12px; color: var(--editor-ink-muted); }
+.workbench-card-menu { position: absolute; top: 10px; right: 10px; }
+.workbench-card-menu > button { display: grid; width: 30px; height: 30px; color: var(--editor-ink-muted); background: transparent; border: 1px solid transparent; border-radius: 6px; place-items: center; cursor: pointer; }
+.workbench-card-menu > button:hover { color: var(--editor-ink); background: var(--editor-accent-soft, #e7f1ef); }
+.workbench-card-menu > button[aria-expanded="true"] { color: var(--editor-ink); background: var(--editor-accent-soft, #e7f1ef); border-color: var(--editor-line, #d3dce2); }
+.workbench-card-menu > button:focus-visible { outline: 2px solid var(--editor-focus, #d6b56d); outline-offset: 2px; }
+.workbench-menu { position: absolute; z-index: 20; top: 34px; right: 0; display: flex; width: 168px; flex-direction: column; padding: 6px; background: var(--editor-surface-raised, #ffffff); border: 1px solid var(--editor-line, #d3dce2); border-radius: 8px; box-shadow: 0 8px 24px rgb(28 49 84 / 16%); }
+.workbench-menu button { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--editor-ink); font-size: 13px; text-align: left; background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
+.workbench-menu button:hover { background: var(--editor-accent-soft, #e7f1ef); }
+.workbench-menu button:focus-visible { outline: 2px solid var(--editor-focus, #d6b56d); outline-offset: -2px; }
+.workbench-menu button:last-child { color: var(--editor-danger, #c95c49); }
+.workbench-empty { grid-column: 1 / -1; padding: 48px 16px; color: var(--editor-ink-muted); font-size: 14px; text-align: center; }
+@media (max-width: 760px) {
+  .workbench-header { flex-direction: column; align-items: flex-start; }
+  .workbench-actions { width: 100%; }
+  .workbench-actions button { flex: 1; justify-content: center; }
+}
