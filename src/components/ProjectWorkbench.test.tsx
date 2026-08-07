@@ -18,6 +18,8 @@ afterEach(() => {
   roots.forEach(({ root }) => root.unmount());
   roots = [];
   window.localStorage.clear();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("ProjectWorkbench", () => {
@@ -64,7 +66,7 @@ describe("ProjectWorkbench", () => {
     await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
     container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
     await vi.waitFor(() => expect(container.textContent).toContain("重命名"));
-    window.prompt = vi.fn(() => "高三3班");
+    vi.stubGlobal("prompt", vi.fn(() => "高三3班"));
     Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("重命名"))?.click();
     await vi.waitFor(() => expect(container.textContent).toContain("高三3班"));
   });
@@ -77,7 +79,7 @@ describe("ProjectWorkbench", () => {
     await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
     container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
     await vi.waitFor(() => expect(container.textContent).toContain("删除"));
-    window.confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", vi.fn(() => true));
     Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("删除"))?.click();
     await vi.waitFor(async () => expect((await store.list())).toHaveLength(0));
   });
@@ -99,12 +101,65 @@ describe("ProjectWorkbench", () => {
   it("imports a project package file", async () => {
     const store = createMemoryProjectStore();
     const sample = createSampleProject();
+    await store.put(sample);
     const file = new File([serializeProjectPackage(sample.pack)], "project.json", { type: "application/json" });
     const { container } = renderWorkbench(store);
     await vi.waitFor(() => expect(container.querySelector('input[type="file"]')).not.toBeNull());
     const input = container.querySelector<HTMLInputElement>('input[type="file"]');
     Object.defineProperty(input!, "files", { value: [file] as unknown as FileList, configurable: true });
     input!.dispatchEvent(new Event("change", { bubbles: true }));
-    await vi.waitFor(async () => expect((await store.list()).length).toBeGreaterThan(0));
+    await vi.waitFor(async () => {
+      const projects = await store.list();
+      expect(projects).toHaveLength(2);
+      expect(projects.some((p) => p.name === "project")).toBe(true);
+    });
+  });
+
+  it("keeps a project when deletion is cancelled", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
+    await vi.waitFor(() => expect(container.textContent).toContain("删除"));
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("删除"))?.click();
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
+    const projects = await store.list();
+    expect(projects).toHaveLength(1);
+    expect(projects[0].id).toBe(sample.id);
+  });
+
+  it("keeps the name when rename is cancelled", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
+    await vi.waitFor(() => expect(container.textContent).toContain("重命名"));
+    const prompt = vi.fn(() => null);
+    vi.stubGlobal("prompt", prompt);
+    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("重命名"))?.click();
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
+    const projects = await store.list();
+    expect(projects).toHaveLength(1);
+    expect(projects[0].name).toBe(sample.name);
+  });
+
+  it("shows an error banner for an invalid project package", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const file = new File(["not-json"], "broken.json", { type: "application/json" });
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('input[type="file"]')).not.toBeNull());
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    Object.defineProperty(input!, "files", { value: [file] as unknown as FileList, configurable: true });
+    input!.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(container.textContent).toContain("导入失败"));
+    expect(container.querySelector(".workbench-error")?.textContent).toContain("导入失败");
+    expect(await store.list()).toHaveLength(1);
   });
 });

@@ -44,13 +44,17 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      await refresh();
-      if (cancelled || seededRef.current) return;
-      seededRef.current = true;
-      const list = await store.list();
-      if (list.length === 0) {
-        await store.put(createSampleProject());
+      try {
         await refresh();
+        if (cancelled || seededRef.current) return;
+        seededRef.current = true;
+        const list = await store.list();
+        if (list.length === 0) {
+          await store.put(createSampleProject());
+          await refresh();
+        }
+      } catch (reason) {
+        setError(reason instanceof Error ? `初始化项目失败：${reason.message}` : "初始化项目失败：浏览器存储不可用");
       }
     })();
     return () => { cancelled = true; };
@@ -59,31 +63,47 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   const openProject = (id: string) => go(`#/project/${encodeURIComponent(id)}`);
 
   const createProject = async () => {
-    const project = createEmptyProject();
-    await store.put(project);
-    openProject(project.id);
+    try {
+      const project = createEmptyProject();
+      await store.put(project);
+      openProject(project.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? `创建项目失败：${reason.message}` : "创建项目失败");
+    }
   };
 
   const renameProject = async (project: StoredProject) => {
     const name = window.prompt("请输入新项目名称", project.name);
     if (name === null || !name.trim()) return;
-    await store.put({ ...project, name: name.trim(), updatedAt: new Date().toISOString() });
-    setOpenMenuId(null);
-    await refresh();
+    try {
+      await store.put({ ...project, name: name.trim(), updatedAt: new Date().toISOString() });
+      setOpenMenuId(null);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? `重命名项目失败：${reason.message}` : "重命名项目失败");
+    }
   };
 
   const duplicateProject = async (project: StoredProject) => {
-    const copy = duplicateStoredProject(project);
-    await store.put(copy);
-    setOpenMenuId(null);
-    await refresh();
+    try {
+      const copy = duplicateStoredProject(project);
+      await store.put(copy);
+      setOpenMenuId(null);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? `复制项目失败：${reason.message}` : "复制项目失败");
+    }
   };
 
   const deleteProject = async (project: StoredProject) => {
     if (!window.confirm(`删除项目「${project.name}」？此操作不可恢复。`)) return;
-    await store.remove(project.id);
-    setOpenMenuId(null);
-    await refresh();
+    try {
+      await store.remove(project.id);
+      setOpenMenuId(null);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? `删除项目失败：${reason.message}` : "删除项目失败");
+    }
   };
 
   const exportProject = (project: StoredProject) => {
