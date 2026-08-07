@@ -64,7 +64,9 @@ export function createMemoryProjectStore(): ProjectStore {
   const records = new Map<string, StoredProject>();
   return {
     async list() {
-      return [...records.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return [...records.values()]
+        .map((record) => structuredClone(record))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     },
     async get(id) {
       const record = records.get(id);
@@ -120,43 +122,48 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
     return {
       async list() { return []; },
       async get() { return null; },
-      async put() {},
-      async remove() {},
+      async put() { throw new Error("当前浏览器不支持 IndexedDB"); },
+      async remove() { throw new Error("当前浏览器不支持 IndexedDB"); },
     };
   }
   let ready: Promise<IDBDatabase> | null = null;
   const ensure = () => {
-    ready ??= openDatabase(factory, (db) => {
-      // 迁移:旧版 workspace 库(键 "current")合并为第一个项目
-      if (db.objectStoreNames.contains(LEGACY_WORKSPACE_STORE)) {
-        const legacy = db.transaction(LEGACY_WORKSPACE_STORE, "readonly").objectStore(LEGACY_WORKSPACE_STORE);
-        const request = legacy.get("current");
-        request.onsuccess = () => {
-          const legacyPack = request.result;
-          if (!legacyPack) return;
-          const targets = db.transaction([STORE_NAME], "readwrite").objectStore(STORE_NAME);
-          const existing = targets.getAllKeys();
-          existing.onsuccess = () => {
-            if (existing.result.length > 0) return;
-            try {
-              // 必须显式传键:createObjectStore(STORE_NAME) 为 out-of-line key store,
-              // put() 不提供键会抛 DataError,导致旧工作区永远不会被迁移。
-              const migrated = {
-                id: createId("proj"),
-                name: "迁移的项目",
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                pack: restoreProjectPackage(legacyPack),
-              };
-              targets.put(migrated, migrated.id);
-            } catch {
-              // 损坏的旧工作区直接丢弃
-            }
+    let pending = ready;
+    if (!pending) {
+      pending = openDatabase(factory, (db) => {
+        // 迁移:旧版 workspace 库(键 "current")合并为第一个项目
+        if (db.objectStoreNames.contains(LEGACY_WORKSPACE_STORE)) {
+          const legacy = db.transaction(LEGACY_WORKSPACE_STORE, "readonly").objectStore(LEGACY_WORKSPACE_STORE);
+          const request = legacy.get("current");
+          request.onsuccess = () => {
+            const legacyPack = request.result;
+            if (!legacyPack) return;
+            const targets = db.transaction([STORE_NAME], "readwrite").objectStore(STORE_NAME);
+            const existing = targets.getAllKeys();
+            existing.onsuccess = () => {
+              if (existing.result.length > 0) return;
+              try {
+                // 必须显式传键:createObjectStore(STORE_NAME) 为 out-of-line key store,
+                // put() 不提供键会抛 DataError,导致旧工作区永远不会被迁移。
+                const migrated = {
+                  id: createId("proj"),
+                  name: "迁移的项目",
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                  pack: restoreProjectPackage(legacyPack),
+                };
+                targets.put(migrated, migrated.id);
+              } catch {
+                // 损坏的旧工作区直接丢弃
+              }
+            };
           };
-        };
-      }
-    });
-    return ready!;
+        }
+      });
+      pending.catch(() => { ready = null; });
+      ready = pending;
+    }
+    return pending;
   };
   return {
     async list() {
