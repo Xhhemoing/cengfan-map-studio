@@ -176,4 +176,19 @@ describe("ProjectWorkbench", () => {
     await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("创建项目失败"));
     expect(container.querySelector(".workbench-error")?.textContent).toContain("配额不足");
   });
+
+  it("retries seeding after a failed seed", async () => {
+    const store = createMemoryProjectStore();
+    const putSpy = vi.spyOn(store, "put").mockRejectedValueOnce(new Error("quota"));
+    const first = renderWorkbench(store);
+    // 首次播种失败 → 错误横幅,store 仍为空
+    await vi.waitFor(() => expect(first.container.querySelector(".workbench-error")?.textContent).toContain("初始化项目失败"));
+    expect(await store.list()).toHaveLength(0);
+
+    putSpy.mockRestore();
+    // 重新进入工作台(重新挂载)自动重试播种
+    const second = renderWorkbench(store);
+    await vi.waitFor(() => expect(second.container.textContent).toContain("示例：2026届毕业去向"));
+    expect(await store.list()).toHaveLength(1);
+  });
 });

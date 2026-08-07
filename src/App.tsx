@@ -1229,6 +1229,16 @@ function StudioApp({ projectId }: { projectId?: string }) {
     await workspaceSync.overwrite(pack);
   };
 
+  // 项目模式下离开页面(切换/关闭标签)的自动保存采用 latest-ref 模式:
+  // ref 在每次渲染后的 effect 中同步(lint 禁止渲染期写 ref),初始值即真实保存管线,
+  // 覆盖首帧事件窗口;projectLifecycleRef 同样在 effect 中同步加载/缺失状态。
+  const saveWorkspaceNowRef = useRef<() => Promise<void>>(saveWorkspaceNow);
+  const projectLifecycleRef = useRef({ loading: projectLoading, missing: projectMissing });
+  useEffect(() => {
+    saveWorkspaceNowRef.current = saveWorkspaceNow;
+    projectLifecycleRef.current = { loading: projectLoading, missing: projectMissing };
+  });
+
   const handleBackToWorkbench = async () => {
     if (backNavigatingRef.current) return;
     backNavigatingRef.current = true;
@@ -1237,6 +1247,25 @@ function StudioApp({ projectId }: { projectId?: string }) {
     }
     window.location.hash = "#/";
   };
+
+  // 仅项目模式注册:visibilitychange/pagehide 时若存在未保存编辑,尽力保存到
+  // 本地草稿镜像(localStorage,同步落盘)+ IndexedDB 项目记录。
+  useEffect(() => {
+    if (!projectId) return;
+    const handlePageLeave = () => {
+      if (!projectIdRef.current || projectLifecycleRef.current.loading || projectLifecycleRef.current.missing || backNavigatingRef.current) return;
+      const state = workspaceSync.getState();
+      if (state.status === "pending" || hasLocalWorkspaceEditsRef.current) {
+        void saveWorkspaceNowRef.current();
+      }
+    };
+    window.addEventListener("visibilitychange", handlePageLeave);
+    window.addEventListener("pagehide", handlePageLeave);
+    return () => {
+      window.removeEventListener("visibilitychange", handlePageLeave);
+      window.removeEventListener("pagehide", handlePageLeave);
+    };
+  }, [projectId, workspaceSync]);
 
   const overwriteBrowserStorage = async () => {
     await saveWorkspaceNow();

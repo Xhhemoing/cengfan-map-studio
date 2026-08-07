@@ -47,12 +47,14 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       try {
         await refresh();
         if (cancelled || seededRef.current) return;
-        seededRef.current = true;
         const list = await store.list();
         if (list.length === 0) {
           await store.put(createSampleProject());
           await refresh();
         }
+        // 播种成功后才置位:若 put 失败(见 catch),seededRef 保持 false,
+        // 下次进入工作台(重新挂载)会自动重试播种。
+        seededRef.current = true;
       } catch (reason) {
         setError(reason instanceof Error ? `初始化项目失败：${reason.message}` : "初始化项目失败：浏览器存储不可用");
       }

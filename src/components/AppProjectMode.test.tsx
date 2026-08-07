@@ -142,6 +142,40 @@ describe("App in project mode", () => {
     });
   });
 
+  it("saves pending edits when the page is hidden", async () => {
+    const container = mountApp(sample.id);
+    await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
+
+    openPeopleData(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "林舟舟");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+    // 编辑已提交但尚未落盘:同步状态应处于 pending(而非 saved)。
+    await vi.waitFor(() => expect(container.querySelector('[data-sync-status="pending"]')).not.toBeNull());
+
+    window.dispatchEvent(new Event("pagehide"));
+
+    await vi.waitFor(async () => {
+      const record = await editorProjectStore.get(sample.id);
+      expect(record?.pack.project.students.some((student) => student.name === "林舟舟")).toBe(true);
+    });
+    expect(window.localStorage.getItem("cengfan-map-studio:draft")).not.toBeNull();
+  });
+
+  it("does not write when nothing is pending on page hide", async () => {
+    const container = mountApp(sample.id);
+    await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
+
+    const before = await editorProjectStore.get(sample.id);
+    window.dispatchEvent(new Event("pagehide"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.localStorage.getItem("cengfan-map-studio:draft")).toBeNull();
+    const after = await editorProjectStore.get(sample.id);
+    expect(after?.updatedAt).toBe(before?.updatedAt);
+  });
+
   it("recovers when a missing project id is replaced by a valid one", async () => {
     const container = mountApp("no-such-project");
     await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
