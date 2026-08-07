@@ -163,7 +163,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       <section className="workbench-grid" aria-label="项目列表">
         {loading && projects.length === 0 ? (
           <p className="workbench-empty">正在加载项目…</p>
-        ) : sorted.length === 0 ? (
+        ) : sorted.length === 0 && !error ? (
           <p className="workbench-empty">还没有项目。点击「新建项目」或「导入」开始。</p>
         ) : (
           sorted.map((project) => (

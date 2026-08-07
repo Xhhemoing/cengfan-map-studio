@@ -162,4 +162,18 @@ describe("ProjectWorkbench", () => {
     expect(container.querySelector(".workbench-error")?.textContent).toContain("导入失败");
     expect(await store.list()).toHaveLength(1);
   });
+
+  it("shows an error banner when the store write fails during creation", async () => {
+    const store = createMemoryProjectStore();
+    const failingStore = { ...store, put: () => Promise.reject(new Error("配额不足")) };
+    const { container } = renderWorkbench(failingStore);
+    // 种子 IIFE 写入失败 → 横幅出现;错误存在时空态文案不显示
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("初始化项目失败"));
+    expect(container.querySelector(".workbench-empty")).toBeNull();
+    expect(container.textContent).not.toContain("还没有项目");
+    // 新建项目写入失败 → 横幅切换为创建失败
+    container.querySelector<HTMLButtonElement>('[aria-label="新建项目"]')?.click();
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("创建项目失败"));
+    expect(container.querySelector(".workbench-error")?.textContent).toContain("配额不足");
+  });
 });
