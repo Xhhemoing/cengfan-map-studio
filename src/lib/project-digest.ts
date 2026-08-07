@@ -142,6 +142,62 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
   };
 }
 
+const LONG_DATA_URL_THRESHOLD = 1024;
+
+function canonicalString(value: string): string {
+  if (!value.startsWith("data:") || value.length <= LONG_DATA_URL_THRESHOLD) return JSON.stringify(value);
+  return JSON.stringify(`<data-url:length=${value.length};${hash32(value).toString(16).padStart(8, "0")}>`);
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return canonicalString(value);
+  if (typeof value === "number") {
+    if (Object.is(value, -0)) return "-0";
+    if (Number.isNaN(value)) return "NaN";
+    if (value === Infinity) return "Infinity";
+    if (value === -Infinity) return "-Infinity";
+    return String(value);
+  }
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  if (typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  }
+  return `${typeof value}:${String(value)}`;
+}
+
+function hash32(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+function fingerprintHash(value: string): string {
+  return `fnv1a32:${hash32(value).toString(16).padStart(8, "0")}`;
+}
+
+/**
+ * Fingerprint every executable project field while excluding undo/redo history.
+ * The canonical form makes the result independent of object insertion order.
+ */
+const projectFingerprintCache = new WeakMap<ProjectDocument, string>();
+
+export function fingerprintProject(project: ProjectDocument): string {
+  const cached = projectFingerprintCache.get(project);
+  if (cached) return cached;
+  const { history: _history, ...executableProject } = project;
+  const fingerprint = fingerprintHash(stableSerialize(executableProject));
+  projectFingerprintCache.set(project, fingerprint);
+  return fingerprint;
+}
+
+export const buildProjectFingerprint = fingerprintProject;
+
 export function digestByteLength(digest: ProjectDigest): number {
   return new TextEncoder().encode(JSON.stringify(digest)).byteLength;
 }

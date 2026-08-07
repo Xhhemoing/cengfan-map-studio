@@ -493,8 +493,9 @@ describe("DataWorkspace", () => {
     );
     changeInput(container.querySelector("textarea")!, "追加同学 浙江大学 杭州");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-    flushSync(() => {});
+    await vi.waitFor(() => {
+      expect(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))).toBeDefined();
+    });
     click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
 
     expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "追加同学" })]);

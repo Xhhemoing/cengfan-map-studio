@@ -52,8 +52,10 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
           ))}
         </select>
       </label>
-      {number("width", canvas.width, 320, 6000, "宽度")}
-      {number("height", canvas.height, 320, 6000, "高度")}
+      <div className="property-panel__pair" data-property-pair="canvas-size">
+        {number("width", canvas.width, 320, 6000, "宽度")}
+        {number("height", canvas.height, 320, 6000, "高度")}
+      </div>
       {number("safeMargin", canvas.safeMargin, 0, 3000, "安全边距")}
       <label htmlFor="canvas-background">背景色
         <DeferredInput

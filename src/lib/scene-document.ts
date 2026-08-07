@@ -454,11 +454,11 @@ function normalizeFieldTypography(value: unknown): Partial<Record<CardFontField,
   }));
 }
 
-const LAYOUT_MODES = ["quadrant", "radial", "right-stack", "grid"] as const;
-export type CardLayoutModeValue = (typeof LAYOUT_MODES)[number];
+export const CARD_LAYOUT_MODES = ["quadrant", "radial", "right-stack", "grid"] as const;
+export type CardLayoutModeValue = (typeof CARD_LAYOUT_MODES)[number];
 
 export function normalizeLayoutMode(value: unknown): CardLayoutModeValue {
-  return (LAYOUT_MODES as readonly string[]).includes(value as string) ? (value as CardLayoutModeValue) : "quadrant";
+  return (CARD_LAYOUT_MODES as readonly string[]).includes(value as string) ? (value as CardLayoutModeValue) : "quadrant";
 }
 
 export function createDefaultScene(templateId: MapTemplateId): SceneDocument {

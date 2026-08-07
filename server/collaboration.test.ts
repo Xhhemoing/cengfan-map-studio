@@ -3,6 +3,72 @@ import { describe, expect, it, vi } from "vitest";
 import { createRoomStore } from "./collaboration";
 
 describe("collaboration room store", () => {
+  it("permits an invited editor to update a room and rejects a viewer write", () => {
+    const secrets = ["owner-access", "editor-invite", "viewer-invite", "editor-access", "viewer-access"];
+    const store = createRoomStore({
+      generateId: () => "ROLE01",
+      generateSecret: () => secrets.shift()!,
+    });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const editorInvite = store.createInvitation("ROLE01", owner.access.accessToken, "editor");
+    const viewerInvite = store.createInvitation("ROLE01", owner.access.accessToken, "viewer");
+    const editor = store.join("ROLE01", {
+      inviteToken: editorInvite.token,
+      clientId: "editor",
+      displayName: "编辑同学",
+    });
+    const viewer = store.join("ROLE01", {
+      inviteToken: viewerInvite.token,
+      clientId: "viewer",
+      displayName: "查看同学",
+    });
+
+    expect(store.apply("ROLE01", editor.access.accessToken, {
+      txId: "editor-1",
+      clientId: "editor",
+      baseVersion: 0,
+      snapshot: { title: "编辑完成" },
+    }).snapshot).toEqual({ title: "编辑完成" });
+
+    expect(() => store.apply("ROLE01", viewer.access.accessToken, {
+      txId: "viewer-1",
+      clientId: "viewer",
+      baseVersion: 1,
+      snapshot: { title: "越权" },
+    })).toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+  });
+
+  it("rejects unknown access tokens and non-owner invitations", () => {
+    const secrets = ["owner-access", "editor-invite", "editor-access"];
+    const store = createRoomStore({ generateId: () => "ACCESS1", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const invitation = store.createInvitation("ACCESS1", owner.access.accessToken, "editor");
+    const editor = store.join("ACCESS1", { inviteToken: invitation.token, clientId: "editor", displayName: "编辑同学" });
+
+    expect(() => store.authorize("ACCESS1", "not-a-token", "read")).toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+    expect(() => store.createInvitation("ACCESS1", editor.access.accessToken, "viewer")).toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+  });
+
+  it("consumes invitations once and rejects expired invitations", () => {
+    let now = 1_000;
+    const secrets = ["owner-access", "invite-once", "member-access", "invite-expired"];
+    const store = createRoomStore({
+      generateId: () => "INVITE1",
+      generateSecret: () => secrets.shift()!,
+      invitationTtlMs: 10,
+      now: () => now,
+    });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const oneTime = store.createInvitation("INVITE1", owner.access.accessToken, "viewer");
+    store.join("INVITE1", { inviteToken: oneTime.token, clientId: "viewer", displayName: "查看同学" });
+
+    expect(() => store.join("INVITE1", { inviteToken: oneTime.token, clientId: "again", displayName: "重复" })).toThrowError(expect.objectContaining({ code: "INVITATION_INVALID" }));
+
+    const expired = store.createInvitation("INVITE1", owner.access.accessToken, "viewer");
+    now += 11;
+    expect(() => store.join("INVITE1", { inviteToken: expired.token, clientId: "late", displayName: "迟到" })).toThrowError(expect.objectContaining({ code: "INVITATION_EXPIRED" }));
+  });
+
   it("enforces a maximum room count", () => {
     const store = createRoomStore({ maxRooms: 1, generateId: () => "LIMIT01" });
     store.create({ title: "first" }, "client-a");

@@ -7,8 +7,8 @@ export const PANEL_WIDTH_LIMITS = {
 } as const;
 
 export const DEFAULT_EDITOR_PANEL_LAYOUT = {
-  sidebarWidth: 220,
-  inspectorWidth: 280,
+  sidebarWidth: 200,
+  inspectorWidth: 240,
 } as const;
 
 export type PanelSide = keyof typeof PANEL_WIDTH_LIMITS;

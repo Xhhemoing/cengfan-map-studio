@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { loadThemeMode, resolveTheme, saveThemeMode, type ThemeMode } from "./theme";
+import {
+  loadStudioSkin,
+  loadThemeMode,
+  resolveTheme,
+  saveStudioSkin,
+  saveThemeMode,
+  type ThemeMode,
+} from "./theme";
 
 describe("theme preference", () => {
   it.each([
@@ -31,5 +38,23 @@ describe("theme preference", () => {
     expect(loadThemeMode(storage)).toBe("dark");
 
     expect(() => saveThemeMode("system", { setItem: () => { throw new Error("quota"); } } as unknown as Storage)).not.toThrow();
+  });
+
+  it("uses Atelier when no valid skin preference was saved", () => {
+    const storage = { getItem: () => null } as unknown as Storage;
+    expect(loadStudioSkin(storage)).toBe("atelier");
+  });
+
+  it("persists Classic without changing the color-theme preference key", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    } as unknown as Storage;
+
+    saveStudioSkin("classic", storage);
+
+    expect(loadStudioSkin(storage)).toBe("classic");
+    expect(values.get("cengfan-map-studio:theme-mode")).toBeUndefined();
   });
 });

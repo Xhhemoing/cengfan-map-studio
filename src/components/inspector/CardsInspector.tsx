@@ -65,6 +65,14 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     const first = values[0] ?? "";
     return values.every((value) => value === first) ? first : "";
   })();
+  // 位置 X/Y 共享同一紧凑成对控件，供“仅位置”与完整面板复用，避免两处漂移。
+  const cardPlacementControls = <>
+    <div className="property-panel__pair" data-property-pair="cards-position">
+      {number("x", cards.x, 0, 6000, "X")}
+      {number("y", cards.y, 0, 6000, "Y")}
+    </div>
+    {number("maxWidth", cards.maxWidth, 80, 6000, "卡片宽度（画布像素）")}
+  </>;
   const fieldFontControls = (
     <fieldset className="cards-field-fonts">
       <legend>字段字体</legend>
@@ -103,7 +111,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     </>
   );
 
-  if (mode === "placement") return <section className="property-panel"><InspectorHeader title="数据框位置与尺寸" />{number("x", cards.x, 0, 6000, "X")}{number("y", cards.y, 0, 6000, "Y")}{number("maxWidth", cards.maxWidth, 80, 6000, "卡片宽度（画布像素）")}{layerControl()}</section>;
+  if (mode === "placement") return <section className="property-panel"><InspectorHeader title="数据框位置与尺寸" />{cardPlacementControls}{layerControl()}</section>;
 
   const advancedControls = (
     <>
@@ -131,7 +139,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     <label htmlFor="cards-auto-balance" className="boolean-control checkbox-row"><input id="cards-auto-balance" type="checkbox" checked={cards.autoBalance !== false} disabled={(cards.layoutMode ?? "quadrant") !== "quadrant"} onChange={() => onPatch({ autoBalance: cards.autoBalance === false })} />自动平衡左右</label>
     <label htmlFor="cards-allow-map-overlap" className="boolean-control checkbox-row"><input id="cards-allow-map-overlap" type="checkbox" checked={cards.allowMapOverlap === true} onChange={(event) => onPatch({ allowMapOverlap: event.target.checked })} />允许卡片覆盖地图</label>
     <label htmlFor="cards-show-province-texture" className="boolean-control checkbox-row"><input id="cards-show-province-texture" type="checkbox" checked={cards.showProvinceTexture === true} onChange={(event) => onPatch({ showProvinceTexture: event.target.checked })} />数据框显示省份贴图</label>
-    {mode !== "global" && <>{number("x", cards.x, 0, 6000, "X")}{number("y", cards.y, 0, 6000, "Y")}{number("maxWidth", cards.maxWidth, 80, 6000, "卡片宽度（画布像素）")}</>}
+    {mode !== "global" && cardPlacementControls}
     {mode !== "global" && layerControl()}
     <label htmlFor="cards-columns">列数<select id="cards-columns" value={cards.columns} onChange={(event) => onPatch({ columns: event.target.value === "auto" ? "auto" : Number(event.target.value) })}><option value="auto">自动</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
     <label htmlFor="cards-background">背景色<DeferredInput id="cards-background" type="color" value={cards.background} onCommit={(background) => onPatch({ background })} /></label>

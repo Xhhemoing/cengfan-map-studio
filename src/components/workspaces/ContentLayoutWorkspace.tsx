@@ -1,9 +1,8 @@
-import { ArrowLeft, Redo2, RotateCcw, Undo2 } from "lucide-react";
-import { useMemo, type ComponentProps } from "react";
+import { ArrowLeft, Redo2, Undo2 } from "lucide-react";
+import type { ComponentProps } from "react";
 import type { UserAsset } from "../../lib/assets";
 import type { UserFont } from "../../lib/fonts";
 import type { ProjectDocument } from "../../lib/project-document";
-import type { LayoutHealthIssue } from "../../lib/layout-health";
 import type { SceneSelection } from "../../lib/scene-document";
 import { AssetPanel } from "../AssetPanel";
 import { PosterCanvas } from "../canvas/PosterCanvas";
@@ -11,8 +10,6 @@ import { InspectorPanel } from "../inspector/InspectorPanel";
 import { CompactButton, IconButton } from "../StudioUi";
 
 export type ContentAssetPanelProps = ComponentProps<typeof AssetPanel>;
-type ArrangeMode = "untouched" | "all";
-
 export interface ContentLayoutWorkspaceProps {
   project: ProjectDocument;
   selection: SceneSelection;
@@ -22,15 +19,10 @@ export interface ContentLayoutWorkspaceProps {
   canRedo: boolean;
   undoLabel: string;
   redoLabel: string;
-  layoutIssues: LayoutHealthIssue[];
   assetPanelProps?: ContentAssetPanelProps;
   onSelect: (selection: SceneSelection) => void;
   onPatch: (target: SceneSelection, patch: Record<string, unknown>) => void;
   onReset: (target: Extract<SceneSelection, { type: "canvas" | "map" | "cards" }>) => void;
-  onArrangeCards: (mode: ArrangeMode) => void;
-  onLocateLayoutIssue: (issue: LayoutHealthIssue) => void;
-  onRestoreCardPosition: (id: string) => void;
-  onRestoreAllCardPositions: () => void;
   onClose: () => void;
   onBackToMap: () => void;
   onUndo: () => void;
@@ -74,15 +66,10 @@ export function ContentLayoutWorkspace({
   canRedo,
   undoLabel,
   redoLabel,
-  layoutIssues,
   assetPanelProps = EMPTY_ASSET_PANEL_PROPS,
   onSelect,
   onPatch,
   onReset,
-  onArrangeCards,
-  onLocateLayoutIssue,
-  onRestoreCardPosition,
-  onRestoreAllCardPositions,
   onClose,
   onBackToMap,
   onUndo,
@@ -100,25 +87,6 @@ export function ContentLayoutWorkspace({
   onSelectStudent,
   selectedStudentId = null,
 }: ContentLayoutWorkspaceProps) {
-  const manualPositionIds = useMemo(
-    () => Object.keys(project.cards.positions ?? {}).sort((left, right) => left.localeCompare(right)),
-    [project.cards.positions],
-  );
-  const outline = useMemo(() => [
-    { selection: { type: "canvas" } as const, label: "画布" },
-    { selection: { type: "map" } as const, label: "地图展示框" },
-    { selection: { type: "cards" } as const, label: "数据展示框" },
-    { selection: { type: "guests" } as const, label: "嘉宾板块" },
-    ...project.textElements.filter((item) => item.visibility !== false).map((item) => ({
-      selection: { type: "text", id: item.id } as const,
-      label: item.content.trim() || "未命名文字",
-    })),
-    ...project.assetElements.filter((item) => item.visibility !== false).map((item) => ({
-      selection: { type: "asset", id: item.id } as const,
-      label: item.label,
-    })),
-  ], [project.assetElements, project.textElements]);
-
   return (
     <main className="content-layout-workspace workflow-panel--content" aria-label="内容与排版">
       <header className="content-layout-workspace__header">
@@ -133,45 +101,6 @@ export function ContentLayoutWorkspace({
       </header>
 
       <div className="content-layout-workspace__body">
-        <aside className="content-layout-workspace__outline" aria-label="内容大纲">
-          <div className="content-layout-workspace__section-heading"><strong>内容大纲</strong><small>{outline.length} 个对象</small></div>
-          <div className="content-layout-workspace__outline-list" role="listbox" aria-label="内容对象列表">
-            {outline.map(({ selection: itemSelection, label }) => (
-              <button
-                key={`${itemSelection.type}-${"id" in itemSelection ? itemSelection.id : ""}-${"province" in itemSelection ? itemSelection.province : ""}`}
-                type="button"
-                role="option"
-                aria-selected={JSON.stringify(selection) === JSON.stringify(itemSelection)}
-                className={JSON.stringify(selection) === JSON.stringify(itemSelection) ? "is-active" : undefined}
-                onClick={() => onSelect(itemSelection)}
-              >
-                <span>{label}</span>
-                <small>{selectionLabel(itemSelection)}</small>
-              </button>
-            ))}
-          </div>
-          <section className="content-layout-workspace__section" aria-label="智能排版控制">
-            <div className="content-layout-workspace__section-heading"><strong>智能排版</strong><small>手调位置会保留</small></div>
-            <button type="button" className="wide-button" aria-label="仅排未手调" onClick={() => onArrangeCards("untouched")}>仅排未手调</button>
-            <button type="button" className="secondary-button" aria-label="全部重新排版" onClick={() => onArrangeCards("all")}>全部重新排版</button>
-            {manualPositionIds.length > 0 && (
-              <div className="content-layout-workspace__manual-positions" aria-label="手动位置">
-                <div className="content-layout-workspace__section-heading"><strong>手动位置</strong><small>{manualPositionIds.length}</small></div>
-                {manualPositionIds.map((id) => (
-                  <button key={id} type="button" onClick={() => onRestoreCardPosition(id)}>
-                    <span>{id}</span><RotateCcw size={13} aria-hidden />
-                  </button>
-                ))}
-                <button type="button" className="content-layout-workspace__restore-all" onClick={onRestoreAllCardPositions}>恢复全部自动位置</button>
-              </div>
-            )}
-          </section>
-          <section className="content-layout-workspace__issues" aria-label="排版问题提示">
-            <div className="content-layout-workspace__section-heading"><strong>排版问题</strong><small>{layoutIssues.length} 项</small></div>
-            {layoutIssues.length === 0 ? <p>当前未发现明显问题。</p> : layoutIssues.map((issue) => <button key={issue.id} type="button" onClick={() => onLocateLayoutIssue(issue)}>{issue.detail}</button>)}
-          </section>
-        </aside>
-
         <section className="content-layout-workspace__preview" aria-label="内容排版画布">
           <div className="content-layout-workspace__preview-heading"><strong>实时画布</strong><span>{project.canvas.width} × {project.canvas.height}</span></div>
           <div className="content-layout-workspace__canvas">

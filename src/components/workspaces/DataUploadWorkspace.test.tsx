@@ -1,9 +1,11 @@
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 import { DataUploadWorkspace } from "./DataUploadWorkspace";
 import { createProjectDocument } from "../../lib/project-document";
 import type { Student } from "../../lib/project-data";
+import type { DataWorkspace } from "../DataWorkspace";
 
 const students: Student[] = [{
   id: "student-1",
@@ -21,35 +23,55 @@ afterEach(() => {
   });
 });
 
+function defaultDataWorkspaceProps(): ComponentProps<typeof DataWorkspace> {
+  return {
+    students,
+    onReplaceStudents: vi.fn(),
+    onAppendStudents: vi.fn(),
+    onUpdateStudent: vi.fn(),
+    onToggleVisibility: vi.fn(),
+    onDeleteStudent: vi.fn(),
+    onSetStudentsVisibility: vi.fn(),
+  };
+}
+
+function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWorkspace>> = {}) {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push({ root, container });
+  const project = overrides.project ?? createProjectDocument({ students, templateId: "original", dataView: "province" });
+  flushSync(() => root.render(
+    <DataUploadWorkspace
+      project={project}
+      summary={overrides.summary ?? { total: 1, visible: 1, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 }}
+      issues={overrides.issues ?? []}
+      dataWorkspaceProps={overrides.dataWorkspaceProps ?? defaultDataWorkspaceProps()}
+      assetPanelProps={overrides.assetPanelProps ?? { onApplyBackground: vi.fn() }}
+      onCreateDecoration={overrides.onCreateDecoration ?? vi.fn()}
+      onSelectStudent={overrides.onSelectStudent ?? vi.fn()}
+      onClose={overrides.onClose ?? vi.fn()}
+    />,
+  ));
+  return { container, root, project };
+}
+
 describe("DataUploadWorkspace", () => {
   it("is the upload data workbench and excludes templates and map expression controls", () => {
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ root, container });
-    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    flushSync(() => root.render(
-      <DataUploadWorkspace
-        project={project}
-        summary={{ total: 1, visible: 1, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 }}
-        issues={[]}
-        dataWorkspaceProps={{
-          students,
-          onReplaceStudents: vi.fn(),
-          onAppendStudents: vi.fn(),
-          onUpdateStudent: vi.fn(),
-          onToggleVisibility: vi.fn(),
-          onDeleteStudent: vi.fn(),
-          onSetStudentsVisibility: vi.fn(),
-          hideDataExpression: false,
-          hideTemplateDownload: false,
-        }}
-        onSelectStudent={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    ));
+    const { container } = renderWorkspace();
 
-    expect(container.querySelector('main[aria-label="上传数据工作台"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="数据与素材工作台"]')).not.toBeNull();
+    expect(container.querySelector('.data-upload-workspace--expanded')).not.toBeNull();
+    expect(container.querySelector('.data-workspace--roster')).not.toBeNull();
+    expect(container.querySelector('.data-table-wrap')).not.toBeNull();
+    const addStudent = container.querySelector<HTMLButtonElement>('button[aria-label="展开新增学生"]');
+    const importRoster = container.querySelector<HTMLButtonElement>('button[aria-label="展开导入名单"]');
+    expect(addStudent?.getAttribute("aria-expanded")).toBe("false");
+    expect(importRoster?.getAttribute("aria-expanded")).toBe("false");
+    flushSync(() => addStudent?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    flushSync(() => importRoster?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(container.querySelector('button[aria-label="收起新增学生"]')?.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector('button[aria-label="收起导入名单"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(container.textContent).not.toContain("模板");
     expect(container.textContent).not.toContain("地图呈现");
     expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).toBeNull();
@@ -61,30 +83,11 @@ describe("DataUploadWorkspace", () => {
     const innerSelect = vi.fn();
     const outerSelect = vi.fn();
     const onClose = vi.fn();
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ root, container });
-    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    flushSync(() => root.render(
-      <DataUploadWorkspace
-        project={project}
-        summary={{ total: 1, visible: 1, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 }}
-        issues={[]}
-        dataWorkspaceProps={{
-          students,
-          onReplaceStudents: vi.fn(),
-          onAppendStudents: vi.fn(),
-          onUpdateStudent: vi.fn(),
-          onToggleVisibility: vi.fn(),
-          onDeleteStudent: vi.fn(),
-          onSetStudentsVisibility: vi.fn(),
-          onSelectStudent: innerSelect,
-        }}
-        onSelectStudent={outerSelect}
-        onClose={onClose}
-      />,
-    ));
+    const { container } = renderWorkspace({
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), onSelectStudent: innerSelect },
+      onSelectStudent: outerSelect,
+      onClose,
+    });
 
     flushSync(() => container.querySelector('[data-student-row="student-1"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')?.click());
@@ -95,21 +98,7 @@ describe("DataUploadWorkspace", () => {
   });
 
   it("delegates six-stage navigation to the app topbar instead of a nested stepper", () => {
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ root, container });
-    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    flushSync(() => root.render(
-      <DataUploadWorkspace
-        project={project}
-        summary={{ total: 1, visible: 1, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 }}
-        issues={[]}
-        dataWorkspaceProps={{ students, onReplaceStudents: vi.fn(), onAppendStudents: vi.fn(), onUpdateStudent: vi.fn(), onToggleVisibility: vi.fn(), onDeleteStudent: vi.fn(), onSetStudentsVisibility: vi.fn() }}
-        onSelectStudent={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    ));
+    const { container } = renderWorkspace();
 
     // 顶部栏统一承载六阶段导航，工作台自身不再渲染重复的步骤条
     expect(container.querySelector(".workflow-stage-stepper")).toBeNull();
@@ -117,24 +106,14 @@ describe("DataUploadWorkspace", () => {
 
   it("restores the province mapping panel with inline province overrides", () => {
     const onUpdateStudent = vi.fn();
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ root, container });
-    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    flushSync(() => root.render(
-      <DataUploadWorkspace
-        project={project}
-        summary={{ total: 1, visible: 1, hidden: 0, international: 0, unresolved: 1, missingRequired: 0, duplicate: 0 }}
-        issues={[
-          { studentId: "student-1", studentName: "林舟", kind: "unresolved-location", detail: "无法定位城市：火星市", severity: "warning" },
-          { studentId: "student-1", studentName: "林舟", kind: "manual-province", detail: "使用省份覆盖：火星省", severity: "info" },
-        ]}
-        dataWorkspaceProps={{ students, onReplaceStudents: vi.fn(), onAppendStudents: vi.fn(), onUpdateStudent, onToggleVisibility: vi.fn(), onDeleteStudent: vi.fn(), onSetStudentsVisibility: vi.fn() }}
-        onSelectStudent={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    ));
+    const { container } = renderWorkspace({
+      summary: { total: 1, visible: 1, hidden: 0, international: 0, unresolved: 1, missingRequired: 0, duplicate: 0 },
+      issues: [
+        { studentId: "student-1", studentName: "林舟", kind: "unresolved-location", detail: "无法定位城市：火星市", severity: "warning" },
+        { studentId: "student-1", studentName: "林舟", kind: "manual-province", detail: "使用省份覆盖：火星省", severity: "info" },
+      ],
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), onUpdateStudent },
+    });
 
     expect(container.querySelector('section[aria-label="地图映射"]')).not.toBeNull();
     expect(container.textContent).toContain("无法定位城市：火星市");
@@ -146,32 +125,63 @@ describe("DataUploadWorkspace", () => {
     flushSync(() => input.dispatchEvent(new Event("input", { bubbles: true })));
     flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="为 林舟 应用省份覆盖"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onUpdateStudent).toHaveBeenCalledWith("student-1", { province: "火星省" });
-
-    root.unmount();
   });
 
   it("shows an empty state when all locations and provinces are resolved", () => {
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ root, container });
-    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    flushSync(() => root.render(
-      <DataUploadWorkspace
-        project={project}
-        summary={{ total: 1, visible: 1, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 }}
-        issues={[]}
-        dataWorkspaceProps={{ students, onReplaceStudents: vi.fn(), onAppendStudents: vi.fn(), onUpdateStudent: vi.fn(), onToggleVisibility: vi.fn(), onDeleteStudent: vi.fn(), onSetStudentsVisibility: vi.fn() }}
-        onSelectStudent={vi.fn()}
-        onClose={vi.fn()}
-      />,
-    ));
+    const { container } = renderWorkspace();
 
     const mapping = container.querySelector('section[aria-label="地图映射"]');
     expect(mapping).not.toBeNull();
     expect(mapping?.textContent).toContain("城市与省份已全部定位");
     expect(mapping?.querySelector('[aria-label="省份分布"]')?.textContent).toContain("北京市");
+  });
 
-    root.unmount();
+  it("defaults the side rail to the quality tab and switches to the asset library", () => {
+    const { container } = renderWorkspace();
+
+    const qualityTab = container.querySelector<HTMLButtonElement>("#data-rail-quality-tab");
+    const assetsTab = container.querySelector<HTMLButtonElement>("#data-rail-assets-tab");
+    expect(qualityTab).not.toBeNull();
+    expect(assetsTab).not.toBeNull();
+    expect(container.querySelector("#data-rail-quality")).not.toBeNull();
+    expect(container.querySelector("#data-rail-assets")).toBeNull();
+    expect(qualityTab?.getAttribute("aria-selected")).toBe("true");
+    expect(assetsTab?.getAttribute("aria-selected")).toBe("false");
+
+    flushSync(() => assetsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(container.querySelector("#data-rail-quality")).toBeNull();
+    expect(container.querySelector("#data-rail-assets")).not.toBeNull();
+    expect(container.querySelector("#data-rail-assets .asset-panel")).not.toBeNull();
+    expect(assetsTab?.getAttribute("aria-selected")).toBe("true");
+    expect(qualityTab?.getAttribute("aria-selected")).toBe("false");
+
+    // arrow keys switch and refocus the other tab
+    flushSync(() => assetsTab?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
+    expect(container.querySelector("#data-rail-quality")).not.toBeNull();
+    expect(container.querySelector("#data-rail-assets")).toBeNull();
+    expect(qualityTab?.getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(qualityTab);
+  });
+
+  it("wires the asset library province picker to the workspace override", () => {
+    const onCreateDecoration = vi.fn();
+    const { container } = renderWorkspace({
+      assetPanelProps: { onApplyBackground: vi.fn(), provinces: ["北京市", "浙江省"] },
+      onCreateDecoration,
+    });
+
+    flushSync(() => container.querySelector<HTMLButtonElement>("#data-rail-assets-tab")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    const select = container.querySelector("#asset-province") as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(container.querySelector("#asset-province-upload")).toBeNull();
+
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+    flushSync(() => {
+      setter?.call(select, "北京市");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(container.querySelector("#asset-province-upload")).not.toBeNull();
   });
 });

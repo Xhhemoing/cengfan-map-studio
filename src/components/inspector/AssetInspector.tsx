@@ -62,8 +62,8 @@ export function AssetInspector({
         </p>
       )}
       {province && <p className="panel-note">绑定省份：{province}</p>}
-      {!isTexture && <>{numberControl(asset, "x", "X", -6000, 6000, onPatch)}{numberControl(asset, "y", "Y", -6000, 6000, onPatch)}</>}
-      {!isTexture && <>{numberControl(asset, "width", "宽度", 1, 6000, onPatch)}{numberControl(asset, "height", "高度", 1, 6000, onPatch)}</>}
+      {!isTexture && <div className="property-panel__pair" data-property-pair="asset-position">{numberControl(asset, "x", "X", -6000, 6000, onPatch)}{numberControl(asset, "y", "Y", -6000, 6000, onPatch)}</div>}
+      {!isTexture && <div className="property-panel__pair" data-property-pair="asset-size">{numberControl(asset, "width", "宽度", 1, 6000, onPatch)}{numberControl(asset, "height", "高度", 1, 6000, onPatch)}</div>}
       {isLandmark && numberControl(asset, "rotation", "旋转", -360, 360, onPatch)}
       {numberControl(asset, "opacity", "透明度", 0, 1, onPatch)}
       <label htmlFor="asset-zindex">

@@ -14,34 +14,36 @@ const ok = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.st
 describe("collaboration client", () => {
   it("creates and reads rooms through the typed API", async () => {
     const request = vi.fn()
-      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, snapshot: { project: 1 } }, 201))
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0, snapshot: { project: 1 } }, access: { accessToken: "owner-token" } }, 201))
       .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, snapshot: { project: 1 } }));
-    await expect(createRoom({ clientId: "c1", snapshot: { project: 1 }, request })).resolves.toMatchObject({ id: "ABC123" });
-    await expect(fetchRoom("abc123", request)).resolves.toMatchObject({ id: "ABC123" });
-    expect(request).toHaveBeenLastCalledWith("/api/rooms/ABC123");
+    await expect(createRoom({ clientId: "c1", displayName: "创建者", snapshot: { project: 1 }, request })).resolves.toMatchObject({ room: { id: "ABC123" } });
+    await expect(fetchRoom("abc123", "owner-token", request)).resolves.toMatchObject({ id: "ABC123" });
+    expect(request).toHaveBeenLastCalledWith("/api/rooms/ABC123", {
+      headers: { "X-Cengfan-Room-Token": "owner-token" },
+    });
   });
 
   it("creates an initializing room without serializing an initial snapshot", async () => {
-    const request = vi.fn(() => ok({ id: "FAST01", version: 0, ready: false }, 201));
+    const request = vi.fn(() => ok({ room: { id: "FAST01", version: 0, ready: false }, access: { accessToken: "owner-token" } }, 201));
 
-    await expect(createRoom({ clientId: "c1", request })).resolves.toMatchObject({ id: "FAST01", ready: false });
+    await expect(createRoom({ clientId: "c1", displayName: "创建者", request })).resolves.toMatchObject({ room: { id: "FAST01", ready: false } });
     expect(request).toHaveBeenCalledWith("/api/rooms", expect.objectContaining({
-      body: JSON.stringify({ clientId: "c1" }),
+      body: JSON.stringify({ clientId: "c1", displayName: "创建者" }),
     }));
   });
 
   it("surfaces version conflicts with the server version", async () => {
     const request = vi.fn(() => ok({ error: { code: "VERSION_CONFLICT", message: "冲突", currentVersion: 3 } }, 409));
-    await expect(submitRoomSnapshot("ABC123", { txId: "tx-1", clientId: "c1", baseVersion: 2, snapshot: {} }, request)).rejects.toMatchObject({ code: "VERSION_CONFLICT", currentVersion: 3 });
+    await expect(submitRoomSnapshot("ABC123", "owner-token", { txId: "tx-1", clientId: "c1", baseVersion: 2, snapshot: {} }, request)).rejects.toMatchObject({ code: "VERSION_CONFLICT", currentVersion: 3 });
   });
 
   it("requests a metadata-only acknowledgement for uploaded snapshots", async () => {
     const request = vi.fn((_url: RequestInfo | URL, _init?: RequestInit) => ok({ id: "ABC123", version: 2, ready: true, updatedBy: "c1", lastTxId: "tx-2" }));
 
-    await submitRoomSnapshot("ABC123", { txId: "tx-2", clientId: "c1", baseVersion: 1, snapshot: { large: true } }, request);
+    await submitRoomSnapshot("ABC123", "owner-token", { txId: "tx-2", clientId: "c1", baseVersion: 1, snapshot: { large: true } }, request);
 
     expect(request).toHaveBeenCalledWith("/api/rooms/ABC123/transactions", expect.objectContaining({
-      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal", "X-Cengfan-Room-Token": "owner-token" },
     }));
   });
 
@@ -52,7 +54,7 @@ describe("collaboration client", () => {
       return ok({ id: "ABC123", version: 2, ready: true, updatedBy: "c1", lastTxId: "tx-op" });
     });
 
-    await submitRoomOperations("ABC123", {
+    await submitRoomOperations("ABC123", "owner-token", {
       txId: "tx-op",
       clientId: "c1",
       baseVersion: 1,

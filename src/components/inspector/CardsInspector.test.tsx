@@ -20,6 +20,8 @@ describe("CardsInspector", () => {
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
     const input = container.querySelector("#cards-zindex") as HTMLInputElement;
+    expect(container.querySelector('[data-property-pair="cards-position"] #cards-x')).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="cards-position"] #cards-y')).not.toBeNull();
     expect(input.value).toBe("12");
     input.focus();
     flushSync(() => setInputValue(input, "30"));
@@ -293,6 +295,20 @@ describe("CardsInspector", () => {
     onPatch.mockClear();
     flushSync(() => (container.querySelector("#cards-nowrap-university") as HTMLInputElement).dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ noWrapFields: ["name", "university"] });
+
+    flushSync(() => root.unmount());
+  });
+
+  it("shares the same cards position pair between placement-only and full views", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={vi.fn()} onReset={vi.fn()} mode="placement" />));
+    expect(container.textContent).toContain("数据框位置与尺寸");
+    expect(container.querySelector('[data-property-pair="cards-position"] #cards-x')).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="cards-position"] #cards-y')).not.toBeNull();
+    expect(container.querySelector('#cards-maxWidth')).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="cards-position"] #cards-maxWidth')).toBeNull();
 
     flushSync(() => root.unmount());
   });

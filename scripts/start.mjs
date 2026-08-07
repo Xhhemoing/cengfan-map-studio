@@ -11,6 +11,17 @@ const child = isWindows
     env: { ...process.env, STATIC_DIR: process.env.STATIC_DIR ?? "dist" },
   });
 
+let stopping = false;
+
+const forwardSignal = (signal) => {
+  if (stopping) return;
+  stopping = true;
+  child.kill(signal);
+};
+
+process.once("SIGINT", () => forwardSignal("SIGINT"));
+process.once("SIGTERM", () => forwardSignal("SIGTERM"));
+
 child.on("error", (error) => {
   console.error(`Unable to start server: ${error.message}`);
   process.exitCode = 1;

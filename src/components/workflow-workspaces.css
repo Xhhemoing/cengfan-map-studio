@@ -64,7 +64,7 @@
 .delivery-workspace__actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
 .delivery-workspace__error { display: grid; gap: 7px; color: #922f26; background: #fff7f5; border-color: #edb4ac; }
 .delivery-workspace__preview { min-width: 0; padding: 16px; background: var(--editor-surface-muted); border: 1px solid var(--editor-line); border-radius: 8px; }
-.delivery-workspace__preview-heading { display: flex; justify-content: space-between; margin-bottom: 12px; color: #536970; }
+.delivery-workspace__preview-heading { display: flex; justify-content: space-between; margin-bottom: 12px; color: var(--editor-ink-muted, #536970); }
 .delivery-workspace__canvas { display: grid; place-items: center; overflow: auto; }
 .delivery-workspace__canvas .poster { width: auto; height: auto; min-width: 0; max-width: 100%; max-height: 100%; box-shadow: 0 14px 40px rgba(38, 61, 66, .14); }
 

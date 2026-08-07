@@ -256,10 +256,14 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
         actions={showGlobal ? <IconButton label="重置地图" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} /> : undefined}
       />
       {showPlacement && <>
-        {number("x", map.x, 0, 6000, 1, "X")}
-        {number("y", map.y, 0, 6000, 1, "Y")}
-        {number("width", map.width, 1, 6000, 1, "宽度")}
-        {number("height", map.height, 1, 6000, 1, "高度")}
+        <div className="property-panel__pair" data-property-pair="map-position">
+          {number("x", map.x, 0, 6000, 1, "X")}
+          {number("y", map.y, 0, 6000, 1, "Y")}
+        </div>
+        <div className="property-panel__pair" data-property-pair="map-size">
+          {number("width", map.width, 1, 6000, 1, "宽度")}
+          {number("height", map.height, 1, 6000, 1, "高度")}
+        </div>
         {number("scale", map.scale, 0.1, 3, 0.01, "缩放")}
         <label htmlFor="map-zindex">层级
           <DeferredInput
@@ -438,56 +442,60 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
           </>}
           {showPlacement && renderSource.alignment && (
             <>
-              <label htmlFor="map-align-x">对齐 X
-                <DeferredInput
-                  id="map-align-x"
-                  type="number"
-                  step={1}
-                  value={renderSource.alignment.x}
-                  onCommit={(draft) => {
-                    const next = Number(draft);
-                    if (Number.isFinite(next)) patchAlignment({ x: next });
-                  }}
-                />
-              </label>
-              <label htmlFor="map-align-y">对齐 Y
-                <DeferredInput
-                  id="map-align-y"
-                  type="number"
-                  step={1}
-                  value={renderSource.alignment.y}
-                  onCommit={(draft) => {
-                    const next = Number(draft);
-                    if (Number.isFinite(next)) patchAlignment({ y: next });
-                  }}
-                />
-              </label>
-              <label htmlFor="map-align-width">对齐宽度
-                <DeferredInput
-                  id="map-align-width"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={renderSource.alignment.width}
-                  onCommit={(draft) => {
-                    const next = Number(draft);
-                    if (Number.isFinite(next) && next > 0) patchAlignment({ width: next });
-                  }}
-                />
-              </label>
-              <label htmlFor="map-align-height">对齐高度
-                <DeferredInput
-                  id="map-align-height"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={renderSource.alignment.height}
-                  onCommit={(draft) => {
-                    const next = Number(draft);
-                    if (Number.isFinite(next) && next > 0) patchAlignment({ height: next });
-                  }}
-                />
-              </label>
+              <div className="property-panel__pair" data-property-pair="map-image-position">
+                <label htmlFor="map-align-x">对齐 X
+                  <DeferredInput
+                    id="map-align-x"
+                    type="number"
+                    step={1}
+                    value={renderSource.alignment.x}
+                    onCommit={(draft) => {
+                      const next = Number(draft);
+                      if (Number.isFinite(next)) patchAlignment({ x: next });
+                    }}
+                  />
+                </label>
+                <label htmlFor="map-align-y">对齐 Y
+                  <DeferredInput
+                    id="map-align-y"
+                    type="number"
+                    step={1}
+                    value={renderSource.alignment.y}
+                    onCommit={(draft) => {
+                      const next = Number(draft);
+                      if (Number.isFinite(next)) patchAlignment({ y: next });
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="property-panel__pair" data-property-pair="map-image-size">
+                <label htmlFor="map-align-width">对齐宽度
+                  <DeferredInput
+                    id="map-align-width"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={renderSource.alignment.width}
+                    onCommit={(draft) => {
+                      const next = Number(draft);
+                      if (Number.isFinite(next) && next > 0) patchAlignment({ width: next });
+                    }}
+                  />
+                </label>
+                <label htmlFor="map-align-height">对齐高度
+                  <DeferredInput
+                    id="map-align-height"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={renderSource.alignment.height}
+                    onCommit={(draft) => {
+                      const next = Number(draft);
+                      if (Number.isFinite(next) && next > 0) patchAlignment({ height: next });
+                    }}
+                  />
+                </label>
+              </div>
               <label htmlFor="map-align-rotation">旋转°
                 <DeferredInput
                   id="map-align-rotation"

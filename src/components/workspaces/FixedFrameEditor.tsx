@@ -16,10 +16,14 @@ export function FixedFrameEditor({ frame, onChange }: { frame: DisplayFrameDefin
           <fieldset key={item.id} className="display-frame-item">
             <legend>{FIELD_LABELS[item.field ?? "title"] ?? item.id}</legend>
             <div className="display-frame-item__grid">
-              <label htmlFor={`display-frame-fixed-${item.id}-x`}>局部 X<input id={`display-frame-fixed-${item.id}-x`} type="number" value={item.x} onChange={(event) => updateItem(item.id, { x: Number(event.currentTarget.value) })} /></label>
-              <label htmlFor={`display-frame-fixed-${item.id}-y`}>局部 Y<input id={`display-frame-fixed-${item.id}-y`} type="number" value={item.y} onChange={(event) => updateItem(item.id, { y: Number(event.currentTarget.value) })} /></label>
-              <label htmlFor={`display-frame-fixed-${item.id}-width`}>宽度<input id={`display-frame-fixed-${item.id}-width`} type="number" min={1} value={item.width} onChange={(event) => updateItem(item.id, { width: Number(event.currentTarget.value) })} /></label>
-              <label htmlFor={`display-frame-fixed-${item.id}-height`}>高度<input id={`display-frame-fixed-${item.id}-height`} type="number" min={1} value={item.height} onChange={(event) => updateItem(item.id, { height: Number(event.currentTarget.value) })} /></label>
+              <div className="display-frame-item__pair property-panel__pair" data-property-pair={`${item.id}-position`}>
+                <label htmlFor={`display-frame-fixed-${item.id}-x`}>局部 X<input id={`display-frame-fixed-${item.id}-x`} type="number" value={item.x} onChange={(event) => updateItem(item.id, { x: Number(event.currentTarget.value) })} /></label>
+                <label htmlFor={`display-frame-fixed-${item.id}-y`}>局部 Y<input id={`display-frame-fixed-${item.id}-y`} type="number" value={item.y} onChange={(event) => updateItem(item.id, { y: Number(event.currentTarget.value) })} /></label>
+              </div>
+              <div className="display-frame-item__pair property-panel__pair" data-property-pair={`${item.id}-size`}>
+                <label htmlFor={`display-frame-fixed-${item.id}-width`}>宽度<input id={`display-frame-fixed-${item.id}-width`} type="number" min={1} value={item.width} onChange={(event) => updateItem(item.id, { width: Number(event.currentTarget.value) })} /></label>
+                <label htmlFor={`display-frame-fixed-${item.id}-height`}>高度<input id={`display-frame-fixed-${item.id}-height`} type="number" min={1} value={item.height} onChange={(event) => updateItem(item.id, { height: Number(event.currentTarget.value) })} /></label>
+              </div>
               <label htmlFor={`display-frame-fixed-${item.id}-z`}>层级<input id={`display-frame-fixed-${item.id}-z`} type="number" value={item.zIndex} onChange={(event) => updateItem(item.id, { zIndex: Number(event.currentTarget.value) })} /></label>
             </div>
           </fieldset>

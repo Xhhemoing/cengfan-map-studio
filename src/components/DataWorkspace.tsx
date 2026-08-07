@@ -71,6 +71,7 @@ export function DataWorkspace({
   confirmReplace = ({ currentCount, nextCount }) => window.confirm(`确认替换全部名单？当前 ${currentCount} 条 -> 新 ${nextCount} 条`),
   hideDataExpression = false,
   hideTemplateDownload = false,
+  compactRosterControls = false,
 }: {
   students: Student[];
   onReplaceStudents: (students: Student[]) => void;
@@ -88,6 +89,7 @@ export function DataWorkspace({
   confirmReplace?: (input: { currentCount: number; nextCount: number }) => boolean;
   hideDataExpression?: boolean;
   hideTemplateDownload?: boolean;
+  compactRosterControls?: boolean;
 }) {
   const [draft, setDraft] = useState<StudentDraft>(createEmptyStudentDraft());
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
@@ -138,7 +140,8 @@ export function DataWorkspace({
   }, [reviewRows]);
 
 
-  const [showImport, setShowImport] = useState(true);
+  const [showImport, setShowImport] = useState(!compactRosterControls);
+  const [showNewStudent, setShowNewStudent] = useState(!compactRosterControls);
 
   const setCandidates = (
     candidates: Array<{
@@ -347,7 +350,7 @@ export function DataWorkspace({
   };
 
   return (
-    <div className="data-workspace">
+    <div className={`data-workspace${compactRosterControls ? " data-workspace--roster" : ""}`}>
       <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />
 
       {!hideDataExpression && <section className="data-expression" aria-labelledby="data-expression-title">
@@ -388,65 +391,81 @@ export function DataWorkspace({
         )}
       </div>
 
-      <div className="draft-form">
-        <label>
-          去向类型
-          <select aria-label="新增学生去向类型" value={draft.locationScope ?? "china"} onChange={(event) => setDraft(updateStudentDraft(draft, "locationScope", event.target.value))}>
-            <option value="china">中国去向</option>
-            <option value="international">海外去向</option>
-          </select>
-        </label>
-        <label>
-          学生名称
-          <input
-            value={draft.name}
-            onChange={(event) => setDraft(updateStudentDraft(draft, "name", event.target.value))}
-            placeholder="林舟"
-          />
-        </label>
-        <label>
-          就读院校
-          <SearchCombobox
-            label="就读院校"
-            value={draft.university}
-            onChange={(value) => setDraft(updateStudentDraft(draft, "university", value))}
-            placeholder="北京大学"
-            searchOptions={universityOptions}
-          />
-        </label>
-        <label>
-          {draft.locationScope === "international" ? "国家/地区与城市" : "城市"}
-          <SearchCombobox
-            label="城市"
-            value={draft.city}
-            allowFreeInput
-            onChange={(value) => setDraft(updateStudentDraft(draft, "city", value))}
-            placeholder={draft.locationScope === "international" ? "美国·波士顿" : "北京"}
-            searchOptions={draft.locationScope === "international" ? () => [] : cityOptions}
-          />
-        </label>
-        {draft.locationScope !== "international" && (
+      <section className="data-workspace__new-student">
+        {compactRosterControls && (
+          <button
+            type="button"
+            className="data-workspace__section-toggle"
+            aria-label={showNewStudent ? "收起新增学生" : "展开新增学生"}
+            aria-expanded={showNewStudent}
+            onClick={() => setShowNewStudent((current) => !current)}
+          >
+            <Plus size={15} aria-hidden />
+            <span>新增学生</span>
+          </button>
+        )}
+        {showNewStudent && <div className="draft-form">
           <label>
-            省份
-            <SearchCombobox
-              label="新增省份"
-              value={draft.province ?? ""}
-              allowFreeInput
-              onChange={(value) => setDraft(updateStudentDraft(draft, "province", value))}
-              placeholder="浙江省"
-              searchOptions={provinceOptions}
+            去向类型
+            <select aria-label="新增学生去向类型" value={draft.locationScope ?? "china"} onChange={(event) => setDraft(updateStudentDraft(draft, "locationScope", event.target.value))}>
+              <option value="china">中国去向</option>
+              <option value="international">海外去向</option>
+            </select>
+          </label>
+          <label>
+            学生名称
+            <input
+              value={draft.name}
+              onChange={(event) => setDraft(updateStudentDraft(draft, "name", event.target.value))}
+              placeholder="林舟"
             />
           </label>
-        )}
-        <ActionButton onClick={addDraftStudent}>
-          <Plus size={16} /> 新增学生
-        </ActionButton>
-      </div>
+          <label>
+            就读院校
+            <SearchCombobox
+              label="就读院校"
+              value={draft.university}
+              onChange={(value) => setDraft(updateStudentDraft(draft, "university", value))}
+              placeholder="北京大学"
+              searchOptions={universityOptions}
+            />
+          </label>
+          <label>
+            {draft.locationScope === "international" ? "国家/地区与城市" : "城市"}
+            <SearchCombobox
+              label="城市"
+              value={draft.city}
+              allowFreeInput
+              onChange={(value) => setDraft(updateStudentDraft(draft, "city", value))}
+              placeholder={draft.locationScope === "international" ? "美国·波士顿" : "北京"}
+              searchOptions={draft.locationScope === "international" ? () => [] : cityOptions}
+            />
+          </label>
+          {draft.locationScope !== "international" && (
+            <label>
+              省份
+              <SearchCombobox
+                label="新增省份"
+                value={draft.province ?? ""}
+                allowFreeInput
+                onChange={(value) => setDraft(updateStudentDraft(draft, "province", value))}
+                placeholder="浙江省"
+                searchOptions={provinceOptions}
+              />
+            </label>
+          )}
+          <ActionButton onClick={addDraftStudent}>
+            <Plus size={16} /> 新增学生
+          </ActionButton>
+        </div>}
+      </section>
 
       <div className="import-box">
         <button
           type="button"
           className="wide-button secondary import-toggle"
+          aria-label={showImport ? "收起导入名单" : "展开导入名单"}
+          aria-expanded={showImport}
           onClick={() => setShowImport((current) => !current)}
         >
           {showImport ? "收起导入" : "展开导入 / OCR / Excel"}

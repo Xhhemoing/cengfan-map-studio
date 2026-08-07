@@ -46,26 +46,28 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
     onPatch({ people: people.filter((person) => person.id !== id) });
   };
 
-  const placementControls = <div className="property-panel__grid">
-    <label htmlFor="guests-x">X
-      <DeferredInput id="guests-x" type="number" value={guests.x} onCommit={(draft) => {
-        const next = Number(draft);
-        if (Number.isFinite(next)) onPatch({ x: next });
-      }} />
-    </label>
-    <label htmlFor="guests-y">Y
-      <DeferredInput id="guests-y" type="number" value={guests.y} onCommit={(draft) => {
-        const next = Number(draft);
-        if (Number.isFinite(next)) onPatch({ y: next });
-      }} />
-    </label>
+  const placementControls = <>
+    <div className="property-panel__pair" data-property-pair="guests-position">
+      <label htmlFor="guests-x">X
+        <DeferredInput id="guests-x" type="number" value={guests.x} onCommit={(draft) => {
+          const next = Number(draft);
+          if (Number.isFinite(next)) onPatch({ x: next });
+        }} />
+      </label>
+      <label htmlFor="guests-y">Y
+        <DeferredInput id="guests-y" type="number" value={guests.y} onCommit={(draft) => {
+          const next = Number(draft);
+          if (Number.isFinite(next)) onPatch({ y: next });
+        }} />
+      </label>
+    </div>
     <label htmlFor="guests-width">宽度
       <DeferredInput id="guests-width" type="number" min={120} max={800} value={guests.width} onCommit={(draft) => {
         const next = Number(draft);
         if (Number.isFinite(next)) onPatch({ width: next });
       }} />
     </label>
-  </div>;
+  </>;
 
   if (placementOnly) return <section className="property-panel"><InspectorHeader title="辅助板块位置与尺寸" />{placementControls}</section>;
 

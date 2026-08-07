@@ -23,7 +23,7 @@ export function TextInspector({ text, userFonts = [], onPatch, onDelete }: {
     : <IconButton label={text.visibility ? "隐藏文本" : "显示文本"} text={text.visibility ? "隐藏文本" : "显示文本"} icon={text.visibility ? <EyeOff size={15} /> : <Eye size={15} />} variant="ghost" onClick={() => onPatch({ visibility: !text.visibility })} />}
   />
     <label htmlFor="text-content">内容<DeferredTextarea id="text-content" value={text.content} onCommit={(content) => onPatch({ content })} /></label>
-    {number("x", text.x, 0, 6000, "X", "text-x")}{number("y", text.y, 0, 6000, "Y", "text-y")}
+    <div className="property-panel__pair" data-property-pair="text-position">{number("x", text.x, 0, 6000, "X", "text-x")}{number("y", text.y, 0, 6000, "Y", "text-y")}</div>
     <label htmlFor="text-color">颜色<DeferredInput id="text-color" type="color" value={text.color} onCommit={(color) => onPatch({ color })} /></label>
     <FontEditor
       id="text-font"

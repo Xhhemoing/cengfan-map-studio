@@ -16,7 +16,7 @@ cp .env.example .env        # 配置 API/LLM 密钥等
 npm run dev                 # 同时启动 Vite(5173)与 API(8787)
 ```
 
-AI agent 使用 OpenAI 兼容接口。旧变量 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL` 继续可用；生产环境建议使用 `AI_PRIMARY_API_KEY`、`AI_PRIMARY_BASE_URL`、`AI_PRIMARY_MODEL` 和可选的 `AI_FALLBACK_*`。未配置主模型时 agent 使用本地确定性规则。可配置 `AI_BUDGET_RECEIPT_SECRET` 让预算回执签名在进程重启后保持稳定；回执防重放 ledger 仍是有界进程内内存，多实例必须共享 ledger 才能提供跨实例防重放，当前重启续聊会失效。运行中的配置状态、路由与任务限制可通过 `GET /api/health` 查看，健康响应不会暴露密钥。
+AI agent 使用 OpenAI 兼容接口。旧变量 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL` 继续可用；生产环境建议使用 `AI_PRIMARY_API_KEY`、`AI_PRIMARY_BASE_URL`、`AI_PRIMARY_MODEL` 和可选的 `AI_FALLBACK_*`。未配置主模型时 agent 使用本地确定性规则。生产部署、状态文件、启动门禁、`/api/live`、`/api/ready` 与回滚流程见 [AI 生产部署手册](docs/deployment/ai-production.md)。运行中的配置状态、路由与任务限制可通过 `GET /api/health` 查看，健康响应不会暴露密钥。
 
 ## 常用命令
 
@@ -39,6 +39,10 @@ AI agent 使用 OpenAI 兼容接口。旧变量 `AI_API_KEY`、`AI_BASE_URL`、`
 - `scripts/` — dev/build/start 与重任务包装
 - `docs/` — 设计规格与需求文档
 - `.data/` — 运行时数据(不入库)
+
+## 共享协作
+
+共享房间保存在 API 进程内，空闲一段时间后会过期。创建者可以生成“可编辑”或“仅查看”的单次邀请凭证；该凭证与房间访问 token 都是访问权限，应通过私密渠道发送。成员 token 仅保存在当前浏览器的本地存储中，离开房间、令牌失效或房间过期都不会删除本机工程草稿。当前实现不提供账户身份审计、永久历史、跨实例持久化或端到端加密。
 
 ## 验证与提交
 

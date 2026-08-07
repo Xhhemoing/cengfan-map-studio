@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "./project-document";
-import { AgentSession, compactAgentToolResult } from "./agent-session";
+import { AgentSession, compactAgentToolResult, type AgentSessionSnapshot } from "./agent-session";
 
 function response(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
@@ -12,6 +12,54 @@ afterEach(() => {
 });
 
 describe("AgentSession", () => {
+  it("exports only replay data and restores it by replaying on the current project", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "snapshot-step", name: "update_map", arguments: { patch: { width: 640 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const source = new AgentSession(project, { mode: "conservative" });
+    await source.run("调整地图");
+
+    const snapshot = source.exportSnapshot();
+    const restored = AgentSession.restore(project, snapshot, { mode: "conservative" });
+    expect(snapshot).not.toHaveProperty("shadowProject");
+    expect(snapshot).not.toHaveProperty("budget");
+    expect(snapshot).not.toHaveProperty("taskId");
+    expect(snapshot).not.toHaveProperty("budgetReceipt");
+    expect(snapshot.conversation).toEqual([{ role: "user", content: "调整地图" }]);
+    expect(snapshot.steps[0]?.arguments).toEqual({ patch: { width: 640 } });
+    expect(snapshot.steps[0]).not.toHaveProperty("result");
+    expect(restored.shadowProject.map.width).toBe(640);
+    expect(restored.steps[0]?.arguments).toEqual({ patch: { width: 640 } });
+    expect(restored.canContinue).toBe(true);
+    expect(() => AgentSession.restore(project, { ...snapshot, schemaVersion: 3 } as unknown as AgentSessionSnapshot, { mode: "conservative" })).toThrow();
+  });
+
+  it("does not restore active execution state", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    let release!: () => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise((resolve) => { release = () => resolve(response({ kind: "finish", summary: "完成" })); })));
+    const source = new AgentSession(project, { mode: "conservative" });
+    const running = source.run("执行");
+    const snapshot = source.exportSnapshot();
+    const restored = AgentSession.restore(project, snapshot, { mode: "conservative" });
+    release();
+    await running;
+    expect(restored.canContinue).toBe(false);
+    expect(restored.steps).toEqual([]);
+  });
+
+  it.each([
+    { rounds: -1 },
+    { rounds: 1.5 },
+    { usedTokens: -1 },
+    { usedTokens: 1.5 },
+  ])("rejects invalid metric values in a snapshot: %o", (metrics) => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const snapshot = new AgentSession(project, { mode: "conservative" }).exportSnapshot();
+    expect(() => AgentSession.restore(project, { ...snapshot, metrics: { ...snapshot.metrics, ...metrics } }, { mode: "conservative" })).toThrow();
+  });
+
   it("executes scene tools on a shadow copy", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     vi.stubGlobal("fetch", vi.fn()

@@ -16,6 +16,8 @@ describe("InspectorPanel", () => {
     expect(container.querySelector('label[for="canvas-width"]')?.textContent).toBe("宽度");
     expect(container.querySelector("#canvas-size-preset")).not.toBeNull();
     expect(container.querySelector("#canvas-background-opacity")).not.toBeNull();
+    expect(container.querySelector('.property-panel__pair[data-property-pair="canvas-size"] #canvas-width')).not.toBeNull();
+    expect(container.querySelector('.property-panel__pair[data-property-pair="canvas-size"] #canvas-height')).not.toBeNull();
     const width = container.querySelector("#canvas-width") as HTMLInputElement;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     flushSync(() => {

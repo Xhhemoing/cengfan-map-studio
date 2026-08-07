@@ -14,7 +14,6 @@ import {
   Undo2,
 
   PackageOpen,
-  SlidersHorizontal,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -24,6 +23,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { createNoteElement, createTextElement } from "./lib/canvas-data";
 import { CHINA_PROVINCE_ADJACENCY, getProvinceNames } from "./lib/map-data";
@@ -35,7 +35,8 @@ import {
 } from "./lib/project-data";
 import { createId } from "./lib/ids";
 
-import { AgentAssistant, AssistantConversationProvider } from "./components/AgentAssistant";
+import { AssistantConversationProvider } from "./components/AgentAssistant";
+import { StudioAssistantRail } from "./components/StudioAssistantRail";
 
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
@@ -43,13 +44,12 @@ import "./components/workflow-workspaces.css";
 import { GlobalSettingsScreen, type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
 import { TemplateWorkspace } from "./components/workspaces/TemplateWorkspace";
 import { DataUploadWorkspace } from "./components/workspaces/DataUploadWorkspace";
-import { MapStyleWorkspace, type MapStyleAssetPanelProps } from "./components/workspaces/MapStyleWorkspace";
+import { MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
 import { DisplayFrameWorkspace } from "./components/workspaces/DisplayFrameWorkspace";
 import { ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
 import { DeliveryWorkspace, type DeliveryExportState, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
 
 import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
-import { WorkflowGuide } from "./components/WorkflowGuide";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
 import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import {
@@ -60,6 +60,7 @@ import {
 import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
 import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { SkinSelector } from "./components/SkinSelector";
 import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
 import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
 import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
@@ -137,7 +138,14 @@ import {
 } from "./lib/project-package";
 import { applyTypographyFont, type TypographyTarget } from "./lib/typography";
 import type { ImageThemeResult } from "./lib/image-color";
-import { loadThemeMode, resolveTheme, saveThemeMode, type ThemeMode } from "./lib/theme";
+import {
+  loadStudioSkin,
+  loadThemeMode,
+  resolveTheme,
+  saveStudioSkin,
+  saveThemeMode,
+  type ThemeMode,
+} from "./lib/theme";
 import {
   getPanelWidthBounds,
   normalizeEditorPanelLayout,
@@ -174,17 +182,23 @@ import {
 import {
   CollaborationClientError,
   createRoom,
+  createRoomInvitation,
   fetchRoom,
+  joinRoom,
   retryInitializingRoom,
   submitRoomOperations,
   submitRoomSnapshot,
   subscribeRoom,
+  type CollaborationRole,
   type CollaborationRoom,
+  type RoomParticipant,
 } from "./lib/collaboration-client";
 import { applyCollaborationOperations, diffCollaborationDocument, rebaseRemoteCollaborationOperations } from "./lib/collaboration-operations";
 
 
 const DRAFT_KEY = "cengfan-map-studio:draft";
+const ROOM_ACCESS_STORAGE_PREFIX = "cengfan-map-studio:room-access:";
+const COLLABORATION_DISPLAY_NAME = "本机协作者";
 const DRAFT_SAVED_AT_KEY = "cengfan-map-studio:draft-saved-at";
 const RENDER_SETTINGS_KEY = "cengfan-map-studio:render-settings";
 const COLLABORATION_SEND_DELAY_MS = 600;
@@ -247,6 +261,11 @@ interface ProjectMenuProps {
   roomId: string | null;
   roomVersion: number;
   roomInput: string;
+  inviteTokenInput: string;
+  roomRole: CollaborationRole | null;
+  participants: RoomParticipant[];
+  invitationToken: string | null;
+  hasStoredRoomAccess: boolean;
   collaborationStatus: CollaborationStatus;
   collaborationMessage: string;
   collaborationOpen: boolean;
@@ -255,6 +274,8 @@ interface ProjectMenuProps {
   syncStatus: LocalOverwriteStatus;
   onSetCollaborationOpen: (open: boolean) => void;
   onRoomInputChange: (value: string) => void;
+  onInviteTokenInputChange: (value: string) => void;
+  onCreateInvitation: (role: Exclude<CollaborationRole, "owner">) => void;
   onLeaveRoom: () => void;
   onStartRoom: () => void;
   onJoinRoom: () => void;
@@ -272,6 +293,11 @@ function ProjectMenu({
   roomId,
   roomVersion,
   roomInput,
+  inviteTokenInput,
+  roomRole,
+  participants,
+  invitationToken,
+  hasStoredRoomAccess,
   collaborationStatus,
   collaborationMessage,
   collaborationOpen,
@@ -280,6 +306,8 @@ function ProjectMenu({
   syncStatus,
   onSetCollaborationOpen,
   onRoomInputChange,
+  onInviteTokenInputChange,
+  onCreateInvitation,
   onLeaveRoom,
   onStartRoom,
   onJoinRoom,
@@ -338,16 +366,24 @@ function ProjectMenu({
                       <b>{roomId}</b>
                       <button type="button" aria-label="复制房间码" onClick={() => void navigator.clipboard?.writeText(roomId)}><Copy size={15} /></button>
                     </div>
+                    <small>{roomRole === "owner" ? "创建者" : roomRole === "editor" ? "编辑者" : roomRole === "viewer" ? "仅查看" : "正在确认权限"} · {participants.length} 位协作者</small>
+                    {roomRole === "viewer" && <p>当前仅查看，无法修改此工程。</p>}
+                    {roomRole === "owner" && <div className="collaboration-invitations">
+                      <button type="button" onClick={() => onCreateInvitation("editor")}>邀请编辑者</button>
+                      <button type="button" onClick={() => onCreateInvitation("viewer")}>邀请查看者</button>
+                      {invitationToken && <button type="button" aria-label="复制邀请凭证" title="邀请凭证仅可使用一次，请通过私密渠道发送" onClick={() => void navigator.clipboard?.writeText(invitationToken)}><Copy size={15} /> 复制邀请凭证</button>}
+                    </div>}
                     <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
                     <button type="button" className="collaboration-leave" onClick={onLeaveRoom}><LogOut size={14} /> 断开房间</button>
                   </>
                 ) : (
                   <>
-                    <p>未连接时不会上传或覆盖工程。创建或加入后，仅发送变化字段；同一路径冲突会暂停上传。</p>
+                    <p>未连接时不会上传或覆盖工程。创建者可生成可编辑或仅查看的一次性邀请凭证。</p>
                     <button type="button" className="collaboration-create" disabled={collaborationStatus === "connecting"} onClick={onStartRoom}><Share2 size={14} /> 创建房间</button>
                     <div className="collaboration-join">
                       <input aria-label="协作房间码" value={roomInput} maxLength={12} placeholder="输入房间码" onChange={(event) => onRoomInputChange(event.target.value.toUpperCase())} />
-                      <button type="button" disabled={!roomInput.trim() || collaborationStatus === "connecting"} onClick={onJoinRoom}>加入</button>
+                      <input aria-label="协作邀请凭证" value={inviteTokenInput} placeholder="输入邀请凭证" onChange={(event) => onInviteTokenInputChange(event.target.value)} />
+                      <button type="button" disabled={!roomInput.trim() || (!inviteTokenInput.trim() && !hasStoredRoomAccess) || collaborationStatus === "connecting"} onClick={onJoinRoom}>加入</button>
                     </div>
                     <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
                   </>
@@ -374,6 +410,27 @@ function ProjectMenu({
         </section>
       </div>
     </details>
+  );
+}
+
+function StudioStageShell({
+  leftRail,
+  showRail,
+  children,
+}: {
+  leftRail: ReactNode;
+  showRail: boolean;
+  children: ReactNode;
+}) {
+  if (!showRail) return <>{children}</>;
+
+  return (
+    <section className="studio-stage-shell">
+      <aside className="studio-sidebar">
+        <div className="studio-sidebar__rail">{leftRail}</div>
+      </aside>
+      <div className="studio-stage-shell__main">{children}</div>
+    </section>
   );
 }
 
@@ -432,11 +489,20 @@ function StudioApp() {
   const [zoomPercent, setZoomPercent] = useState(100);
   const [collaborationOpen, setCollaborationOpen] = useState(false);
   const [roomInput, setRoomInput] = useState("");
+  const [inviteTokenInput, setInviteTokenInput] = useState("");
   const [roomId, setRoomId] = useState<string | null>(null);
+  const [roomAccessToken, setRoomAccessToken] = useState<string | null>(null);
+  const [roomRole, setRoomRole] = useState<CollaborationRole | null>(null);
+  const [roomParticipants, setRoomParticipants] = useState<RoomParticipant[]>([]);
+  const [invitationToken, setInvitationToken] = useState<string | null>(null);
   const [roomVersion, setRoomVersion] = useState(0);
   const [collaborationStatus, setCollaborationStatus] = useState<"idle" | "connecting" | "connected" | "syncing" | "conflict" | "error">("idle");
   const [collaborationMessage, setCollaborationMessage] = useState("未连接时不会上传或覆盖工程");
   const [collaborationClientId] = useState(() => createId("collab-client"));
+  const hasStoredRoomAccess = Boolean(roomInput.trim() && loadBrowserValue(
+    () => window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${roomInput.trim().toUpperCase()}`),
+    null,
+  ));
 
   const hasLocalWorkspaceEditsRef = useRef(false);
   const [workspaceSync] = useState(() => new LocalWorkspaceOverwrite({
@@ -459,6 +525,7 @@ function StudioApp() {
   const collaborationBaselineRef = useRef<ProjectPackage | null>(null);
   const collaborationVersionRef = useRef(0);
   const collaborationRoomRef = useRef<string | null>(null);
+  const collaborationAccessTokenRef = useRef<string | null>(null);
   const suppressCollaborationSendRef = useRef(false);
   const receiveRoomUpdateRef = useRef<(room: CollaborationRoom<ProjectPackage>) => void>(() => undefined);
 
@@ -474,6 +541,7 @@ function StudioApp() {
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => typeof window === "undefined" ? "system" : loadThemeMode());
+  const [skin, setSkin] = useState(() => typeof window === "undefined" ? "atelier" : loadStudioSkin());
   const [prefersDark, setPrefersDark] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true);
   const [panelLayout, setPanelLayout] = useState<EditorPanelLayout>(() => readEditorPanelLayout());
   const [resizingPanel, setResizingPanel] = useState<PanelSide | null>(null);
@@ -510,30 +578,6 @@ function StudioApp() {
     "--sidebar-width": `${panelLayout.sidebarWidth}px`,
     "--inspector-width": `${panelLayout.inspectorWidth}px`,
   } as CSSProperties;
-  const selectionDescription = (() => {
-    switch (selection.type) {
-      case "canvas":
-        return "当前选中：画布。";
-      case "map":
-        return "当前选中：地图展示框。";
-      case "province":
-        return `当前选中：${selection.province}。`;
-      case "cards":
-        return "当前选中：数据板块。";
-      case "guests":
-        return "当前选中：嘉宾板块。";
-      case "text": {
-        const text = project.textElements.find((item) => item.id === selection.id);
-        return text ? `当前选中：文字“${text.content}”。` : "";
-      }
-      case "asset": {
-        const asset = project.assetElements.find((item) => item.id === selection.id);
-        return asset ? `当前选中：素材“${asset.label}”。` : "";
-      }
-    }
-  })();
-
-
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -545,6 +589,18 @@ function StudioApp() {
   useEffect(() => {
     saveThemeMode(themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    saveStudioSkin(skin);
+  }, [skin]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    root.dataset.editorTheme = resolvedTheme;
+    root.dataset.editorSkin = skin;
+    root.style.colorScheme = resolvedTheme === "dark" ? "dark" : "light";
+  }, [resolvedTheme, skin]);
 
   useEffect(() => {
     try {
@@ -597,7 +653,6 @@ function StudioApp() {
 
   const template = renderProject.templateId;
   const dataView = renderProject.dataView;
-  const dataViewLabel = dataViews.find((view) => view.id === dataView)?.name ?? dataView;
   const students = renderProject.students;
 
   const style = renderProject.style;
@@ -713,16 +768,17 @@ function StudioApp() {
   });
 
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId || !roomAccessToken) return;
     collaborationRoomRef.current = roomId;
-    return subscribeRoom<ProjectPackage>(roomId, (room) => receiveRoomUpdateRef.current(room), () => {
+    collaborationAccessTokenRef.current = roomAccessToken;
+    return subscribeRoom<ProjectPackage>(roomId, roomAccessToken, (room) => receiveRoomUpdateRef.current(room), () => {
       setCollaborationStatus("error");
       setCollaborationMessage("连接中断，浏览器会自动尝试重连");
-    }, { clientId: collaborationClientId, version: collaborationVersionRef.current });
-  }, [collaborationClientId, roomId]);
+    }, { version: collaborationVersionRef.current });
+  }, [roomAccessToken, roomId]);
 
   useEffect(() => {
-    if (!roomId || !collaborationBaselineRef.current) return;
+    if (!roomId || !roomAccessToken || roomRole === "viewer" || !collaborationBaselineRef.current) return;
     if (suppressCollaborationSendRef.current) {
       suppressCollaborationSendRef.current = false;
       return;
@@ -742,7 +798,7 @@ function StudioApp() {
       setCollaborationStatus("syncing");
       setCollaborationMessage(`正在同步 ${operations.length} 项增量修改`);
       try {
-        const acknowledged = await submitRoomOperations<ProjectPackage>(roomId, {
+        const acknowledged = await submitRoomOperations<ProjectPackage>(roomId, roomAccessToken, {
           txId,
           clientId: collaborationClientId,
           baseVersion: collaborationVersionRef.current,
@@ -764,23 +820,50 @@ function StudioApp() {
       }
     }, COLLABORATION_SEND_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [collaborationClientId, customTemplates, project, renderSettings, roomId, userAssets, userFonts]);
+  }, [collaborationClientId, customTemplates, project, renderSettings, roomAccessToken, roomId, roomRole, userAssets, userFonts]);
+
+  const storedRoomAccess = (id: string): string | null => loadBrowserValue(
+    () => window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`),
+    null,
+  );
+
+  const persistRoomAccess = (id: string, accessToken: string) => {
+    try {
+      window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`, accessToken);
+    } catch {
+      // The active connection remains usable when browser storage is unavailable.
+    }
+  };
+
+  const forgetRoomAccess = (id: string) => {
+    try {
+      window.localStorage.removeItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`);
+    } catch {
+      // Local project data is intentionally untouched when credentials cannot be cleared.
+    }
+  };
 
   const startCollaborationRoom = async () => {
     setCollaborationStatus("connecting");
     setCollaborationMessage("正在创建房间");
     try {
-      const allocated = await createRoom<ProjectPackage>({ clientId: collaborationClientId });
-      setRoomId(allocated.id);
-      setRoomInput(allocated.id);
-      collaborationRoomRef.current = allocated.id;
-      collaborationVersionRef.current = allocated.version;
+      const allocated = await createRoom<ProjectPackage>({ clientId: collaborationClientId, displayName: COLLABORATION_DISPLAY_NAME });
+      const { room, access } = allocated;
+      persistRoomAccess(room.id, access.accessToken);
+      setRoomId(room.id);
+      setRoomAccessToken(access.accessToken);
+      setRoomRole(access.role);
+      setRoomParticipants([{ id: access.participantId, displayName: access.displayName, role: access.role }]);
+      setRoomInput(room.id);
+      collaborationRoomRef.current = room.id;
+      collaborationAccessTokenRef.current = access.accessToken;
+      collaborationVersionRef.current = room.version;
       const initial = currentCollaborationPackage();
       collaborationBaselineRef.current = initial;
-      const ready = await submitRoomSnapshot(allocated.id, {
+      const ready = await submitRoomSnapshot(room.id, access.accessToken, {
         txId: createId("collab-init"),
         clientId: collaborationClientId,
-        baseVersion: allocated.version,
+        baseVersion: room.version,
         snapshot: initial,
       });
       collaborationVersionRef.current = ready.version;
@@ -796,25 +879,62 @@ function StudioApp() {
   const joinCollaborationRoom = async () => {
     const normalizedRoomId = roomInput.trim().toUpperCase();
     if (!normalizedRoomId) return;
+    const persistedToken = storedRoomAccess(normalizedRoomId);
+    if (!inviteTokenInput.trim() && !persistedToken) return;
     setCollaborationStatus("connecting");
-    setCollaborationMessage("正在读取房间当前版本");
+    setCollaborationMessage(persistedToken ? "正在恢复房间访问" : "正在验证邀请凭证");
     try {
-      const room = await retryInitializingRoom(() => fetchRoom<ProjectPackage>(normalizedRoomId));
+      const access = persistedToken
+        ? { accessToken: persistedToken, role: null }
+        : await joinRoom<ProjectPackage>({
+          roomId: normalizedRoomId,
+          inviteToken: inviteTokenInput.trim(),
+          clientId: collaborationClientId,
+          displayName: COLLABORATION_DISPLAY_NAME,
+        }).then((joined) => joined.access);
+      const room = await retryInitializingRoom(() => fetchRoom<ProjectPackage>(normalizedRoomId, access.accessToken));
       if (!room.snapshot) throw new Error("房间工程数据不完整");
+      persistRoomAccess(normalizedRoomId, access.accessToken);
       setRoomId(normalizedRoomId);
+      setRoomAccessToken(access.accessToken);
+      setRoomRole(room.role ?? access.role);
+      setRoomParticipants(room.participants ?? []);
+      setInviteTokenInput("");
       collaborationRoomRef.current = normalizedRoomId;
+      collaborationAccessTokenRef.current = access.accessToken;
       applySharedPackage(room.snapshot, room.version);
       setCollaborationStatus("connected");
       setCollaborationMessage("已加入房间，后续仅同步增量修改");
     } catch (error) {
+      if (error instanceof CollaborationClientError && (error.code === "ROOM_FORBIDDEN" || error.code === "ROOM_NOT_FOUND")) {
+        forgetRoomAccess(normalizedRoomId);
+      }
       setCollaborationStatus("error");
       setCollaborationMessage(error instanceof Error ? error.message : "加入协作房间失败");
     }
   };
 
+  const createCollaborationInvitation = async (role: Exclude<CollaborationRole, "owner">) => {
+    if (!roomId || !roomAccessToken) return;
+    try {
+      const invitation = await createRoomInvitation(roomId, roomAccessToken, role);
+      setInvitationToken(invitation.token);
+      setCollaborationMessage(`已生成${role === "editor" ? "编辑" : "查看"}邀请凭证，请通过私密渠道发送`);
+    } catch (error) {
+      setCollaborationStatus("error");
+      setCollaborationMessage(error instanceof Error ? error.message : "创建邀请失败");
+    }
+  };
+
   const leaveCollaborationRoom = () => {
+    if (roomId) forgetRoomAccess(roomId);
     setRoomId(null);
+    setRoomAccessToken(null);
+    setRoomRole(null);
+    setRoomParticipants([]);
+    setInvitationToken(null);
     collaborationRoomRef.current = null;
+    collaborationAccessTokenRef.current = null;
     collaborationBaselineRef.current = null;
     collaborationVersionRef.current = 0;
     setRoomVersion(0);
@@ -822,13 +942,23 @@ function StudioApp() {
     setCollaborationMessage("已断开；未连接时不会上传或覆盖工程");
   };
 
+  const canEditSharedProject = roomRole !== "viewer";
+
   const commitProject = (next: ProjectDocument) => {
+    if (!canEditSharedProject) {
+      setCollaborationMessage("当前仅查看，无法修改此工程");
+      return;
+    }
     setProject(next);
     setPreviewCommands([]);
     workspaceSync.markPending();
   };
 
   const commitProjectTransaction = (transaction: ProjectTransaction) => {
+    if (!canEditSharedProject) {
+      setCollaborationMessage("当前仅查看，无法修改此工程");
+      return;
+    }
     setProject((current) => {
       const next = applyTransaction(current, transaction);
       return next;
@@ -1554,7 +1684,7 @@ function StudioApp() {
     onSelectStudent: setSelectedStudentId,
   };
 
-  const mapStyleAssetPanelProps: MapStyleAssetPanelProps = {
+  const mapStyleAssetPanelProps: ContentAssetPanelProps = {
     instances: project.assetElements
       .filter((element) => element.kind !== "province-texture")
       .map((element) => ({ id: element.id, assetId: element.assetId, label: element.label, kind: element.kind })),
@@ -1629,10 +1759,87 @@ function StudioApp() {
     id: templateId,
     name: createSystemTemplate(templateId).name,
   }));
+  const openStudioSettings = () => {
+    setActiveWorkflowStep("layout");
+    setGlobalSettingsSection("canvas");
+  };
+  const openTopbarProjectMenu = () => {
+    const menu = document.querySelector<HTMLDetailsElement>(".topbar .project-menu");
+    if (menu) menu.open = !menu.open;
+  };
+  const openCollaborationSettings = () => {
+    openTopbarProjectMenu();
+    setCollaborationOpen(true);
+  };
+  const openDataDiagnostics = () => {
+    setGlobalSettingsSection("cards");
+  };
+  const openRenderSettings = () => {
+    setGlobalSettingsSection("advanced");
+  };
+  const projectExportActions = (
+    <ToolbarGroup label="导出与工程">
+      <ProjectMenu
+      roomId={roomId}
+      roomVersion={roomVersion}
+      roomInput={roomInput}
+      inviteTokenInput={inviteTokenInput}
+      roomRole={roomRole}
+      participants={roomParticipants}
+      invitationToken={invitationToken}
+      hasStoredRoomAccess={hasStoredRoomAccess}
+      collaborationStatus={collaborationStatus}
+      collaborationMessage={collaborationMessage}
+      collaborationOpen={collaborationOpen}
+      pngScale={pngScale}
+      transparentExport={transparentExport}
+      syncStatus={syncState.status}
+      onSetCollaborationOpen={setCollaborationOpen}
+      onRoomInputChange={setRoomInput}
+      onInviteTokenInputChange={setInviteTokenInput}
+      onCreateInvitation={(role) => void createCollaborationInvitation(role)}
+      onLeaveRoom={leaveCollaborationRoom}
+      onStartRoom={() => void startCollaborationRoom()}
+      onJoinRoom={joinCollaborationRoom}
+      onNewProject={createNewProject}
+      onRestoreLocal={restoreLocalProject}
+      onSaveLocal={() => void overwriteBrowserStorage()}
+      onPngScaleChange={setPngScale}
+      onTransparentChange={setTransparentExport}
+      onExportSvg={exportSvg}
+      onExportProject={openProjectExportDialog}
+      onImportProject={importProjectPackage}
+    />
+    </ToolbarGroup>
+  );
+  const studioAssistantRail = (
+    <StudioAssistantRail
+      project={project}
+      assets={userAssets}
+      syncStatus={syncState.status}
+      collaboration={{ roomId, status: collaborationStatus, participantCount: roomParticipants.length }}
+      dataIssueCount={dataIssues.length}
+      renderIntervalMs={resolvedRenderInterval}
+      onOpenSettings={openStudioSettings}
+      onOpenProject={openTopbarProjectMenu}
+      onOpenCollaboration={openCollaborationSettings}
+      onOpenDataDiagnostics={openDataDiagnostics}
+      onOpenRenderSettings={openRenderSettings}
+      selection={selection}
+      layoutIssues={contentLayoutIssues}
+      onSelectElement={handleSceneSelect}
+      onArrangeCards={arrangeCards}
+      onRestoreCardPosition={restoreCardPosition}
+      onRestoreAllCardPositions={restoreAllCardPositions}
+      onLocateLayoutIssue={locateLayoutIssue}
+      onPreview={setAgentPreview}
+      onCommit={commitProjectTransaction}
+    />
+  );
 
   if (activeStage === "template") {
     return (
-      <div className="app-shell" data-editor-theme={resolvedTheme}>
+      <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
         <header className="topbar">
           <div className="brand">
             <MapPinned size={24} />
@@ -1640,33 +1847,40 @@ function StudioApp() {
             <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
             <em>Beta</em>
           </div>
-          <div className="topbar-workflow" aria-hidden="false">
+          <div className="topbar-workflow">
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectExportActions}
             <ToolbarGroup label="界面主题">
-              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+              <SkinSelector skin={skin} onChange={setSkin} />
+<ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
             </ToolbarGroup>
           </div>
         </header>
-        <TemplateWorkspace
-          project={project}
-          templates={templateOptions}
-          customTemplates={customTemplates}
-          onApplyTemplate={applySystemTemplate}
-          onApplyCustomTemplate={applyCustomTemplateRecord}
-          onClose={() => {
-            setActiveStage(lastNonTemplateStageRef.current);
-            setActivePanel(WORKFLOW_STAGE_TO_LEGACY_PANEL[lastNonTemplateStageRef.current] ?? "content");
-          }}
-        />
+        <StudioStageShell
+          leftRail={studioAssistantRail}
+        showRail={skin === "atelier"}
+        >
+          <TemplateWorkspace
+            project={project}
+            templates={templateOptions}
+            customTemplates={customTemplates}
+            onApplyTemplate={applySystemTemplate}
+            onApplyCustomTemplate={applyCustomTemplateRecord}
+            onClose={() => {
+              setActiveStage(lastNonTemplateStageRef.current);
+              setActivePanel(WORKFLOW_STAGE_TO_LEGACY_PANEL[lastNonTemplateStageRef.current] ?? "content");
+            }}
+          />
+        </StudioStageShell>
       </div>
     );
   }
 
   if (activeStage === "data") {
     return (
-      <div className="app-shell" data-editor-theme={resolvedTheme}>
+      <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
         <header className="topbar">
           <div className="brand">
             <MapPinned size={24} />
@@ -1674,33 +1888,59 @@ function StudioApp() {
             <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
             <em>Beta</em>
           </div>
-          <div className="topbar-workflow" aria-hidden="false">
+          <div className="topbar-workflow">
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectExportActions}
             <ToolbarGroup label="界面主题">
-              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+              <SkinSelector skin={skin} onChange={setSkin} />
+<ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
             </ToolbarGroup>
           </div>
         </header>
-        <DataUploadWorkspace
-          project={project}
-          summary={dataHealth}
-          issues={dataIssues}
-          dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
-          onSelectStudent={setSelectedStudentId}
-          onClose={() => {
-            setActiveStage(lastNonTemplateStageRef.current);
-            setActivePanel(WORKFLOW_STAGE_TO_LEGACY_PANEL[lastNonTemplateStageRef.current] ?? "content");
-          }}
-        />
+        <StudioStageShell
+          leftRail={studioAssistantRail}
+        showRail={skin === "atelier"}
+        >
+          <DataUploadWorkspace
+            project={project}
+            summary={dataHealth}
+            issues={dataIssues}
+            dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
+            assetPanelProps={mapStyleAssetPanelProps}
+            onCreateDecoration={(asset) => {
+              const element = createDecorationElement(asset, {
+                x: project.canvas.width - 180,
+                y: project.canvas.height - 180,
+              });
+              commitProject(
+                applyTransaction(project, {
+                  id: createId("tx-decoration"),
+                  label: `添加装饰：${asset.label}`,
+                  source: "manual",
+                  apply: (current) => ({
+                    ...current,
+                    assetElements: [...current.assetElements, element],
+                  }),
+                }),
+              );
+              setSelection({ type: "asset", id: element.id });
+            }}
+            onSelectStudent={setSelectedStudentId}
+            onClose={() => {
+              setActiveStage(lastNonTemplateStageRef.current);
+              setActivePanel(WORKFLOW_STAGE_TO_LEGACY_PANEL[lastNonTemplateStageRef.current] ?? "content");
+            }}
+          />
+        </StudioStageShell>
       </div>
     );
   }
 
   if (activeStage === "map") {
     return (
-      <main className="app-shell" data-editor-theme={resolvedTheme}>
+      <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
         <header className="topbar">
           <div className="brand">
             <MapPinned size={24} />
@@ -1708,15 +1948,21 @@ function StudioApp() {
             <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
             <em>Beta</em>
           </div>
-          <div className="topbar-workflow" aria-hidden="false">
+          <div className="topbar-workflow">
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectExportActions}
             <ToolbarGroup label="界面主题">
-              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+              <SkinSelector skin={skin} onChange={setSkin} />
+<ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
             </ToolbarGroup>
           </div>
         </header>
+        <StudioStageShell
+          leftRail={studioAssistantRail}
+        showRail={skin === "atelier"}
+        >
         <MapStyleWorkspace
           project={project}
           selectedProvince={selection.type === "province" ? selection.province : null}
@@ -1746,7 +1992,6 @@ function StudioApp() {
             })));
           }}
           onAddUserAsset={addUserAsset}
-          assetPanelProps={mapStyleAssetPanelProps}
           onClose={() => {
             setActiveStage("content");
             setActivePanel("content");
@@ -1755,13 +2000,14 @@ function StudioApp() {
           onUndo={handleUndo}
           onRedo={handleRedo}
         />
+        </StudioStageShell>
       </main>
     );
   }
 
   if (activeStage === "frame") {
     return (
-      <main className="app-shell" data-editor-theme={resolvedTheme}>
+      <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
         <header className="topbar">
           <div className="brand">
             <MapPinned size={24} />
@@ -1769,7 +2015,7 @@ function StudioApp() {
             <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
             <em>Beta</em>
           </div>
-          <div className="topbar-workflow" aria-hidden="false">
+          <div className="topbar-workflow">
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
@@ -1777,49 +2023,30 @@ function StudioApp() {
               <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
               <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
             </ToolbarGroup>
-            <ToolbarGroup label="导出与工程">
-              <ProjectMenu
-                roomId={roomId}
-                roomVersion={roomVersion}
-                roomInput={roomInput}
-                collaborationStatus={collaborationStatus}
-                collaborationMessage={collaborationMessage}
-                collaborationOpen={collaborationOpen}
-                pngScale={pngScale}
-                transparentExport={transparentExport}
-                syncStatus={syncState.status}
-                onSetCollaborationOpen={setCollaborationOpen}
-                onRoomInputChange={setRoomInput}
-                onLeaveRoom={leaveCollaborationRoom}
-                onStartRoom={() => void startCollaborationRoom()}
-                onJoinRoom={joinCollaborationRoom}
-                onNewProject={createNewProject}
-                onRestoreLocal={restoreLocalProject}
-                onSaveLocal={() => void overwriteBrowserStorage()}
-                onPngScaleChange={setPngScale}
-                onTransparentChange={setTransparentExport}
-                onExportSvg={exportSvg}
-                onExportProject={openProjectExportDialog}
-                onImportProject={importProjectPackage}
-              />
-            </ToolbarGroup>
+            {projectExportActions}
             <ToolbarGroup label="界面主题">
-              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+              <SkinSelector skin={skin} onChange={setSkin} />
+<ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
             </ToolbarGroup>
           </div>
         </header>
-        <DisplayFrameWorkspace
-          cards={project.cards}
-          userFonts={userFonts}
-          onPatch={(patch) => patchScene({ type: "cards" }, patch)}
-        />
+        <StudioStageShell
+          leftRail={studioAssistantRail}
+        showRail={skin === "atelier"}
+        >
+          <DisplayFrameWorkspace
+            cards={project.cards}
+            userFonts={userFonts}
+            onPatch={(patch) => patchScene({ type: "cards" }, patch)}
+          />
+        </StudioStageShell>
       </main>
     );
   }
 
   if (activeStage === "export") {
     return (
-      <main className="app-shell" data-editor-theme={resolvedTheme}>
+      <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
         <header className="topbar">
           <div className="brand">
             <MapPinned size={24} />
@@ -1827,15 +2054,21 @@ function StudioApp() {
             <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
             <em>Beta</em>
           </div>
-          <div className="topbar-workflow" aria-hidden="false">
+          <div className="topbar-workflow">
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectExportActions}
             <ToolbarGroup label="界面主题">
-              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+              <SkinSelector skin={skin} onChange={setSkin} />
+<ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
             </ToolbarGroup>
           </div>
         </header>
+        <StudioStageShell
+          leftRail={studioAssistantRail}
+        showRail={skin === "atelier"}
+        >
         <DeliveryWorkspace
           project={renderProject}
           posterRef={posterRef}
@@ -1862,13 +2095,14 @@ function StudioApp() {
             setActivePanel("content");
           }}
         />
+        </StudioStageShell>
       </main>
     );
   }
 
   if (activeStage === "content" && !legacyEditorEnabled) {
     return (
-      <main className="app-shell" data-editor-theme={resolvedTheme}>
+      <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
         <header className="topbar">
           <div className="brand">
             <MapPinned size={24} />
@@ -1876,15 +2110,21 @@ function StudioApp() {
             <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
             <em>Beta</em>
           </div>
-          <div className="topbar-workflow" aria-hidden="false">
+          <div className="topbar-workflow">
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           </div>
           <div className="topbar-actions">
+            {projectExportActions}
             <ToolbarGroup label="界面主题">
-              <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
+              <SkinSelector skin={skin} onChange={setSkin} />
+<ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
             </ToolbarGroup>
           </div>
         </header>
+        <StudioStageShell
+          leftRail={studioAssistantRail}
+        showRail={skin === "atelier"}
+        >
         <ContentLayoutWorkspace
           project={renderProject}
           selection={selection}
@@ -1894,15 +2134,10 @@ function StudioApp() {
           canRedo={canRedo}
           undoLabel={undoLabel}
           redoLabel={redoLabel}
-          layoutIssues={contentLayoutIssues}
-          assetPanelProps={mapStyleAssetPanelProps as ContentAssetPanelProps}
+          assetPanelProps={mapStyleAssetPanelProps}
           onSelect={handleSceneSelect}
           onPatch={patchScene}
           onReset={resetSceneTarget}
-          onArrangeCards={arrangeCards}
-          onLocateLayoutIssue={locateLayoutIssue}
-          onRestoreCardPosition={restoreCardPosition}
-          onRestoreAllCardPositions={restoreAllCardPositions}
           onClose={() => {
             setActiveStage("map");
             setActivePanel("map");
@@ -1961,14 +2196,14 @@ function StudioApp() {
             commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, point)));
           }}
         />
-        <AgentAssistant project={project} assets={userAssets} onPreview={setAgentPreview} onCommit={commitProjectTransaction} />
+        </StudioStageShell>
       </main>
     );
   }
 
   if (globalSettingsSection) {
     return (
-      <div className="app-shell" data-editor-theme={resolvedTheme}>
+      <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
         <header className="topbar">
           <div className="brand">
             <MapPinned size={24} />
@@ -1976,7 +2211,7 @@ function StudioApp() {
             <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
             <em>Beta</em>
           </div>
-          <div className="topbar-workflow" aria-hidden="false">
+          <div className="topbar-workflow">
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
             <div className="topbar-workflow__legacy" aria-hidden="true">
               <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
@@ -2038,7 +2273,7 @@ function StudioApp() {
   }
 
   return (
-    <main className="app-shell" data-editor-theme={resolvedTheme}>
+    <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
       <header className="topbar">
         <div className="brand">
           <MapPinned size={24} />
@@ -2046,71 +2281,13 @@ function StudioApp() {
           <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
           <em>Beta</em>
         </div>
-        <div className="topbar-workflow" aria-hidden="false">
+        <div className="topbar-workflow">
           <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
           <div className="topbar-workflow__legacy" aria-hidden="true">
             <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
           </div>
-          <div className="topbar-workflow__legacy" aria-hidden="true">
-          <ToolbarGroup label="制作流程">
-            <WorkflowGuide
-              progress={workflowProgress}
-              activeStep={activeWorkflowStep}
-              dataView={dataView}
-              dataViewLabel={dataViewLabel}
-              selectionDescription={selectionDescription}
-              templates={(["original", "cartoon", "grain", "q", "scenery"] as const).map((templateId) => ({
-                id: templateId,
-                name: createSystemTemplate(templateId).name,
-              }))}
-              currentTemplateId={template}
-              customTemplates={customTemplates.map(({ id, name, scope }) => ({ id, name, scope }))}
-              exportWarnings={exportWarnings}
-              onSelectStep={setActiveWorkflowStep}
-              onChangeDataView={(view) => {
-                commitProjectTransaction({
-                  id: createId(`tx-data-view-${view}`),
-                  label: `切换数据呈现：${view}`,
-                  source: "manual",
-                  apply: (current) => applyDataViewChange(current, view),
-                });
-              }}
-              onOpenGlobalSettings={setGlobalSettingsSection}
-              onArrangeCards={arrangeCards}
-              onApplyTemplate={applySystemTemplate}
-              onApplyCustomTemplate={(record) => {
-                const full = customTemplates.find((item) => item.id === record.id);
-                if (full) applyCustomTemplateRecord(full);
-              }}
-              onSaveTemplate={saveCurrentTemplate}
-              onFocusStudent={(id) => {
-                setSelectedStudentId(id);
-                setGlobalSettingsSection("cards");
-              }}
-              onExportPng={() => void exportPng()}
-              onExportSvg={exportSvg}
-              onExportProject={openProjectExportDialog}
-              onSaveLocal={() => void overwriteBrowserStorage()}
-              onOpenAssets={() => setActivePanel("assets")}
-            />
-          </ToolbarGroup>
-          </div>
         </div>
         <div className="topbar-actions">
-          <ToolbarGroup label="项目设置">
-            <button
-              type="button"
-              className="secondary-button global-settings-entry"
-              aria-label="打开全局设置"
-              onClick={() => {
-                setActiveWorkflowStep("layout");
-                setGlobalSettingsSection("canvas");
-              }}
-            >
-              <SlidersHorizontal size={16} aria-hidden />
-              <span>全局设置</span>
-            </button>
-          </ToolbarGroup>
           <ToolbarGroup label="历史与缩放">
             <ToolbarButton
               label={undoLabel}
@@ -2149,37 +2326,16 @@ function StudioApp() {
           </ToolbarGroup>
 
           <ToolbarGroup label="界面主题">
+            <SkinSelector skin={skin} onChange={setSkin} />
             <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
           </ToolbarGroup>
 
-          <ToolbarGroup label="导出与工程">
+          {projectExportActions}
+
+          <ToolbarGroup label="导出">
             <button className="primary-button" onClick={exportPng} disabled={exportingPng}>
               <ImageDown size={16} /> {exportingPng ? "导出中..." : "导出 PNG"}
             </button>
-            <ProjectMenu
-              roomId={roomId}
-              roomVersion={roomVersion}
-              roomInput={roomInput}
-              collaborationStatus={collaborationStatus}
-              collaborationMessage={collaborationMessage}
-              collaborationOpen={collaborationOpen}
-              pngScale={pngScale}
-              transparentExport={transparentExport}
-              syncStatus={syncState.status}
-              onSetCollaborationOpen={setCollaborationOpen}
-              onRoomInputChange={setRoomInput}
-              onLeaveRoom={leaveCollaborationRoom}
-              onStartRoom={() => void startCollaborationRoom()}
-              onJoinRoom={joinCollaborationRoom}
-              onNewProject={createNewProject}
-              onRestoreLocal={restoreLocalProject}
-              onSaveLocal={() => void overwriteBrowserStorage()}
-              onPngScaleChange={setPngScale}
-              onTransparentChange={setTransparentExport}
-              onExportSvg={exportSvg}
-              onExportProject={openProjectExportDialog}
-              onImportProject={importProjectPackage}
-            />
           </ToolbarGroup>
         </div>
       </header>
@@ -2230,7 +2386,10 @@ function StudioApp() {
         data-editor-resizing={resizingPanel ? "true" : undefined}
         data-resizing-panel={resizingPanel ?? undefined}
       >
-        <aside className="sidebar">
+        <aside className="sidebar studio-sidebar">
+          <div className="studio-sidebar__rail">{studioAssistantRail}</div>
+
+          <div className="studio-sidebar__panel">
           {activePanel === "roster" && (
             <div className="panel-content workflow-panel workflow-panel--roster">
               <div className="panel-heading"><span>名单检查</span><small>{project.students.length} 条记录</small></div>
@@ -2503,6 +2662,7 @@ function StudioApp() {
                 </>
             </div>
           )}
+          </div>
         </aside>
 
         <section className="editor-area">
@@ -2603,7 +2763,6 @@ function StudioApp() {
             </div>
           </div>
         </section>
-        <AgentAssistant project={project} assets={userAssets} onPreview={setAgentPreview} onCommit={commitProjectTransaction} />
 
         <aside id="editor-inspector" className={`inspector${mobileInspectorOpen ? " is-open" : ""}`}>
           <InspectorPanel

@@ -17,7 +17,7 @@ export interface WorkflowStageProgress {
 
 export const WORKFLOW_STAGES: readonly WorkflowStageDefinition[] = [
   { id: "template", label: "选择模板", description: "先确定海报的视觉基础" },
-  { id: "data", label: "上传数据", description: "导入并检查名单数据" },
+  { id: "data", label: "数据与素材", description: "导入名单并准备地图素材" },
   { id: "map", label: "地图样式", description: "确定地图表达与外观" },
   { id: "frame", label: "展示框样式", description: "设计数据展示框" },
   { id: "content", label: "内容与排版", description: "编辑内容并完成排版" },

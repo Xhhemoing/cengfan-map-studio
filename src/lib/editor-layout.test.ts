@@ -10,8 +10,8 @@ import {
 } from "./editor-layout";
 
 describe("editor panel layout", () => {
-  it("defines readable defaults for both side panels", () => {
-    expect(DEFAULT_EDITOR_PANEL_LAYOUT).toEqual({ sidebarWidth: 220, inspectorWidth: 280 });
+  it("defaults to compact side panels so the poster canvas remains the primary work area", () => {
+    expect(DEFAULT_EDITOR_PANEL_LAYOUT).toEqual({ sidebarWidth: 200, inspectorWidth: 240 });
   });
 
   it("clamps each panel to its own desktop bounds", () => {

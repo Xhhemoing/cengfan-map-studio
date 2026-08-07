@@ -1,5 +1,11 @@
 # AI 调用平台完善进度
 
+## 2026-08-06 生产加固
+
+已补齐浏览器 AI 对话恢复、单实例文件状态、生产配置校验、live/ready 探针和优雅停机。浏览器对话使用独立 localStorage key，并限制版本、记录数和序列化大小；服务端状态文件只保存预算 ledger、限流计数、摘要和时间字段，原子写入并隔离损坏文件。
+
+验证证据：`server/production.test.ts` 5 tests、AI state/ledger/rate-limit/index 定向测试 58 tests、会话与对话恢复定向测试 61 tests 均通过；`npx tsc -b` 与 `npm run lint` 通过。生产部署仍限定单实例，包体积警告与浏览器人工验收仍是交付前风险。
+
 ## STATUS
 最终审查 Important 已完成：预算回执有界 ledger/序列防重放、严格 tool-call 状态机、非法模型调用规范化、update_fact 三层校验、完整工具组压缩、输入/运行时边界和 AI 错误码均已落地。`src/App.tsx` 保持 HEAD 不变。
 

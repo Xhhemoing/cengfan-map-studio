@@ -1,4 +1,224 @@
 
+## [ERR-20260806-DEEPSEEK-UI-POLISH-DISPATCH]
+
+**Logged**: 2026-08-06T06:41:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The requested `deepseek/deepseek-v4-flash` implementation-agent dispatch failed because the subagent tool resolves a registered agent name, not a provider/model identifier.
+
+### Context
+- Task: implement the Notion-inspired Atelier polish plan and compact inspector property pairs.
+- Runs `mshf4ife-f90d7a23`, `mshf4qjl-47ecc439`, `mshfc4h2-45994958`, and `mshfchlt-ab99df6b` all failed with `Unknown agent`.
+- The underlying model was healthy: `pi --provider deepseek --model deepseek-v4-flash --no-tools --no-session --print "Reply with exactly READY."` returned `READY`.
+
+### Resolution
+Added `.pi/agents/deepseek-v4-flash.md`, which registers the agent name `deepseek-v4-flash`, routes it to `deepseek/deepseek-v4-flash`, and permits the standard coding tools. The end-to-end subagent probe `mshfhg5a-519bfbdb` returned `READY`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `.pi/agents/deepseek-v4-flash.md`, `docs/superpowers/plans/2026-08-06-notion-inspired-editor-polish-plan.md`
+
+---
+
+## [ERR-20260806-PLAYWRIGHT-BROWSER-MISSING]
+
+**Logged**: 2026-08-06T06:37:40Z
+**Priority**: low
+**Status**: blocked
+**Area**: tooling
+
+### Summary
+The installed Playwright CLI has no downloaded Chromium headless-shell binary, so screenshot verification could not run.
+
+### Error
+`Executable doesn't exist at C:\\Users\\86080\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1234\\chrome-headless-shell-win64\\chrome-headless-shell.exe`
+
+### Context
+- Attempted `npx playwright screenshot` against the active local Vite server.
+- The npx-resolved playwright 1.62.1 expects headless-shell 1234; only chromium 1228 (full Chrome) is installed.
+
+### Resolution (2026-08-06, Notion polish verification)
+- No download was performed (per repo constraint).
+- Per the polish plan, a missing Playwright browser must not be worked around with an alternate browser or with extra verification tooling.
+- Visual verification of the Notion-inspired polish remains blocked; manual browser verification (desktop and narrow widths per plan Step 4) is required.
+- Follow-up: install the playwright 1.62-compatible headless shell (or pin playwright) before future visual regression runs.
+- The CLI recommends `npx playwright install`, which would download a browser binary and was not run automatically.
+
+### Suggested Fix
+Install the approved Playwright browser in the development environment, then complete manual browser verification of the polish changes.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `package.json`
+
+---
+
+## [ERR-20260806-SINGLE-SIDEBAR-TSC]
+
+**Logged**: 2026-08-06T06:35:30Z
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+The first single-right-sidebar extraction left obsolete content-layout props and removed a type context used by the shared asset panel props.
+
+### Error
+`TS6133` for unused restore-position helpers; `TS7006` for implicit callback parameters; `TS2322` for stale test props; and `TS2304` for a removed selection label helper.
+
+### Context
+- `ContentLayoutWorkspace` no longer owns outline, layout-health, or manual-position controls.
+- `mapStyleAssetPanelProps` now serves only the content workspace but temporarily lost its `ContentAssetPanelProps` annotation.
+
+### Resolution
+- Remove the obsolete callbacks and test props.
+- Keep `ContentAssetPanelProps` as the explicit asset-panel contract and retain the small current-selection label helper.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `src/App.tsx`, `src/components/workspaces/ContentLayoutWorkspace.tsx`
+
+---
+
+## [ERR-20260806-DEV-PORT-COLLISION]
+
+**Logged**: 2026-08-06T06:34:45Z
+**Priority**: low
+**Status**: pending
+**Area**: tooling
+
+### Summary
+Starting the combined development command could not start its API process because port 8787 was already occupied.
+
+### Error
+`listen EADDRINUSE: address already in use 0.0.0.0:8787`
+
+### Context
+- `npm run dev` selected Vite port 5175 after 5173 and 5174 were already occupied.
+- The existing Vite server at `http://localhost:5173/` responds with HTTP 200.
+- The API process attempted to bind 8787 and exited because another process already owns it.
+
+### Suggested Fix
+Reuse the existing local API server or add configurable API-port handling to `scripts/dev.mjs`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `scripts/dev.mjs`
+
+---
+
+## [ERR-20260806-IMPECCABLE-PATH]
+
+**Logged**: 2026-08-06T00:00:00Z
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The Impeccable context script is installed outside this repository and fails when invoked through a project-relative skill path.
+
+### Error
+`Cannot find module 'E:\\Project\\蹭饭图\\.agents\\skills\\impeccable\\scripts\\context.mjs'`
+
+### Context
+- The requested UI planning work uses the global skill installation.
+- The correct script is `C:\\Users\\86080\\.agents\\skills\\impeccable\\scripts\\context.mjs`.
+
+### Suggested Fix
+Always resolve the supplied skill location before invoking its scripts.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `C:\\Users\\86080\\.agents\\skills\\impeccable\\scripts\\context.mjs`
+
+### Resolution
+- **Resolved**: 2026-08-06T00:00:00Z
+- **Notes**: The global skill root was found and will be used for the next context load.
+
+---
+
+## [ERR-20260806-BROWSER-SCRIPT-PATH]
+
+**Logged**: 2026-08-06T00:00:00Z
+**Priority**: low
+**Status**: pending
+**Area**: tooling
+
+### Summary
+The browser skill documents JavaScript helpers that are absent from its installed global skill directory.
+
+### Error
+`Cannot find module 'C:\\Users\\86080\\.agents\\skills\\browser\\scripts\\start.js'`
+
+### Context
+- A visual brainstorming prototype was ready for local browser inspection.
+- The skill directory exists but does not contain the documented launcher at that path.
+
+### Suggested Fix
+Inspect the installed browser skill contents and use its actual script names, or start an available Chromium browser manually with CDP.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `C:\\Users\\86080\\.agents\\skills\\browser\\SKILL.md`
+
+---
+
+## [ERR-20260806-SUBAGENT-MODEL-ROUTING]
+
+**Logged**: 2026-08-06T00:00:00Z
+**Priority**: medium
+**Status**: pending
+**Area**: tooling
+
+### Summary
+The requested `deepseekv4flash` and `gpt-5.6-luna` subagent review runs failed before producing a result.
+
+### Error
+Subagent runs `msgz6ci8-185c6e2f` and `msgz6ci8-2c9dac28` returned `failed` with no result payload.
+
+### Context
+- Both runs used the same review-only task and repository working directory.
+- No project file was modified by either subagent.
+
+### Suggested Fix
+Expose model-routing failure details or register the requested model aliases for the subagent runner.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: `E:\\Project\\蹭饭图\\.superpowers\\brainstorm\\2485-1785987242\\layout-direction-b.html`
+
+---
+
+## [ERR-20260805-BROWSER-CDP]
+
+**Logged**: 2026-08-05T16:16:00Z
+**Priority**: low
+**Status**: pending
+**Area**: tooling
+
+### Summary
+The browser skill's documented launcher assumes Google Chrome and its `nav.cjs --new` helper uses an HTTP verb Edge rejects.
+
+### Error
+`spawn C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe ENOENT`
+
+### Context
+- Google Chrome is not installed at the launcher path; Microsoft Edge and Playwright Chromium are available.
+- Launching Edge manually with `--remote-debugging-port=9222` works.
+- Edge requires `PUT /json/new`; the helper currently sends `GET` and cannot create a tab.
+
+### Suggested Fix
+Update the browser skill launcher to discover Edge/Playwright Chromium on Windows and use `PUT` when creating a CDP target.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `C:\\Users\\86080\\.agents\\skills\\browser\\scripts\\start.cjs`, `C:\\Users\\86080\\.agents\\skills\\browser\\scripts\\nav.cjs`
+
+---
+
 ## [ERR-20260803-LOCAL-RSYNC]
 
 **Logged**: 2026-08-03T16:00:00Z
@@ -497,5 +717,129 @@ Use the installed `.cjs` script names rather than the stale `.js` names in the s
 ### Metadata
 - Reproducible: yes
 - Related Files: `C:\\Users\\86080\\.agents\\skills\\browser\\SKILL.md`
+
+---
+
+## [ERR-20260805-005] worktree-full-test-aborted
+
+**Logged**: 2026-08-05T22:18:11+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The full Vitest command in the isolated worktree was aborted before it produced a pass or failure result.
+
+### Error
+```
+Command aborted
+```
+
+### Context
+- `npm test`, `npm run lint`, and `npm run build` were started together despite the repository guidance to serialize heavy validation.
+- Lint and build completed; the test process emitted only the Vitest header before the harness stopped it.
+
+### Suggested Fix
+Rerun `npm test` by itself from the isolated worktree, then keep full validation commands serialized.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: scripts/run-heavy.mjs
+
+### Resolution
+- **Resolved**: 2026-08-05T22:22:20+08:00
+- **Notes**: Serialized rerun of `npm test` completed with 137 test files and 940 tests passing.
+
+---
+
+## [ERR-20260805-004] worktree-test-command-cwd
+
+**Logged**: 2026-08-05T22:10:03+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A focused test command ran in the primary checkout rather than the isolated worktree and therefore selected no tests.
+
+### Error
+```
+Test Files 1 skipped; Tests 94 skipped
+```
+
+### Context
+- The shell command did not change into `.worktrees/non-ai-optimizations`.
+- The isolated worktree contains the uncommitted delivery failure test.
+
+### Suggested Fix
+Prefix worktree validation commands with `cd .worktrees/non-ai-optimizations`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: src/App.test.tsx
+
+### Resolution
+- **Resolved**: 2026-08-05T22:10:03+08:00
+- **Notes**: Subsequent focused validation will run from the isolated worktree.
+
+---
+
+## [ERR-20260805-003] worktree-npm-install-network
+
+**Logged**: 2026-08-05T22:06:28+08:00
+**Priority**: medium
+**Status**: pending
+**Area**: infra
+
+### Summary
+Dependency installation in the isolated worktree could not reach the configured npm mirror.
+
+### Error
+```
+ENOTFOUND mirrors.tencentyun.com while fetching undici-7.28.0.tgz
+```
+
+### Context
+- The worktree was rebased to the current main head before installation.
+- npm also reported Windows EPERM cleanup warnings before the network failure.
+
+### Suggested Fix
+Use the root workspace dependencies for immediate local verification or restore network access to the configured npm mirror before a clean worktree install.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: package-lock.json
+
+---
+
+## [ERR-20260805-002] layout-benchmark-direct-node
+
+**Logged**: 2026-08-05T21:28:08+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The documented layout benchmark command used Node directly on a TypeScript module and failed module resolution.
+
+### Error
+```
+ERR_MODULE_NOT_FOUND: Cannot find module '.../src/lib/card-layout'
+```
+
+### Context
+- `node scripts/perf-layout-bench.ts` cannot execute TypeScript source imports in this project.
+- `npx tsx scripts/perf-layout-bench.ts` completed successfully.
+
+### Suggested Fix
+Keep the benchmark invocation on the tsx runtime; add an npm script when the benchmark becomes a routine acceptance check.
+
+### Metadata
+- Reproducible: yes
+- Related Files: scripts/perf-layout-bench.ts
+
+### Resolution
+- **Resolved**: 2026-08-05T21:28:08+08:00
+- **Notes**: Verified the benchmark through `npx tsx`.
 
 ---

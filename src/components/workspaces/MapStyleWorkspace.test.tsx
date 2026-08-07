@@ -62,6 +62,8 @@ describe("MapStyleWorkspace", () => {
     expect(container.textContent).toContain("院校");
     expect(container.textContent).toContain("图钉");
     expect(container.textContent).toContain("热力");
+    expect(container.querySelector('[aria-label="地图对象属性"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="地图样式控制"]')).toBeNull();
     expect(container.querySelector('#map-land-color')).not.toBeNull();
     expect(container.querySelector('#map-active-color')).not.toBeNull();
     expect(container.querySelector('.map-edge-styles')).not.toBeNull();
@@ -81,18 +83,12 @@ describe("MapStyleWorkspace", () => {
     expect(onChangeDataView).toHaveBeenCalledWith("heat");
   });
 
-  it("keeps a selected province in the map context and offers its texture panel inline", () => {
+  it("keeps a selected province in the single right-side object inspector", () => {
     const { container, onPatchProvince } = renderWorkspace("北京市");
 
     expect(container.querySelector(".province-inspector")).not.toBeNull();
     expect(container.querySelector(".province-inspector")?.textContent).toContain("北京市");
-    const assetsButton = container.querySelector<HTMLButtonElement>('button[aria-label="打开省份素材"]');
-    expect(assetsButton).not.toBeNull();
-
-    flushSync(() => assetsButton?.click());
-
-    expect(container.querySelector('[aria-label="省份素材"]')).not.toBeNull();
-    expect(container.textContent).toContain("素材库");
+    expect(container.querySelector('[aria-label="省份素材"]')).toBeNull();
     expect(onPatchProvince).not.toHaveBeenCalled();
   });
 

@@ -55,6 +55,8 @@ describe("DisplayFrameWorkspace", () => {
     expect(container.querySelector('button[aria-label="固定排版连续文字"]')).not.toBeNull();
     expect(container.querySelector("#display-frame-field-order")).not.toBeNull();
     expect(container.querySelector("#display-frame-fixed-name-x")).not.toBeNull();
+    expect(container.querySelector('.display-frame-item__pair[data-property-pair="name-position"] #display-frame-fixed-name-x')).not.toBeNull();
+    expect(container.querySelector('.display-frame-item__pair[data-property-pair="name-size"] #display-frame-fixed-name-width')).not.toBeNull();
 
     const input = container.querySelector<HTMLInputElement>("#display-frame-fixed-name-x")!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;

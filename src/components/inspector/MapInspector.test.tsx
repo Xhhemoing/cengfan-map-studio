@@ -35,6 +35,10 @@ describe("MapInspector", () => {
     ));
 
     const width = container.querySelector("#map-width") as HTMLInputElement;
+    expect(container.querySelector('[data-property-pair="map-position"] #map-x')).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="map-position"] #map-y')).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="map-size"] #map-width')).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="map-size"] #map-height')).not.toBeNull();
     width.focus();
     flushSync(() => setInputValue(width, "900"));
     expect(onPatch).not.toHaveBeenCalled();
@@ -212,6 +216,10 @@ describe("MapInspector", () => {
     expect(container.querySelector("#map-image-clip")).not.toBeNull();
     expect(container.querySelector("#map-align-x")).not.toBeNull();
     expect(container.querySelector("#map-align-rotation")).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="map-image-position"] #map-align-x')).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="map-image-position"] #map-align-y')).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="map-image-size"] #map-align-width')).not.toBeNull();
+    expect(container.querySelector('[data-property-pair="map-image-size"] #map-align-height')).not.toBeNull();
     const clip = container.querySelector("#map-image-clip") as HTMLInputElement;
     expect(clip.closest("label")?.classList.contains("boolean-control")).toBe(true);
     expect(clip.closest("label")?.firstElementChild).toBe(clip);

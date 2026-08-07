@@ -26,7 +26,7 @@ describe("workflow stages", () => {
     ]);
     expect(WORKFLOW_STAGES.map((stage) => stage.label)).toEqual([
       "选择模板",
-      "上传数据",
+      "数据与素材",
       "地图样式",
       "展示框样式",
       "内容与排版",

@@ -79,7 +79,7 @@
 
 ## Layout Skeleton
 
-- **Navigation:** Hybrid shell: a 56-60px topbar for project identity, workflow stage, shared-project state, global commands, and export; task navigation resides in the stable left panel; the right panel is contextual inspection.
+- **Navigation:** Hybrid shell: the 52-58px topbar owns project identity, saved/shared state, history, global commands, and export. The stable left panel is the sole workflow navigator and task launcher; it must not be duplicated in the topbar. The right panel is contextual inspection.
 - **Map as primary artifact:** The canvas remains visually central. Atelier skin uses a restrained warm surround and a fine editorial rule; it never puts the map inside a decorative card.
 - **Panels:** Border-led, flat surfaces. Panel sections use rule-separated groups rather than nested cards.
 - **Data work:** Tables use sticky headers, 36px rows, clear selected state, numeric tabular figures, and tooltips for icon-only actions.
@@ -87,7 +87,7 @@
 
 ## Component Recipes
 
-1. **Topbar:** Product mark, project title/status, workflow stepper, share state, undo/redo, zoom, skin/theme controls, and one strongest action. Warm paper/light or ink/dark surface, no oversized branding.
+1. **Topbar:** Product mark, project title/status, share state, undo/redo, skin/theme controls, and one strongest action. Workflow navigation remains in the left panel. Warm paper/light or ink/dark surface, no oversized branding.
 2. **Button:** 32px high; 5px radius; 12-13px semibold text. `primary` is filled green; `secondary` is raised surface with a border; `ghost` gains surface-2 on hover; destructive is explicit. Every icon-only button has `aria-label` and `title`.
 3. **Input and select:** 32px high; raised surface and 1px border; focus outline uses `focus-ring`; errors pair text/icon with color.
 4. **Navigation item:** Stable 36-44px item with icon, label, optional compact state marker. Current item has an inset primary rule plus a light active surface, rather than a large rounded pill.
@@ -135,6 +135,7 @@
 - [ ] Atelier is default when no skin preference exists; `classic` remains selectable and persists per user.
 - [ ] Switching skins or themes never mutates project content, export output, undo/redo state, zoom, or synchronization data.
 - [ ] Desktop, tablet, and mobile layouts preserve the map editing path and no control text overflows.
+- [ ] The shell supports three density modes without duplicate navigation: a canvas/editor workspace, a full-screen data workspace, and focused full-screen task workspaces for template, delivery, or complex settings.
 - [ ] Every interactive component has hover, focus-visible, disabled, and selected/error states where relevant.
 - [ ] The core editor, data workspace, global settings, AI assistant, delivery, and collaboration popover use the same semantic vocabulary.
 - [ ] Shared rooms display role, presence, and connection/conflict state without relying on color alone.
