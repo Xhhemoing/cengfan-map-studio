@@ -1,0 +1,307 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
+import { REGISTRY_URL, syncChinaLocations } from "./sync-china-locations.mjs";
+
+type ProvinceRow = { code: string; name: string; province: string };
+type CityRow = { code: string; name: string; province: string; city: string };
+type TarFiles = Record<string, string>;
+
+/** Deliberately broken payloads: if the generator ever read town/area data it would fail. */
+const TOWN_JUNK = "{ intentionally invalid JSON";
+const AREA_JUNK = "[ intentionally invalid JSON";
+
+/** Minimal ustar tar writer so fixtures behave like a real npm package tarball. */
+function encodeTarEntry(path: string, content: string): Buffer {
+  const data = Buffer.from(content, "utf8");
+  const header = Buffer.alloc(512);
+  header.write(path, 0, 100, "utf8");
+  header.write("0000644\0", 100, 8, "ascii");
+  header.write("0000000\0", 108, 8, "ascii");
+  header.write("0000000\0", 116, 8, "ascii");
+  header.write(`${data.length.toString(8).padStart(11, "0")}\0`, 124, 12, "ascii");
+  header.write("00000000000\0", 136, 12, "ascii");
+  header.write("        ", 148, 8, "ascii");
+  header[156] = 0x30; // typeflag '0': regular file
+  header.write("ustar\0", 257, 6, "ascii");
+  header.write("00", 263, 2, "ascii");
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  const padding = Buffer.alloc(data.length % 512 === 0 ? 0 : 512 - (data.length % 512));
+  return Buffer.concat([header, data, padding]);
+}
+
+function buildTar(files: TarFiles): Buffer {
+  const blocks = Object.entries(files).map(([path, content]) => encodeTarEntry(path, content));
+  return Buffer.concat([...blocks, Buffer.alloc(1024)]);
+}
+
+function makeRegistry(options: {
+  provinceRows?: ProvinceRow[];
+  cityRows?: CityRow[];
+  files?: TarFiles;
+  version?: string;
+  latest?: string;
+  metadataStatus?: number;
+  tarballStatus?: number;
+}) {
+  const version = options.version ?? "8.5.8";
+  const latest = options.latest ?? version;
+  const tarballUrl = `https://registry.example/province-city-china/-/province-city-china-${version}.tgz`;
+  const files = options.files ?? {
+    "package/dist/province.json": JSON.stringify(options.provinceRows ?? []),
+    "package/dist/city.json": JSON.stringify(options.cityRows ?? []),
+    "package/dist/town.json": TOWN_JUNK,
+    "package/dist/area.json": AREA_JUNK,
+  };
+  const metadata = {
+    "dist-tags": { latest },
+    versions: {
+      [version]: { name: "province-city-china", version, dist: { tarball: tarballUrl } },
+    },
+  };
+  const tarball = gzipSync(buildTar(files));
+  const fetch = async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === REGISTRY_URL) {
+      if (options.metadataStatus && options.metadataStatus >= 400) {
+        return new Response("nope", { status: options.metadataStatus });
+      }
+      return new Response(JSON.stringify(metadata), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url === tarballUrl) {
+      if (options.tarballStatus && options.tarballStatus >= 400) {
+        return new Response("nope", { status: options.tarballStatus });
+      }
+      return new Response(new Uint8Array(tarball), { status: 200 });
+    }
+    throw new Error(`unexpected fetch url: ${url}`);
+  };
+  return { fetch, tarballUrl };
+}
+
+describe("sync-china-locations generator", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "china-locations-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const outputPath = () => join(dir, "china-locations.ts");
+
+  it("writes province and city data from an injected upstream release", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [
+        { code: "330000", name: "浙江省", province: "33" },
+        { code: "440000", name: "广东省", province: "44" },
+      ],
+      cityRows: [
+        { code: "330100", name: "杭州市", province: "33", city: "01" },
+        { code: "330200", name: "宁波市", province: "33", city: "02" },
+        { code: "440300", name: "深圳市", province: "44", city: "03" },
+      ],
+    });
+
+    const result = await syncChinaLocations({ version: "8.5.8", fetch, outputPath: outputPath() });
+
+    expect(result).toEqual({ version: "8.5.8", provinces: 2, cities: 3 });
+    const output = await readFile(outputPath(), "utf8");
+    expect(output).toContain('name: "杭州市"');
+    expect(output).toContain('province: "浙江省"');
+    expect(output).toContain('code: "330100"');
+    expect(output).toContain('version: "8.5.8"');
+    expect(output).toContain('registry: "province-city-china"');
+    expect(output).toContain("export const chinaLocationSource");
+    expect(output).not.toContain(TOWN_JUNK);
+    expect(output).not.toContain(AREA_JUNK);
+  });
+
+  it("resolves the latest release when no version is requested", async () => {
+    const { fetch } = makeRegistry({
+      latest: "8.5.8",
+      provinceRows: [{ code: "330000", name: "浙江省", province: "33" }],
+      cityRows: [{ code: "330100", name: "杭州市", province: "33", city: "01" }],
+    });
+
+    const result = await syncChinaLocations({ fetch, outputPath: outputPath() });
+
+    expect(result.version).toBe("8.5.8");
+  });
+
+  it("rejects a version absent from the registry", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [{ code: "330000", name: "浙江省", province: "33" }],
+      cityRows: [],
+    });
+
+    await expect(
+      syncChinaLocations({ version: "9.9.9", fetch, outputPath: outputPath() }),
+    ).rejects.toThrow(/9\.9\.9/);
+  });
+
+  it("rejects a failing registry response", async () => {
+    const { fetch } = makeRegistry({ provinceRows: [], cityRows: [], metadataStatus: 503 });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/503/);
+  });
+
+  it("rejects a failing tarball response", async () => {
+    const { fetch } = makeRegistry({ provinceRows: [], cityRows: [], tarballStatus: 404 });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/404/);
+  });
+
+  it("synthesizes municipality and special-region entries with compatibility aliases", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [
+        { code: "110000", name: "北京市", province: "11" },
+        { code: "310000", name: "上海市", province: "31" },
+        { code: "500000", name: "重庆市", province: "50" },
+        { code: "710000", name: "台湾省", province: "71" },
+        { code: "810000", name: "香港特别行政区", province: "81" },
+        { code: "820000", name: "澳门特别行政区", province: "82" },
+        { code: "330000", name: "浙江省", province: "33" },
+      ],
+      cityRows: [{ code: "330100", name: "杭州市", province: "33", city: "01" }],
+    });
+
+    const result = await syncChinaLocations({ version: "8.5.8", fetch, outputPath: outputPath() });
+
+    expect(result).toEqual({ version: "8.5.8", provinces: 7, cities: 7 });
+    const output = await readFile(outputPath(), "utf8");
+    expect(output).toContain('{ code: "110000", name: "北京市", province: "北京市", aliases: ["北京", "帝都"] }');
+    expect(output).toContain('{ code: "310000", name: "上海市", province: "上海市", aliases: ["上海", "魔都"] }');
+    expect(output).toContain('{ code: "500000", name: "重庆市", province: "重庆市", aliases: ["重庆", "渝"] }');
+    expect(output).toContain('{ code: "710000", name: "台北市", province: "台湾省", aliases: ["台北"] }');
+    expect(output).toContain('{ code: "810000", name: "香港特别行政区", province: "香港特别行政区", aliases: ["香港", "HongKong", "HK"] }');
+    expect(output).toContain('{ code: "820000", name: "澳门特别行政区", province: "澳门特别行政区", aliases: ["澳门", "Macao"] }');
+  });
+
+  it("adds compatibility aliases to an upstream municipality row instead of duplicating it", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [{ code: "110000", name: "北京市", province: "11" }],
+      cityRows: [{ code: "110100", name: "北京市", province: "11", city: "01" }],
+    });
+
+    const result = await syncChinaLocations({ version: "8.5.8", fetch, outputPath: outputPath() });
+
+    expect(result.cities).toBe(1);
+    const output = await readFile(outputPath(), "utf8");
+    expect(output).toContain('{ code: "110100", name: "北京市", province: "北京市", aliases: ["北京", "帝都"] }');
+    expect(output).toMatch(/name: "北京市", province: "北京市"/g);
+    expect(output.match(/name: "北京市", province: "北京市"/g)).toHaveLength(1);
+  });
+
+  it("orders provinces and cities deterministically by code", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [
+        { code: "440000", name: "广东省", province: "44" },
+        { code: "330000", name: "浙江省", province: "33" },
+      ],
+      cityRows: [
+        { code: "440300", name: "深圳市", province: "44", city: "03" },
+        { code: "330200", name: "宁波市", province: "33", city: "02" },
+        { code: "330100", name: "杭州市", province: "33", city: "01" },
+      ],
+    });
+
+    await syncChinaLocations({ version: "8.5.8", fetch, outputPath: outputPath() });
+
+    const output = await readFile(outputPath(), "utf8");
+    const provinceCodes = [...output.slice(output.indexOf("chinaProvinces"), output.indexOf("chinaCities")).matchAll(/code: "(\d{6})"/g)].map((match) => match[1]);
+    expect(provinceCodes).toEqual(["330000", "440000"]);
+    const cityCodes = [...output.slice(output.indexOf("chinaCities")).matchAll(/code: "(\d{6})"/g)].map((match) => match[1]);
+    expect(cityCodes).toEqual([...cityCodes].sort());
+  });
+
+  it("does not overwrite the existing catalog when upstream data is invalid", async () => {
+    const existing = "// pre-existing catalog content\n";
+    await writeFile(outputPath(), existing, "utf8");
+    const { fetch } = makeRegistry({
+      provinceRows: [{ code: "330000", name: "浙江省", province: "33" }],
+      cityRows: [
+        { code: "330100", name: "杭州市", province: "33", city: "01" },
+        { code: "990100", name: "无主市", province: "99", city: "01" },
+      ],
+    });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/inconsistent with its code/);
+    expect(await readFile(outputPath(), "utf8")).toBe(existing);
+  });
+
+  it("rejects a city whose explicit province does not match its code prefix", async () => {
+    const existing = "// pre-existing catalog content\n";
+    await writeFile(outputPath(), existing, "utf8");
+    const { fetch } = makeRegistry({
+      provinceRows: [{ code: "330000", name: "浙江省", province: "33" }],
+      cityRows: [{ code: "330100", name: "杭州市", province: "99", city: "01" }],
+    });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/province/);
+    expect(await readFile(outputPath(), "utf8")).toBe(existing);
+  });
+
+  it("rejects duplicate province codes without touching the output file", async () => {
+    const existing = "// keep me\n";
+    await writeFile(outputPath(), existing, "utf8");
+    const { fetch } = makeRegistry({
+      provinceRows: [
+        { code: "110000", name: "北京市", province: "11" },
+        { code: "110000", name: "北京市(重复)", province: "11" },
+      ],
+      cityRows: [],
+    });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/duplicate province code/);
+    expect(await readFile(outputPath(), "utf8")).toBe(existing);
+  });
+
+  it("rejects duplicate city codes", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [{ code: "330000", name: "浙江省", province: "33" }],
+      cityRows: [
+        { code: "330100", name: "杭州市", province: "33", city: "01" },
+        { code: "330100", name: "杭州市(重复)", province: "33", city: "01" },
+      ],
+    });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/duplicate city code/);
+  });
+
+  it("rejects a malformed province payload", async () => {
+    const { fetch } = makeRegistry({
+      files: {
+        "package/dist/province.json": '{"code":"110000"}',
+        "package/dist/city.json": "[]",
+      },
+    });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/province/);
+  });
+
+  it("rejects a tarball that is missing the city payload", async () => {
+    const { fetch } = makeRegistry({
+      files: {
+        "package/dist/province.json": JSON.stringify([{ code: "330000", name: "浙江省", province: "33" }]),
+      },
+    });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/city\.json/);
+  });
+
+  it("rejects province rows with missing required fields", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [{ code: "330000", name: "浙江省" }],
+      cityRows: [],
+    });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/missing province/);
+  });
+});

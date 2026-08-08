@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => {
   },
   test: {
     environment: "jsdom",
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "server/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "server/**/*.test.ts", "scripts/**/*.test.ts"],
     testTimeout: 20_000,
   },
   };

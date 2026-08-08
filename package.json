@@ -14,6 +14,7 @@
     "lint": "node scripts/run-heavy.mjs eslint .",
     "security:audit": "node scripts/run-heavy.mjs npm audit --registry=https://registry.npmjs.org",
     "perf:layout": "tsx scripts/perf-layout-bench.ts",
+    "data:sync:china-locations": "node scripts/sync-china-locations.mjs",
     "preview": "npm run start",
     "check": "npm run lint && npm run security:audit"
   },
