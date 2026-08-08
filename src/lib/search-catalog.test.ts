@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveCity,
+  resolveProvinceName,
   searchCities,
+  searchProvinces,
   searchUniversities,
 } from "./search-catalog";
 
@@ -48,6 +50,57 @@ describe("local search catalog", () => {
     expect(resolveCity("澳门")).toMatchObject({ city: "澳门特别行政区", province: "澳门特别行政区", status: "resolved" });
     expect(resolveCity("台北")).toMatchObject({ city: "台北市", province: "台湾省", status: "resolved" });
     expect(resolveCity("威海")).toMatchObject({ city: "威海市", province: "山东省", status: "resolved" });
+  });
+
+  it("resolves a city omitted from the old hand-maintained catalog", () => {
+    expect(resolveCity("沧州")).toMatchObject({
+      city: "沧州市",
+      province: "河北省",
+      status: "resolved",
+    });
+  });
+
+  it("resolves legacy aliases for autonomous prefectures", () => {
+    expect(resolveCity("大理")).toMatchObject({
+      city: "大理白族自治州",
+      province: "云南省",
+      status: "resolved",
+    });
+    expect(resolveCity("延边")).toMatchObject({
+      city: "延边朝鲜族自治州",
+      province: "吉林省",
+      status: "resolved",
+    });
+    expect(resolveCity("西双版纳")).toMatchObject({
+      city: "西双版纳傣族自治州",
+      province: "云南省",
+      status: "resolved",
+    });
+  });
+
+  it("searches every generated province even without a matching city", () => {
+    expect(searchProvinces("西藏", 5)).toEqual(["西藏自治区"]);
+  });
+
+  it("does not surface the directly administered county placeholder as a city", () => {
+    const results = searchCities("河南", 5);
+
+    expect(results.map((city) => city.name)).not.toContain("河南省-省直辖县级行政区划");
+    expect(results.every((city) => !city.name.includes("直辖县级行政区划"))).toBe(true);
+  });
+
+  describe("resolveProvinceName", () => {
+    it("maps a short province alias to the canonical GeoJSON name", () => {
+      expect(resolveProvinceName("浙江")).toBe("浙江省");
+    });
+
+    it("keeps an already canonical province name unchanged", () => {
+      expect(resolveProvinceName("广东省")).toBe("广东省");
+    });
+
+    it("keeps a prefecture-level autonomous prefecture name unchanged instead of resolving it to a province", () => {
+      expect(resolveProvinceName("海南藏族自治州")).toBe("海南藏族自治州");
+    });
   });
 
   it("resolves city names prefixed by their province", () => {

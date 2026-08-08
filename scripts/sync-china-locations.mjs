@@ -23,6 +23,18 @@ const PROVINCE_ENTRY = "package/dist/province.json";
 const CITY_ENTRY = "package/dist/city.json";
 
 /**
+ * Upstream rows that are administrative placeholder buckets rather than
+ * prefecture-level cities. `province-city-china` ships one row per province
+ * whose name denotes the province/region directly administered county-level
+ * divisions (e.g. `河南省-省直辖县级行政区划`). They exist only so the upstream
+ * district data can group county-level divisions, so they must not appear in a
+ * province/city catalog — keeping them would make search surface a fake
+ * "city" row. Rows whose name contains this marker are excluded from the
+ * generated catalog; the marker matches both 省直辖 and 自治区直辖 variants.
+ */
+const DIRECTLY_ADMINISTERED_COUNTY_MARKER = "直辖县级行政区划";
+
+/**
  * Municipality / special-region / Taiwan compatibility rows. The upstream
  * `city.json` ships no city rows for these provinces, while consumers have long
  * relied on these canonical city names and aliases. Rows are only synthesized
@@ -37,6 +49,187 @@ const COMPATIBILITY_CITIES = [
   { provinceName: "香港特别行政区", cityName: "香港特别行政区", aliases: ["香港", "HongKong", "HK"] },
   { provinceName: "澳门特别行政区", cityName: "澳门特别行政区", aliases: ["澳门", "Macao"] },
   { provinceName: "台湾省", cityName: "台北市", aliases: ["台北"] },
+];
+
+/**
+ * Aliases from the deleted hand-maintained catalog (baseline commit 49e462b,
+ * `src/data/china-cities.ts`), keyed by canonical city name. Each entry is
+ * merged into the matching upstream/synthesized city row at generation time;
+ * a key without an upstream match never synthesizes a row. Suffix-free aliases
+ * (e.g. `杭州` for `杭州市`) are kept deliberately — the old catalog exposed
+ * them and consumers may read alias data directly, even though
+ * `toShortProvinceName` derives the same short form at runtime.
+ */
+const LEGACY_CITY_ALIASES = [
+// 168 legacy city entries (168 aliases) from the deleted hand-maintained catalog.
+  { cityName: "杭州市", aliases: ["杭州"] },
+  { cityName: "宁波市", aliases: ["宁波"] },
+  { cityName: "温州市", aliases: ["温州"] },
+  { cityName: "绍兴市", aliases: ["绍兴"] },
+  { cityName: "金华市", aliases: ["金华"] },
+  { cityName: "南京市", aliases: ["南京"] },
+  { cityName: "苏州市", aliases: ["苏州"] },
+  { cityName: "无锡市", aliases: ["无锡"] },
+  { cityName: "常州市", aliases: ["常州"] },
+  { cityName: "徐州市", aliases: ["徐州"] },
+  { cityName: "扬州市", aliases: ["扬州"] },
+  { cityName: "武汉市", aliases: ["武汉"] },
+  { cityName: "宜昌市", aliases: ["宜昌"] },
+  { cityName: "襄阳市", aliases: ["襄阳"] },
+  { cityName: "成都市", aliases: ["成都"] },
+  { cityName: "绵阳市", aliases: ["绵阳"] },
+  { cityName: "德阳市", aliases: ["德阳"] },
+  { cityName: "广州市", aliases: ["广州"] },
+  { cityName: "深圳市", aliases: ["深圳"] },
+  { cityName: "珠海市", aliases: ["珠海"] },
+  { cityName: "佛山市", aliases: ["佛山"] },
+  { cityName: "东莞市", aliases: ["东莞"] },
+  { cityName: "中山市", aliases: ["中山"] },
+  { cityName: "惠州市", aliases: ["惠州"] },
+  { cityName: "汕头市", aliases: ["汕头"] },
+  { cityName: "江门市", aliases: ["江门"] },
+  { cityName: "湛江市", aliases: ["湛江"] },
+  { cityName: "西安市", aliases: ["西安"] },
+  { cityName: "咸阳市", aliases: ["咸阳"] },
+  { cityName: "宝鸡市", aliases: ["宝鸡"] },
+  { cityName: "哈尔滨市", aliases: ["哈尔滨"] },
+  { cityName: "大庆市", aliases: ["大庆"] },
+  { cityName: "齐齐哈尔市", aliases: ["齐齐哈尔"] },
+  { cityName: "厦门市", aliases: ["厦门"] },
+  { cityName: "福州市", aliases: ["福州"] },
+  { cityName: "泉州市", aliases: ["泉州"] },
+  { cityName: "漳州市", aliases: ["漳州"] },
+  { cityName: "莆田市", aliases: ["莆田"] },
+  { cityName: "宁德市", aliases: ["宁德"] },
+  { cityName: "龙岩市", aliases: ["龙岩"] },
+  { cityName: "南平市", aliases: ["南平"] },
+  { cityName: "三明市", aliases: ["三明"] },
+  { cityName: "长沙市", aliases: ["长沙"] },
+  { cityName: "株洲市", aliases: ["株洲"] },
+  { cityName: "湘潭市", aliases: ["湘潭"] },
+  { cityName: "衡阳市", aliases: ["衡阳"] },
+  { cityName: "岳阳市", aliases: ["岳阳"] },
+  { cityName: "常德市", aliases: ["常德"] },
+  { cityName: "青岛市", aliases: ["青岛"] },
+  { cityName: "济南市", aliases: ["济南"] },
+  { cityName: "烟台市", aliases: ["烟台"] },
+  { cityName: "威海市", aliases: ["威海"] },
+  { cityName: "潍坊市", aliases: ["潍坊"] },
+  { cityName: "临沂市", aliases: ["临沂"] },
+  { cityName: "淄博市", aliases: ["淄博"] },
+  { cityName: "泰安市", aliases: ["泰安"] },
+  { cityName: "济宁市", aliases: ["济宁"] },
+  { cityName: "日照市", aliases: ["日照"] },
+  { cityName: "德州市", aliases: ["德州"] },
+  { cityName: "聊城市", aliases: ["聊城"] },
+  { cityName: "菏泽市", aliases: ["菏泽"] },
+  { cityName: "滨州市", aliases: ["滨州"] },
+  { cityName: "东营市", aliases: ["东营"] },
+  { cityName: "枣庄市", aliases: ["枣庄"] },
+  { cityName: "莱芜市", aliases: ["莱芜"] },
+  { cityName: "合肥市", aliases: ["合肥"] },
+  { cityName: "芜湖市", aliases: ["芜湖"] },
+  { cityName: "蚌埠市", aliases: ["蚌埠"] },
+  { cityName: "南昌市", aliases: ["南昌"] },
+  { cityName: "赣州市", aliases: ["赣州"] },
+  { cityName: "九江市", aliases: ["九江"] },
+  { cityName: "上饶市", aliases: ["上饶"] },
+  { cityName: "郑州市", aliases: ["郑州"] },
+  { cityName: "洛阳市", aliases: ["洛阳"] },
+  { cityName: "新乡市", aliases: ["新乡"] },
+  { cityName: "南阳市", aliases: ["南阳"] },
+  { cityName: "开封市", aliases: ["开封"] },
+  { cityName: "安阳市", aliases: ["安阳"] },
+  { cityName: "平顶山市", aliases: ["平顶山"] },
+  { cityName: "焦作市", aliases: ["焦作"] },
+  { cityName: "许昌市", aliases: ["许昌"] },
+  { cityName: "漯河市", aliases: ["漯河"] },
+  { cityName: "驻马店市", aliases: ["驻马店"] },
+  { cityName: "商丘市", aliases: ["商丘"] },
+  { cityName: "周口市", aliases: ["周口"] },
+  { cityName: "信阳市", aliases: ["信阳"] },
+  { cityName: "濮阳市", aliases: ["濮阳"] },
+  { cityName: "三门峡市", aliases: ["三门峡"] },
+  { cityName: "鹤壁市", aliases: ["鹤壁"] },
+  { cityName: "济源市", aliases: ["济源"] },
+  { cityName: "石家庄市", aliases: ["石家庄"] },
+  { cityName: "唐山市", aliases: ["唐山"] },
+  { cityName: "保定市", aliases: ["保定"] },
+  { cityName: "廊坊市", aliases: ["廊坊"] },
+  { cityName: "秦皇岛市", aliases: ["秦皇岛"] },
+  { cityName: "沈阳市", aliases: ["沈阳"] },
+  { cityName: "大连市", aliases: ["大连"] },
+  { cityName: "鞍山市", aliases: ["鞍山"] },
+  { cityName: "抚顺市", aliases: ["抚顺"] },
+  { cityName: "本溪市", aliases: ["本溪"] },
+  { cityName: "丹东市", aliases: ["丹东"] },
+  { cityName: "锦州市", aliases: ["锦州"] },
+  { cityName: "营口市", aliases: ["营口"] },
+  { cityName: "阜新市", aliases: ["阜新"] },
+  { cityName: "辽阳市", aliases: ["辽阳"] },
+  { cityName: "铁岭市", aliases: ["铁岭"] },
+  { cityName: "朝阳市", aliases: ["朝阳"] },
+  { cityName: "盘锦市", aliases: ["盘锦"] },
+  { cityName: "葫芦岛市", aliases: ["葫芦岛"] },
+  { cityName: "长春市", aliases: ["长春"] },
+  { cityName: "吉林市", aliases: ["吉林"] },
+  { cityName: "延边朝鲜族自治州", aliases: ["延边"] },
+  { cityName: "四平市", aliases: ["四平"] },
+  { cityName: "通化市", aliases: ["通化"] },
+  { cityName: "白山市", aliases: ["白山"] },
+  { cityName: "辽源市", aliases: ["辽源"] },
+  { cityName: "白城市", aliases: ["白城"] },
+  { cityName: "松原市", aliases: ["松原"] },
+  { cityName: "海口市", aliases: ["海口"] },
+  { cityName: "三亚市", aliases: ["三亚"] },
+  { cityName: "三沙市", aliases: ["三沙"] },
+  { cityName: "儋州市", aliases: ["儋州"] },
+  { cityName: "昆明市", aliases: ["昆明"] },
+  { cityName: "大理白族自治州", aliases: ["大理"] },
+  { cityName: "丽江市", aliases: ["丽江"] },
+  { cityName: "西双版纳傣族自治州", aliases: ["西双版纳"] },
+  { cityName: "贵阳市", aliases: ["贵阳"] },
+  { cityName: "遵义市", aliases: ["遵义"] },
+  { cityName: "六盘水市", aliases: ["六盘水"] },
+  { cityName: "南宁市", aliases: ["南宁"] },
+  { cityName: "桂林市", aliases: ["桂林"] },
+  { cityName: "柳州市", aliases: ["柳州"] },
+  { cityName: "北海市", aliases: ["北海"] },
+  { cityName: "兰州市", aliases: ["兰州"] },
+  { cityName: "天水市", aliases: ["天水"] },
+  { cityName: "酒泉市", aliases: ["酒泉"] },
+  { cityName: "张掖市", aliases: ["张掖"] },
+  { cityName: "敦煌市", aliases: ["敦煌"] },
+  { cityName: "银川市", aliases: ["银川"] },
+  { cityName: "石嘴山市", aliases: ["石嘴山"] },
+  { cityName: "中卫市", aliases: ["中卫"] },
+  { cityName: "西宁市", aliases: ["西宁"] },
+  { cityName: "海东市", aliases: ["海东"] },
+  { cityName: "格尔木市", aliases: ["格尔木"] },
+  { cityName: "乌鲁木齐市", aliases: ["乌鲁木齐"] },
+  { cityName: "克拉玛依市", aliases: ["克拉玛依"] },
+  { cityName: "喀什市", aliases: ["喀什"] },
+  { cityName: "伊宁市", aliases: ["伊宁"] },
+  { cityName: "拉萨市", aliases: ["拉萨"] },
+  { cityName: "日喀则市", aliases: ["日喀则"] },
+  { cityName: "林芝市", aliases: ["林芝"] },
+  { cityName: "昌都市", aliases: ["昌都"] },
+  { cityName: "呼和浩特市", aliases: ["呼和浩特"] },
+  { cityName: "包头市", aliases: ["包头"] },
+  { cityName: "鄂尔多斯市", aliases: ["鄂尔多斯"] },
+  { cityName: "赤峰市", aliases: ["赤峰"] },
+  { cityName: "呼伦贝尔市", aliases: ["呼伦贝尔"] },
+  { cityName: "太原市", aliases: ["太原"] },
+  { cityName: "大同市", aliases: ["大同"] },
+  { cityName: "晋中市", aliases: ["晋中"] },
+  { cityName: "忻州市", aliases: ["忻州"] },
+  { cityName: "吕梁市", aliases: ["吕梁"] },
+  { cityName: "长治市", aliases: ["长治"] },
+  { cityName: "晋城市", aliases: ["晋城"] },
+  { cityName: "临汾市", aliases: ["临汾"] },
+  { cityName: "运城市", aliases: ["运城"] },
+  { cityName: "朔州市", aliases: ["朔州"] },
+  { cityName: "阳泉市", aliases: ["阳泉"] },
 ];
 
 /**
@@ -194,17 +387,22 @@ function normalizeLocationRows(provinceRows, cityRows) {
     prefixToProvince.set(province.code.slice(0, 2), province);
   }
 
-  const cities = cityRows.map((row, index) => {
-    assertRow(row, `city row ${index}`);
-    const code = String(row.code);
-    const name = String(row.name);
-    const explicitProvince = String(row.province);
-    const province = prefixToProvince.get(explicitProvince);
-    if (!province || explicitProvince !== code.slice(0, 2)) {
-      throw new Error(`city "${code} ${name}" references province "${row.province}" inconsistent with its code`);
-    }
-    return { code, name, province: province.name, aliases: [] };
-  });
+  const cities = cityRows
+    .map((row, index) => {
+      assertRow(row, `city row ${index}`);
+      const code = String(row.code);
+      const name = String(row.name);
+      const explicitProvince = String(row.province);
+      const province = prefixToProvince.get(explicitProvince);
+      if (!province || explicitProvince !== code.slice(0, 2)) {
+        throw new Error(`city "${code} ${name}" references province "${row.province}" inconsistent with its code`);
+      }
+      return { code, name, province: province.name, aliases: [] };
+    })
+    // Drop province/region directly administered county-level placeholder rows
+    // (see DIRECTLY_ADMINISTERED_COUNTY_MARKER) so the catalog only contains
+    // real prefecture-level cities.
+    .filter((city) => !city.name.includes(DIRECTLY_ADMINISTERED_COUNTY_MARKER));
   assertUnique(cities, "city", (entry) => entry.code);
 
   // Municipality / special-region / Taiwan compatibility entries.
@@ -219,6 +417,21 @@ function normalizeLocationRows(provinceRows, cityRows) {
       }
     } else {
       cities.push({ code: province.code, name: spec.cityName, province: province.name, aliases: [...spec.aliases] });
+    }
+  }
+
+  // Legacy aliases from the deleted hand-maintained catalog, keyed by canonical
+  // city name. Merged only into matching rows — never synthesized — so the
+  // prefecture-level scope of the catalog is preserved and city codes stay
+  // unique. Suffix-free aliases are kept as-is (never suppressed).
+  const legacyAliasesByCityName = new Map(
+    LEGACY_CITY_ALIASES.map(({ cityName, aliases }) => [cityName, aliases]),
+  );
+  for (const city of cities) {
+    const legacyAliases = legacyAliasesByCityName.get(city.name);
+    if (!legacyAliases) continue;
+    for (const alias of legacyAliases) {
+      if (!city.aliases.includes(alias)) city.aliases.push(alias);
     }
   }
 
@@ -254,7 +467,9 @@ function renderCatalog({ provinces, cities }, version) {
  *
  * This file is checked in and ships to browsers as static data. It contains
  * province and prefecture-level city data only; district and town data is never
- * loaded during synchronization. Regenerate it with:
+ * loaded during synchronization. Province/region directly administered
+ * county-level placeholder rows (e.g. \`河南省-省直辖县级行政区划\`) are excluded
+ * from the city catalog. Regenerate it with:
  *
  *   npm run data:sync:china-locations [-- --version <semver>]
  */

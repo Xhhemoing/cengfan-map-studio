@@ -199,6 +199,64 @@ describe("sync-china-locations generator", () => {
     expect(output.match(/name: "北京市", province: "北京市"/g)).toHaveLength(1);
   });
 
+  it("merges legacy aliases into matching normal city rows without synthesizing new rows", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [
+        { code: "220000", name: "吉林省", province: "22" },
+        { code: "330000", name: "浙江省", province: "33" },
+        { code: "530000", name: "云南省", province: "53" },
+      ],
+      cityRows: [
+        { code: "222400", name: "延边朝鲜族自治州", province: "22", city: "24" },
+        { code: "330100", name: "杭州市", province: "33", city: "01" },
+        { code: "532900", name: "大理白族自治州", province: "53", city: "29" },
+      ],
+    });
+
+    const result = await syncChinaLocations({ version: "8.5.8", fetch, outputPath: outputPath() });
+
+    // Legacy aliases land on the matching normal (non-compatibility) city rows;
+    // legacy keys without an upstream match never synthesize extra rows, and
+    // suffix-free aliases (杭州) are preserved rather than suppressed.
+    expect(result.cities).toBe(3);
+    const output = await readFile(outputPath(), "utf8");
+    expect(output).toContain('{ code: "222400", name: "延边朝鲜族自治州", province: "吉林省", aliases: ["延边"] }');
+    expect(output).toContain('{ code: "532900", name: "大理白族自治州", province: "云南省", aliases: ["大理"] }');
+    expect(output).toContain('{ code: "330100", name: "杭州市", province: "浙江省", aliases: ["杭州"] }');
+    expect(output.match(/name: "延边朝鲜族自治州"/g)).toHaveLength(1);
+    expect(output).not.toContain("敦煌市");
+  });
+
+  it("excludes province/region directly administered county-level placeholder rows from the city catalog", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [
+        { code: "410000", name: "河南省", province: "41" },
+        { code: "420000", name: "湖北省", province: "42" },
+        { code: "460000", name: "海南省", province: "46" },
+        { code: "650000", name: "新疆维吾尔自治区", province: "65" },
+      ],
+      cityRows: [
+        { code: "410100", name: "郑州市", province: "41", city: "01" },
+        // Upstream administrative placeholder buckets, NOT prefecture-level cities.
+        { code: "419000", name: "河南省-省直辖县级行政区划", province: "41", city: "90" },
+        { code: "429000", name: "湖北省-自治区直辖县级行政区划", province: "42", city: "90" },
+        { code: "469000", name: "海南省-自治区直辖县级行政区划", province: "46", city: "90" },
+        { code: "659000", name: "新疆维吾尔自治区-自治区直辖县级行政区划", province: "65", city: "90" },
+      ],
+    });
+
+    const result = await syncChinaLocations({ version: "8.5.8", fetch, outputPath: outputPath() });
+
+    // Real prefecture-level cities stay; rows whose name denotes directly
+    // administered county-level divisions (contains 直辖县级行政区划) are
+    // dropped so search never surfaces a fake "city".
+    expect(result).toEqual({ version: "8.5.8", provinces: 4, cities: 1 });
+    const output = await readFile(outputPath(), "utf8");
+    expect(output).toContain('name: "郑州市"');
+    expect(output).not.toMatch(/name: ".*直辖县级行政区划/);
+    expect(output).not.toContain("419000");
+  });
+
   it("orders provinces and cities deterministically by code", async () => {
     const { fetch } = makeRegistry({
       provinceRows: [

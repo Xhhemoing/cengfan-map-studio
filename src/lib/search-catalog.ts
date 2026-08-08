@@ -1,4 +1,4 @@
-import { chinaCities, type CityCatalogEntry } from "../data/china-cities";
+import { chinaCities, chinaProvinces, type CityCatalogEntry } from "../data/china-locations";
 import {
   chinaUniversities,
   type UniversityCatalogEntry,
@@ -72,9 +72,8 @@ export function searchUniversities(query: string, limit = 8): UniversityCatalogE
 }
 
 export function searchProvinces(query: string, limit = 8): string[] {
-  const uniqueProvinces = [...new Set(chinaCities.map((entry) => entry.province))];
   return searchCatalog(
-    uniqueProvinces.map((province) => ({ name: province, aliases: [] })),
+    chinaProvinces.map((province) => ({ name: province.name, aliases: [] })),
     query,
     limit,
   ).map((entry) => entry.name);
