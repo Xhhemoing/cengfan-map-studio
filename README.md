@@ -34,6 +34,19 @@ AI agent 使用 OpenAI 兼容接口。旧变量 `AI_API_KEY`、`AI_BASE_URL`、`
 
 重操作(测试/lint/build)经 `scripts/run-heavy.mjs` 串行化,避免多任务并发争抢小内存 VM。
 
+## 行政区划数据(省/市)
+
+浏览器使用的省/市目录是**检入仓库的静态数据** `src/data/china-locations.ts`:构建与运行时直接读取该文件,**不会发起任何运行时位置数据请求**。目录主体为省级与地级市(州/盟)数据,并可能包含极少量有明确边界的县级/历史兼容记录(如 `济源市`),仅用于保持历史导入的旧城市名可解析;**不含任何区县/乡镇载荷**(省/自治区直辖县级行政区划等占位行也会被排除)。
+
+仅在需要维护/升级目录时,才运行同步脚本(此时才会从 npm 下载 `province-city-china` 包):
+
+```bash
+npm run data:sync:china-locations                # 同步到 latest 版本
+npm run data:sync:china-locations -- --version 8.5.8   # 固定版本,结果可复现
+```
+
+脚本只读取包内 `province.json` 与 `city.json`(从不触碰 district/town 数据),并在内存中校验通过后才覆盖静态文件;直辖市/港澳/台湾等兼容条目、历史别名与县级/历史兼容记录由脚本在生成时合成。
+
 ## 目录结构
 
 - `src/` — React 前端(`App.tsx` 编辑器画布,`components/ProjectWorkbench.tsx` 项目工作台,`components/` 组件,`lib/` 工具与 AI 客户端(含 IndexedDB 项目存储),`data/` 静态数据)

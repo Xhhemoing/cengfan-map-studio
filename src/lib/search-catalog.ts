@@ -1,4 +1,4 @@
-import { chinaCities, type CityCatalogEntry } from "../data/china-cities";
+import { chinaCities, chinaProvinces, type CityCatalogEntry } from "../data/china-locations";
 import {
   chinaUniversities,
   type UniversityCatalogEntry,
@@ -24,6 +24,19 @@ function getSearchVariants(value: string): string[] {
   return withoutSuffix && withoutSuffix !== normalized
     ? [normalized, withoutSuffix]
     : [normalized];
+}
+
+/**
+ * Suffix-free short form used by exact city resolution ONLY. Unlike the
+ * province-only `toShortProvinceName` in map-data.ts, city resolution must also
+ * strip the generic prefecture markers `州` / `地区` / `盟` so inputs like `阿里`
+ * and `兴安` resolve to `阿里地区` / `兴安盟` exactly as `searchCities` finds them.
+ */
+const CITY_SUFFIXES = ["特别行政区", "自治区", "自治州", "地区", "盟", "州", "市"];
+
+function toShortCityName(name: string): string {
+  const suffix = CITY_SUFFIXES.find((candidate) => name.endsWith(candidate));
+  return suffix ? name.slice(0, -suffix.length) : name;
 }
 
 function getMatchRank(query: string, value: string): number | null {
@@ -72,16 +85,15 @@ export function searchUniversities(query: string, limit = 8): UniversityCatalogE
 }
 
 export function searchProvinces(query: string, limit = 8): string[] {
-  const uniqueProvinces = [...new Set(chinaCities.map((entry) => entry.province))];
   return searchCatalog(
-    uniqueProvinces.map((province) => ({ name: province, aliases: [] })),
+    chinaProvinces.map((province) => ({ name: province.name, aliases: [] })),
     query,
     limit,
   ).map((entry) => entry.name);
 }
 
 function cityMatchesInput(entry: CityCatalogEntry, normalizedInput: string): boolean {
-  const cityNames = [entry.name, ...entry.aliases, toShortProvinceName(entry.name)]
+  const cityNames = [entry.name, ...entry.aliases, toShortCityName(entry.name)]
     .map(normalizeCatalogText);
   if (cityNames.includes(normalizedInput)) return true;
 
