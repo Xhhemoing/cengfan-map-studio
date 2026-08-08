@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { chinaCities } from "../data/china-locations";
 import {
   resolveCity,
   resolveProvinceName,
   searchCities,
   searchProvinces,
   searchUniversities,
+  type CityResolution,
 } from "./search-catalog";
 
 describe("local search catalog", () => {
@@ -45,11 +47,21 @@ describe("local search catalog", () => {
     expect(searchUniversities("大学", 2)).toHaveLength(2);
   });
 
-  it("resolves Hong Kong, Macau, Taipei and Weihai", () => {
-    expect(resolveCity("香港")).toMatchObject({ city: "香港特别行政区", province: "香港特别行政区", status: "resolved" });
-    expect(resolveCity("澳门")).toMatchObject({ city: "澳门特别行政区", province: "澳门特别行政区", status: "resolved" });
-    expect(resolveCity("台北")).toMatchObject({ city: "台北市", province: "台湾省", status: "resolved" });
-    expect(resolveCity("威海")).toMatchObject({ city: "威海市", province: "山东省", status: "resolved" });
+  it.each<[input: string, expected: CityResolution]>([
+    // Beijing municipality: alias resolves to the municipal city/province pair.
+    ["北京", { city: "北京市", province: "北京市", status: "resolved" }],
+    // Special regions and Taiwan compatibility rows.
+    ["香港", { city: "香港特别行政区", province: "香港特别行政区", status: "resolved" }],
+    ["澳门", { city: "澳门特别行政区", province: "澳门特别行政区", status: "resolved" }],
+    ["台北", { city: "台北市", province: "台湾省", status: "resolved" }],
+    // A normal upstream prefecture-level city with a legacy alias.
+    ["威海", { city: "威海市", province: "山东省", status: "resolved" }],
+    // Province-prefixed city input.
+    ["广东深圳", { city: "深圳市", province: "广东省", status: "resolved" }],
+    // Unknown/custom city stays unresolved with the original name.
+    ["自定义火星城", { city: "自定义火星城", province: "", status: "unresolved" }],
+  ])('resolves the compatibility input "%s" to the expected city/province pair', (input, expected) => {
+    expect(resolveCity(input)).toEqual(expected);
   });
 
   it("resolves a city omitted from the old hand-maintained catalog", () => {
@@ -82,11 +94,10 @@ describe("local search catalog", () => {
     expect(searchProvinces("西藏", 5)).toEqual(["西藏自治区"]);
   });
 
-  it("does not surface the directly administered county placeholder as a city", () => {
-    const results = searchCities("河南", 5);
+  it("excludes every directly administered county placeholder from the generated city catalog", () => {
+    const placeholders = chinaCities.filter((city) => city.name.includes("直辖县级行政区划"));
 
-    expect(results.map((city) => city.name)).not.toContain("河南省-省直辖县级行政区划");
-    expect(results.every((city) => !city.name.includes("直辖县级行政区划"))).toBe(true);
+    expect(placeholders).toEqual([]);
   });
 
   describe("resolveProvinceName", () => {
