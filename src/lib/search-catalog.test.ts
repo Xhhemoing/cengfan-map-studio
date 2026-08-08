@@ -90,6 +90,33 @@ describe("local search catalog", () => {
     });
   });
 
+  it("resolves 州/地区/盟 cities exactly as search finds them", () => {
+    expect(resolveCity("阿里")).toMatchObject({
+      city: "阿里地区",
+      province: "西藏自治区",
+      status: "resolved",
+    });
+    expect(resolveCity("兴安")).toMatchObject({
+      city: "兴安盟",
+      province: "内蒙古自治区",
+      status: "resolved",
+    });
+  });
+
+  it.each<[input: string, expected: CityResolution]>([
+    // Legacy county-level/historical city labels preserved for backwards-compatible importing:
+    // 莱芜 merged into 济南市 in 2019; 敦煌/格尔木/喀什/伊宁 are county-level cities that
+    // resolve to their canonical upstream prefecture; 济源 keeps a standalone compatibility row.
+    ["莱芜", { city: "济南市", province: "山东省", status: "resolved" }],
+    ["济源", { city: "济源市", province: "河南省", status: "resolved" }],
+    ["敦煌", { city: "酒泉市", province: "甘肃省", status: "resolved" }],
+    ["格尔木", { city: "海西蒙古族藏族自治州", province: "青海省", status: "resolved" }],
+    ["喀什", { city: "喀什地区", province: "新疆维吾尔自治区", status: "resolved" }],
+    ["伊宁", { city: "伊犁哈萨克自治州", province: "新疆维吾尔自治区", status: "resolved" }],
+  ])('resolves the legacy compatibility input "%s" to its canonical city/province pair', (input, expected) => {
+    expect(resolveCity(input)).toEqual(expected);
+  });
+
   it("searches every generated province even without a matching city", () => {
     expect(searchProvinces("西藏", 5)).toEqual(["西藏自治区"]);
   });

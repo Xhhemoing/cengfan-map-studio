@@ -61,7 +61,10 @@ const COMPATIBILITY_CITIES = [
  * `toShortProvinceName` derives the same short form at runtime.
  */
 const LEGACY_CITY_ALIASES = [
-// 168 legacy city entries (168 aliases) from the deleted hand-maintained catalog.
+// 162 legacy city entries (162 aliases) from the deleted hand-maintained catalog
+// whose rows still exist upstream. The six historical labels without an upstream
+// prefecture row (莱芜/济源/敦煌/格尔木/喀什/伊宁) live in
+// LEGACY_CITY_COMPATIBILITY below instead.
   { cityName: "杭州市", aliases: ["杭州"] },
   { cityName: "宁波市", aliases: ["宁波"] },
   { cityName: "温州市", aliases: ["温州"] },
@@ -126,7 +129,6 @@ const LEGACY_CITY_ALIASES = [
   { cityName: "滨州市", aliases: ["滨州"] },
   { cityName: "东营市", aliases: ["东营"] },
   { cityName: "枣庄市", aliases: ["枣庄"] },
-  { cityName: "莱芜市", aliases: ["莱芜"] },
   { cityName: "合肥市", aliases: ["合肥"] },
   { cityName: "芜湖市", aliases: ["芜湖"] },
   { cityName: "蚌埠市", aliases: ["蚌埠"] },
@@ -151,7 +153,6 @@ const LEGACY_CITY_ALIASES = [
   { cityName: "濮阳市", aliases: ["濮阳"] },
   { cityName: "三门峡市", aliases: ["三门峡"] },
   { cityName: "鹤壁市", aliases: ["鹤壁"] },
-  { cityName: "济源市", aliases: ["济源"] },
   { cityName: "石家庄市", aliases: ["石家庄"] },
   { cityName: "唐山市", aliases: ["唐山"] },
   { cityName: "保定市", aliases: ["保定"] },
@@ -199,17 +200,13 @@ const LEGACY_CITY_ALIASES = [
   { cityName: "天水市", aliases: ["天水"] },
   { cityName: "酒泉市", aliases: ["酒泉"] },
   { cityName: "张掖市", aliases: ["张掖"] },
-  { cityName: "敦煌市", aliases: ["敦煌"] },
   { cityName: "银川市", aliases: ["银川"] },
   { cityName: "石嘴山市", aliases: ["石嘴山"] },
   { cityName: "中卫市", aliases: ["中卫"] },
   { cityName: "西宁市", aliases: ["西宁"] },
   { cityName: "海东市", aliases: ["海东"] },
-  { cityName: "格尔木市", aliases: ["格尔木"] },
   { cityName: "乌鲁木齐市", aliases: ["乌鲁木齐"] },
   { cityName: "克拉玛依市", aliases: ["克拉玛依"] },
-  { cityName: "喀什市", aliases: ["喀什"] },
-  { cityName: "伊宁市", aliases: ["伊宁"] },
   { cityName: "拉萨市", aliases: ["拉萨"] },
   { cityName: "日喀则市", aliases: ["日喀则"] },
   { cityName: "林芝市", aliases: ["林芝"] },
@@ -230,6 +227,81 @@ const LEGACY_CITY_ALIASES = [
   { cityName: "运城市", aliases: ["运城"] },
   { cityName: "朔州市", aliases: ["朔州"] },
   { cityName: "阳泉市", aliases: ["阳泉"] },
+];
+
+/**
+ * Historical/county-level city labels preserved ONLY for backwards-compatible
+ * student-data importing. The six labels below existed in the deleted
+ * hand-maintained catalog (baseline commit 49e462b) but have no upstream
+ * prefecture-level city row in `province-city-china@8.5.8`, so without them the
+ * catalog would silently stop resolving these inputs.
+ *
+ * Each entry carries the canonical compatibility `name`, the canonical map
+ * `province`, the accepted `aliases`, and the official administrative `code`
+ * where one is known (documentation only for mapped rows).
+ *
+ * - `mapsToCity`: the alias set is merged into that canonical upstream
+ *   prefecture row (same province); it never synthesizes a new row, so the
+ *   catalog stays province/prefecture-level and district/town payloads are
+ *   never read. Entries are skipped when the anchor prefecture is absent,
+ *   mirroring COMPATIBILITY_CITIES; consumer resolveCity tests guard the
+ *   checked-in catalog against silent regression.
+ * - no `mapsToCity`: the label is kept as a standalone legacy compatibility row
+ *   with its official code. This is used only for 济源, whose real
+ *   county-level status (directly administered by 河南省) cannot be represented
+ *   by any upstream prefecture without false geography.
+ */
+const LEGACY_CITY_COMPATIBILITY = [
+  {
+    // 莱芜市 was a prefecture-level city (code 371200) until it merged into
+    // 济南市 in 2019. The input alias must keep resolving to the successor.
+    name: "莱芜市",
+    province: "山东省",
+    aliases: ["莱芜"],
+    code: "371200",
+    mapsToCity: "济南市",
+  },
+  {
+    // 济源市 is a county-level city directly administered by 河南省 (national
+    // code 419001). No upstream prefecture can represent it without false
+    // geography, so it stays a standalone legacy compatibility record only.
+    name: "济源市",
+    province: "河南省",
+    aliases: ["济源"],
+    code: "419001",
+  },
+  {
+    // 敦煌市 (county-level, code 620982) belongs to 酒泉市.
+    name: "敦煌市",
+    province: "甘肃省",
+    aliases: ["敦煌"],
+    code: "620982",
+    mapsToCity: "酒泉市",
+  },
+  {
+    // 格尔木市 (county-level, code 632801) belongs to 海西蒙古族藏族自治州.
+    name: "格尔木市",
+    province: "青海省",
+    aliases: ["格尔木"],
+    code: "632801",
+    mapsToCity: "海西蒙古族藏族自治州",
+  },
+  {
+    // 喀什市 (county-level, code 653101) belongs to 喀什地区.
+    name: "喀什市",
+    province: "新疆维吾尔自治区",
+    aliases: ["喀什"],
+    code: "653101",
+    mapsToCity: "喀什地区",
+  },
+  {
+    // 伊宁市 (county-level, code 654002) belongs to 伊犁哈萨克自治州.
+    name: "伊宁市",
+    province: "新疆维吾尔自治区",
+    aliases: ["伊宁"],
+    code: "654002",
+    mapsToCity: "伊犁哈萨克自治州",
+  },
 ];
 
 /**
@@ -403,7 +475,6 @@ function normalizeLocationRows(provinceRows, cityRows) {
     // (see DIRECTLY_ADMINISTERED_COUNTY_MARKER) so the catalog only contains
     // real prefecture-level cities.
     .filter((city) => !city.name.includes(DIRECTLY_ADMINISTERED_COUNTY_MARKER));
-  assertUnique(cities, "city", (entry) => entry.code);
 
   // Municipality / special-region / Taiwan compatibility entries.
   const provinceByName = new Map(provinces.map((province) => [province.name, province]));
@@ -434,6 +505,47 @@ function normalizeLocationRows(provinceRows, cityRows) {
       if (!city.aliases.includes(alias)) city.aliases.push(alias);
     }
   }
+
+  // Legacy county-level/historical city labels preserved for backwards-compatible
+  // importing. Mapped entries attach their aliases to the canonical upstream
+  // prefecture; the standalone entry (济源) is synthesized only when its province
+  // exists. This never reads district/town payloads and never invents rows that
+  // could collide with upstream data (uniqueness is asserted below).
+  for (const legacy of LEGACY_CITY_COMPATIBILITY) {
+    if (legacy.mapsToCity) {
+      // Attach the historical aliases to the canonical upstream prefecture. If
+      // that prefecture is absent the entry is skipped, mirroring how
+      // COMPATIBILITY_CITIES behaves for a missing anchor province; the
+      // checked-in catalog is guarded by consumer resolveCity tests, so a
+      // regression upstream can never silently break existing import resolution.
+      const target = cities.find(
+        (city) => city.name === legacy.mapsToCity && city.province === legacy.province,
+      );
+      if (!target) continue;
+      for (const alias of legacy.aliases) {
+        if (!target.aliases.includes(alias)) target.aliases.push(alias);
+      }
+    } else {
+      if (!provinceByName.has(legacy.province)) continue;
+      const existing = cities.find(
+        (city) => city.name === legacy.name && city.province === legacy.province,
+      );
+      const row = existing ?? {
+        code: legacy.code,
+        name: legacy.name,
+        province: legacy.province,
+        aliases: [],
+      };
+      if (!existing) cities.push(row);
+      for (const alias of legacy.aliases) {
+        if (!row.aliases.includes(alias)) row.aliases.push(alias);
+      }
+    }
+  }
+
+  // City codes must stay unique after ALL upstream, municipality/SAR/Taipei and
+  // legacy compatibility rows have been added — they share one namespace.
+  assertUnique(cities, "city", (entry) => entry.code);
 
   provinces.sort(compareByCode);
   cities.sort(compareByCode);
@@ -466,10 +578,13 @@ function renderCatalog({ provinces, cities }, version) {
  * China province/city catalog generated from the \`province-city-china\` npm package.
  *
  * This file is checked in and ships to browsers as static data. It contains
- * province and prefecture-level city data only; district and town data is never
- * loaded during synchronization. Province/region directly administered
+ * province and prefecture-level city/prefecture data; district and town data is
+ * never loaded during synchronization. Province/region directly administered
  * county-level placeholder rows (e.g. \`河南省-省直辖县级行政区划\`) are excluded
- * from the city catalog. Regenerate it with:
+ * from the city catalog. A narrowly scoped set of historic/county-level
+ * compatibility rows (e.g. \`济源市\`, code 419001) is kept solely so legacy
+ * imported city names keep resolving; these rows are not prefecture-level.
+ * Regenerate it with:
  *
  *   npm run data:sync:china-locations [-- --version <semver>]
  */
@@ -482,9 +597,9 @@ export interface ProvinceCatalogEntry {
 }
 
 export interface CityCatalogEntry {
-  /** Six-digit prefecture-level code, e.g. "330100". */
+  /** Six-digit national administrative division code, e.g. "330100". Not always a prefecture-level code: legacy compatibility rows carry their official county-level codes (e.g. "419001" for 济源市). */
   code: string;
-  /** Canonical prefecture-level city name, e.g. "杭州市". */
+  /** Canonical city/prefecture name, e.g. "杭州市", or a legacy import-compatibility label (e.g. "济源市"). */
   name: string;
   /** Canonical province name the city belongs to, e.g. "浙江省". */
   province: string;

@@ -2,10 +2,13 @@
  * China province/city catalog generated from the `province-city-china` npm package.
  *
  * This file is checked in and ships to browsers as static data. It contains
- * province and prefecture-level city data only; district and town data is never
- * loaded during synchronization. Province/region directly administered
+ * province and prefecture-level city/prefecture data; district and town data is
+ * never loaded during synchronization. Province/region directly administered
  * county-level placeholder rows (e.g. `河南省-省直辖县级行政区划`) are excluded
- * from the city catalog. Regenerate it with:
+ * from the city catalog. A narrowly scoped set of historic/county-level
+ * compatibility rows (e.g. `济源市`, code 419001) is kept solely so legacy
+ * imported city names keep resolving; these rows are not prefecture-level.
+ * Regenerate it with:
  *
  *   npm run data:sync:china-locations [-- --version <semver>]
  */
@@ -18,9 +21,9 @@ export interface ProvinceCatalogEntry {
 }
 
 export interface CityCatalogEntry {
-  /** Six-digit prefecture-level code, e.g. "330100". */
+  /** Six-digit national administrative division code, e.g. "330100". Not always a prefecture-level code: legacy compatibility rows carry their official county-level codes (e.g. "419001" for 济源市). */
   code: string;
-  /** Canonical prefecture-level city name, e.g. "杭州市". */
+  /** Canonical city/prefecture name, e.g. "杭州市", or a legacy import-compatibility label (e.g. "济源市"). */
   name: string;
   /** Canonical province name the city belongs to, e.g. "浙江省". */
   province: string;
@@ -202,7 +205,7 @@ export const chinaCities: CityCatalogEntry[] = [
   { code: "360900", name: "宜春市", province: "江西省", aliases: [] },
   { code: "361000", name: "抚州市", province: "江西省", aliases: [] },
   { code: "361100", name: "上饶市", province: "江西省", aliases: ["上饶"] },
-  { code: "370100", name: "济南市", province: "山东省", aliases: ["济南"] },
+  { code: "370100", name: "济南市", province: "山东省", aliases: ["济南", "莱芜"] },
   { code: "370200", name: "青岛市", province: "山东省", aliases: ["青岛"] },
   { code: "370300", name: "淄博市", province: "山东省", aliases: ["淄博"] },
   { code: "370400", name: "枣庄市", province: "山东省", aliases: ["枣庄"] },
@@ -235,6 +238,7 @@ export const chinaCities: CityCatalogEntry[] = [
   { code: "411500", name: "信阳市", province: "河南省", aliases: ["信阳"] },
   { code: "411600", name: "周口市", province: "河南省", aliases: ["周口"] },
   { code: "411700", name: "驻马店市", province: "河南省", aliases: ["驻马店"] },
+  { code: "419001", name: "济源市", province: "河南省", aliases: ["济源"] },
   { code: "420100", name: "武汉市", province: "湖北省", aliases: ["武汉"] },
   { code: "420200", name: "黄石市", province: "湖北省", aliases: [] },
   { code: "420300", name: "十堰市", province: "湖北省", aliases: [] },
@@ -373,7 +377,7 @@ export const chinaCities: CityCatalogEntry[] = [
   { code: "620600", name: "武威市", province: "甘肃省", aliases: [] },
   { code: "620700", name: "张掖市", province: "甘肃省", aliases: ["张掖"] },
   { code: "620800", name: "平凉市", province: "甘肃省", aliases: [] },
-  { code: "620900", name: "酒泉市", province: "甘肃省", aliases: ["酒泉"] },
+  { code: "620900", name: "酒泉市", province: "甘肃省", aliases: ["酒泉", "敦煌"] },
   { code: "621000", name: "庆阳市", province: "甘肃省", aliases: [] },
   { code: "621100", name: "定西市", province: "甘肃省", aliases: [] },
   { code: "621200", name: "陇南市", province: "甘肃省", aliases: [] },
@@ -386,7 +390,7 @@ export const chinaCities: CityCatalogEntry[] = [
   { code: "632500", name: "海南藏族自治州", province: "青海省", aliases: [] },
   { code: "632600", name: "果洛藏族自治州", province: "青海省", aliases: [] },
   { code: "632700", name: "玉树藏族自治州", province: "青海省", aliases: [] },
-  { code: "632800", name: "海西蒙古族藏族自治州", province: "青海省", aliases: [] },
+  { code: "632800", name: "海西蒙古族藏族自治州", province: "青海省", aliases: ["格尔木"] },
   { code: "640100", name: "银川市", province: "宁夏回族自治区", aliases: ["银川"] },
   { code: "640200", name: "石嘴山市", province: "宁夏回族自治区", aliases: ["石嘴山"] },
   { code: "640300", name: "吴忠市", province: "宁夏回族自治区", aliases: [] },
@@ -401,9 +405,9 @@ export const chinaCities: CityCatalogEntry[] = [
   { code: "652800", name: "巴音郭楞蒙古自治州", province: "新疆维吾尔自治区", aliases: [] },
   { code: "652900", name: "阿克苏地区", province: "新疆维吾尔自治区", aliases: [] },
   { code: "653000", name: "克孜勒苏柯尔克孜自治州", province: "新疆维吾尔自治区", aliases: [] },
-  { code: "653100", name: "喀什地区", province: "新疆维吾尔自治区", aliases: [] },
+  { code: "653100", name: "喀什地区", province: "新疆维吾尔自治区", aliases: ["喀什"] },
   { code: "653200", name: "和田地区", province: "新疆维吾尔自治区", aliases: [] },
-  { code: "654000", name: "伊犁哈萨克自治州", province: "新疆维吾尔自治区", aliases: [] },
+  { code: "654000", name: "伊犁哈萨克自治州", province: "新疆维吾尔自治区", aliases: ["伊宁"] },
   { code: "654200", name: "塔城地区", province: "新疆维吾尔自治区", aliases: [] },
   { code: "654300", name: "阿勒泰地区", province: "新疆维吾尔自治区", aliases: [] },
   { code: "710000", name: "台北市", province: "台湾省", aliases: ["台北"] },

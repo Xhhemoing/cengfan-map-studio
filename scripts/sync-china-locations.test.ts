@@ -227,6 +227,56 @@ describe("sync-china-locations generator", () => {
     expect(output).not.toContain("敦煌市");
   });
 
+  it("emits each legacy compatibility alias exactly once on its canonical prefecture", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [
+        { code: "370000", name: "山东省", province: "37" },
+        { code: "410000", name: "河南省", province: "41" },
+        { code: "620000", name: "甘肃省", province: "62" },
+        { code: "630000", name: "青海省", province: "63" },
+        { code: "650000", name: "新疆维吾尔自治区", province: "65" },
+      ],
+      cityRows: [
+        { code: "370100", name: "济南市", province: "37", city: "01" },
+        { code: "410100", name: "郑州市", province: "41", city: "01" },
+        { code: "620900", name: "酒泉市", province: "62", city: "09" },
+        { code: "632800", name: "海西蒙古族藏族自治州", province: "63", city: "28" },
+        { code: "653100", name: "喀什地区", province: "65", city: "31" },
+        { code: "654000", name: "伊犁哈萨克自治州", province: "65", city: "40" },
+      ],
+    });
+
+    const result = await syncChinaLocations({ version: "8.5.8", fetch, outputPath: outputPath() });
+
+    // The five naturally-mapped legacy labels land as aliases on their canonical
+    // upstream prefecture rows (codes stay upstream); 济源 has no natural upstream
+    // prefecture, so it is synthesized as a standalone legacy compatibility row
+    // with its official national code 419001.
+    expect(result).toEqual({ version: "8.5.8", provinces: 5, cities: 7 });
+    const output = await readFile(outputPath(), "utf8");
+    expect(output).toContain('{ code: "370100", name: "济南市", province: "山东省", aliases: ["济南", "莱芜"] }');
+    expect(output).toContain('{ code: "620900", name: "酒泉市", province: "甘肃省", aliases: ["酒泉", "敦煌"] }');
+    expect(output).toContain('{ code: "632800", name: "海西蒙古族藏族自治州", province: "青海省", aliases: ["格尔木"] }');
+    expect(output).toContain('{ code: "653100", name: "喀什地区", province: "新疆维吾尔自治区", aliases: ["喀什"] }');
+    expect(output).toContain('{ code: "654000", name: "伊犁哈萨克自治州", province: "新疆维吾尔自治区", aliases: ["伊宁"] }');
+    expect(output).toContain('{ code: "419001", name: "济源市", province: "河南省", aliases: ["济源"] }');
+    // Every legacy compatibility alias appears exactly once in the generated catalog.
+    for (const alias of ["莱芜", "敦煌", "格尔木", "喀什", "伊宁", "济源"]) {
+      expect(output.match(new RegExp(`"${alias}"`, "g"))).toHaveLength(1);
+    }
+  });
+
+  it("rejects a legacy compatibility code that collides with an existing row", async () => {
+    const { fetch } = makeRegistry({
+      provinceRows: [{ code: "410000", name: "河南省", province: "41" }],
+      // A pre-existing row claims the 济源 compatibility code 419001; uniqueness
+      // must be asserted after compatibility AND legacy rows are added.
+      cityRows: [{ code: "419001", name: "河南省直辖县级市", province: "41", city: "01" }],
+    });
+
+    await expect(syncChinaLocations({ fetch, outputPath: outputPath() })).rejects.toThrow(/duplicate city code/);
+  });
+
   it("excludes province/region directly administered county-level placeholder rows from the city catalog", async () => {
     const { fetch } = makeRegistry({
       provinceRows: [
@@ -249,10 +299,13 @@ describe("sync-china-locations generator", () => {
 
     // Real prefecture-level cities stay; rows whose name denotes directly
     // administered county-level divisions (contains 直辖县级行政区划) are
-    // dropped so search never surfaces a fake "city".
-    expect(result).toEqual({ version: "8.5.8", provinces: 4, cities: 1 });
+    // dropped so search never surfaces a fake "city". The 济源 legacy
+    // compatibility row (official code 419001, distinct from the dropped 419000
+    // placeholder) is synthesized because its 河南省 province is present.
+    expect(result).toEqual({ version: "8.5.8", provinces: 4, cities: 2 });
     const output = await readFile(outputPath(), "utf8");
     expect(output).toContain('name: "郑州市"');
+    expect(output).toContain('{ code: "419001", name: "济源市", province: "河南省", aliases: ["济源"] }');
     expect(output).not.toMatch(/name: ".*直辖县级行政区划/);
     expect(output).not.toContain("419000");
   });
