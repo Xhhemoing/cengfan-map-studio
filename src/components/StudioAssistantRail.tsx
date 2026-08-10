@@ -1,4 +1,3 @@
-import { RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AgentAssistant } from "./AgentAssistant";
 import type { UserAsset } from "../lib/assets";
@@ -24,9 +23,6 @@ export interface StudioAssistantRailProps {
   selection: SceneSelection;
   layoutIssues: LayoutHealthIssue[];
   onSelectElement: (selection: SceneSelection) => void;
-  onArrangeCards: (mode: "untouched" | "all") => void;
-  onRestoreCardPosition: (id: string) => void;
-  onRestoreAllCardPositions: () => void;
   onLocateLayoutIssue: (issue: LayoutHealthIssue) => void;
   onPreview: (project: ProjectDocument | null) => void;
   onCommit: (transaction: ProjectTransaction) => void;
@@ -80,9 +76,6 @@ export function StudioAssistantRail({
   selection,
   layoutIssues,
   onSelectElement,
-  onArrangeCards,
-  onRestoreCardPosition,
-  onRestoreAllCardPositions,
   onLocateLayoutIssue,
   onPreview,
   onCommit,
@@ -103,10 +96,6 @@ export function StudioAssistantRail({
       label: item.label,
     })),
   ], [project.assetElements, project.textElements]);
-  const manualPositionIds = useMemo(
-    () => Object.keys(project.cards.positions ?? {}).sort((left, right) => left.localeCompare(right)),
-    [project.cards.positions],
-  );
 
   return (
     <div className="studio-assistant-rail">
@@ -177,18 +166,6 @@ export function StudioAssistantRail({
                     ))}
                   </div>
                 </section>
-                <section className="studio-advanced__group" aria-label="智能排版控制">
-                  <h3>智能排版</h3>
-                  <p className="studio-advanced__hint">手调位置会保留。</p>
-                  <button type="button" className="wide-button action-button" aria-label="仅排未手调" onClick={() => onArrangeCards("untouched")}>仅排未手调</button>
-                  <button type="button" className="wide-button action-button" aria-label="全部重新排版" onClick={() => onArrangeCards("all")}>全部重新排版</button>
-                  {manualPositionIds.length > 0 && (
-                    <div className="studio-advanced__manual-positions" aria-label="手动位置">
-                      {manualPositionIds.map((id) => <button key={id} type="button" onClick={() => onRestoreCardPosition(id)}><span>{id}</span><RotateCcw size={13} aria-hidden /></button>)}
-                      <button type="button" onClick={onRestoreAllCardPositions}>恢复全部自动位置</button>
-                    </div>
-                  )}
-                </section>
                 <section className="studio-advanced__group" aria-label="排版问题提示">
                   <div className="studio-advanced__section-heading"><h3>排版问题</h3><small>{layoutIssues.length} 项</small></div>
                   {layoutIssues.length === 0 ? <p className="studio-advanced__hint">当前未发现明显问题。</p> : layoutIssues.map((issue) => <button key={issue.id} type="button" className="studio-advanced__issue" onClick={() => onLocateLayoutIssue(issue)}>{issue.detail}</button>)}
@@ -198,49 +175,43 @@ export function StudioAssistantRail({
             <section className="studio-advanced__group" aria-label="元素查看">
               <h3>元素查看</h3>
               <p className="studio-advanced__hint">定位画布、地图、数据框、文字和素材。</p>
-              <button type="button" className="wide-button action-button" aria-label="打开元素查看" onClick={() => setAdvancedView("elements")}>打开元素查看</button>
+              <button type="button" className="studio-advanced__action" aria-label="打开元素查看" onClick={() => setAdvancedView("elements")}>
+                <span>打开元素查看</span><small>画布元素 · 排版问题</small>
+              </button>
             </section>
             <section className="studio-advanced__group" aria-label="工程状态">
               <h3>工程状态</h3>
-              <ul className="studio-advanced__status">
-                <li><span>当前文档</span><strong>ProjectDocument</strong></li>
-                <li><span>学生名单</span><strong>{project.students.length} 条</strong></li>
-                <li><span>同步状态</span><strong>{SYNC_LABELS[syncStatus]}</strong></li>
-              </ul>
+              <div className="studio-advanced__meta-line"><span>同步状态</span><strong>{SYNC_LABELS[syncStatus]} · {project.students.length} 条名单</strong></div>
             </section>
             <section className="studio-advanced__group" aria-label="协作与邀请">
               <h3>协作与邀请</h3>
-              <ul className="studio-advanced__status">
-                <li><span>协作房间</span><strong>{collaboration.roomId ?? "未连接"}</strong></li>
-                <li><span>连接状态</span><strong>{COLLABORATION_LABELS[collaboration.status]}</strong></li>
-                <li><span>协作者</span><strong>{collaboration.participantCount} 人</strong></li>
-              </ul>
-              <button type="button" className="wide-button action-button" aria-label="管理协作与邀请" onClick={onOpenCollaboration}>管理协作与邀请</button>
+              <button type="button" className="studio-advanced__action" aria-label="管理协作与邀请" onClick={onOpenCollaboration}>
+                <span>管理协作与邀请</span>
+                <small>{collaboration.roomId
+                  ? `房间 ${collaboration.roomId} · ${COLLABORATION_LABELS[collaboration.status]}${collaboration.participantCount > 0 ? ` · ${collaboration.participantCount} 人` : ""}`
+                  : COLLABORATION_LABELS[collaboration.status]}</small>
+              </button>
             </section>
             <section className="studio-advanced__group" aria-label="数据诊断">
               <h3>数据诊断</h3>
-              <ul className="studio-advanced__status">
-                <li><span>数据告警</span><strong>{dataIssueCount > 0 ? `${dataIssueCount} 项` : "无"}</strong></li>
-              </ul>
-              <button type="button" className="wide-button action-button" aria-label="打开数据诊断" onClick={onOpenDataDiagnostics}>打开数据诊断</button>
+              <button type="button" className="studio-advanced__action" aria-label="打开数据诊断" onClick={onOpenDataDiagnostics}>
+                <span>打开数据诊断</span><small>{dataIssueCount > 0 ? `${dataIssueCount} 项告警` : "暂无告警"}</small>
+              </button>
             </section>
             <section className="studio-advanced__group" aria-label="渲染性能">
               <h3>渲染性能</h3>
-              <ul className="studio-advanced__status">
-                <li><span>渲染间隔</span><strong>{renderIntervalMs} ms</strong></li>
-              </ul>
-              <button type="button" className="wide-button action-button" aria-label="打开渲染设置" onClick={onOpenRenderSettings}>打开渲染设置</button>
+              <button type="button" className="studio-advanced__action" aria-label="打开渲染设置" onClick={onOpenRenderSettings}>
+                <span>打开渲染设置</span><small>{renderIntervalMs} ms 间隔</small>
+              </button>
             </section>
             <section className="studio-advanced__group" aria-label="开发者配置">
               <h3>开发者配置</h3>
-              <div className="studio-advanced__actions">
-                <button type="button" className="wide-button action-button" aria-label="打开全局设置" onClick={onOpenSettings}>
-                  项目配置与设置
-                </button>
-                <button type="button" className="wide-button action-button" aria-label="打开项目菜单" onClick={onOpenProject}>
-                  项目菜单
-                </button>
-              </div>
+              <button type="button" className="studio-advanced__action" aria-label="打开全局设置" onClick={onOpenSettings}>
+                <span>项目配置与设置</span><small>全局设置</small>
+              </button>
+              <button type="button" className="studio-advanced__action" aria-label="打开项目菜单" onClick={onOpenProject}>
+                <span>项目菜单</span><small>导入导出</small>
+              </button>
             </section>
             </>}
           </div>

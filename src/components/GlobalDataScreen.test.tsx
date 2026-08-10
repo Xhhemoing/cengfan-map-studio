@@ -42,7 +42,6 @@ function render(issues: DataIssue[] = []): { container: HTMLDivElement; onSelect
       dataViewLabel="省份卡片"
       selectedStudentId={null}
       onSelectStudent={onSelectStudent}
-      onClose={vi.fn()}
       onChangeDataView={vi.fn()}
       templates={[]}
       currentTemplateId="original"
@@ -70,6 +69,7 @@ describe("GlobalDataScreen", () => {
     const { container } = render();
 
     expect(container.querySelector('main[aria-label="全局数据工作台"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="返回编辑器"]')).toBeNull();
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(5);
     expect(container.textContent).toContain("数据总览");
     flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="名单管理"]')!.click());

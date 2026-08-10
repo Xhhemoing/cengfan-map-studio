@@ -78,7 +78,6 @@ export function WorkflowGuide({
   onSelectStep,
   onChangeDataView = () => {},
   onOpenGlobalSettings = () => {},
-  onArrangeCards = () => {},
   onApplyTemplate = () => {},
   onApplyCustomTemplate = () => {},
   onSaveTemplate = () => {},
@@ -114,7 +113,6 @@ export function WorkflowGuide({
   onSelectStep: (step: WorkflowStepId) => void;
   onChangeDataView?: (view: DataViewId) => void;
   onOpenGlobalSettings?: (section: GlobalSettingsSection) => void;
-  onArrangeCards?: () => void;
   onApplyTemplate?: (id: MapTemplateId) => void;
   onApplyCustomTemplate?: (record: { id: string; name: string; scope: "visual" | "layout" }) => void;
   onSaveTemplate?: () => void;
@@ -208,10 +206,7 @@ export function WorkflowGuide({
             <button type="button" onClick={() => onOpenGlobalSettings("guests")}>辅助板块</button>
             <button type="button" onClick={() => onOpenGlobalSettings("typography")}>字体排版</button>
           </div>
-          <button type="button" className="wide-button" onClick={onArrangeCards}>
-            一键智能排版
-          </button>
-          <p className="panel-note">模板决定整套地图元素；分区按钮打开对应全屏设置；智能排版会清除手动位置覆盖并重新执行地理布局。</p>
+          <p className="panel-note">模板决定整套地图元素；分区按钮打开对应全屏设置。</p>
         </section>
       )}
 

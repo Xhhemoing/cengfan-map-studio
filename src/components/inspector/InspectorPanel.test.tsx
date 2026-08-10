@@ -241,7 +241,6 @@ describe("InspectorPanel", () => {
         onPatch={onPatch}
         onReset={vi.fn()}
         onOpenGlobalSettings={vi.fn()}
-        onArrangeCards={vi.fn()}
         onApplyFont={vi.fn()}
         onUploadFont={vi.fn()}
       />,
@@ -264,10 +263,10 @@ describe("InspectorPanel", () => {
     expect(container.querySelector("#map-land-color")).not.toBeNull();
 
     flushSync(() => root.render(
-      <InspectorPanel project={project} selection={{ type: "cards" }} provinces={["北京市"]} onPatch={onPatch} onReset={vi.fn()} onOpenGlobalSettings={vi.fn()} onArrangeCards={vi.fn()} onApplyFont={vi.fn()} />,
+      <InspectorPanel project={project} selection={{ type: "cards" }} provinces={["北京市"]} onPatch={onPatch} onReset={vi.fn()} onOpenGlobalSettings={vi.fn()} onApplyFont={vi.fn()} />,
     ));
     expect(container.querySelector("#cards-layout-mode")).not.toBeNull();
-    expect(container.querySelector('button[aria-label="一键智能排版"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="一键智能排版"]')).toBeNull();
 
     flushSync(() => root.render(
       <InspectorPanel project={project} selection={{ type: "guests" }} provinces={["北京市"]} onPatch={onPatch} onReset={vi.fn()} onOpenGlobalSettings={vi.fn()} onApplyFont={vi.fn()} />,

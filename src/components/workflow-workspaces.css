@@ -21,7 +21,7 @@
 .template-workspace__header { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 18px; padding: 14px 24px; background: var(--editor-surface); border-bottom: 1px solid var(--editor-line); }
 .template-workspace__status { display: flex; align-items: baseline; gap: 6px; padding: 9px 12px; justify-self: end; background: var(--editor-surface-muted); border: 1px solid var(--editor-line); border-radius: 6px; }
 .template-workspace__status strong { color: var(--editor-accent); font-size: 18px; }
-.template-workspace__layout { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); min-height: 0; }
+.template-workspace__layout { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
 .template-workspace__catalog { min-width: 0; padding: 18px; overflow: auto; background: var(--editor-surface-muted); border-right: 1px solid var(--editor-line); }
 .template-workspace__catalog-heading { display: flex; justify-content: space-between; align-items: baseline; }
 .template-workspace__catalog-heading h2 { margin: 0 0 12px; font-size: 16px; }
@@ -49,7 +49,7 @@
 .delivery-workspace__status { padding: 8px 12px; justify-self: end; color: var(--editor-ink-muted); background: var(--editor-surface); border: 1px solid var(--editor-line); border-radius: 6px; }
 .delivery-workspace__status[data-export-state="success"] { color: #17675c; border-color: #86b8ae; }
 .delivery-workspace__status[data-export-state="error"] { color: #a33c30; border-color: #e3a39a; }
-.delivery-workspace__body { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); gap: 20px; max-width: 1500px; margin: 0 auto; }
+.delivery-workspace__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; max-width: 1500px; margin: 0 auto; }
 .delivery-workspace__checks { display: grid; align-content: start; gap: 10px; }
 .delivery-workspace__checks-title { margin: 0 0 2px; font-size: 16px; }
 .delivery-workspace__check, .delivery-workspace__controls, .delivery-workspace__error { padding: 14px; background: var(--editor-surface); border: 1px solid var(--editor-line); border-radius: 7px; }

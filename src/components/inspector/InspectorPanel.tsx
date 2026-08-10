@@ -12,7 +12,7 @@ import { AssetInspector } from "./AssetInspector";
 import { ProvinceInspector } from "./ProvinceInspector";
 import { TypographyPanel } from "../TypographyPanel";
 import type { ReactNode } from "react";
-import { LayoutDashboard, Settings2 } from "lucide-react";
+import { Settings2 } from "lucide-react";
 import { CompactButton } from "../StudioUi";
 
 /** 全局设置分区（与 GlobalSettingsScreen.sections 保持一致）。 */
@@ -32,7 +32,7 @@ const DEFAULT_GUESTS: GuestPanelSettings = {
   people: [],
 };
 
-export function InspectorPanel({ project, selection, userFonts = [], provinces = [], onPatch, onReset, onDeleteText, onDeleteAsset, onDuplicateAsset, onLayerChange, onAddUserAsset, onOpenGlobalSettings, onArrangeCards, onApplyFont, onUploadFont, onDeleteUserFont }: {
+export function InspectorPanel({ project, selection, userFonts = [], provinces = [], onPatch, onReset, onDeleteText, onDeleteAsset, onDuplicateAsset, onLayerChange, onAddUserAsset, onOpenGlobalSettings, onApplyFont, onUploadFont, onDeleteUserFont }: {
   project: ProjectDocument;
   selection: SceneSelection;
   userFonts?: UserFont[];
@@ -46,8 +46,6 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
   onAddUserAsset?: (asset: UserAsset) => void;
   /** 打开全屏全局设置（各面板完整控件已内联到右侧栏，此入口用于批量/高级配置）。 */
   onOpenGlobalSettings?: (section: GlobalSettingsSectionId) => void;
-  /** 一键智能排版数据框（卡片面板顶部）。 */
-  onArrangeCards?: () => void;
   onApplyFont?: (target: TypographyTarget, fontId: string, applyToAll: boolean) => void;
   onUploadFont?: (font: UserFont) => void;
   onDeleteUserFont?: (fontId: string) => void;
@@ -71,17 +69,12 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
 
     />;
   } else if (selection.type === "cards") {
-    panel = <>
-      {onArrangeCards && (
-        <CompactButton className="wide-button inspector-arrange-cards" icon={<LayoutDashboard size={14} aria-hidden />} aria-label="一键智能排版" onClick={onArrangeCards}>一键智能排版</CompactButton>
-      )}
-      <CardsInspector
-        cards={project.cards}
-        userFonts={userFonts}
-        onPatch={(patch) => onPatch(selection, patch)}
-        onReset={() => onReset(selection)}
-      />
-    </>;
+    panel = <CardsInspector
+      cards={project.cards}
+      userFonts={userFonts}
+      onPatch={(patch) => onPatch(selection, patch)}
+      onReset={() => onReset(selection)}
+    />;
   } else if (selection.type === "guests") {
     panel = <GuestsInspector guests={guests} onPatch={(patch) => onPatch(selection, patch)} />;
   } else if (selection.type === "text") {

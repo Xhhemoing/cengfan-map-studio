@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { App } from "../App";
@@ -6,6 +6,13 @@ import { editorProjectStore } from "../lib/editor-project-store";
 import { createSampleProject, type StoredProject } from "../lib/project-store";
 import { createCustomTemplateFromProject } from "../lib/template-store";
 import { LEGACY_EDITOR_STORAGE_KEY } from "../lib/workspace-session";
+
+// App.tsx lazy-loads the full-screen settings panel; preload its module so the
+// first test that opens it renders synchronously after a single act flush.
+beforeAll(async () => {
+  await import("../components/GlobalSettingsScreen");
+  await import("../components/workspaces/DataUploadWorkspace");
+});
 
 // jsdom 没有 IndexedDB;App 在 projectId 模式下会调用 editorProjectStore.get/put,
 // 必须注入内存 store,否则真实 store 的 get() 恒返回 null 导致项目缺失界面。
@@ -38,10 +45,18 @@ function openRailAdvancedTab(container: HTMLElement): void {
   click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="studio-advanced-panel"]')!);
 }
 
-function openPeopleData(container: HTMLElement): void {
+// GlobalSettingsScreen is lazy; flush the module-resolution microtask once after
+// opening the settings panel so synchronous follow-up clicks find its tabs.
+async function openPeopleDataAwaiting(container: HTMLElement): Promise<void> {
   openRailAdvancedTab(container);
   click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
+  const { act } = await import("react");
+  await act(async () => {});
   click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-cards"]')!);
+}
+
+function closeGlobalSettings(container: HTMLElement): void {
+  click(container.querySelector<HTMLButtonElement>("button.global-settings-done")!);
 }
 
 function changeInput(input: HTMLInputElement | HTMLTextAreaElement, value: string): void {
@@ -104,11 +119,11 @@ describe("App in project mode", () => {
     const container = mountApp(sample.id);
     await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
 
-    openPeopleData(container);
+    await openPeopleDataAwaiting(container);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
     changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "林舟舟");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+    closeGlobalSettings(container);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
 
     await vi.waitFor(async () => {
@@ -128,11 +143,11 @@ describe("App in project mode", () => {
     const container = mountApp(sample.id);
     await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
 
-    openPeopleData(container);
+    await openPeopleDataAwaiting(container);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
     changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "林舟舟");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+    closeGlobalSettings(container);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="返回项目列表"]')!);
 
     await vi.waitFor(() => expect(window.location.hash).toBe("#/"));
@@ -146,11 +161,11 @@ describe("App in project mode", () => {
     const container = mountApp(sample.id);
     await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
 
-    openPeopleData(container);
+    await openPeopleDataAwaiting(container);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
     changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "林舟舟");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')!);
+    closeGlobalSettings(container);
     // 编辑已提交但尚未落盘:同步状态应处于 pending(而非 saved)。
     await vi.waitFor(() => expect(container.querySelector('[data-sync-status="pending"]')).not.toBeNull());
 
@@ -224,7 +239,7 @@ describe("App in project mode", () => {
     const container = mountApp(sample.id);
     await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
 
-    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stage-stepper button[aria-label="选择模板"]')!);
+    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="选择模板"]')!);
     await vi.waitFor(() => expect(container.textContent).toContain("毕业海报"));
 
     click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);

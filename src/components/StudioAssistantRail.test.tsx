@@ -28,9 +28,6 @@ function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
     selection: { type: "canvas" },
     layoutIssues: [],
     onSelectElement: vi.fn(),
-    onArrangeCards: vi.fn(),
-    onRestoreCardPosition: vi.fn(),
-    onRestoreAllCardPositions: vi.fn(),
     onLocateLayoutIssue: vi.fn(),
     onPreview: vi.fn(),
     onCommit: vi.fn(),
@@ -58,7 +55,7 @@ describe("StudioAssistantRail", () => {
 
     click(container.querySelector('[role="tab"]:last-child')!);
     expect(container.textContent).toContain("工程状态");
-    expect(container.textContent).toContain("ProjectDocument");
+    expect(container.textContent).toContain("0 条名单");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });

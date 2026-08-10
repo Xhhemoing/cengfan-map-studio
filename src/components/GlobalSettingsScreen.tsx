@@ -1,4 +1,4 @@
-import { ArrowLeft, Database, LayoutPanelTop, Map, Redo2, RectangleHorizontal, Settings2, Type, Undo2, Wallpaper } from "lucide-react";
+import { Database, LayoutPanelTop, Map, Redo2, RectangleHorizontal, Settings2, Type, Undo2, Wallpaper } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 import type { ProjectDocument } from "../lib/project-document";
 import type { UserFont } from "../lib/fonts";
@@ -93,7 +93,6 @@ export function GlobalSettingsScreen({
   onRedo,
   onPatch,
   onReset,
-  onArrangeCards,
   selectedStudentId,
   onSelectStudent,
   onChangeDataView,
@@ -132,7 +131,6 @@ export function GlobalSettingsScreen({
   onRedo: () => void;
   onPatch: (target: SceneSelection, patch: Record<string, unknown>) => void;
   onReset: (target: Extract<SceneSelection, { type: "canvas" | "map" | "cards" }>) => void;
-  onArrangeCards: () => void;
   selectedStudentId: string | null;
   onSelectStudent: (id: string) => void;
   onChangeDataView: (view: DataViewId) => void;
@@ -181,7 +179,6 @@ export function GlobalSettingsScreen({
   return (
     <main className="global-settings-screen" aria-label="全局设置">
       <header className="global-settings-header">
-        <CompactButton className="global-settings-back" aria-label="返回编辑器" icon={<ArrowLeft size={17} aria-hidden />} onClick={onClose}><span>返回编辑器</span></CompactButton>
         <ActionGroup label="全局设置历史" className="global-settings-history">
           <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
           <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
@@ -308,7 +305,6 @@ export function GlobalSettingsScreen({
                     onApplyCustomTemplate={onApplyCustomTemplate}
                     onSaveTemplate={onSaveTemplate}
                   />
-                  <CompactButton className="global-settings-arrange" icon={<LayoutPanelTop size={14} aria-hidden />} aria-label="一键智能排版" onClick={onArrangeCards}>一键智能排版</CompactButton>
                   <CardsInspector
                     cards={project.cards}
                     userFonts={userFonts}

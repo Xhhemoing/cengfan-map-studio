@@ -2,7 +2,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
-import { DataUploadWorkspace } from "./DataUploadWorkspace";
+import { DataUploadRail, DataUploadWorkspace } from "./DataUploadWorkspace";
 import { createProjectDocument } from "../../lib/project-document";
 import type { Student } from "../../lib/project-data";
 import type { DataWorkspace } from "../DataWorkspace";
@@ -41,17 +41,36 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
   const root = createRoot(container);
   roots.push({ root, container });
   const project = overrides.project ?? createProjectDocument({ students, templateId: "original", dataView: "province" });
+  const summary = overrides.summary ?? { total: 1, visible: 1, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 };
+  const issues = overrides.issues ?? [];
+  const dataWorkspaceProps = overrides.dataWorkspaceProps ?? defaultDataWorkspaceProps();
+  const assetPanelProps = overrides.assetPanelProps ?? { onApplyBackground: vi.fn() };
+  const onCreateDecoration = overrides.onCreateDecoration ?? vi.fn();
+  const onSelectStudent = overrides.onSelectStudent ?? vi.fn();
+  // The DATA stage is split: the center workbench (header + roster table) and
+  // the unified right rail (数据质量/素材库) are separate components composed
+  // by the app shell, so render both together like the shell does.
   flushSync(() => root.render(
-    <DataUploadWorkspace
-      project={project}
-      summary={overrides.summary ?? { total: 1, visible: 1, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 }}
-      issues={overrides.issues ?? []}
-      dataWorkspaceProps={overrides.dataWorkspaceProps ?? defaultDataWorkspaceProps()}
-      assetPanelProps={overrides.assetPanelProps ?? { onApplyBackground: vi.fn() }}
-      onCreateDecoration={overrides.onCreateDecoration ?? vi.fn()}
-      onSelectStudent={overrides.onSelectStudent ?? vi.fn()}
-      onClose={overrides.onClose ?? vi.fn()}
-    />,
+    <div className="data-upload-test-suite">
+      <DataUploadWorkspace
+        project={project}
+        summary={summary}
+        issues={issues}
+        dataWorkspaceProps={dataWorkspaceProps}
+        assetPanelProps={assetPanelProps}
+        onCreateDecoration={onCreateDecoration}
+        onSelectStudent={onSelectStudent}
+      />
+      <DataUploadRail
+        project={project}
+        summary={summary}
+        issues={issues}
+        dataWorkspaceProps={dataWorkspaceProps}
+        assetPanelProps={assetPanelProps}
+        onCreateDecoration={onCreateDecoration}
+        onSelectStudent={onSelectStudent}
+      />
+    </div>,
   ));
   return { container, root, project };
 }
@@ -79,22 +98,19 @@ describe("DataUploadWorkspace", () => {
     expect(container.querySelector('[aria-label="数据质量"]')).not.toBeNull();
   });
 
-  it("forwards row selection and close actions to the surrounding editor", () => {
+  it("forwards row selection without rendering a return-editor action", () => {
     const innerSelect = vi.fn();
     const outerSelect = vi.fn();
-    const onClose = vi.fn();
     const { container } = renderWorkspace({
       dataWorkspaceProps: { ...defaultDataWorkspaceProps(), onSelectStudent: innerSelect },
       onSelectStudent: outerSelect,
-      onClose,
     });
 
     flushSync(() => container.querySelector('[data-student-row="student-1"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="返回编辑器"]')?.click());
 
     expect(innerSelect).toHaveBeenCalledWith("student-1");
     expect(outerSelect).toHaveBeenCalledWith("student-1");
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('button[aria-label="返回编辑器"]')).toBeNull();
   });
 
   it("delegates six-stage navigation to the app topbar instead of a nested stepper", () => {

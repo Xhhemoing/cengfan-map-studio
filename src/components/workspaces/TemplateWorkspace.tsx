@@ -1,10 +1,9 @@
-import { ArrowLeft, Check, RotateCcw } from "lucide-react";
+import { Check, RotateCcw } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { MapTemplateId } from "../../lib/project-data";
 import type { ProjectDocument } from "../../lib/project-document";
 import { createSystemTemplate, type TemplateDocument } from "../../lib/template-document";
 import type { CustomTemplateRecord } from "../../lib/template-store";
-import { CompactButton } from "../StudioUi";
 import { TemplatePreview } from "./TemplatePreview";
 
 export interface TemplateWorkspaceTemplateOption {
@@ -18,26 +17,108 @@ export interface TemplateWorkspaceProps {
   customTemplates: CustomTemplateRecord[];
   onApplyTemplate: (id: MapTemplateId) => void;
   onApplyCustomTemplate: (record: CustomTemplateRecord) => void;
-  onClose: () => void;
+  /** Lifted selection for the unified right rail; falls back to internal state when omitted. */
+  selection?: TemplateSelection | null;
+  onSelect?: (selection: TemplateSelection | null) => void;
 }
 
-type Selection =
+export type TemplateSelection =
   | { kind: "system"; id: MapTemplateId }
   | { kind: "custom"; record: CustomTemplateRecord };
 
-function selectionKey(selection: Selection): string {
+function selectionKey(selection: TemplateSelection): string {
   return selection.kind === "system" ? selection.id : selection.record.id;
 }
 
-export function TemplateWorkspace({
-  project,
+export interface TemplateCatalogRailProps {
+  templates: TemplateWorkspaceTemplateOption[];
+  customTemplates: CustomTemplateRecord[];
+  currentTemplateId: MapTemplateId;
+  selection: TemplateSelection | null;
+  onSelect: (selection: TemplateSelection | null) => void;
+}
+
+/**
+ * The template stage's unified right rail: the 模板列表 catalog of system and
+ * custom templates. The shell owns the labelled aside + resizer + mobile
+ * drawer chrome; this component supplies the list content.
+ */
+export function TemplateCatalogRail({
   templates,
   customTemplates,
+  currentTemplateId,
+  selection,
+  onSelect,
+}: TemplateCatalogRailProps) {
+  const resolvedSelection = selection ?? { kind: "system", id: currentTemplateId };
+  return (
+    <aside className="template-workspace__catalog" aria-label="模板列表">
+      <div className="template-workspace__catalog-heading">
+        <h2>模板列表</h2>
+        <span>{templates.length + customTemplates.length} 个选项</span>
+      </div>
+      <div className="template-workspace__list" role="listbox" aria-label="模板列表">
+        {templates.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="option"
+            aria-label={`选择${item.name}`}
+            aria-selected={selectionKey(resolvedSelection) === item.id}
+            className={selectionKey(resolvedSelection) === item.id ? "is-selected" : undefined}
+            onClick={() => onSelect({ kind: "system", id: item.id })}
+          >
+            <span className={`template-workspace__swatch template-workspace__swatch--${item.id}`} />
+            <span><strong>{item.name}</strong><small>系统模板 · 1500 × 1000 px · 横版</small></span>
+            {item.id === currentTemplateId && <Check size={15} aria-label="当前模板" />}
+          </button>
+        ))}
+        {customTemplates.length > 0 && (
+          <div className="template-workspace__custom" role="group" aria-label="我的模板">
+            <h3>我的模板</h3>
+            {customTemplates.map((item) => {
+              const selected = selectionKey(resolvedSelection) === item.id;
+              const orientation = item.document.canvas.width >= item.document.canvas.height ? "横版" : "竖版";
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="option"
+                  aria-label={`选择${item.name}`}
+                  aria-selected={selected}
+                  className={selected ? "is-selected" : undefined}
+                  onClick={() => onSelect({ kind: "custom", record: item })}
+                >
+                  <span className="template-workspace__swatch template-workspace__swatch--custom" />
+                  <span><strong>{item.name}</strong><small>{item.scope === "visual" ? "视觉样式" : "布局倾向"} · {item.document.canvas.width} × {item.document.canvas.height} px · {orientation}</small></span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+/**
+ * Center content of the template stage: the 模板详情 preview plus impact
+ * summary. The 模板列表 catalog lives in the unified right rail
+ * (`TemplateCatalogRail`); the footer actions stay here under the preview.
+ */
+export function TemplateWorkspace({
+  project,
   onApplyTemplate,
   onApplyCustomTemplate,
-  onClose,
+  selection: controlledSelection,
+  onSelect: onControlledSelect,
 }: TemplateWorkspaceProps) {
-  const [selection, setSelection] = useState<Selection | null>(null);
+  const [internalSelection, setInternalSelection] = useState<TemplateSelection | null>(null);
+  const selection = controlledSelection !== undefined ? controlledSelection : internalSelection;
+  const setSelection = (next: TemplateSelection | null) => {
+    setInternalSelection(next);
+    onControlledSelect?.(next);
+  };
   const selectedTemplate = useMemo<TemplateDocument>(() => {
     if (!selection) return createSystemTemplate(project.templateId);
     return selection.kind === "system" ? createSystemTemplate(selection.id) : selection.record.document;
@@ -53,20 +134,11 @@ export function TemplateWorkspace({
     if (!selection) return;
     if (selection.kind === "system") onApplyTemplate(selection.id);
     else onApplyCustomTemplate(selection.record);
-    onClose();
   };
 
   return (
     <main className="template-workspace" aria-label="模板选择工作台">
       <header className="template-workspace__header">
-        <CompactButton
-          className="template-workspace__back"
-          icon={<ArrowLeft size={17} aria-hidden />}
-          aria-label="取消模板选择"
-          onClick={onClose}
-        >
-          返回编辑器
-        </CompactButton>
         <div className="template-workspace__status" aria-live="polite">
           <strong>{project.students.length}</strong>
           <span>条名单 · 当前{isCurrent ? "已选" : "待应用"}</span>
@@ -74,53 +146,6 @@ export function TemplateWorkspace({
       </header>
 
       <div className="template-workspace__layout">
-        <aside className="template-workspace__catalog" aria-label="模板列表">
-          <div className="template-workspace__catalog-heading">
-            <h2>模板列表</h2>
-            <span>{templates.length + customTemplates.length} 个选项</span>
-          </div>
-          <div className="template-workspace__list" role="listbox" aria-label="模板列表">
-            {templates.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                role="option"
-                aria-label={`选择${item.name}`}
-                aria-selected={selectionKey(selection ?? { kind: "system", id: project.templateId }) === item.id}
-                className={selectionKey(selection ?? { kind: "system", id: project.templateId }) === item.id ? "is-selected" : undefined}
-                onClick={() => setSelection({ kind: "system", id: item.id })}
-              >
-                <span className={`template-workspace__swatch template-workspace__swatch--${item.id}`} />
-                <span><strong>{item.name}</strong><small>系统模板 · 1500 × 1000 px · 横版</small></span>
-                {item.id === project.templateId && <Check size={15} aria-label="当前模板" />}
-              </button>
-            ))}
-            {customTemplates.length > 0 && (
-              <div className="template-workspace__custom" role="group" aria-label="我的模板">
-                <h3>我的模板</h3>
-                {customTemplates.map((item) => {
-                  const selected = selectionKey(selection ?? { kind: "system", id: project.templateId }) === item.id;
-                  const orientation = item.document.canvas.width >= item.document.canvas.height ? "横版" : "竖版";
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      role="option"
-                      aria-label={`选择${item.name}`}
-                      aria-selected={selected}
-                      className={selected ? "is-selected" : undefined}
-                      onClick={() => setSelection({ kind: "custom", record: item })}
-                    >
-                      <span className="template-workspace__swatch template-workspace__swatch--custom" />
-                      <span><strong>{item.name}</strong><small>{item.scope === "visual" ? "视觉样式" : "布局倾向"} · {item.document.canvas.width} × {item.document.canvas.height} px · {orientation}</small></span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </aside>
-
         <section className="template-workspace__detail" aria-label="模板详情">
           <TemplatePreview project={project} template={selectedTemplate} customRecord={selectedCustomRecord} />
           <div className="template-workspace__impact" aria-label="模板应用影响摘要">
@@ -147,7 +172,6 @@ export function TemplateWorkspace({
               <RotateCcw size={15} aria-hidden /> 重新选择
             </button>
           )}
-          <button type="button" className="secondary-button" aria-label="取消模板选择" onClick={onClose}>取消</button>
           <button type="button" className="primary-button" aria-label="应用模板" disabled={!selection} onClick={applySelection}>
             <Check size={15} aria-hidden /> 应用模板
           </button>

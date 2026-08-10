@@ -26,7 +26,6 @@ function renderGuide(props: Partial<Parameters<typeof WorkflowGuide>[0]> = {}) {
   const onSelectStep = vi.fn();
   const onChangeDataView = vi.fn();
   const onOpenGlobalSettings = vi.fn();
-  const onArrangeCards = vi.fn();
   const onApplyTemplate = vi.fn();
   const onApplyCustomTemplate = vi.fn();
   const onSaveTemplate = vi.fn();
@@ -54,7 +53,6 @@ function renderGuide(props: Partial<Parameters<typeof WorkflowGuide>[0]> = {}) {
         onSelectStep={onSelectStep}
         onChangeDataView={onChangeDataView}
         onOpenGlobalSettings={onOpenGlobalSettings}
-        onArrangeCards={onArrangeCards}
         onApplyTemplate={onApplyTemplate}
         onApplyCustomTemplate={onApplyCustomTemplate}
         onSaveTemplate={onSaveTemplate}
@@ -69,7 +67,7 @@ function renderGuide(props: Partial<Parameters<typeof WorkflowGuide>[0]> = {}) {
     );
   });
   roots.push({ root, container });
-  return { container, onSelectStep, onChangeDataView, onOpenGlobalSettings, onArrangeCards, onApplyTemplate, onApplyCustomTemplate, onSaveTemplate, onExportPng, onExportSvg, onExportProject, onSaveLocal, onOpenAssets, onFocusStudent };
+  return { container, onSelectStep, onChangeDataView, onOpenGlobalSettings, onApplyTemplate, onApplyCustomTemplate, onSaveTemplate, onExportPng, onExportSvg, onExportProject, onSaveLocal, onOpenAssets, onFocusStudent };
 }
 
 function click(element: Element): void {
@@ -157,17 +155,14 @@ describe("WorkflowGuide", () => {
     expect(onChangeDataView).toHaveBeenCalledWith("heat");
   });
 
-  it("expands the layout step with section shortcuts and one-click arrangement", () => {
-    const { container, onOpenGlobalSettings, onArrangeCards } = renderGuide({ activeStep: "layout" });
+  it("expands the layout step with global section shortcuts", () => {
+    const { container, onOpenGlobalSettings } = renderGuide({ activeStep: "layout" });
     clickBar(container);
 
     click(Array.from(container.querySelectorAll(".workflow-step-panel button"))
       .find((item) => item.textContent?.trim() === "画布")!);
     expect(onOpenGlobalSettings).toHaveBeenCalledWith("canvas");
-
-    click(Array.from(container.querySelectorAll(".workflow-step-panel button"))
-      .find((item) => item.textContent?.includes("一键智能排版"))!);
-    expect(onArrangeCards).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toContain("一键智能排版");
   });
 
   it("expands the layout step with template selection and save", () => {

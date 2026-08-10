@@ -1,4 +1,3 @@
-import { ArrowLeft, Redo2, Undo2 } from "lucide-react";
 import type { ComponentProps } from "react";
 import type { UserAsset } from "../../lib/assets";
 import type { UserFont } from "../../lib/fonts";
@@ -7,7 +6,6 @@ import type { SceneSelection } from "../../lib/scene-document";
 import { AssetPanel } from "../AssetPanel";
 import { PosterCanvas } from "../canvas/PosterCanvas";
 import { InspectorPanel } from "../inspector/InspectorPanel";
-import { CompactButton, IconButton } from "../StudioUi";
 
 export type ContentAssetPanelProps = ComponentProps<typeof AssetPanel>;
 export interface ContentLayoutWorkspaceProps {
@@ -23,7 +21,7 @@ export interface ContentLayoutWorkspaceProps {
   onSelect: (selection: SceneSelection) => void;
   onPatch: (target: SceneSelection, patch: Record<string, unknown>) => void;
   onReset: (target: Extract<SceneSelection, { type: "canvas" | "map" | "cards" }>) => void;
-  onClose: () => void;
+  onRefreshPositions: () => void;
   onBackToMap: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -34,6 +32,7 @@ export interface ContentLayoutWorkspaceProps {
   onResizeMapImage?: (alignment: { x: number; y: number; width: number; height: number; rotation: number }) => void;
   onMoveCard?: (id: string, x: number, y: number) => void;
   onMoveGuests?: (x: number, y: number) => void;
+  onCardPositionsResolved?: (positions: Record<string, { x: number; y: number }>) => void;
   onApplyFont?: (target: Parameters<NonNullable<ComponentProps<typeof InspectorPanel>["onApplyFont"]>>[0], fontId: string, applyToAll: boolean) => void;
   onUploadFont?: (font: UserFont) => void;
   onDeleteUserFont?: (fontId: string) => void;
@@ -57,23 +56,68 @@ function selectionLabel(selection: SceneSelection): string {
   }
 }
 
-export function ContentLayoutWorkspace({
+/**
+ * Props for the content stage's right rail. The shell owns the rail chrome
+ * (labelled aside + resizer + mobile drawer); this component supplies the
+ * 当前对象 inspector and the 素材与实例 asset context. History and the
+ * position-refresh / back-to-map actions live in the topbar instead.
+ */
+export type ContentLayoutRailProps = Omit<
+  ContentLayoutWorkspaceProps,
+  | "canUndo" | "canRedo" | "undoLabel" | "redoLabel"
+  | "onRefreshPositions" | "onBackToMap" | "onUndo" | "onRedo"
+  | "onSelect" | "onSelectStudent" | "selectedStudentId"
+  | "onMoveText" | "onMoveAsset" | "onResizeAsset"
+  | "onMoveProvinceTexture" | "onResizeMapImage"
+  | "onMoveCard" | "onMoveGuests" | "onCardPositionsResolved"
+>;
+
+export function ContentLayoutRail({
   project,
   selection,
   userAssets = [],
   userFonts = [],
-  canUndo,
-  canRedo,
-  undoLabel,
-  redoLabel,
   assetPanelProps = EMPTY_ASSET_PANEL_PROPS,
-  onSelect,
   onPatch,
   onReset,
-  onClose,
-  onBackToMap,
-  onUndo,
-  onRedo,
+  onApplyFont,
+  onUploadFont,
+  onDeleteUserFont,
+}: ContentLayoutRailProps) {
+  return (
+    <aside className="content-layout-workspace__context" aria-label="内容对象属性">
+      <section aria-label="当前对象属性">
+        <div className="content-layout-workspace__section-heading"><strong>当前对象</strong><small>{selectionLabel(selection)}</small></div>
+        <InspectorPanel
+          project={project}
+          selection={selection}
+          userFonts={userFonts}
+          onPatch={onPatch}
+          onReset={onReset}
+          onApplyFont={onApplyFont}
+          onUploadFont={onUploadFont}
+          onDeleteUserFont={onDeleteUserFont}
+        />
+      </section>
+      <details open className="content-layout-workspace__assets" aria-label="内容素材上下文">
+        <summary>素材与实例</summary>
+        <AssetPanel {...assetPanelProps} userAssets={userAssets} />
+      </details>
+    </aside>
+  );
+}
+
+/**
+ * Center content of the content stage: the poster canvas preview. The
+ * 当前对象 inspector and 素材与实例 context live in the unified right rail
+ * (`ContentLayoutRail`); undo/redo, 刷新展示框位置 and 返回地图样式 actions
+ * live in the topbar's stage-actions slot.
+ */
+export function ContentLayoutWorkspace({
+  project,
+  selection,
+  userFonts = [],
+  onSelect,
   onMoveText,
   onMoveAsset,
   onResizeAsset,
@@ -81,25 +125,12 @@ export function ContentLayoutWorkspace({
   onResizeMapImage,
   onMoveCard,
   onMoveGuests,
-  onApplyFont,
-  onUploadFont,
-  onDeleteUserFont,
+  onCardPositionsResolved,
   onSelectStudent,
   selectedStudentId = null,
 }: ContentLayoutWorkspaceProps) {
   return (
     <main className="content-layout-workspace workflow-panel--content" aria-label="内容与排版">
-      <header className="content-layout-workspace__header">
-        <div className="content-layout-workspace__header-actions">
-          <CompactButton aria-label="返回编辑器" icon={<ArrowLeft size={17} aria-hidden />} onClick={onClose}>返回编辑器</CompactButton>
-          <CompactButton aria-label="返回地图样式" variant="ghost" onClick={onBackToMap}>地图样式</CompactButton>
-        </div>
-        <div className="content-layout-workspace__history" role="group" aria-label="内容与排版历史">
-          <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
-          <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
-        </div>
-      </header>
-
       <div className="content-layout-workspace__body">
         <section className="content-layout-workspace__preview" aria-label="内容排版画布">
           <div className="content-layout-workspace__preview-heading"><strong>实时画布</strong><span>{project.canvas.width} × {project.canvas.height}</span></div>
@@ -119,31 +150,12 @@ export function ContentLayoutWorkspace({
               onResizeMapImage={onResizeMapImage}
               onMoveCard={onMoveCard}
               onMoveGuests={onMoveGuests}
+              onCardPositionsResolved={onCardPositionsResolved}
               onSelectStudent={onSelectStudent}
               mapSelected={selection.type === "map"}
             />
           </div>
         </section>
-
-        <aside className="content-layout-workspace__context" aria-label="内容对象属性">
-          <section aria-label="当前对象属性">
-            <div className="content-layout-workspace__section-heading"><strong>当前对象</strong><small>{selectionLabel(selection)}</small></div>
-            <InspectorPanel
-              project={project}
-              selection={selection}
-              userFonts={userFonts}
-              onPatch={onPatch}
-              onReset={onReset}
-              onApplyFont={onApplyFont}
-              onUploadFont={onUploadFont}
-              onDeleteUserFont={onDeleteUserFont}
-            />
-          </section>
-          <details open className="content-layout-workspace__assets" aria-label="内容素材上下文">
-            <summary>素材与实例</summary>
-            <AssetPanel {...assetPanelProps} userAssets={userAssets} />
-          </details>
-        </aside>
       </div>
     </main>
   );

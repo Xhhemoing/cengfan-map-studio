@@ -147,3 +147,4 @@
 | Date | Change |
 |---|---|
 | 2026-08-05 | Initial atelier/workstation contract, legacy skin retention, and role-aware collaboration direction. |
+| 2026-08-08 | Added an implementation addendum for the shared MUI editor shell. Animal Island UI is visual-reference-only because its CC-BY-NC-4.0 license is incompatible with planned commercial use. |

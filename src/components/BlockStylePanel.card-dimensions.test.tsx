@@ -14,7 +14,6 @@ function ControlledPanel({ onPatch }: { onPatch: (patch: Partial<CardSettings>) 
   }).cards);
   return <BlockStylePanel
     cards={cards}
-    onArrange={vi.fn()}
     onPatch={(patch) => {
       onPatch(patch);
       setCards((current) => ({ ...current, ...patch }));

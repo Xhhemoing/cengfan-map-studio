@@ -1,4 +1,4 @@
-import { ArrowLeft, Database, MapPinned, Rows3, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Database, MapPinned, Rows3, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { useMemo, useState, type ComponentProps } from "react";
 import type { DataHealthSummary, DataIssue, DataIssueKind } from "../lib/data-health";
 import type { ProjectDocument } from "../lib/project-document";
@@ -8,7 +8,7 @@ import { DataPresentationPanel } from "./DataPresentationPanel";
 import { DataQualityPanel } from "./DataQualityPanel";
 import { DataWorkspace } from "./DataWorkspace";
 import type { CustomTemplateOption, TemplateOption } from "./TemplatePicker";
-import { CompactButton, PanelHeader } from "./StudioUi";
+import { PanelHeader } from "./StudioUi";
 
 export type GlobalDataView = "overview" | "roster" | "quality" | "mapping" | "presentation";
 
@@ -28,7 +28,6 @@ export function GlobalDataScreen({
   dataViewLabel,
   selectedStudentId,
   onSelectStudent,
-  onClose,
   onChangeDataView,
   templates,
   currentTemplateId,
@@ -46,7 +45,6 @@ export function GlobalDataScreen({
   dataViewLabel: string;
   selectedStudentId: string | null;
   onSelectStudent: (id: string) => void;
-  onClose: () => void;
   onChangeDataView: (view: DataViewId) => void;
   templates: TemplateOption[];
   currentTemplateId: string;
@@ -81,14 +79,6 @@ export function GlobalDataScreen({
   return (
     <main className="global-data-screen" aria-label="全局数据工作台">
       <header className="global-data-header">
-        <CompactButton
-          className="global-data-header__back"
-          icon={<ArrowLeft size={17} aria-hidden />}
-          aria-label="返回编辑器"
-          onClick={onClose}
-        >
-          返回编辑器
-        </CompactButton>
         <div className="global-data-header__status" aria-label="工程数据状态">
           <span><strong>{summary.visible}</strong> 可见</span>
           <span><strong>{summary.unresolved}</strong> 未匹配</span>

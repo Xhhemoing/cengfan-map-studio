@@ -1,13 +1,11 @@
-import { WandSparkles } from "lucide-react";
 import type { CardSettings } from "../lib/scene-document";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../lib/edge-styles";
 import { DeferredInput } from "./DeferredInput";
-import { ActionButton, PanelHeader } from "./StudioUi";
+import { PanelHeader } from "./StudioUi";
 
-export function BlockStylePanel({ cards, onPatch, onArrange }: {
+export function BlockStylePanel({ cards, onPatch }: {
   cards: CardSettings;
   onPatch: (patch: Partial<CardSettings>) => void;
-  onArrange: () => void;
 }) {
   const number = (key: "opacity" | "fontSize" | "gap" | "padding" | "horizontalPadding" | "bottomPadding" | "maxWidth" | "connectorWidth", value: number, min: number, max: number, id: string) => (
     <DeferredInput id={id} type="number" min={min} max={max} step={key === "opacity" ? 0.05 : key === "connectorWidth" ? 0.5 : 1} value={value} onCommit={(draft) => {
@@ -21,10 +19,6 @@ export function BlockStylePanel({ cards, onPatch, onArrange }: {
   return (
     <div className="block-style-panel">
       <PanelHeader title="板块样式" meta="卡片与连接线" />
-
-      <ActionButton aria-label="一键智能排版" onClick={onArrange}>
-        <WandSparkles size={16} /> 一键智能排版
-      </ActionButton>
 
       <div className="block-style-section">
         <h3>卡片格式</h3>

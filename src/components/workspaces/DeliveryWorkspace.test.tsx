@@ -1,7 +1,7 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DeliveryWorkspace } from "./DeliveryWorkspace";
+import { DeliveryRail, DeliveryWorkspace, type DeliveryWorkspaceProps } from "./DeliveryWorkspace";
 import { createProjectDocument } from "../../lib/project-document";
 import type { DataIssue } from "../../lib/data-health";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
@@ -14,33 +14,36 @@ const layoutIssues: LayoutHealthIssue[] = [{ id: "map", kind: "overflow", severi
 const resourceIssues: ResourceHealthIssue[] = [{ kind: "resource", target: "map", detail: "地图资源缺失", severity: "error" }];
 const fontIssues: ResourceHealthIssue[] = [{ kind: "font", target: "text:title", detail: "标题字体缺失", severity: "error" }];
 
-function renderWorkspace(overrides: Partial<React.ComponentProps<typeof DeliveryWorkspace>> = {}) {
+function renderWorkspace(overrides: Partial<DeliveryWorkspaceProps> = {}) {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   roots.push({ root, container });
+  const shared = {
+    project,
+    dataIssues,
+    layoutIssues,
+    resourceIssues,
+    fontIssues,
+    pngScale: 2,
+    transparentExport: true,
+    includeResources: true,
+    exportState: "idle" as const,
+    onPngScaleChange: vi.fn(),
+    onTransparentExportChange: vi.fn(),
+    onIncludeResourcesChange: vi.fn(),
+    onLocate: vi.fn(),
+    onExportPng: vi.fn(),
+    onExportSvg: vi.fn(),
+    onExportProjectPackage: vi.fn(),
+    onRetry: vi.fn(),
+    ...overrides,
+  };
   flushSync(() => root.render(
-    <DeliveryWorkspace
-      project={project}
-      dataIssues={dataIssues}
-      layoutIssues={layoutIssues}
-      resourceIssues={resourceIssues}
-      fontIssues={fontIssues}
-      pngScale={2}
-      transparentExport
-      includeResources
-      exportState="idle"
-      onPngScaleChange={vi.fn()}
-      onTransparentExportChange={vi.fn()}
-      onIncludeResourcesChange={vi.fn()}
-      onLocate={vi.fn()}
-      onExportPng={vi.fn()}
-      onExportSvg={vi.fn()}
-      onExportProjectPackage={vi.fn()}
-      onRetry={vi.fn()}
-      onBack={vi.fn()}
-      {...overrides}
-    />,
+    <>
+      <DeliveryWorkspace {...shared} />
+      <DeliveryRail {...shared} />
+    </>,
   ));
   return container;
 }
@@ -58,6 +61,7 @@ describe("DeliveryWorkspace", () => {
     const container = renderWorkspace({ onLocate });
 
     expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="返回编辑器"]')).toBeNull();
     expect(container.textContent).toContain("数据完整性");
     expect(container.textContent).toContain("排版问题");
     expect(container.textContent).toContain("资源缺失");
@@ -73,12 +77,16 @@ describe("DeliveryWorkspace", () => {
     const container = renderWorkspace();
 
     expect(container.querySelector("svg")).not.toBeNull();
+    expect(container.querySelector('section[aria-label="最终预览"]')).not.toBeNull();
+    expect(container.querySelector('aside[aria-label="交付检查"]')).not.toBeNull();
+    expect(container.querySelector('section[aria-label="导出设置"]')).not.toBeNull();
     expect(container.textContent).toContain("1500 × 1000 px");
     expect(container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')?.value).toBe("2");
     expect(container.querySelector<HTMLInputElement>('input[aria-label="透明背景"]')?.checked).toBe(true);
     expect(container.querySelector<HTMLInputElement>('input[aria-label="工程包包含资源"]')?.checked).toBe(true);
     expect(container.querySelector<HTMLInputElement>('input[aria-label="透明背景"]')?.closest("label")?.classList).toContain("boolean-control");
     expect(container.querySelector<HTMLInputElement>('input[aria-label="工程包包含资源"]')?.closest("label")?.classList).toContain("checkbox-row");
+    expect(container.querySelector('[role="group"][aria-label="导出操作"]')).not.toBeNull();
   });
 
   it("shows retry on export error without removing the current configuration", () => {

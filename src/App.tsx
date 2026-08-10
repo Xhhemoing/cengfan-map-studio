@@ -1,7 +1,7 @@
 import {
   ArrowLeft,
+  Bot,
   Download,
-  FolderOpen,
   ImageDown,
   MapPinned,
   PanelRight,
@@ -9,12 +9,9 @@ import {
   Plus,
   Redo2,
   Save,
-  Share2,
-  Copy,
-  LogOut,
   Undo2,
-
   PackageOpen,
+  RefreshCw,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -24,10 +21,20 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
 } from "react";
 import { createNoteElement, createTextElement } from "./lib/canvas-data";
-import { CHINA_PROVINCE_ADJACENCY, getProvinceNames } from "./lib/map-data";
+import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
+import {
+  DRAFT_KEY,
+  ROOM_ACCESS_STORAGE_PREFIX,
+  COLLABORATION_DISPLAY_NAME,
+  DRAFT_SAVED_AT_KEY,
+  RENDER_SETTINGS_KEY,
+  COLLABORATION_SEND_DELAY_MS,
+  provinceNames,
+  dataViews,
+  type ActivePanel,
+} from "./lib/app-constants";
 import {
   buildProvinceSummary,
   sampleStudents,
@@ -38,18 +45,23 @@ import { createId } from "./lib/ids";
 import { editorProjectStore } from "./lib/editor-project-store";
 
 import { AssistantConversationProvider } from "./components/AgentAssistant";
+import { ProjectMenu } from "./components/ProjectMenu";
+import { StudioTopbar } from "./components/StudioTopbar";
+import { StudioLeftRail } from "./components/StudioLeftRail";
+import { StudioEditorShell } from "./components/StudioEditorShell";
+import { StudioAssistantDrawer } from "./components/StudioAssistantDrawer";
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
 
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
 import "./components/workflow-workspaces.css";
 import { GlobalSettingsScreen, type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
-import { TemplateWorkspace } from "./components/workspaces/TemplateWorkspace";
-import { DataUploadWorkspace } from "./components/workspaces/DataUploadWorkspace";
-import { MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
-import { DisplayFrameWorkspace } from "./components/workspaces/DisplayFrameWorkspace";
-import { ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
-import { DeliveryWorkspace, type DeliveryExportState, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
+import { TemplateCatalogRail, TemplateWorkspace, type TemplateSelection } from "./components/workspaces/TemplateWorkspace";
+import { DataUploadRail, DataUploadWorkspace } from "./components/workspaces/DataUploadWorkspace";
+import { MapStyleRail, MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
+import { DisplayFrameRail, DisplayFrameWorkspace } from "./components/workspaces/DisplayFrameWorkspace";
+import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
+import { DeliveryRail, DeliveryWorkspace, type DeliveryExportState, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
 
 import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
@@ -111,6 +123,7 @@ import {
 } from "./lib/asset-elements";
 import { PosterCanvas } from "./components/canvas/PosterCanvas";
 import { createDefaultScene, type ProvinceAppearance, type SceneSelection } from "./lib/scene-document";
+import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame } from "./lib/display-frame";
 import { createProvinceThemeTransaction, createSceneTransaction, deleteAsset, deleteText } from "./lib/inspector-operations";
 import { InspectorPanel } from "./components/inspector/InspectorPanel";
 import { MapInspector } from "./components/inspector/MapInspector";
@@ -122,6 +135,7 @@ import {
 } from "./lib/fonts";
 import {
   loadUserAssets,
+  type StudioAsset,
   type UserAsset,
 } from "./lib/assets";
 import {
@@ -178,7 +192,6 @@ import {
 } from "./lib/browser-workspace-store";
 import {
   LocalWorkspaceOverwrite,
-  type LocalOverwriteStatus,
   type LocalWorkspaceOverwriteState,
 } from "./lib/incremental-workspace-sync";
 import {
@@ -196,27 +209,6 @@ import {
   type RoomParticipant,
 } from "./lib/collaboration-client";
 import { applyCollaborationOperations, diffCollaborationDocument, rebaseRemoteCollaborationOperations } from "./lib/collaboration-operations";
-
-
-const DRAFT_KEY = "cengfan-map-studio:draft";
-const ROOM_ACCESS_STORAGE_PREFIX = "cengfan-map-studio:room-access:";
-const COLLABORATION_DISPLAY_NAME = "本机协作者";
-const DRAFT_SAVED_AT_KEY = "cengfan-map-studio:draft-saved-at";
-const RENDER_SETTINGS_KEY = "cengfan-map-studio:render-settings";
-const COLLABORATION_SEND_DELAY_MS = 600;
-
-type ActivePanel = "roster" | "map" | "layout" | "content" | "assets" | "deliver";
-
-const provinceNames = getProvinceNames();
-
-const dataViews: Array<{ id: DataViewId; name: string; description: string }> = [
-  { id: "province", name: "省份卡片", description: "按省份聚合，同校合并展示" },
-  { id: "city", name: "城市卡片", description: "按城市聚合，同校合并展示" },
-  { id: "university", name: "院校卡片", description: "按就读院校聚合名单" },
-  { id: "pins", name: "地图图钉", description: "在地图内定位" },
-  { id: "heat", name: "人数热力", description: "颜色表达数量" },
-];
-
 
 function createInitialProject(): ProjectDocument {
   return createProjectDocument({
@@ -255,185 +247,6 @@ function loadBrowserValue<T>(load: () => T, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error";
-
-interface ProjectMenuProps {
-  roomId: string | null;
-  roomVersion: number;
-  roomInput: string;
-  inviteTokenInput: string;
-  roomRole: CollaborationRole | null;
-  participants: RoomParticipant[];
-  invitationToken: string | null;
-  hasStoredRoomAccess: boolean;
-  collaborationStatus: CollaborationStatus;
-  collaborationMessage: string;
-  collaborationOpen: boolean;
-  pngScale: number;
-  transparentExport: boolean;
-  syncStatus: LocalOverwriteStatus;
-  onSetCollaborationOpen: (open: boolean) => void;
-  onRoomInputChange: (value: string) => void;
-  onInviteTokenInputChange: (value: string) => void;
-  onCreateInvitation: (role: Exclude<CollaborationRole, "owner">) => void;
-  onLeaveRoom: () => void;
-  onStartRoom: () => void;
-  onJoinRoom: () => void;
-  onNewProject: () => void;
-  onRestoreLocal: () => void;
-  onSaveLocal: () => void;
-  onPngScaleChange: (scale: number) => void;
-  onTransparentChange: (checked: boolean) => void;
-  onExportSvg: () => void;
-  onExportProject: () => void;
-  onImportProject: (file: File | null) => void;
-}
-
-function ProjectMenu({
-  roomId,
-  roomVersion,
-  roomInput,
-  inviteTokenInput,
-  roomRole,
-  participants,
-  invitationToken,
-  hasStoredRoomAccess,
-  collaborationStatus,
-  collaborationMessage,
-  collaborationOpen,
-  pngScale,
-  transparentExport,
-  syncStatus,
-  onSetCollaborationOpen,
-  onRoomInputChange,
-  onInviteTokenInputChange,
-  onCreateInvitation,
-  onLeaveRoom,
-  onStartRoom,
-  onJoinRoom,
-  onNewProject,
-  onRestoreLocal,
-  onSaveLocal,
-  onPngScaleChange,
-  onTransparentChange,
-  onExportSvg,
-  onExportProject,
-  onImportProject,
-}: ProjectMenuProps) {
-  return (
-    <details className="project-menu">
-      <summary className="secondary-button" aria-label="打开项目菜单">
-        <FolderOpen size={16} /> <span>项目</span>
-      </summary>
-      <div className="project-menu__popover">
-        <section>
-          <strong>项目管理</strong>
-          <button type="button" aria-label="新建项目" onClick={onNewProject}><Plus size={16} /> 新建项目</button>
-          <button type="button" aria-label="恢复本机最近项目" onClick={onRestoreLocal}><FolderOpen size={16} /> 恢复最近项目</button>
-          <button type="button" aria-label="保存项目到本机" onClick={onSaveLocal}><Save size={16} /> 保存到本机</button>
-        </section>
-        <section>
-          <strong>导出海报</strong>
-          <label>PNG 倍率
-            <select aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}>
-              <option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option>
-            </select>
-          </label>
-          <label className="project-menu__check boolean-control checkbox-row"><input type="checkbox" checked={transparentExport} onChange={(event) => onTransparentChange(event.target.checked)} />透明背景</label>
-          <button type="button" onClick={onExportSvg}><Download size={16} /> 导出 SVG</button>
-        </section>
-        <section>
-          <strong>在线协作</strong>
-          <div className="collaboration-control project-menu__collaboration">
-            <button
-              type="button"
-              className={`secondary-button collaboration-button ${roomId ? "is-connected" : ""}`}
-              aria-label="增量在线协作"
-              aria-expanded={collaborationOpen}
-              onClick={() => onSetCollaborationOpen(!collaborationOpen)}
-            >
-              <Share2 size={16} /> <span>{roomId ? roomId : "增量协作"}</span>
-            </button>
-            {collaborationOpen && (
-              <section className="collaboration-popover" aria-label="增量协作设置">
-                <header>
-                  <strong>在线协作</strong>
-                  <span>v{roomVersion} · 增量同步</span>
-                </header>
-                {roomId ? (
-                  <>
-                    <div className="collaboration-room-code">
-                      <b>{roomId}</b>
-                      <button type="button" aria-label="复制房间码" onClick={() => void navigator.clipboard?.writeText(roomId)}><Copy size={15} /></button>
-                    </div>
-                    <small>{roomRole === "owner" ? "创建者" : roomRole === "editor" ? "编辑者" : roomRole === "viewer" ? "仅查看" : "正在确认权限"} · {participants.length} 位协作者</small>
-                    {roomRole === "viewer" && <p>当前仅查看，无法修改此工程。</p>}
-                    {roomRole === "owner" && <div className="collaboration-invitations">
-                      <button type="button" onClick={() => onCreateInvitation("editor")}>邀请编辑者</button>
-                      <button type="button" onClick={() => onCreateInvitation("viewer")}>邀请查看者</button>
-                      {invitationToken && <button type="button" aria-label="复制邀请凭证" title="邀请凭证仅可使用一次，请通过私密渠道发送" onClick={() => void navigator.clipboard?.writeText(invitationToken)}><Copy size={15} /> 复制邀请凭证</button>}
-                    </div>}
-                    <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
-                    <button type="button" className="collaboration-leave" onClick={onLeaveRoom}><LogOut size={14} /> 断开房间</button>
-                  </>
-                ) : (
-                  <>
-                    <p>未连接时不会上传或覆盖工程。创建者可生成可编辑或仅查看的一次性邀请凭证。</p>
-                    <button type="button" className="collaboration-create" disabled={collaborationStatus === "connecting"} onClick={onStartRoom}><Share2 size={14} /> 创建房间</button>
-                    <div className="collaboration-join">
-                      <input aria-label="协作房间码" value={roomInput} maxLength={12} placeholder="输入房间码" onChange={(event) => onRoomInputChange(event.target.value.toUpperCase())} />
-                      <input aria-label="协作邀请凭证" value={inviteTokenInput} placeholder="输入邀请凭证" onChange={(event) => onInviteTokenInputChange(event.target.value)} />
-                      <button type="button" disabled={!roomInput.trim() || (!inviteTokenInput.trim() && !hasStoredRoomAccess) || collaborationStatus === "connecting"} onClick={onJoinRoom}>加入</button>
-                    </div>
-                    <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
-                  </>
-                )}
-              </section>
-            )}
-          </div>
-        </section>
-        <section>
-          <strong>工程文件</strong>
-          <button
-            type="button"
-            aria-label="强制保存到浏览器本地"
-            title="立即将当前工程、素材、字体、模板和渲染设置覆盖到浏览器本地存储"
-            disabled={syncStatus === "saving"}
-            onClick={onSaveLocal}
-          >
-            <Save size={16} /> {syncStatus === "saving" ? "保存中" : "保存到本机"}
-          </button>
-          <button type="button" onClick={onExportProject}><PackageOpen size={16} /> 导出工程</button>
-          <label className="project-menu__file"><PackageOpen size={16} /> 导入工程
-            <input type="file" accept="application/json,.json" aria-label="导入完整工程包" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
-          </label>
-        </section>
-      </div>
-    </details>
-  );
-}
-
-function StudioStageShell({
-  leftRail,
-  showRail,
-  children,
-}: {
-  leftRail: ReactNode;
-  showRail: boolean;
-  children: ReactNode;
-}) {
-  if (!showRail) return <>{children}</>;
-
-  return (
-    <section className="studio-stage-shell">
-      <aside className="studio-sidebar">
-        <div className="studio-sidebar__rail">{leftRail}</div>
-      </aside>
-      <div className="studio-stage-shell__main">{children}</div>
-    </section>
-  );
 }
 
 function WorkbenchBackButton({ onClick = () => { window.location.hash = "#/"; } }: { onClick?: () => void }) {
@@ -478,6 +291,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(() =>
     initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
   );
+  const [templateSelection, setTemplateSelection] = useState<TemplateSelection | null>(null);
   const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
   const [projectMissing, setProjectMissing] = useState(false);
   const [projectLoading, setProjectLoading] = useState(() => Boolean(projectId));
@@ -584,6 +398,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
     && loadBrowserValue(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false));
   const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => legacyEditorEnabled ? "content" : workspaceSession.stage);
   const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "template" || activeStage === "data" ? "content" : activeStage);
+  const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
+  const assistantEntryRef = useRef<HTMLButtonElement>(null);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
@@ -1112,46 +928,40 @@ function StudioApp({ projectId }: { projectId?: string }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const arrangeCards = (mode: "untouched" | "all" = "untouched") => {
-    if (mode === "all" && typeof window !== "undefined" && !window.confirm("全部重新排版会清除所有数据框手动位置并重新计算，是否继续？")) return;
-    commitProjectTransaction({
-      id: createId(`tx-smart-card-layout-${mode}`),
-      label: mode === "all" ? "全部重新排版数据框" : "排版未手调数据框",
-      source: "manual",
-      apply: (current) => ({
-        ...current,
-        cards: { ...current.cards, positions: mode === "all" ? {} : current.cards.positions },
-      }),
-    });
-    setStatusMessage(mode === "all" ? "已清除手动位置并重新智能排版" : "已智能排版未手调数据框，手动位置保持不变");
+  const resolvedCardPositionsRef = useRef<Record<string, { x: number; y: number }> | null>(null);
+  const captureCardPositions = (positions: Record<string, { x: number; y: number }>) => {
+    resolvedCardPositionsRef.current = positions;
   };
-
-  const restoreCardPosition = (id: string) => {
-    if (!project.cards.positions?.[id]) return;
-    commitProjectTransaction({
-      id: createId(`tx-card-position-reset-${id}`),
-      label: `恢复自动位置：${id}`,
-      source: "manual",
-      apply: (current) => {
-        const positions = { ...(current.cards.positions ?? {}) };
-        delete positions[id];
-        return { ...current, cards: { ...current.cards, positions } };
-      },
-    });
+  const freezeCardPositionsForMapChange = (current: ProjectDocument) => {
+    const positions = resolvedCardPositionsRef.current;
+    if (!positions || Object.keys(positions).length === 0) return current.cards;
+    return { ...current.cards, positions: { ...positions, ...current.cards.positions } };
   };
-
-  const restoreAllCardPositions = () => {
-    if (Object.keys(project.cards.positions ?? {}).length === 0) return;
+  const refreshDisplayFramePositions = () => {
+    if (typeof window !== "undefined" && Object.keys(project.cards.positions ?? {}).length > 0
+      && !window.confirm("刷新展示框位置会重新按当前地图计算数据框位置，是否继续？")) return;
+    resolvedCardPositionsRef.current = null;
     commitProjectTransaction({
-      id: createId("tx-card-position-reset-all"),
-      label: "恢复全部自动位置",
+      id: createId("tx-display-frame-position-refresh"),
+      label: "刷新展示框位置",
       source: "manual",
       apply: (current) => ({ ...current, cards: { ...current.cards, positions: {} } }),
     });
+    setStatusMessage("已刷新展示框位置");
   };
-
   const patchScene = (target: SceneSelection, patch: Record<string, unknown>) => {
-    commitProjectTransaction(createSceneTransaction(target, patch));
+    if (target.type !== "map" && target.type !== "province") {
+      commitProjectTransaction(createSceneTransaction(target, patch));
+      return;
+    }
+    const transaction = createSceneTransaction(target, patch);
+    commitProjectTransaction({
+      ...transaction,
+      apply: (current) => {
+        const next = transaction.apply(current);
+        return { ...next, cards: freezeCardPositionsForMapChange(current) };
+      },
+    });
   };
 
   const applyFont = (target: TypographyTarget, fontId: string, applyToAll: boolean) => {
@@ -1723,6 +1533,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   };
 
   const handleWorkflowStageChange = (stage: WorkflowStageId) => {
+    setGlobalSettingsSection(null);
     if (stage !== "template" && stage !== "data") lastNonTemplateStageRef.current = stage;
     setActiveStage(stage);
     if (stage === "template") {
@@ -1810,6 +1621,25 @@ function StudioApp({ projectId }: { projectId?: string }) {
     onSelectStudent: setSelectedStudentId,
   };
 
+  const handleCreateDecoration = (asset: StudioAsset) => {
+    const element = createDecorationElement(asset, {
+      x: project.canvas.width - 180,
+      y: project.canvas.height - 180,
+    });
+    commitProject(
+      applyTransaction(project, {
+        id: createId("tx-decoration"),
+        label: `添加装饰：${asset.label}`,
+        source: "manual",
+        apply: (current) => ({
+          ...current,
+          assetElements: [...current.assetElements, element],
+        }),
+      }),
+    );
+    setSelection({ type: "asset", id: element.id });
+  };
+
   const mapStyleAssetPanelProps: ContentAssetPanelProps = {
     instances: project.assetElements
       .filter((element) => element.kind !== "province-texture")
@@ -1838,21 +1668,22 @@ function StudioApp({ projectId }: { projectId?: string }) {
     onPatchProvinceTextureUniformSize: (next) => patchScene({ type: "map" }, { provinceTextureUniformSize: next }),
     onApplyProvinceAppearance: (province, appearance, fill) => {
       setSelection({ type: "province", province });
-      commitProjectTransaction(createSceneTransaction({ type: "province", province }, { appearance, ...(fill ? { fill } : {}) }));
+      patchScene({ type: "province", province }, { appearance, ...(fill ? { fill } : {}) });
       setStatusMessage(`已应用到地图：${province}`);
     },
     onApplyProvinceThemes: (themes) => {
       const entries = Object.entries(themes);
       if (entries.length === 0) return;
-      commitProjectTransaction(createProvinceThemeTransaction(themes));
+      const transaction = createProvinceThemeTransaction(themes);
+      commitProjectTransaction({
+        ...transaction,
+        apply: (current) => ({ ...transaction.apply(current), cards: freezeCardPositionsForMapChange(current) }),
+      });
       setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
     },
     onResetProvinceAppearance: (province) => {
       setSelection({ type: "province", province });
-      commitProjectTransaction(createSceneTransaction(
-        { type: "province", province },
-        { appearance: undefined, fill: undefined, textureSrc: undefined },
-      ));
+      patchScene({ type: "province", province }, { appearance: undefined, fill: undefined, textureSrc: undefined });
       setStatusMessage(`已恢复系统默认：${province}`);
     },
     onAddUserAsset: addUserAsset,
@@ -1954,9 +1785,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
       selection={selection}
       layoutIssues={contentLayoutIssues}
       onSelectElement={handleSceneSelect}
-      onArrangeCards={arrangeCards}
-      onRestoreCardPosition={restoreCardPosition}
-      onRestoreAllCardPositions={restoreAllCardPositions}
       onLocateLayoutIssue={locateLayoutIssue}
       onPreview={setAgentPreview}
       onCommit={commitProjectTransaction}
@@ -1993,41 +1821,77 @@ function StudioApp({ projectId }: { projectId?: string }) {
   if (activeStage === "template") {
     return (
       <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
-        <header className="topbar">
-          <div className="brand">
-            <MapPinned size={24} />
-            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-            <em>Beta</em>
-          </div>
-          <div className="topbar-workflow">
-            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
-          </div>
-          <div className="topbar-actions">
-            {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
-            {projectExportActions}
-            <ToolbarGroup label="界面主题">
-              <SkinSelector skin={skin} onChange={setSkin} />
+        <StudioTopbar
+          assistantEntry={
+            <button
+              ref={assistantEntryRef}
+              type="button"
+              aria-label="打开AI助手与高级功能"
+              aria-expanded={assistantDrawerOpen}
+              onClick={() => setAssistantDrawerOpen(true)}
+            >
+              <Bot size={17} />
+            </button>
+          }
+          projectActions={
+            <>
+              {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+              {projectExportActions}
+              <ToolbarGroup label="界面主题">
+                <SkinSelector skin={skin} onChange={setSkin} />
 <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-            </ToolbarGroup>
-          </div>
-        </header>
-        <StudioStageShell
-          leftRail={studioAssistantRail}
-        showRail={skin === "atelier"}
+              </ToolbarGroup>
+            </>
+          }
+        />
+        <StudioEditorShell
+          stage={activeStage}
+          leftRail={
+            <StudioLeftRail
+              activeStage={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChangeStage={handleWorkflowStageChange}
+            />
+          }
+          rightRail={
+            <TemplateCatalogRail
+              templates={templateOptions}
+              customTemplates={customTemplates}
+              currentTemplateId={project.templateId}
+              selection={templateSelection}
+              onSelect={setTemplateSelection}
+            />
+          }
+          rightRailLabel="模板列表"
         >
           <TemplateWorkspace
             project={project}
             templates={templateOptions}
             customTemplates={customTemplates}
-            onApplyTemplate={applySystemTemplate}
-            onApplyCustomTemplate={applyCustomTemplateRecord}
-            onClose={() => {
-              setActiveStage(lastNonTemplateStageRef.current);
-              setActivePanel(WORKFLOW_STAGE_TO_LEGACY_PANEL[lastNonTemplateStageRef.current] ?? "content");
+            onApplyTemplate={(templateId) => {
+              applySystemTemplate(templateId);
+              setTemplateSelection(null);
+              setActiveStage("content");
+              setActivePanel("content");
             }}
+            onApplyCustomTemplate={(templateRecord) => {
+              applyCustomTemplateRecord(templateRecord);
+              setTemplateSelection(null);
+              setActiveStage("content");
+              setActivePanel("content");
+            }}
+            selection={templateSelection}
+            onSelect={setTemplateSelection}
           />
-        </StudioStageShell>
+        </StudioEditorShell>
+        <StudioAssistantDrawer
+          open={assistantDrawerOpen}
+          onClose={() => setAssistantDrawerOpen(false)}
+          label="AI 助手与高级功能"
+        >
+          {studioAssistantRail}
+        </StudioAssistantDrawer>
       </div>
     );
   }
@@ -2035,28 +1899,51 @@ function StudioApp({ projectId }: { projectId?: string }) {
   if (activeStage === "data") {
     return (
       <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
-        <header className="topbar">
-          <div className="brand">
-            <MapPinned size={24} />
-            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-            <em>Beta</em>
-          </div>
-          <div className="topbar-workflow">
-            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
-          </div>
-          <div className="topbar-actions">
-            {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
-            {projectExportActions}
-            <ToolbarGroup label="界面主题">
-              <SkinSelector skin={skin} onChange={setSkin} />
+        <StudioTopbar
+          assistantEntry={
+            <button
+              ref={assistantEntryRef}
+              type="button"
+              aria-label="打开AI助手与高级功能"
+              aria-expanded={assistantDrawerOpen}
+              onClick={() => setAssistantDrawerOpen(true)}
+            >
+              <Bot size={17} />
+            </button>
+          }
+          projectActions={
+            <>
+              {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+              {projectExportActions}
+              <ToolbarGroup label="界面主题">
+                <SkinSelector skin={skin} onChange={setSkin} />
 <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-            </ToolbarGroup>
-          </div>
-        </header>
-        <StudioStageShell
-          leftRail={studioAssistantRail}
-        showRail={skin === "atelier"}
+              </ToolbarGroup>
+            </>
+          }
+        />
+        <StudioEditorShell
+          stage={activeStage}
+          leftRail={
+            <StudioLeftRail
+              activeStage={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChangeStage={handleWorkflowStageChange}
+            />
+          }
+          rightRail={
+            <DataUploadRail
+              project={project}
+              summary={dataHealth}
+              issues={dataIssues}
+              dataWorkspaceProps={dataWorkspaceProps}
+              assetPanelProps={mapStyleAssetPanelProps}
+              onCreateDecoration={handleCreateDecoration}
+              onSelectStudent={setSelectedStudentId}
+            />
+          }
+          rightRailLabel="数据质量与素材"
         >
           <DataUploadWorkspace
             project={project}
@@ -2064,60 +1951,76 @@ function StudioApp({ projectId }: { projectId?: string }) {
             issues={dataIssues}
             dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
             assetPanelProps={mapStyleAssetPanelProps}
-            onCreateDecoration={(asset) => {
-              const element = createDecorationElement(asset, {
-                x: project.canvas.width - 180,
-                y: project.canvas.height - 180,
-              });
-              commitProject(
-                applyTransaction(project, {
-                  id: createId("tx-decoration"),
-                  label: `添加装饰：${asset.label}`,
-                  source: "manual",
-                  apply: (current) => ({
-                    ...current,
-                    assetElements: [...current.assetElements, element],
-                  }),
-                }),
-              );
-              setSelection({ type: "asset", id: element.id });
-            }}
+            onCreateDecoration={handleCreateDecoration}
             onSelectStudent={setSelectedStudentId}
-            onClose={() => {
-              setActiveStage(lastNonTemplateStageRef.current);
-              setActivePanel(WORKFLOW_STAGE_TO_LEGACY_PANEL[lastNonTemplateStageRef.current] ?? "content");
-            }}
           />
-        </StudioStageShell>
+        </StudioEditorShell>
+        <StudioAssistantDrawer
+          open={assistantDrawerOpen}
+          onClose={() => setAssistantDrawerOpen(false)}
+          label="AI 助手与高级功能"
+        >
+          {studioAssistantRail}
+        </StudioAssistantDrawer>
       </div>
     );
   }
 
   if (activeStage === "map") {
     return (
-      <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
-        <header className="topbar">
-          <div className="brand">
-            <MapPinned size={24} />
-            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-            <em>Beta</em>
-          </div>
-          <div className="topbar-workflow">
-            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
-          </div>
-          <div className="topbar-actions">
-            {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
-            {projectExportActions}
-            <ToolbarGroup label="界面主题">
-              <SkinSelector skin={skin} onChange={setSkin} />
+      <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
+        <StudioTopbar
+          assistantEntry={
+            <button
+              ref={assistantEntryRef}
+              type="button"
+              aria-label="打开AI助手与高级功能"
+              aria-expanded={assistantDrawerOpen}
+              onClick={() => setAssistantDrawerOpen(true)}
+            >
+              <Bot size={17} />
+            </button>
+          }
+          projectActions={
+            <>
+              {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+              {projectExportActions}
+              <ToolbarGroup label="界面主题">
+                <SkinSelector skin={skin} onChange={setSkin} />
 <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-            </ToolbarGroup>
-          </div>
-        </header>
-        <StudioStageShell
-          leftRail={studioAssistantRail}
-        showRail={skin === "atelier"}
+              </ToolbarGroup>
+            </>
+          }
+        />
+        <StudioEditorShell
+          stage={activeStage}
+          leftRail={
+            <StudioLeftRail
+              activeStage={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChangeStage={handleWorkflowStageChange}
+            />
+          }
+          rightRail={
+            <MapStyleRail
+              project={project}
+              selectedProvince={selection.type === "province" ? selection.province : null}
+              userFonts={userFonts}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              undoLabel={undoLabel}
+              redoLabel={redoLabel}
+              onChangeDataView={dataWorkspaceProps.onChangeDataView}
+              onPatchMap={(patch) => patchScene({ type: "map" }, patch)}
+              onResetMap={() => resetSceneTarget({ type: "map" })}
+              onPatchProvince={(province, patch) => patchScene({ type: "province", province }, patch as Record<string, unknown>)}
+              onAddUserAsset={addUserAsset}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+            />
+          }
+          rightRailLabel="地图对象属性"
         >
         <MapStyleWorkspace
           project={project}
@@ -2131,101 +2034,167 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onPatchMap={(patch) => patchScene({ type: "map" }, patch)}
           onResetMap={() => resetSceneTarget({ type: "map" })}
           onPatchProvince={(province, patch) => patchScene({ type: "province", province }, patch as Record<string, unknown>)}
+          onCardPositionsResolved={captureCardPositions}
           onSelect={handleSceneSelect}
           onMoveProvinceTexture={(province, offsetX, offsetY) => {
             const appearance = project.map.provinceStyles?.[province]?.appearance;
             if (!appearance || appearance.kind === "manual-color") return;
-            commitProject(applyTransaction(project, createSceneTransaction(
-              { type: "province", province },
-              { appearance: { ...appearance, offsetX, offsetY } },
-            )));
+            patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
           }}
           onResizeMapImage={(alignment) => {
             const source = project.map.renderSource;
             if (source?.kind !== "image" || !source.alignment) return;
-            commitProject(applyTransaction(project, createSceneTransaction({ type: "map" }, {
-              renderSource: { ...source, alignment: { ...source.alignment, ...alignment } },
-            })));
+            patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
           }}
           onAddUserAsset={addUserAsset}
-          onClose={() => {
-            setActiveStage("content");
-            setActivePanel("content");
-            setSelection(selection.type === "province" ? selection : { type: "canvas" });
-          }}
           onUndo={handleUndo}
           onRedo={handleRedo}
         />
-        </StudioStageShell>
-      </main>
+        </StudioEditorShell>
+        <StudioAssistantDrawer
+          open={assistantDrawerOpen}
+          onClose={() => setAssistantDrawerOpen(false)}
+          label="AI 助手与高级功能"
+        >
+          {studioAssistantRail}
+        </StudioAssistantDrawer>
+      </div>
     );
   }
 
   if (activeStage === "frame") {
+    const displayFrame = project.cards.displayFrame === undefined
+      ? deriveFixedDisplayFrameFromCardSettings(project.cards)
+      : normalizeDisplayFrame(project.cards.displayFrame);
     return (
-      <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
-        <header className="topbar">
-          <div className="brand">
-            <MapPinned size={24} />
-            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-            <em>Beta</em>
-          </div>
-          <div className="topbar-workflow">
-            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
-          </div>
-          <div className="topbar-actions">
-            {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
-            <ToolbarGroup label="历史与缩放">
-              <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
-              <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
-            </ToolbarGroup>
-            {projectExportActions}
-            <ToolbarGroup label="界面主题">
-              <SkinSelector skin={skin} onChange={setSkin} />
+      <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
+        <StudioTopbar
+          assistantEntry={
+            <button
+              ref={assistantEntryRef}
+              type="button"
+              aria-label="打开AI助手与高级功能"
+              aria-expanded={assistantDrawerOpen}
+              onClick={() => setAssistantDrawerOpen(true)}
+            >
+              <Bot size={17} />
+            </button>
+          }
+          stageActions={
+            <>
+              <ToolbarGroup label="历史与缩放">
+                <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
+                <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
+              </ToolbarGroup>
+              <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={refreshDisplayFramePositions} />
+            </>
+          }
+          projectActions={
+            <>
+              {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+              {projectExportActions}
+              <ToolbarGroup label="界面主题">
+                <SkinSelector skin={skin} onChange={setSkin} />
 <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-            </ToolbarGroup>
-          </div>
-        </header>
-        <StudioStageShell
-          leftRail={studioAssistantRail}
-        showRail={skin === "atelier"}
+              </ToolbarGroup>
+            </>
+          }
+        />
+        <StudioEditorShell
+          stage={activeStage}
+          leftRail={
+            <StudioLeftRail
+              activeStage={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChangeStage={handleWorkflowStageChange}
+            />
+          }
+          rightRail={
+            <DisplayFrameRail
+              frame={displayFrame}
+              onPatchStyle={(patch) => patchScene({ type: "cards" }, { displayFrame: { ...displayFrame, style: { ...displayFrame.style, ...patch } } })}
+            />
+          }
+          rightRailLabel="展示框公共样式"
         >
           <DisplayFrameWorkspace
             cards={project.cards}
             userFonts={userFonts}
             onPatch={(patch) => patchScene({ type: "cards" }, patch)}
+            onRefreshPositions={refreshDisplayFramePositions}
           />
-        </StudioStageShell>
-      </main>
+        </StudioEditorShell>
+        <StudioAssistantDrawer
+          open={assistantDrawerOpen}
+          onClose={() => setAssistantDrawerOpen(false)}
+          label="AI 助手与高级功能"
+        >
+          {studioAssistantRail}
+        </StudioAssistantDrawer>
+      </div>
     );
   }
 
   if (activeStage === "export") {
     return (
-      <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
-        <header className="topbar">
-          <div className="brand">
-            <MapPinned size={24} />
-            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-            <em>Beta</em>
-          </div>
-          <div className="topbar-workflow">
-            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
-          </div>
-          <div className="topbar-actions">
-            {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
-            {projectExportActions}
-            <ToolbarGroup label="界面主题">
-              <SkinSelector skin={skin} onChange={setSkin} />
+      <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
+        <StudioTopbar
+          assistantEntry={
+            <button
+              ref={assistantEntryRef}
+              type="button"
+              aria-label="打开AI助手与高级功能"
+              aria-expanded={assistantDrawerOpen}
+              onClick={() => setAssistantDrawerOpen(true)}
+            >
+              <Bot size={17} />
+            </button>
+          }
+          projectActions={
+            <>
+              {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+              {projectExportActions}
+              <ToolbarGroup label="界面主题">
+                <SkinSelector skin={skin} onChange={setSkin} />
 <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-            </ToolbarGroup>
-          </div>
-        </header>
-        <StudioStageShell
-          leftRail={studioAssistantRail}
-        showRail={skin === "atelier"}
+              </ToolbarGroup>
+            </>
+          }
+        />
+        <StudioEditorShell
+          stage={activeStage}
+          leftRail={
+            <StudioLeftRail
+              activeStage={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChangeStage={handleWorkflowStageChange}
+            />
+          }
+          rightRail={
+            <DeliveryRail
+              project={renderProject}
+              dataIssues={dataIssues}
+              layoutIssues={contentLayoutIssues}
+              resourceIssues={resourceHealthIssues.filter((issue) => issue.kind === "resource")}
+              fontIssues={resourceHealthIssues.filter((issue) => issue.kind === "font")}
+              pngScale={pngScale}
+              transparentExport={transparentExport}
+              includeResources={includeResourcesInProjectExport}
+              exportState={exportState}
+              exportError={exportError}
+              onPngScaleChange={setPngScale}
+              onTransparentExportChange={setTransparentExport}
+              onIncludeResourcesChange={setIncludeResourcesInProjectExport}
+              onLocate={locateDeliveryIssue}
+              onExportPng={() => void exportPng()}
+              onExportSvg={exportSvg}
+              onExportProjectPackage={exportProjectPackage}
+              onRetry={retryLastExport}
+            />
+          }
+          rightRailLabel="导出与检查"
         >
         <DeliveryWorkspace
           project={renderProject}
@@ -2248,41 +2217,86 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onExportSvg={exportSvg}
           onExportProjectPackage={exportProjectPackage}
           onRetry={retryLastExport}
-          onBack={() => {
-            setActiveStage("content");
-            setActivePanel("content");
-          }}
         />
-        </StudioStageShell>
-      </main>
+        </StudioEditorShell>
+        <StudioAssistantDrawer
+          open={assistantDrawerOpen}
+          onClose={() => setAssistantDrawerOpen(false)}
+          label="AI 助手与高级功能"
+        >
+          {studioAssistantRail}
+        </StudioAssistantDrawer>
+      </div>
     );
   }
 
   if (activeStage === "content" && !legacyEditorEnabled) {
     return (
-      <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
-        <header className="topbar">
-          <div className="brand">
-            <MapPinned size={24} />
-            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-            <em>Beta</em>
-          </div>
-          <div className="topbar-workflow">
-            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
-          </div>
-          <div className="topbar-actions">
-            {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
-            {projectExportActions}
-            <ToolbarGroup label="界面主题">
-              <SkinSelector skin={skin} onChange={setSkin} />
+      <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
+        <StudioTopbar
+          assistantEntry={
+            <button
+              ref={assistantEntryRef}
+              type="button"
+              aria-label="打开AI助手与高级功能"
+              aria-expanded={assistantDrawerOpen}
+              onClick={() => setAssistantDrawerOpen(true)}
+            >
+              <Bot size={17} />
+            </button>
+          }
+          stageActions={
+            <>
+              <ToolbarGroup label="历史与缩放">
+                <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
+                <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
+              </ToolbarGroup>
+              <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={refreshDisplayFramePositions} />
+              <ToolbarButton label="返回地图样式" icon={<MapPinned size={18} />} onClick={() => {
+                setActiveStage("map");
+                setActivePanel("map");
+              }} />
+            </>
+          }
+          projectActions={
+            <>
+              {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+              {projectExportActions}
+              <ToolbarGroup label="界面主题">
+                <SkinSelector skin={skin} onChange={setSkin} />
 <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-            </ToolbarGroup>
-          </div>
-        </header>
-        <StudioStageShell
-          leftRail={studioAssistantRail}
-        showRail={skin === "atelier"}
+              </ToolbarGroup>
+            </>
+          }
+        />
+        <StudioEditorShell
+          stage={activeStage}
+          leftRail={
+            <StudioLeftRail
+              activeStage={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChangeStage={handleWorkflowStageChange}
+            />
+          }
+          rightRail={
+            <ContentLayoutRail
+              project={renderProject}
+              selection={selection}
+              userAssets={userAssets}
+              userFonts={userFonts}
+              assetPanelProps={mapStyleAssetPanelProps}
+              onPatch={patchScene}
+              onReset={resetSceneTarget}
+              onApplyFont={applyFont}
+              onUploadFont={(font) => {
+                setUserFonts((current) => [...current, font]);
+                setStatusMessage(`已上传字体：${font.label}`);
+              }}
+              onDeleteUserFont={deleteUserFont}
+            />
+          }
+          rightRailLabel="内容对象属性"
         >
         <ContentLayoutWorkspace
           project={renderProject}
@@ -2297,10 +2311,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onSelect={handleSceneSelect}
           onPatch={patchScene}
           onReset={resetSceneTarget}
-          onClose={() => {
-            setActiveStage("map");
-            setActivePanel("map");
-          }}
+          onRefreshPositions={refreshDisplayFramePositions}
           onBackToMap={() => {
             setActiveStage("map");
             setActivePanel("map");
@@ -2334,13 +2345,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onMoveProvinceTexture={(province, offsetX, offsetY) => {
             const appearance = project.map.provinceStyles?.[province]?.appearance;
             if (!appearance || appearance.kind === "manual-color") return;
-            commitProject(applyTransaction(project, createSceneTransaction({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } })));
+            patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
           }}
           onResizeMapImage={(alignment) => {
             const source = project.map.renderSource;
             if (source?.kind !== "image" || !source.alignment) return;
-            commitProject(applyTransaction(project, createSceneTransaction({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } })));
+            patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
           }}
+          onCardPositionsResolved={captureCardPositions}
           onMoveCard={(id, x, y) => {
             const point = maybeSnap(x, y);
             commitProject(applyTransaction(project, {
@@ -2355,8 +2367,15 @@ function StudioApp({ projectId }: { projectId?: string }) {
             commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, point)));
           }}
         />
-        </StudioStageShell>
-      </main>
+        </StudioEditorShell>
+        <StudioAssistantDrawer
+          open={assistantDrawerOpen}
+          onClose={() => setAssistantDrawerOpen(false)}
+          label="AI 助手与高级功能"
+        >
+          {studioAssistantRail}
+        </StudioAssistantDrawer>
+      </div>
     );
   }
 
@@ -2372,9 +2391,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
           </div>
           <div className="topbar-workflow">
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
-            <div className="topbar-workflow__legacy" aria-hidden="true">
-              <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
-            </div>
           </div>
           <div className="topbar-actions">
             {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
@@ -2393,7 +2409,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onRedo={handleRedo}
         onPatch={patchScene}
         onReset={resetSceneTarget}
-        onArrangeCards={arrangeCards}
         selectedStudentId={dataWorkspaceProps.selectedStudentId}
         onSelectStudent={dataWorkspaceProps.onSelectStudent}
         onChangeDataView={dataWorkspaceProps.onChangeDataView}
@@ -2428,7 +2443,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           themeMode={themeMode}
           resolvedTheme={resolvedTheme}
           onThemeChange={setThemeMode}
-        />
+          />
       </div>
     );
   }
@@ -2715,12 +2730,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
                   try {
                     setSelection({ type: "province", province });
                     setActivePanel("assets");
-                    commitProjectTransaction(
-                      createSceneTransaction(
-                        { type: "province", province },
-                        { appearance, ...(fill ? { fill } : {}) },
-                      ),
-                    );
+                    patchScene({ type: "province", province }, { appearance, ...(fill ? { fill } : {}) });
                     setStatusMessage(`已应用到地图：${province}`);
                   } catch (error) {
                     setStatusMessage(error instanceof Error ? error.message : "应用省份贴图失败");
@@ -2729,19 +2739,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
                 onApplyProvinceThemes={(themeResults: Record<string, ImageThemeResult>) => {
                   const entries = Object.entries(themeResults);
                   if (entries.length === 0) return;
-                  commitProjectTransaction(createProvinceThemeTransaction(themeResults));
+                  const transaction = createProvinceThemeTransaction(themeResults);
+                  commitProjectTransaction({
+                    ...transaction,
+                    apply: (current) => ({ ...transaction.apply(current), cards: freezeCardPositionsForMapChange(current) }),
+                  });
                   setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
                 }}
                 onResetProvinceAppearance={(province) => {
                   try {
                     setSelection({ type: "province", province });
                     setActivePanel("assets");
-                    commitProjectTransaction(
-                      createSceneTransaction(
-                        { type: "province", province },
-                        { appearance: undefined, fill: undefined, textureSrc: undefined },
-                      ),
-                    );
+                    patchScene({ type: "province", province }, { appearance: undefined, fill: undefined, textureSrc: undefined });
                     setStatusMessage(`已恢复系统默认：${province}`);
                   } catch (error) {
                     setStatusMessage(error instanceof Error ? error.message : "恢复省份外观失败");
@@ -2882,22 +2891,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
                   onMoveProvinceTexture={(province, offsetX, offsetY) => {
                     const appearance = project.map.provinceStyles?.[province]?.appearance;
                     if (!appearance || appearance.kind === "manual-color") return;
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction(
-                        { type: "province", province },
-                        { appearance: { ...appearance, offsetX, offsetY } },
-                      )),
-                    );
+                    patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
                   }}
                   onResizeMapImage={(alignment) => {
                     const rs = project.map.renderSource;
                     if (rs?.kind !== "image" || !rs.alignment) return;
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "map" }, {
-                        renderSource: { ...rs, alignment: { ...rs.alignment, ...alignment } },
-                      })),
-                    );
+                    patchScene({ type: "map" }, { renderSource: { ...rs, alignment: { ...rs.alignment, ...alignment } } });
                   }}
+                  onCardPositionsResolved={captureCardPositions}
                   selectedStudentId={selectedStudentId}
                   onSelectStudent={setSelectedStudentId}
                   onMoveCard={(id, x, y) => {
@@ -2940,7 +2941,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
             onAddUserAsset={addUserAsset}
             provinces={provinceNames}
             onOpenGlobalSettings={setGlobalSettingsSection}
-            onArrangeCards={arrangeCards}
             onApplyFont={applyFont}
             onUploadFont={(font) => {
               setUserFonts((current) => [...current, font]);

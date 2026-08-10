@@ -1,4 +1,4 @@
-import { ArrowLeft, Redo2, Undo2 } from "lucide-react";
+import { Redo2, Undo2 } from "lucide-react";
 import type { DataViewId } from "../../lib/project-data";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { UserAsset } from "../../lib/assets";
@@ -6,7 +6,7 @@ import type { UserFont } from "../../lib/fonts";
 import type { MapSettings, ProvinceStyle, SceneSelection } from "../../lib/scene-document";
 import { InspectorPanel } from "../inspector/InspectorPanel";
 import { PosterCanvas } from "../canvas/PosterCanvas";
-import { CompactButton, IconButton, SegmentedControl } from "../StudioUi";
+import { IconButton, SegmentedControl } from "../StudioUi";
 
 const DATA_VIEWS: Array<{ id: DataViewId; label: string; ariaLabel: string }> = [
   { id: "province", label: "省份", ariaLabel: "切换为省份表达" },
@@ -33,12 +33,23 @@ export interface MapStyleWorkspaceProps {
   onMoveProvinceTexture?: (province: string, offsetX: number, offsetY: number) => void;
   onResizeMapImage?: (alignment: { x: number; y: number; width: number; height: number; rotation: number }) => void;
   onAddUserAsset?: (asset: UserAsset) => void;
-  onClose: () => void;
+  onCardPositionsResolved?: (positions: Record<string, { x: number; y: number }>) => void;
   onUndo: () => void;
   onRedo: () => void;
 }
 
-export function MapStyleWorkspace({
+/**
+ * Props for the map stage's right rail. The shell owns the rail chrome
+ * (labelled aside + resizer + mobile drawer); this component supplies the
+ * 地图表达 segmented control, the undo/redo history group and the
+ * map/province InspectorPanel.
+ */
+export type MapStyleRailProps = Omit<
+  MapStyleWorkspaceProps,
+  "onSelect" | "onMoveProvinceTexture" | "onResizeMapImage" | "onCardPositionsResolved"
+>;
+
+export function MapStyleRail({
   project,
   selectedProvince,
   userFonts = [],
@@ -50,28 +61,60 @@ export function MapStyleWorkspace({
   onPatchMap,
   onResetMap,
   onPatchProvince,
+  onAddUserAsset,
+  onUndo,
+  onRedo,
+}: MapStyleRailProps) {
+  return (
+    <aside className="map-style-workspace__context" aria-label="地图对象属性">
+      <section className="map-style-workspace__section" aria-label="地图表达">
+        <div className="map-style-workspace__section-heading">
+          <strong>地图表达</strong>
+          <div className="map-style-workspace__history" role="group" aria-label="地图样式历史">
+            <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
+            <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
+          </div>
+        </div>
+        <SegmentedControl
+          label="地图表达"
+          activeId={project.dataView}
+          items={DATA_VIEWS}
+          onChange={onChangeDataView}
+          className="map-style-workspace__data-views"
+        />
+      </section>
+      <InspectorPanel
+        project={project}
+        selection={selectedProvince ? { type: "province", province: selectedProvince } : { type: "map" }}
+        userFonts={userFonts}
+        onPatch={(target, patch) => {
+          if (target.type === "map") onPatchMap(patch as Partial<MapSettings>);
+          if (target.type === "province") onPatchProvince(target.province, patch as Partial<ProvinceStyle>);
+        }}
+        onReset={(target) => {
+          if (target.type === "map") onResetMap();
+        }}
+        onAddUserAsset={onAddUserAsset}
+      />
+    </aside>
+  );
+}
+
+/**
+ * Center content of the map style stage: the poster canvas preview. The
+ * map/province controls live in the unified right rail (`MapStyleRail`).
+ */
+export function MapStyleWorkspace({
+  project,
+  selectedProvince,
+  userFonts = [],
   onSelect,
   onMoveProvinceTexture,
   onResizeMapImage,
-  onAddUserAsset,
-  onClose,
-  onUndo,
-  onRedo,
+  onCardPositionsResolved,
 }: MapStyleWorkspaceProps) {
   return (
     <main className="map-style-workspace" aria-label="地图样式">
-      <header className="map-style-workspace__header">
-        <CompactButton
-          aria-label="返回编辑器"
-          icon={<ArrowLeft size={17} aria-hidden />}
-          onClick={onClose}
-        >返回编辑器</CompactButton>
-        <div className="map-style-workspace__history" role="group" aria-label="地图样式历史">
-          <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
-          <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
-        </div>
-      </header>
-
       <div className="map-style-workspace__body">
         <section className="map-style-workspace__preview" aria-label="地图样式预览">
           <div className="map-style-workspace__preview-heading">
@@ -89,38 +132,10 @@ export function MapStyleWorkspace({
               onSelect={onSelect}
               onMoveProvinceTexture={onMoveProvinceTexture}
               onResizeMapImage={onResizeMapImage}
+              onCardPositionsResolved={onCardPositionsResolved}
             />
           </div>
         </section>
-
-        <aside className="map-style-workspace__context" aria-label="地图对象属性">
-          <section className="map-style-workspace__section" aria-label="地图表达">
-            <div className="map-style-workspace__section-heading">
-              <strong>地图表达</strong>
-              <small>选择读图方式</small>
-            </div>
-            <SegmentedControl
-              label="地图表达"
-              activeId={project.dataView}
-              items={DATA_VIEWS}
-              onChange={onChangeDataView}
-              className="map-style-workspace__data-views"
-            />
-          </section>
-          <InspectorPanel
-            project={project}
-            selection={selectedProvince ? { type: "province", province: selectedProvince } : { type: "map" }}
-            userFonts={userFonts}
-            onPatch={(target, patch) => {
-              if (target.type === "map") onPatchMap(patch as Partial<MapSettings>);
-              if (target.type === "province") onPatchProvince(target.province, patch as Partial<ProvinceStyle>);
-            }}
-            onReset={(target) => {
-              if (target.type === "map") onResetMap();
-            }}
-            onAddUserAsset={onAddUserAsset}
-          />
-        </aside>
       </div>
     </main>
   );
