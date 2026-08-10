@@ -1,4 +1,191 @@
 
+## [ERR-20260808-EXTERNAL-SKILL-SOURCES]
+
+**Logged**: 2026-08-08T00:00:00Z
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+External GitHub and Vercel sources initially could not be reliably fetched during skill evaluation.
+
+### Error
+```
+git clone https://github.com/oil-oil/vibe-hub-skill: Could not resolve host: github.com
+curl https://v0-project-workspace.vercel.app/clients: Failed to connect to port 443
+```
+
+### Context
+- The VibeHub README was fetched successfully from GitHub Raw before DNS became unavailable, but cloning the repository then failed.
+- The v0 project workspace route timed out on every request.
+- `jq` is not installed in the shell, so GitHub API output cannot be parsed through the usual command.
+
+### Resolution
+- Retried the VibeHub raw assets after connectivity recovered, installed the reviewed skill package into `C:\\Users\\86080\\.agents\\skills\\vibehub`, and verified its resolver against the live VibeHub API.
+- Reached the v0 workspace through a locally launched Edge CDP session and inspected desktop and mobile behavior directly.
+- Cloned the candidate accessibility, architecture, and web-quality skill repositories into temporary directories for review; no additional third-party skill was globally installed without a separate selection.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: `C:\\Users\\86080\\.agents\\skills`, `https://github.com/oil-oil/vibe-hub-skill`, `https://v0-project-workspace.vercel.app/clients`
+
+---
+
+## [ERR-20260808-APPLY-PATCH-UNAVAILABLE]
+
+**Logged**: 2026-08-08T00:00:00Z
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The shell environment does not provide `apply_patch`, so a plan-document creation command exited before modifying files.
+
+### Error
+```
+/usr/bin/bash: line 2: apply_patch: command not found
+```
+
+### Context
+- The requested planning workflow needed two new Markdown files.
+- No target file was written because the command failed before the patch could be applied.
+
+### Resolution
+Use the harness `write` tool for complete new files and `edit` for later precise updates.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `docs/superpowers/specs/2026-08-08-china-province-city-catalog-design.md`, `docs/superpowers/plans/2026-08-08-china-province-city-catalog.md`
+
+---
+
+## [ERR-20260808-DEEPSEEK-QUALITY-REVIEW-TIMEOUT]
+
+**Logged**: 2026-08-08T00:00:00Z
+**Priority**: low
+**Status**: pending
+**Area**: tooling
+
+### Summary
+The DeepSeek V4 Flash code-quality review subagent timed out after five minutes without producing findings for the province/city catalog sync task.
+
+### Context
+- Run: `msjt6tmj-92f1bdb3`
+- Worktree: `.worktrees/china-province-city-catalog`
+- The implementation and specification review had completed; the timed-out run was the mandatory code-quality gate.
+
+### Suggested Fix
+The first retry narrowed review to the two Task 1 script files and a one-page response, but it also timed out after two minutes (`msjtdjl3-16d4125c`). Use a different reviewer model or conduct the required review inline if the DeepSeek worker is unavailable.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `scripts/sync-china-locations.mjs`, `scripts/sync-china-locations.test.ts
+
+---
+
+## [ERR-20260808-QUALITY-REVIEWER-MODEL-UNAVAILABLE]
+
+**Logged**: 2026-08-08T00:00:00Z
+**Priority**: low
+**Status**: pending
+**Area**: tooling
+
+### Summary
+The fallback code-quality reviewer could not start because its configured `gpt-5.6-sol` model is unavailable to the current account group.
+
+### Error
+```
+404: {"message":"Model \"gpt-5.6-sol\" is not supported by any configured account in this group","type":"model_not_found"}
+```
+
+### Context
+- Run: `msjtgn48-8f964c0a`
+- The DeepSeek V4 Flash quality reviewer had already timed out twice.
+
+### Suggested Fix
+Use a configured reviewer model or complete a targeted inline review when reviewer dispatch is unavailable.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `.pi/agents/98pro.md`, `scripts/sync-china-locations.mjs`
+
+---
+
+## [ERR-20260808-TOKENFREE-QUALITY-REVIEWER-UNAVAILABLE]
+
+**Logged**: 2026-08-08T00:00:00Z
+**Priority**: low
+**Status**: pending
+**Area**: tooling
+
+### Summary
+The second fallback reviewer could not start because its configured `gpt-5.6-luna` model is unavailable to the current account group.
+
+### Error
+```
+404: {"message":"Model \"gpt-5.6-luna\" is not supported by any configured account in this group","type":"model_not_found"}
+```
+
+### Context
+- Run: `msjth1vs-27460c86`
+- DeepSeek V4 Flash code-quality review runs timed out; the `98pro` fallback was also unavailable.
+
+### Suggested Fix
+Use a configured reviewer model or complete a targeted inline review when reviewer dispatch is unavailable.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `.pi/agents/tokenfree-luna.md`, `scripts/sync-china-locations.mjs`
+
+---
+
+## [ERR-20260808-DEEPSEEK-LEGACY-COMPAT-IMPLEMENTATION-TIMEOUT]
+
+**Logged**: 2026-08-08T00:00:00Z
+**Priority**: medium
+**Status**: pending
+**Area**: data
+
+### Summary
+The DeepSeek V4 Flash subagent timed out after ten minutes while implementing the final legacy city-alias compatibility fix.
+
+### Context
+- Run: `msjuucvd-92374667`
+- Worktree: `.worktrees/china-province-city-catalog`
+- Task: preserve six historical aliases and make exact city resolution handle `州`/`地区`/`盟` suffixes.
+
+### Suggested Fix
+Inspect the worktree for partial changes and either resume the same focused task or complete it with a fresh implementation agent before release.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: `scripts/sync-china-locations.mjs`, `src/lib/search-catalog.ts`, `src/lib/search-catalog.test.ts`
+
+---
+
+## [ERR-20260808-DEEPSEEK-POSTFIX-REVIEW-TIMEOUT]
+
+**Logged**: 2026-08-08T00:00:00Z
+**Priority**: low
+**Status**: pending
+**Area**: tooling
+
+### Summary
+The final DeepSeek V4 Flash review timed out after four minutes while reviewing the completed legacy compatibility fix.
+
+### Context
+- Run: `msjvieha-0e94560e`
+- Targeted compatibility tests and deterministic generation had already been independently rechecked before this review attempt.
+
+### Suggested Fix
+Use a configured reviewer model when available; retain a focused local verification checklist when asynchronous review dispatch is unavailable.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: `scripts/sync-china-locations.mjs`, `src/lib/search-catalog.ts`
+
+---
+
 ## [ERR-20260806-DEEPSEEK-UI-POLISH-DISPATCH]
 
 **Logged**: 2026-08-06T06:41:00Z

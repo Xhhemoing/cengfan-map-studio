@@ -24,6 +24,34 @@ export default defineConfig(({ mode }) => {
       },
     },
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name(moduleId: string): string | null {
+                if (/node_modules\/(react|react-dom|scheduler)\//.test(moduleId)) return "react-vendor";
+                return null;
+              },
+            },
+            {
+              name(moduleId: string): string | null {
+                if (/node_modules\/(@mui|@emotion)\//.test(moduleId)) return "mui-vendor";
+                return null;
+              },
+            },
+            {
+              name(moduleId: string): string | null {
+                if (/node_modules\/(d3-geo|d3-array|d3-dsv|internmap|pinyin-pro|lucide-react)\//.test(moduleId)) return "vendor";
+                return null;
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx", "server/**/*.test.ts", "scripts/**/*.test.ts"],

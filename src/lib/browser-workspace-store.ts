@@ -1,8 +1,10 @@
 import { restoreProjectPackage, type ProjectPackage } from "./project-package";
 
 const DATABASE_NAME = "cengfan-map-studio";
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const STORE_NAME = "workspace";
+// 与 project store 共享同一数据库；升级时补齐该 store，避免另一方随后再升级而触发 blocked。
+const PROJECT_STORE_NAME = "projects";
 const WORKSPACE_ID = "current";
 const MIRROR_KEY = "cengfan-map-studio:workspace-mirror";
 
@@ -61,14 +63,34 @@ export function createSafeLocalStorageMirror(): SyncWorkspaceStore {
 
 function openWorkspaceDatabase(factory: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = factory.open(DATABASE_NAME, DATABASE_VERSION);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
-        request.result.createObjectStore(STORE_NAME);
-      }
+    // 与 project store 共享同一数据库：先探测版本与 store 情况，按需升级以创建 workspace store，
+    // 避免库已被升到更高版本时固定 open(1) 抛 VersionError。
+    const probe = factory.open(DATABASE_NAME);
+    probe.onsuccess = () => {
+      const db = probe.result;
+      const version = db.version;
+      const hasStore = db.objectStoreNames.contains(STORE_NAME);
+      db.close();
+      // 目标版本至少为 DATABASE_VERSION；若缺 store 则必须高于当前版本以触发升级。
+      let target = Math.max(version, DATABASE_VERSION);
+      if (!hasStore) target = Math.max(target, version + 1);
+      const request = factory.open(DATABASE_NAME, target);
+      request.onupgradeneeded = () => {
+        const opened = request.result;
+        if (!opened.objectStoreNames.contains(STORE_NAME)) {
+          opened.createObjectStore(STORE_NAME);
+        }
+        if (!opened.objectStoreNames.contains(PROJECT_STORE_NAME)) {
+          opened.createObjectStore(PROJECT_STORE_NAME);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error("IndexedDB 打开失败"));
+      request.onblocked = () => reject(new Error("IndexedDB 被其他标签页占用"));
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("IndexedDB 打开失败"));
+    probe.onerror = () => reject(probe.error ?? new Error("IndexedDB 打开失败"));
+    // 全新库首次 open 也会触发 upgradeneeded（创建空库），无需中止；onsuccess 中会关闭并重新按需 open。
+    probe.onupgradeneeded = () => {};
   });
 }
 
