@@ -22,6 +22,10 @@ nul
 
 # Generated graph cache; keep the tracked report and graph artifacts only.
 graphify-out/cache/ast/
+graphify-out/cache/
 graphify-out/.graphify_labels.json
 graphify-out/.graphify_labels.json.sig
 graphify-out/graph.html
+
+# 校徽原始素材（258MB，不提交；由 sync 脚本压缩进 public/emblems）
+assets-src/

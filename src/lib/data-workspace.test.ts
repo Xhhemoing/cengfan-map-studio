@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyUniversityAutoLocation,
   confirmImportCandidates,
   createEmptyStudentDraft,
   removeStudent,
@@ -114,5 +115,63 @@ describe("data workspace helpers", () => {
     expect(result.students[0]).not.toHaveProperty("province");
     expect(result.rejected).toHaveLength(2);
     expect(result.issues.some((issue) => issue.code === "missing_field")).toBe(true);
+  });
+
+  describe("applyUniversityAutoLocation", () => {
+    it("fills city and province from the university catalog when both are empty", () => {
+      const draft = createEmptyStudentDraft();
+      const next = applyUniversityAutoLocation(draft, "浙江大学");
+      expect(next).toMatchObject({
+        university: "浙江大学",
+        city: "杭州市",
+        province: "浙江省",
+      });
+    });
+
+    it("fills location from a typed alias", () => {
+      const next = applyUniversityAutoLocation(createEmptyStudentDraft(), "浙大");
+      expect(next).toMatchObject({
+        university: "浙大",
+        city: "杭州市",
+        province: "浙江省",
+      });
+    });
+
+    it("never overwrites a manually typed city", () => {
+      const draft: StudentDraft = { name: "", university: "", city: "宁波市" };
+      const next = applyUniversityAutoLocation(draft, "浙江大学");
+      expect(next.city).toBe("宁波市");
+      // 城市已手动填，省份仍为空则自动补省份
+      expect(next.province).toBe("浙江省");
+    });
+
+    it("never overwrites a manually typed province", () => {
+      const draft: StudentDraft = { name: "", university: "", city: "", province: "江苏省" };
+      const next = applyUniversityAutoLocation(draft, "浙江大学");
+      expect(next.province).toBe("江苏省");
+      expect(next.city).toBe("杭州市");
+    });
+
+    it("leaves unknown universities untouched", () => {
+      const draft = createEmptyStudentDraft();
+      const next = applyUniversityAutoLocation(draft, "火星大学");
+      expect(next).toEqual({ name: "", university: "火星大学", city: "", province: undefined });
+    });
+
+    it("leaves international drafts untouched", () => {
+      const draft: StudentDraft = { name: "", university: "", city: "美国·波士顿", locationScope: "international" };
+      const next = applyUniversityAutoLocation(draft, "哈佛大学");
+      expect(next.city).toBe("美国·波士顿");
+      expect(next.province).toBeUndefined();
+    });
+
+    it("keeps an empty university input empty", () => {
+      const draft: StudentDraft = { name: "", university: "", city: "北京市" };
+      expect(applyUniversityAutoLocation(draft, "")).toEqual({
+        name: "",
+        university: "",
+        city: "北京市",
+      });
+    });
   });
 });

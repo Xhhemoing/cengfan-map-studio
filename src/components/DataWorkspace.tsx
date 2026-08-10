@@ -1,6 +1,7 @@
 import { Check, Download, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+  applyUniversityAutoLocation,
   confirmImportCandidates,
   createEmptyStudentDraft,
   updateStudentDraft,
@@ -22,6 +23,7 @@ import { findDuplicateStudentGroups } from "../lib/data-duplicate";
 import { searchCities, searchProvinces, searchUniversities } from "../lib/search-catalog";
 import { SearchCombobox, type SearchComboboxOption } from "./SearchCombobox";
 import { FileDropzone } from "./FileDropzone";
+import { UniversityEmblem } from "./UniversityEmblem";
 import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, SegmentedControl } from "./StudioUi";
 
 function universityOptions(query: string): SearchComboboxOption[] {
@@ -425,7 +427,7 @@ export function DataWorkspace({
             <SearchCombobox
               label="就读院校"
               value={draft.university}
-              onChange={(value) => setDraft(updateStudentDraft(draft, "university", value))}
+              onChange={(value) => setDraft(applyUniversityAutoLocation(draft, value))}
               placeholder="北京大学"
               searchOptions={universityOptions}
             />
@@ -624,7 +626,7 @@ export function DataWorkspace({
                   {isEditing ? (
                     <>
                       <td><input aria-label="编辑学生名称" value={editingDraft.name} placeholder="姓名" onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "name", event.target.value))} /></td>
-                      <td><input aria-label="编辑就读院校" value={editingDraft.university} placeholder="就读院校" onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "university", event.target.value))} /></td>
+                      <td><input aria-label="编辑就读院校" value={editingDraft.university} placeholder="就读院校" onChange={(event) => setEditingDraft(applyUniversityAutoLocation(editingDraft, event.target.value))} /></td>
                       <td><SearchCombobox label="编辑城市" value={editingDraft.city} allowFreeInput portal onChange={(value) => setEditingDraft(updateStudentDraft(editingDraft, "city", value))} searchOptions={cityOptions} /></td>
                       <td>
                         <select aria-label="编辑学生去向类型" value={editingDraft.locationScope ?? "china"} onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "locationScope", event.target.value))}>
@@ -640,7 +642,7 @@ export function DataWorkspace({
                     </>
                   ) : (
                     <>
-                      <td>{student.name}</td>
+                      <td><span className="student-name-cell"><UniversityEmblem university={student.university} size={22} alt={`${student.university || "未知学校"}校徽`} /><span className="student-name-text">{student.name}</span></span></td>
                       <td>{student.university}</td>
                       <td>{student.city}</td>
                       <td className={student.locationScope === "international" ? "" : location.status === "unresolved" ? "is-unresolved" : ""}>

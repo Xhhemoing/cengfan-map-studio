@@ -429,6 +429,79 @@ describe("DataWorkspace", () => {
     ]);
   });
 
+  it("auto-fills city and province from the university catalog when adding a student", () => {
+    const onAppendStudents = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(container.querySelector<HTMLInputElement>('input[placeholder="林舟"]')!, "林舟舟");
+    changeInput(getInput(container, "就读院校"), "浙江大学");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("新增学生"))!);
+
+    expect(onAppendStudents).toHaveBeenCalledWith([
+      expect.objectContaining({ name: "林舟舟", university: "浙江大学", city: "杭州市", province: "浙江省" }),
+    ]);
+  });
+
+  it("auto-fills an empty city but keeps a manually typed city when adding a student", () => {
+    const onAppendStudents = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(container.querySelector<HTMLInputElement>('input[placeholder="林舟"]')!, "林舟舟");
+    changeInput(getInput(container, "就读院校"), "浙江大学");
+    changeInput(getInput(container, "城市"), "宁波市");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("新增学生"))!);
+
+    expect(onAppendStudents).toHaveBeenCalledWith([
+      expect.objectContaining({ name: "林舟舟", university: "浙江大学", city: "宁波市", province: "浙江省" }),
+    ]);
+  });
+
+  it("keeps an existing city but auto-fills an empty province when editing a university", () => {
+    const onUpdateStudent = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={onUpdateStudent}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑就读院校"]')!, "浙江大学");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+
+    // 林舟已有城市"北京市"不被覆盖；省份为空则自动填充为浙江大学所在省份
+    expect(onUpdateStudent).toHaveBeenCalledWith("student-1", expect.objectContaining({
+      university: "浙江大学",
+      city: "北京市",
+      province: "浙江省",
+    }));
+  });
+
   it("clears an international location scope when an edited record is set to China", () => {
     const onUpdateStudent = vi.fn();
     const container = render(

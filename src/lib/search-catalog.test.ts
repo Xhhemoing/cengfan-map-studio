@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { chinaCities } from "../data/china-locations";
+import { chinaUniversities as universityCatalog } from "../data/china-universities";
 import {
   resolveCity,
   resolveProvinceName,
+  resolveUniversity,
   searchCities,
   searchProvinces,
   searchUniversities,
@@ -22,6 +24,7 @@ describe("local search catalog", () => {
   });
 
   it("finds Peking University from its exact alias ahead of substring matches", () => {
+    // 别名精确匹配优先于任何名称子串匹配（如"北京北大方正软件职业技术学院"）。
     expect(searchUniversities("北大", 5)[0]?.name).toBe("北京大学");
   });
 
@@ -30,7 +33,7 @@ describe("local search catalog", () => {
       name: "浙江大学",
       city: "杭州市",
     });
-    expect(searchUniversities("大", 5)[0]?.name).toBe("大连理工大学");
+    expect(searchUniversities("中南", 5)[0]?.name).toBe("中南大学");
   });
 
   it("normalizes whitespace and punctuation around a university alias", () => {
@@ -149,4 +152,92 @@ describe("local search catalog", () => {
   it("keeps custom cities unresolved", () => {
     expect(resolveCity("自定义火星城")).toMatchObject({ status: "unresolved" });
   });
+
+  describe("resolveUniversity", () => {
+    it("resolves a university to its canonical city and province", () => {
+      expect(resolveUniversity("浙江大学")).toEqual({
+        university: "浙江大学",
+        city: "杭州市",
+        province: "浙江省",
+        status: "resolved",
+      });
+    });
+
+    it("resolves a university from its exact alias", () => {
+      expect(resolveUniversity("浙大")).toMatchObject({
+        university: "浙江大学",
+        city: "杭州市",
+        province: "浙江省",
+        status: "resolved",
+      });
+      expect(resolveUniversity("北大")).toMatchObject({
+        university: "北京大学",
+        city: "北京市",
+        province: "北京市",
+        status: "resolved",
+      });
+    });
+
+    it("resolves municipality universities to the municipality as both city and province", () => {
+      expect(resolveUniversity("清华大学")).toMatchObject({
+        university: "清华大学",
+        city: "北京市",
+        province: "北京市",
+        status: "resolved",
+      });
+    });
+
+    it("keeps an unknown university unresolved with an empty city and province", () => {
+      expect(resolveUniversity("火星大学")).toEqual({
+        university: "火星大学",
+        city: "",
+        province: "",
+        status: "unresolved",
+      });
+    });
+
+    it("rejects empty and partial inputs that are not an exact school name", () => {
+      expect(resolveUniversity("")).toMatchObject({ status: "unresolved" });
+      // 只有学校简称，不匹配任何大学的精确名/别名
+      expect(resolveUniversity("浙江")).toMatchObject({ status: "unresolved" });
+    });
+
+    it("trims surrounding whitespace before resolving", () => {
+      expect(resolveUniversity("  复旦大学  ")).toMatchObject({
+        university: "复旦大学",
+        city: "上海市",
+        status: "resolved",
+      });
+    });
+  });
+
+  describe("generated university catalog integrity", () => {
+    it("covers a broad set of ordinary higher-education institutions", () => {
+      expect(universityCatalog.length).toBeGreaterThan(2000);
+      expect(universityCatalog.length).toBeLessThan(4000);
+    });
+
+    it("keeps every university row with a non-empty province and city", () => {
+      const invalid = universityCatalog.filter(
+        (entry) => !entry.province.trim() || !entry.city.trim(),
+      );
+      expect(invalid).toEqual([]);
+    });
+
+    it("keeps at least 98% of university cities resolvable to a canonical province", () => {
+      const unresolved = universityCatalog.filter(
+        (entry) => resolveCity(entry.city).status !== "resolved",
+      );
+      expect(unresolved.length / universityCatalog.length).toBeLessThan(0.02);
+    });
+
+    it("keeps the hand-curated aliases attached to their schools", () => {
+      expect(catalogEntryAliases("北京大学")).toEqual(["北大"]);
+      expect(catalogEntryAliases("上海交通大学")).toEqual(["上交", "上海交大"]);
+    });
+  });
 });
+
+function catalogEntryAliases(name: string): string[] {
+  return universityCatalog.find((entry) => entry.name === name)?.aliases ?? [];
+}

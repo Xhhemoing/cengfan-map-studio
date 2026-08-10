@@ -3,6 +3,7 @@ import {
   buildStudentRecords,
   type StudentIssue,
 } from "./student-data";
+import { resolveUniversity } from "./search-catalog";
 import type { Student } from "./project-data";
 
 export interface StudentDraft {
@@ -39,6 +40,27 @@ export function updateStudentDraft(
   return {
     ...draft,
     [field]: value,
+  };
+}
+
+/**
+ * Apply the university catalog to a draft when the university changes:
+ * fills city/province ONLY while they are still empty, so manual overrides
+ * typed by the user are never clobbered by auto-completion. Unknown schools
+ * and international destinations are left untouched (manual input stays).
+ */
+export function applyUniversityAutoLocation(
+  draft: StudentDraft,
+  university: string,
+): StudentDraft {
+  const next = updateStudentDraft(draft, "university", university);
+  if (next.locationScope === "international" || !university.trim()) return next;
+  const resolution = resolveUniversity(university);
+  if (resolution.status !== "resolved") return next;
+  return {
+    ...next,
+    city: next.city.trim() ? next.city : resolution.city,
+    province: next.province?.trim() ? next.province : resolution.province,
   };
 }
 
