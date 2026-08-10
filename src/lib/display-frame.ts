@@ -3,6 +3,8 @@ import type { CardFontField, CardSettings, TextAlign, TextStyleOverride } from "
 export type DisplayFrameMode = "fixed" | "flow";
 export type DisplayFrameField = CardFontField;
 export type DisplayFrameItemKind = "field" | "text" | "decoration";
+export type DisplayFrameDecoration = "line" | "rectangle";
+export type DisplayFrameFontWeight = "normal" | "medium" | "bold";
 
 export interface DisplayFrameStyle {
   fontId?: string;
@@ -13,12 +15,19 @@ export interface DisplayFrameStyle {
   padding: number;
   margin: number;
   align: TextAlign;
+  borderColor?: string;
+  borderWidth?: number;
+  borderRadius?: number;
 }
 
 export interface DisplayFrameItemStyle {
   fontId?: string;
   fontSize?: number;
   color?: string;
+  fontWeight?: DisplayFrameFontWeight;
+  align?: TextAlign;
+  fill?: string;
+  strokeWidth?: number;
 }
 
 export interface DisplayFrameFixedItem {
@@ -26,6 +35,7 @@ export interface DisplayFrameFixedItem {
   kind: DisplayFrameItemKind;
   field?: DisplayFrameField;
   content?: string;
+  decoration?: DisplayFrameDecoration;
   style?: DisplayFrameItemStyle;
   fontId?: string;
   fontSize?: number;
@@ -69,6 +79,9 @@ const DEFAULT_STYLE: DisplayFrameStyle = {
   padding: 12,
   margin: 0,
   align: "left",
+  borderColor: "#1c3154",
+  borderWidth: 1,
+  borderRadius: 6,
 };
 
 function finite(value: unknown, fallback: number): number {
@@ -100,11 +113,23 @@ function normalizeItemStyle(value: unknown, fallback: DisplayFrameItemStyle | un
   const fontId = optionalText(source.fontId) ?? fallback?.fontId;
   const fontSize = source.fontSize !== undefined ? clamp(source.fontSize, 8, 240, fallback?.fontSize ?? 12) : fallback?.fontSize;
   const color = optionalText(source.color) ?? fallback?.color;
-  if (!fontId && fontSize === undefined && !color) return undefined;
+  const fontWeight = source.fontWeight === "medium" || source.fontWeight === "bold" || source.fontWeight === "normal"
+    ? source.fontWeight
+    : fallback?.fontWeight;
+  const align = source.align === "center" || source.align === "right" || source.align === "left"
+    ? source.align
+    : fallback?.align;
+  const fill = optionalText(source.fill) ?? fallback?.fill;
+  const strokeWidth = source.strokeWidth !== undefined ? clamp(source.strokeWidth, 0, 24, fallback?.strokeWidth ?? 1) : fallback?.strokeWidth;
+  if (!fontId && fontSize === undefined && !color && !fontWeight && !align && !fill && strokeWidth === undefined) return undefined;
   return {
     ...(fontId ? { fontId } : {}),
     ...(fontSize !== undefined ? { fontSize } : {}),
     ...(color ? { color } : {}),
+    ...(fontWeight ? { fontWeight } : {}),
+    ...(align ? { align } : {}),
+    ...(fill ? { fill } : {}),
+    ...(strokeWidth !== undefined ? { strokeWidth } : {}),
   };
 }
 
@@ -124,6 +149,9 @@ function normalizeStyle(value: unknown, fallback = DEFAULT_STYLE): DisplayFrameS
     padding: clamp(source.padding, 0, 120, fallback.padding),
     margin: clamp(source.margin, 0, 120, fallback.margin),
     align: source.align === "center" || source.align === "right" ? source.align : fallback.align,
+    borderColor: text(source.borderColor, fallback.borderColor ?? fallback.color),
+    borderWidth: clamp(source.borderWidth, 0, 24, fallback.borderWidth ?? 1),
+    borderRadius: clamp(source.borderRadius, 0, 120, fallback.borderRadius ?? 6),
   };
   const fontId = optionalText(source.fontId);
   if (fontId) result.fontId = fontId;
@@ -224,22 +252,39 @@ export function deriveFixedDisplayFrameFromCardSettings(cards: CardSettings): Di
   return frame;
 }
 
+function validDecoration(value: unknown): value is DisplayFrameDecoration {
+  return value === "line" || value === "rectangle";
+}
+
+export function clampDisplayFrameItem(item: DisplayFrameFixedItem): DisplayFrameFixedItem {
+  return {
+    ...item,
+    x: clamp(item.x, 0, 6000, 0),
+    y: clamp(item.y, 0, 6000, 0),
+    width: clamp(item.width, 1, 6000, 1),
+    height: clamp(item.height, 1, 6000, 1),
+    zIndex: Math.round(clamp(item.zIndex, -1000, 1000, 0)),
+  };
+}
+
 function normalizeFixedItem(value: unknown, fallback: DisplayFrameFixedItem): DisplayFrameFixedItem | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
+  const kind = validKind(source.kind) ? source.kind : fallback.kind;
   const style = normalizeItemStyle(source.style, fallback.style);
-  return {
+  return clampDisplayFrameItem({
     id: text(source.id, fallback.id),
-    kind: validKind(source.kind) ? source.kind : fallback.kind,
-    ...(validField(source.field) ? { field: source.field } : fallback.field ? { field: fallback.field } : {}),
-    ...(typeof source.content === "string" ? { content: source.content } : fallback.content ? { content: fallback.content } : {}),
+    kind,
+    ...(validField(source.field) ? { field: source.field } : kind === "field" && fallback.field ? { field: fallback.field } : {}),
+    ...(typeof source.content === "string" ? { content: source.content } : kind === "text" && fallback.content ? { content: fallback.content } : {}),
+    ...(validDecoration(source.decoration) ? { decoration: source.decoration } : kind === "decoration" && fallback.decoration ? { decoration: fallback.decoration } : {}),
     ...(style ? { style, ...styleToLegacyFields(style) } : {}),
-    x: clamp(source.x, 0, 6000, fallback.x),
-    y: clamp(source.y, 0, 6000, fallback.y),
-    width: clamp(source.width, 1, 6000, fallback.width),
-    height: clamp(source.height, 1, 6000, fallback.height),
-    zIndex: Math.round(clamp(source.zIndex, -1000, 1000, fallback.zIndex)),
-  };
+    x: finite(source.x, fallback.x),
+    y: finite(source.y, fallback.y),
+    width: finite(source.width, fallback.width),
+    height: finite(source.height, fallback.height),
+    zIndex: finite(source.zIndex, fallback.zIndex),
+  });
 }
 
 function normalizeFlowBlock(value: unknown, fallback: DisplayFrameFlowBlock): DisplayFrameFlowBlock | null {
@@ -284,6 +329,44 @@ export function normalizeDisplayFrame(value: unknown, fallback?: DisplayFrameDef
     fieldOrder: normalizeFieldOrder(source.fieldOrder, base.fieldOrder),
     fixed: { items: fixedItems.length > 0 ? fixedItems : structuredClone(base.fixed.items) },
     flow: { blocks: flowBlocks.length > 0 ? flowBlocks : structuredClone(base.flow.blocks) },
+  };
+}
+
+function nextItemId(frame: DisplayFrameDefinition, prefix: string): string {
+  const ids = new Set(frame.fixed.items.map((item) => item.id));
+  let index = 1;
+  while (ids.has(`${prefix}-${index}`)) index += 1;
+  return `${prefix}-${index}`;
+}
+
+function nextZIndex(frame: DisplayFrameDefinition): number {
+  return Math.max(-1, ...frame.fixed.items.map((item) => item.zIndex)) + 1;
+}
+
+export function createDisplayFrameTextItem(frame: DisplayFrameDefinition, content = "自定义文字"): DisplayFrameFixedItem {
+  return {
+    id: nextItemId(frame, "text"),
+    kind: "text",
+    content,
+    x: 18,
+    y: 18,
+    width: 140,
+    height: 28,
+    zIndex: nextZIndex(frame),
+  };
+}
+
+export function createDisplayFrameDecorationItem(frame: DisplayFrameDefinition, decoration: DisplayFrameDecoration): DisplayFrameFixedItem {
+  return {
+    id: nextItemId(frame, "decoration"),
+    kind: "decoration",
+    decoration,
+    x: 18,
+    y: decoration === "line" ? 64 : 18,
+    width: decoration === "line" ? 140 : 80,
+    height: decoration === "line" ? 1 : 40,
+    zIndex: nextZIndex(frame),
+    style: decoration === "rectangle" ? { fill: "#ffffff", strokeWidth: 1 } : { strokeWidth: 1 },
   };
 }
 

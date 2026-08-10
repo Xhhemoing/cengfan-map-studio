@@ -1,6 +1,5 @@
 import { geoMercator, geoPath } from "d3-geo";
 import { Fragment, useEffect, useMemo, useRef, type PointerEvent, type ReactNode, type RefObject } from "react";
-import chinaMapSource from "../../assets/china.geojson?raw";
 import { clampDestinationCardPosition, type CardArea, type CardLayoutMode, type CardPoint, type CardPolygon } from "../../lib/card-layout";
 import { createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
@@ -15,10 +14,10 @@ import {
 import { buildProvinceSummary, getVisibleStudents } from "../../lib/project-data";
 import { CANVAS_LAYER_Z } from "../../lib/scene-document";
 import type { CanvasText, CardFontField, SceneSelection } from "../../lib/scene-document";
-import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame } from "../../lib/display-frame";
+import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame, type DisplayFrameFixedItem } from "../../lib/display-frame";
 import type { ProjectDocument } from "../../lib/project-document";
 import { resolveStudentLocation } from "../../lib/student-data";
-import { findProvinceFeature, normalizeMapFeatures, type MapFeature, type Position, type RawMapFeature } from "../../lib/map-data";
+import { findProvinceFeature, getChinaMapFeatures, type MapFeature, type Position } from "../../lib/map-data";
 import { buildConnectorGeometry } from "../../lib/connector-geometry";
 import { resolveEdgeStyle } from "../../lib/edge-styles";
 import { resolveFontFamily, buildFontFaceCss, type UserFont } from "../../lib/fonts";
@@ -34,8 +33,7 @@ import { TextLayer } from "./TextLayer";
 import { useCardLayoutWorker } from "./useCardLayoutWorker";
 import { clearCanvasPreview, createCanvasPreviewScheduler, scheduleCanvasPreview } from "./CanvasDragPreview";
 
-const mapSource = JSON.parse(chinaMapSource) as { features: unknown[] };
-const features = normalizeMapFeatures(mapSource.features as RawMapFeature[]);
+const features = getChinaMapFeatures();
 const openMapSplit = splitMapFeaturesForSouthChinaSea(features, false);
 const foldedMapSplit = splitMapFeaturesForSouthChinaSea(features, true);
 const HEAT_COLORS = ["#d9f0e5", "#8ccfb6", "#4da184", "#17675e"] as const;
@@ -147,10 +145,53 @@ export interface PosterCanvasProps {
   onSelectStudent?: (id: string) => void;
   onMoveCard?: (id: string, x: number, y: number) => void;
   onMoveGuests?: (x: number, y: number) => void;
+  /** Reports current card locations so a parent can freeze them before a map edit. */
+  onCardPositionsResolved?: (positions: Record<string, { x: number; y: number }>) => void;
 }
 
 function destinationHeight(lineCount: number, rowHeight: number, bottomPadding: number, headerExtra: number): number {
   return 44 + headerExtra + lineCount * rowHeight + bottomPadding;
+}
+
+function frameTextAnchor(item: DisplayFrameFixedItem): "start" | "middle" | "end" {
+  if (item.style?.align === "center") return "middle";
+  if (item.style?.align === "right") return "end";
+  return "start";
+}
+
+function frameTextX(item: DisplayFrameFixedItem): number {
+  if (item.style?.align === "center") return item.x + item.width / 2;
+  if (item.style?.align === "right") return item.x + item.width;
+  return item.x;
+}
+
+function renderDisplayFrameItem(item: DisplayFrameFixedItem, frameStyle: { color: string; fontSize: number; align: "left" | "center" | "right" }, userFonts: UserFont[]): ReactNode {
+  const color = item.style?.color ?? frameStyle.color;
+  if (item.kind === "text") {
+    return (
+      <text
+        key={item.id}
+        data-display-frame-text={item.id}
+        x={frameTextX(item)}
+        y={item.y + Math.min(item.height, item.style?.fontSize ?? frameStyle.fontSize)}
+        fill={color}
+        fontSize={item.style?.fontSize ?? frameStyle.fontSize}
+        fontWeight={item.style?.fontWeight === "bold" ? 700 : item.style?.fontWeight === "medium" ? 500 : undefined}
+        fontFamily={resolveFontFamily(item.style?.fontId, userFonts)}
+        textAnchor={frameTextAnchor(item)}
+        pointerEvents="none"
+      >
+        {item.content || " "}
+      </text>
+    );
+  }
+  if (item.kind === "decoration" && item.decoration === "line") {
+    return <line key={item.id} data-display-frame-decoration={item.id} x1={item.x} y1={item.y} x2={item.x + item.width} y2={item.y} stroke={color} strokeWidth={item.style?.strokeWidth ?? 1} pointerEvents="none" />;
+  }
+  if (item.kind === "decoration") {
+    return <rect key={item.id} data-display-frame-decoration={item.id} x={item.x} y={item.y} width={item.width} height={item.height} fill={item.style?.fill ?? "transparent"} stroke={color} strokeWidth={item.style?.strokeWidth ?? 1} pointerEvents="none" />;
+  }
+  return null;
 }
 
 /** Extend a connector path so it runs from the card center to its boundary port. The
@@ -283,6 +324,7 @@ export function PosterCanvas({
   onSelectStudent,
   onMoveCard,
   onMoveGuests,
+  onCardPositionsResolved,
   userFonts = [],
   showGrid = false,
   gridSize = DEFAULT_GRID_SIZE,
@@ -517,6 +559,18 @@ export function PosterCanvas({
   );
   const frameTitleItem = displayFrame.fixed.items.find((item) => item.id === "title");
   const frameBodyItem = displayFrame.fixed.items.find((item) => item.id === "name") ?? displayFrame.fixed.items[0];
+  const flowBlocks = displayFrame.mode === "flow" ? displayFrame.flow.blocks.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)) : [];
+  const flowBlockFor = (field: CardFontField) => flowBlocks.find((block) => block.field === field);
+  const flowTitleBlock = flowBlockFor("title");
+  const flowNameBlock = flowBlockFor("name");
+  const flowTitleFontSize = flowTitleBlock?.style?.fontSize ?? project.cards.fieldTypography?.title?.fontSize ?? project.cards.fontSize;
+  const flowNameFontSize = flowNameBlock?.style?.fontSize ?? project.cards.fieldTypography?.name?.fontSize ?? project.cards.fontSize;
+  const flowContentStart = displayFrame.mode === "flow"
+    ? flowBlocks.reduce((cursor, block) => cursor + block.spacing + (block.style?.fontSize ?? (block.field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize)) * block.lineHeight, 12)
+    : 0;
+  const customFrameItems = displayFrame.mode === "fixed"
+    ? displayFrame.fixed.items.filter((item) => item.kind === "text" || item.kind === "decoration").slice().sort((left, right) => left.zIndex - right.zIndex || left.id.localeCompare(right.id))
+    : [];
   const horizontalPadding = displayFrame.mode === "fixed"
     ? frameBodyItem?.x ?? project.cards.horizontalPadding ?? project.cards.padding
     : displayFrame.style.padding;
@@ -676,13 +730,14 @@ export function PosterCanvas({
       const placement = placements.get(card.group.key);
       if (!placement) return [];
       const manual = project.cards.positions?.[card.group.key];
-      const constrained = manual && clampDestinationCardPosition(
-        { ...manual, width: placement.width, height: placement.height },
-        layoutRequest.bounds,
-      );
-      return [constrained ? { ...card, placement: { ...placement, ...constrained } } : { ...card, placement }];
+      return [manual ? { ...card, placement: { ...placement, x: manual.x, y: manual.y } } : { ...card, placement }];
     });
   }, [layoutRequest, layoutState.result, preparedCards, project.cards.positions]);
+
+  useEffect(() => {
+    if (!onCardPositionsResolved || destinationCards.length === 0) return;
+    onCardPositionsResolved(Object.fromEntries(destinationCards.map(({ group, placement }) => [group.key, { x: placement.x, y: placement.y }])));
+  }, [destinationCards, onCardPositionsResolved]);
 
   const connectorEdge = useMemo(() => resolveEdgeStyle({
     style: project.cards.connectorDash,
@@ -929,7 +984,17 @@ export function PosterCanvas({
                         cardDrag.current = null;
                       } : undefined}
                     >
-                      <rect width={placement.width} height={placement.height} rx={project.cards.preset === "ticket" ? 12 : project.cards.preset === "borderless" ? 0 : 6} fill={displayFrame.style.background || project.cards.background} fillOpacity={displayFrame.style.opacity ?? project.cards.opacity} stroke={project.cards.preset === "borderless" ? "none" : project.map.edgeColor} data-display-frame-mode={displayFrame.mode} />
+                      <rect
+                        data-display-frame-surface
+                        width={placement.width}
+                        height={placement.height}
+                        rx={project.cards.preset === "ticket" ? 12 : project.cards.preset === "borderless" ? 0 : displayFrame.style.borderRadius ?? 6}
+                        fill={displayFrame.style.background || project.cards.background}
+                        fillOpacity={displayFrame.style.opacity ?? project.cards.opacity}
+                        stroke={project.cards.preset === "borderless" ? "none" : displayFrame.style.borderColor ?? project.map.edgeColor}
+                        strokeWidth={project.cards.preset === "borderless" ? undefined : displayFrame.style.borderWidth ?? 1}
+                        data-display-frame-mode={displayFrame.mode}
+                      />
                       {provinceTexture && (
                         <image
                           data-card-province-texture={province}
@@ -945,16 +1010,17 @@ export function PosterCanvas({
                       )}
                       {project.cards.preset === "ticket" && <><rect data-card-accent width={8} height={placement.height} rx={4} fill={project.map.activeColor} /><circle cx={placement.width - 18} cy={18} r={7} fill={project.map.activeColor} opacity={0.2} /></>}
                       {project.cards.preset === "photo" && <><circle data-card-avatar cx={horizontalPadding + 13} cy={21} r={13} fill={project.map.activeColor} opacity={0.2} /><text x={horizontalPadding + 13} y={25} textAnchor="middle" fill={project.map.activeColor} fontWeight={700} fontSize={11}>{group.title.slice(0, 1)}</text></>}
+                      {customFrameItems.map((item) => renderDisplayFrameItem(item, displayFrame.style, userFonts))}
                       {titleLines.map((line, index) => (
                         <text
                           key={`title-${index}`}
                           data-card-title-line
                           x={(displayFrame.mode === "fixed" ? frameTitleItem?.x ?? horizontalPadding : horizontalPadding) + (project.cards.preset === "photo" ? 32 : 0) + (provinceTexture ? 36 : 0)}
-                          y={(displayFrame.mode === "fixed" ? frameTitleItem?.y ?? 12 : 22) + (index + 1) * Math.max(16, project.cards.fontSize + 4) * lineHeightMultiplier}
-                          fontWeight={700}
-                          fontSize={project.cards.fieldTypography?.title?.fontSize ?? project.cards.fontSize}
-                          fill={project.cards.fieldTypography?.title?.color ?? project.cards.textColor}
-                          fontFamily={resolveFontFamily(project.cards.fieldFonts?.title, userFonts)}
+                          y={(displayFrame.mode === "fixed" ? frameTitleItem?.y ?? 12 : 12 + (flowTitleBlock?.spacing ?? 0)) + (index + 1) * Math.max(16, flowTitleFontSize + 4) * (flowTitleBlock?.lineHeight ?? lineHeightMultiplier)}
+                          fontWeight={flowTitleBlock?.style?.fontWeight === "medium" ? 500 : 700}
+                          fontSize={flowTitleFontSize}
+                          fill={flowTitleBlock?.style?.color ?? project.cards.fieldTypography?.title?.color ?? project.cards.textColor}
+                          fontFamily={resolveFontFamily(flowTitleBlock?.style?.fontId ?? project.cards.fieldFonts?.title, userFonts)}
                         >{line.map((fragment) => fragment.text).join("")}</text>
                       ))}
                       {project.cards.showCount !== false && <text x={placement.width - horizontalPadding} y={22} fill={project.map.activeColor} textAnchor="end" fontWeight={700} fontSize={project.cards.fontSize} fontFamily={resolveFontFamily(project.cards.fieldFonts?.title, userFonts)}>{group.count} 人</text>}
@@ -966,7 +1032,13 @@ export function PosterCanvas({
                         ) * lineHeightMultiplier;
                         let lineIndex = 0;
                         return rows.flatMap((row) => row.lines.map((line, index) => {
-                          const y = (displayFrame.mode === "fixed" ? frameBodyItem?.y ?? 42 : 49) + headerExtra + lineIndex * rowHeight;
+                          const rowField = row.cityHeading ? "city" : "name";
+                          const block = displayFrame.mode === "flow" ? flowBlockFor(rowField) : undefined;
+                          const rowFontSize = block?.style?.fontSize ?? project.cards.fieldTypography?.[rowField]?.fontSize ?? (row.cityHeading ? Math.max(9, project.cards.fontSize - 1) : flowNameFontSize);
+                          const rowLineHeight = displayFrame.mode === "flow"
+                            ? Math.max(16, rowFontSize + 6) * (block?.lineHeight ?? 1.2)
+                            : rowHeight;
+                          const y = (displayFrame.mode === "fixed" ? frameBodyItem?.y ?? 42 : flowContentStart + flowTitleFontSize + 8) + headerExtra + lineIndex * rowLineHeight;
                           lineIndex += 1;
                           return (
                             <text
@@ -975,9 +1047,9 @@ export function PosterCanvas({
                               data-card-row-line={row.key}
                               x={displayFrame.mode === "fixed" ? frameBodyItem?.x ?? horizontalPadding : horizontalPadding}
                               y={y}
-                              fill={project.cards.fieldTypography?.[row.cityHeading ? "city" : "name"]?.color ?? project.cards.textColor}
-                              fontSize={project.cards.fieldTypography?.[row.cityHeading ? "city" : "name"]?.fontSize ?? (row.cityHeading ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize)}
-                              fontWeight={row.cityHeading ? 700 : undefined}
+                              fill={block?.style?.color ?? project.cards.fieldTypography?.[rowField]?.color ?? project.cards.textColor}
+                              fontSize={rowFontSize}
+                              fontWeight={row.cityHeading ? 700 : block?.style?.fontWeight === "bold" ? 700 : block?.style?.fontWeight === "medium" ? 500 : undefined}
                             >
                               {line.map((fragment, fragmentIndex) => (
                                 <tspan

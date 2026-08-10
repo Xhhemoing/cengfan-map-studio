@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  clampDisplayFrameItem,
+  createDisplayFrameDecorationItem,
   createDefaultDisplayFrame,
+  createDisplayFrameTextItem,
   deriveFixedDisplayFrameFromCardSettings,
   normalizeDisplayFrame,
   restoreDisplayFrameVariant,
@@ -91,5 +94,42 @@ describe("display frame model", () => {
     expect(normalized.cards.displayFrame).toBeUndefined();
     expect(derived.style).toMatchObject({ opacity: 0.42, fontSize: 18 });
     expect(normalized.cards.positions).toEqual(oldScene.cards.positions);
+  });
+
+  it("creates and clamps custom text and decoration items inside a local frame", () => {
+    const frame = createDefaultDisplayFrame();
+    const text = createDisplayFrameTextItem(frame, "毕业快乐");
+    const line = createDisplayFrameDecorationItem(frame, "line");
+    const normalized = normalizeDisplayFrame({
+      ...frame,
+      fixed: {
+        items: [
+          ...frame.fixed.items,
+          { ...text, x: -12, y: 7000, width: 0, height: -5 },
+          { ...line, x: 7000, y: -12, width: 0, height: 0 },
+        ],
+      },
+    });
+
+    expect(clampDisplayFrameItem({ ...text, x: -1, y: 9999, width: 0, height: -2 })).toMatchObject({ x: 0, y: 6000, width: 1, height: 1 });
+    expect(normalized.fixed.items.at(-2)).toMatchObject({ kind: "text", content: "毕业快乐", x: 0, width: 1 });
+    expect(normalized.fixed.items.at(-1)).toMatchObject({ kind: "decoration", decoration: "line", y: 0, width: 1, height: 1 });
+  });
+
+  it("preserves local frame surface and item typography through normalization", () => {
+    const frame = createDefaultDisplayFrame();
+    const normalized = normalizeDisplayFrame({
+      ...frame,
+      style: { ...frame.style, borderColor: "#123456", borderWidth: 3, borderRadius: 18 },
+      fixed: {
+        items: [{
+          ...frame.fixed.items[0],
+          style: { fontWeight: "bold", align: "center", color: "#456789" },
+        }],
+      },
+    });
+
+    expect(normalized.style).toMatchObject({ borderColor: "#123456", borderWidth: 3, borderRadius: 18 });
+    expect(normalized.fixed.items[0]?.style).toMatchObject({ fontWeight: "bold", align: "center", color: "#456789" });
   });
 });
