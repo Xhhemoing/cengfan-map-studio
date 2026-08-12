@@ -6,7 +6,7 @@ import type { ProjectDocument, ProjectTransaction } from "../lib/project-documen
 import type { LayoutHealthIssue } from "../lib/layout-health";
 import type { SceneSelection } from "../lib/scene-document";
 
-export type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error";
+export type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error" | "closed";
 
 export interface StudioAssistantRailProps {
   project: ProjectDocument;
@@ -43,6 +43,7 @@ const COLLABORATION_LABELS: Record<CollaborationStatus, string> = {
   syncing: "同步中",
   conflict: "版本冲突",
   error: "连接错误",
+  closed: "房间已关闭",
 };
 
 function selectionLabel(selection: SceneSelection): string {

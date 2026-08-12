@@ -3,10 +3,15 @@ import {
   CollaborationClientError,
   createRoom,
   fetchRoom,
+  fetchRoomOperations,
   isOwnRoomAcknowledgement,
+  leaveRoom,
   retryInitializingRoom,
+  setRoomAccess,
   submitRoomOperations,
   submitRoomSnapshot,
+  subscribeRoom,
+  type RoomMember,
 } from "./collaboration-client";
 
 const ok = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
@@ -97,5 +102,100 @@ describe("collaboration client", () => {
     await expect(retryInitializingRoom(load, { delays: [100, 250], wait })).rejects.toBe(error);
     expect(load).toHaveBeenCalledTimes(1);
     expect(wait).not.toHaveBeenCalled();
+  });
+
+  it("announces a member leaving through the leave endpoint", async () => {
+    const request = vi.fn(() => ok({ id: "ABC123", version: 3, members: [{ clientId: "c1", role: "owner", joinedAt: "t0", lastSeenAt: "t1" }] }));
+
+    const result = await leaveRoom("abc123", "owner-token", "c1", request);
+
+    expect(request).toHaveBeenCalledWith("/api/rooms/ABC123/leave", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ "X-Cengfan-Room-Token": "owner-token" }),
+      body: JSON.stringify({ clientId: "c1" }),
+    }));
+    expect(result.members).toHaveLength(1);
+  });
+
+  it("sets room access and surfaces owner-only and closed errors", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, readonly: true, closed: false }))
+      .mockImplementationOnce(() => ok({ error: { code: "FORBIDDEN", message: "只有创建者" } }, 403))
+      .mockImplementationOnce(() => ok({ error: { code: "ROOM_CLOSED", message: "已关闭" } }, 409));
+
+    await expect(setRoomAccess("ABC123", "owner-token", "c1", "set-readonly", request)).resolves.toMatchObject({ readonly: true, closed: false });
+    await expect(setRoomAccess("ABC123", "editor-token", "e1", "close", request)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(setRoomAccess("ABC123", "owner-token", "c1", "close", request)).rejects.toMatchObject({ code: "ROOM_CLOSED" });
+    expect(request).toHaveBeenLastCalledWith("/api/rooms/ABC123/access", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ clientId: "c1", action: "close" }),
+    }));
+  });
+
+  it("fetches incremental operations after a version and maps conflict errors", async () => {
+    const operations = [{ type: "set", path: ["title"], value: "乙" }];
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 2, afterVersion: 1, operations }))
+      .mockImplementationOnce(() => ok({ error: { code: "VERSION_CONFLICT", message: "历史裁剪", currentVersion: 2 } }, 409))
+      .mockImplementationOnce(() => ok({ error: { code: "VALIDATION_ERROR", message: "参数错误" } }, 400));
+
+    await expect(fetchRoomOperations("ABC123", "owner-token", 1, request)).resolves.toMatchObject({ version: 2, afterVersion: 1, operations });
+    await expect(fetchRoomOperations("ABC123", "owner-token", 0, request)).rejects.toMatchObject({ code: "VERSION_CONFLICT", currentVersion: 2 });
+    await expect(fetchRoomOperations("ABC123", "owner-token", -1, request)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(request).toHaveBeenCalledWith("/api/rooms/ABC123/operations?afterVersion=1", expect.objectContaining({
+      headers: expect.objectContaining({ "X-Cengfan-Room-Token": "owner-token" }),
+    }));
+  });
+
+  it("dispatches members and closed events through subscribeRoom", async () => {
+    class FakeEventSource {
+      static instances: FakeEventSource[] = [];
+      listeners = new Map<string, (event: MessageEvent<string>) => void>();
+      onerror: (() => void) | null = null;
+      closed = false;
+      constructor(public readonly url: string) {
+        FakeEventSource.instances.push(this);
+      }
+      addEventListener(type: string, handler: (event: MessageEvent<string>) => void): void {
+        this.listeners.set(type, handler);
+      }
+      close(): void {
+        this.closed = true;
+      }
+      emit(type: string, data: unknown): void {
+        this.listeners.get(type)?.({ data: JSON.stringify(data) } as MessageEvent<string>);
+      }
+    }
+    const original = globalThis.EventSource;
+    vi.stubGlobal("EventSource", FakeEventSource);
+    try {
+      const onSnapshot = vi.fn();
+      const onMembers = vi.fn();
+      const onClosed = vi.fn();
+      const members: RoomMember[] = [{ clientId: "c1", role: "owner", joinedAt: "t0", lastSeenAt: "t1" }];
+      const unsubscribe = subscribeRoom("ABC123", "owner-token", onSnapshot, () => {}, {
+        version: 2,
+        createTicket: (id, token) => Promise.resolve(`ticket-${id}-${token}`),
+        onMembers,
+        onClosed,
+      });
+
+      await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+      const source = FakeEventSource.instances[0]!;
+      expect(source.url).toContain("/api/rooms/ABC123/events?ticket=ticket-ABC123-owner-token");
+      expect(source.url).toContain("version=2");
+
+      source.emit("members", members);
+      expect(onMembers).toHaveBeenCalledWith(members);
+
+      source.emit("closed", { id: "ABC123", version: 3, readonly: false, closed: true });
+      expect(onClosed).toHaveBeenCalledWith(expect.objectContaining({ closed: true }));
+      expect(source.closed).toBe(true);
+
+      unsubscribe();
+    } finally {
+      vi.unstubAllGlobals();
+      globalThis.EventSource = original;
+    }
   });
 });

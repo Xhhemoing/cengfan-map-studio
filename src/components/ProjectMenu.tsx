@@ -4,10 +4,10 @@
  * Pure presentation — all state and callbacks flow in through props.
  */
 import { Copy, Download, FolderOpen, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
-import type { CollaborationRole, RoomParticipant } from "../lib/collaboration-client";
+import type { CollaborationRole, RoomAccessAction, RoomMember } from "../lib/collaboration-client";
 import type { LocalOverwriteStatus } from "../lib/incremental-workspace-sync";
 
-export type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error";
+export type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error" | "closed";
 
 export interface ProjectMenuProps {
   roomId: string | null;
@@ -15,7 +15,10 @@ export interface ProjectMenuProps {
   roomInput: string;
   inviteTokenInput: string;
   roomRole: CollaborationRole | null;
-  participants: RoomParticipant[];
+  members: RoomMember[];
+  ownClientId: string;
+  roomReadonly: boolean;
+  roomClosed: boolean;
   invitationToken: string | null;
   hasStoredRoomAccess: boolean;
   collaborationStatus: CollaborationStatus;
@@ -28,6 +31,7 @@ export interface ProjectMenuProps {
   onRoomInputChange: (value: string) => void;
   onInviteTokenInputChange: (value: string) => void;
   onCreateInvitation: (role: Exclude<CollaborationRole, "owner">) => void;
+  onSetRoomAccess: (action: RoomAccessAction) => void;
   onLeaveRoom: () => void;
   onStartRoom: () => void;
   onJoinRoom: () => void;
@@ -47,7 +51,10 @@ export function ProjectMenu({
   roomInput,
   inviteTokenInput,
   roomRole,
-  participants,
+  members,
+  ownClientId,
+  roomReadonly,
+  roomClosed,
   invitationToken,
   hasStoredRoomAccess,
   collaborationStatus,
@@ -60,6 +67,7 @@ export function ProjectMenu({
   onRoomInputChange,
   onInviteTokenInputChange,
   onCreateInvitation,
+  onSetRoomAccess,
   onLeaveRoom,
   onStartRoom,
   onJoinRoom,
@@ -118,13 +126,34 @@ export function ProjectMenu({
                       <b>{roomId}</b>
                       <button type="button" aria-label="复制房间码" onClick={() => void navigator.clipboard?.writeText(roomId)}><Copy size={15} /></button>
                     </div>
-                    <small>{roomRole === "owner" ? "创建者" : roomRole === "editor" ? "编辑者" : roomRole === "viewer" ? "仅查看" : "正在确认权限"} · {participants.length} 位协作者</small>
-                    {roomRole === "viewer" && <p>当前仅查看，无法修改此工程。</p>}
-                    {roomRole === "owner" && <div className="collaboration-invitations">
-                      <button type="button" onClick={() => onCreateInvitation("editor")}>邀请编辑者</button>
-                      <button type="button" onClick={() => onCreateInvitation("viewer")}>邀请查看者</button>
-                      {invitationToken && <button type="button" aria-label="复制邀请凭证" title="邀请凭证仅可使用一次，请通过私密渠道发送" onClick={() => void navigator.clipboard?.writeText(invitationToken)}><Copy size={15} /> 复制邀请凭证</button>}
-                    </div>}
+                    <small>{roomRole === "owner" ? "创建者" : roomRole === "editor" ? "编辑者" : roomRole === "viewer" ? "仅查看" : "正在确认权限"} · {members.length} 位成员</small>
+                    {members.length > 0 && (
+                      <ul className="collaboration-members" aria-label="房间成员">
+                        {members.map((member) => (
+                          <li key={member.clientId} data-member-role={member.role}>
+                            {member.role === "owner" && "👑 "}
+                            {member.clientId === ownClientId ? "我" : `成员 ${member.clientId.slice(0, 6)}`}
+                            {member.role === "owner" ? "（创建者）" : member.role === "viewer" ? "（仅查看）" : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <small>模式：{roomClosed ? "已关闭" : roomReadonly ? "只读" : "可编辑"}</small>
+                    {roomClosed ? (
+                      <p className="collaboration-closed">房间已关闭，无法继续同步或编辑。</p>
+                    ) : (
+                      <>
+                        {roomRole === "viewer" && <p>当前仅查看，无法修改此工程。</p>}
+                        {roomReadonly && roomRole !== "owner" && <p>房间为只读模式，无法修改此工程。</p>}
+                        {roomRole === "owner" && <div className="collaboration-invitations">
+                          <button type="button" onClick={() => onCreateInvitation("editor")}>邀请编辑者</button>
+                          <button type="button" onClick={() => onCreateInvitation("viewer")}>邀请查看者</button>
+                          {invitationToken && <button type="button" aria-label="复制邀请凭证" title="邀请凭证仅可使用一次，请通过私密渠道发送" onClick={() => void navigator.clipboard?.writeText(invitationToken)}><Copy size={15} /> 复制邀请凭证</button>}
+                          <button type="button" onClick={() => onSetRoomAccess("set-readonly")}>{roomReadonly ? "恢复编辑" : "设为只读"}</button>
+                          <button type="button" onClick={() => onSetRoomAccess("close")}>关闭房间</button>
+                        </div>}
+                      </>
+                    )}
                     <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
                     <button type="button" className="collaboration-leave" onClick={onLeaveRoom}><LogOut size={14} /> 断开房间</button>
                   </>

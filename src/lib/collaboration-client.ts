@@ -8,6 +8,20 @@ export interface RoomParticipant {
   role: CollaborationRole;
 }
 
+export interface RoomMember {
+  clientId: string;
+  role: CollaborationRole;
+  joinedAt: string;
+  lastSeenAt: string;
+}
+
+export interface RoomClosedInfo {
+  id: string;
+  version: number;
+  readonly: boolean;
+  closed: true;
+}
+
 export interface RoomAccess extends RoomParticipant {
   participantId: string;
   accessToken: string;
@@ -30,6 +44,9 @@ export interface CollaborationRoom<T = unknown> {
   rebasedFromVersion?: number;
   role?: CollaborationRole;
   participants?: RoomParticipant[];
+  readonly?: boolean;
+  closed?: boolean;
+  members?: RoomMember[];
 }
 
 export interface CreatedRoom<T = unknown> {
@@ -117,6 +134,54 @@ export function createRoomInvitation(
   }));
 }
 
+export function leaveRoom(
+  roomId: string,
+  accessToken: string,
+  clientId: string,
+  request: Requester = fetch,
+): Promise<Pick<CollaborationRoom, "id" | "version" | "members">> {
+  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/leave`, {
+    method: "POST",
+    headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ clientId }),
+  }));
+}
+
+export type RoomAccessAction = "set-readonly" | "close";
+
+export function setRoomAccess(
+  roomId: string,
+  accessToken: string,
+  clientId: string,
+  action: RoomAccessAction,
+  request: Requester = fetch,
+): Promise<Pick<CollaborationRoom, "id" | "version" | "readonly" | "closed">> {
+  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/access`, {
+    method: "POST",
+    headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ clientId, action }),
+  }));
+}
+
+export interface RoomOperationsResponse {
+  id: string;
+  version: number;
+  afterVersion: number;
+  operations: CollaborationOperation[];
+}
+
+export function fetchRoomOperations(
+  roomId: string,
+  accessToken: string,
+  afterVersion: number,
+  request: Requester = fetch,
+): Promise<RoomOperationsResponse> {
+  const query = new URLSearchParams({ afterVersion: String(afterVersion) });
+  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/operations?${query}`, {
+    headers: roomTokenHeaders(accessToken),
+  }));
+}
+
 export function submitRoomSnapshot<T>(
   roomId: string,
   accessToken: string,
@@ -186,12 +251,19 @@ export async function createRoomEventsTicket(roomId: string, accessToken: string
   return response.ticket;
 }
 
+export interface SubscribeRoomOptions {
+  version?: number;
+  createTicket?: (roomId: string, accessToken: string) => Promise<string>;
+  onMembers?: (members: RoomMember[]) => void;
+  onClosed?: (room: RoomClosedInfo) => void;
+}
+
 export function subscribeRoom<T>(
   roomId: string,
   accessToken: string,
   onSnapshot: (room: CollaborationRoom<T>) => void,
   onError: () => void = () => {},
-  options: { version?: number; createTicket?: (roomId: string, accessToken: string) => Promise<string> } = {},
+  options: SubscribeRoomOptions = {},
 ): () => void {
   let source: EventSource | null = null;
   let closed = false;
@@ -208,6 +280,25 @@ export function subscribeRoom<T>(
         onError();
       }
     });
+    if (options.onMembers) {
+      source.addEventListener("members", (event) => {
+        try {
+          options.onMembers?.(JSON.parse((event as MessageEvent<string>).data) as RoomMember[]);
+        } catch {
+          onError();
+        }
+      });
+    }
+    if (options.onClosed) {
+      source.addEventListener("closed", (event) => {
+        try {
+          options.onClosed?.(JSON.parse((event as MessageEvent<string>).data) as RoomClosedInfo);
+        } catch {
+          onError();
+        }
+        source?.close();
+      });
+    }
     source.onerror = onError;
   }).catch(onError);
   return () => {

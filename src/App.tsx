@@ -199,13 +199,18 @@ import {
   createRoom,
   createRoomInvitation,
   fetchRoom,
+  fetchRoomOperations,
   joinRoom,
+  leaveRoom,
   retryInitializingRoom,
+  setRoomAccess,
   submitRoomOperations,
   submitRoomSnapshot,
   subscribeRoom,
   type CollaborationRole,
   type CollaborationRoom,
+  type RoomAccessAction,
+  type RoomMember,
   type RoomParticipant,
 } from "./lib/collaboration-client";
 import { applyCollaborationOperations, diffCollaborationDocument, rebaseRemoteCollaborationOperations } from "./lib/collaboration-operations";
@@ -329,9 +334,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [roomAccessToken, setRoomAccessToken] = useState<string | null>(null);
   const [roomRole, setRoomRole] = useState<CollaborationRole | null>(null);
   const [roomParticipants, setRoomParticipants] = useState<RoomParticipant[]>([]);
+  const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
+  const [roomReadonly, setRoomReadonly] = useState(false);
+  const [roomClosed, setRoomClosed] = useState(false);
   const [invitationToken, setInvitationToken] = useState<string | null>(null);
   const [roomVersion, setRoomVersion] = useState(0);
-  const [collaborationStatus, setCollaborationStatus] = useState<"idle" | "connecting" | "connected" | "syncing" | "conflict" | "error">("idle");
+  const [collaborationStatus, setCollaborationStatus] = useState<"idle" | "connecting" | "connected" | "syncing" | "conflict" | "error" | "closed">("idle");
   const [collaborationMessage, setCollaborationMessage] = useState("未连接时不会上传或覆盖工程");
   const [collaborationClientId] = useState(() => createId("collab-client"));
   const hasStoredRoomAccess = Boolean(roomInput.trim() && loadBrowserValue(
@@ -388,6 +396,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const collaborationRoomRef = useRef<string | null>(null);
   const collaborationAccessTokenRef = useRef<string | null>(null);
   const suppressCollaborationSendRef = useRef(false);
+  const backfillInFlightRef = useRef(false);
   const receiveRoomUpdateRef = useRef<(room: CollaborationRoom<ProjectPackage>) => void>(() => undefined);
 
 
@@ -643,6 +652,13 @@ function StudioApp({ projectId }: { projectId?: string }) {
   };
 
   const receiveRoomUpdate = (room: CollaborationRoom<ProjectPackage>) => {
+    if (room.members) setRoomMembers(room.members);
+    if (room.readonly !== undefined) setRoomReadonly(room.readonly);
+    if (room.closed) {
+      setRoomClosed(true);
+      setCollaborationStatus("closed");
+      setCollaborationMessage("房间已关闭，无法继续同步或编辑");
+    }
     if (room.version <= collaborationVersionRef.current) return;
     if (room.operations && collaborationBaselineRef.current) {
       const current = currentCollaborationPackage(collaborationBaselineRef.current.exportedAt);
@@ -668,14 +684,67 @@ function StudioApp({ projectId }: { projectId?: string }) {
     if (!roomId || !roomAccessToken) return;
     collaborationRoomRef.current = roomId;
     collaborationAccessTokenRef.current = roomAccessToken;
-    return subscribeRoom<ProjectPackage>(roomId, roomAccessToken, (room) => receiveRoomUpdateRef.current(room), () => {
+    const backfillCollaborationGap = async () => {
+      const activeRoomId = collaborationRoomRef.current;
+      const activeToken = collaborationAccessTokenRef.current;
+      if (!activeRoomId || !activeToken || backfillInFlightRef.current) return;
+      backfillInFlightRef.current = true;
       setCollaborationStatus("error");
-      setCollaborationMessage("连接中断，浏览器会自动尝试重连");
-    }, { version: collaborationVersionRef.current });
+      try {
+        const interval = await fetchRoomOperations(activeRoomId, activeToken, collaborationVersionRef.current);
+        if (interval.operations.length > 0 && collaborationBaselineRef.current) {
+          const current = currentCollaborationPackage(collaborationBaselineRef.current.exportedAt);
+          const rebased = rebaseRemoteCollaborationOperations(collaborationBaselineRef.current, current, interval.operations);
+          collaborationBaselineRef.current = rebased.baseline;
+          applySharedPackage(rebased.current, interval.version);
+          collaborationBaselineRef.current = rebased.baseline;
+        } else {
+          collaborationVersionRef.current = interval.version;
+          setRoomVersion(interval.version);
+        }
+        setCollaborationStatus("connected");
+        setCollaborationMessage("已补齐断线期间的修改");
+      } catch (error) {
+        if (error instanceof CollaborationClientError && error.code === "VERSION_CONFLICT") {
+          try {
+            const room = await fetchRoom<ProjectPackage>(activeRoomId, activeToken);
+            if (room.snapshot) {
+              applySharedPackage(room.snapshot, room.version);
+              setCollaborationStatus("connected");
+              setCollaborationMessage("已重新加载完整快照");
+            }
+          } catch {
+            setCollaborationStatus("error");
+            setCollaborationMessage("连接中断，浏览器会自动尝试重连");
+          }
+        } else {
+          setCollaborationStatus("error");
+          setCollaborationMessage("连接中断，浏览器会自动尝试重连");
+        }
+      } finally {
+        backfillInFlightRef.current = false;
+      }
+    };
+    return subscribeRoom<ProjectPackage>(roomId, roomAccessToken, (room) => receiveRoomUpdateRef.current(room), () => {
+      void backfillCollaborationGap();
+    }, {
+      version: collaborationVersionRef.current,
+      onMembers: (members) => setRoomMembers(members),
+      onClosed: () => {
+        setRoomClosed(true);
+        setRoomReadonly(true);
+        setCollaborationStatus("closed");
+        setCollaborationMessage("房间已关闭，无法继续同步或编辑");
+      },
+    });
+    // applySharedPackage/currentCollaborationPackage are re-created each render;
+    // re-subscribing the SSE stream on every render would churn connections. The
+    // handlers run from refs so the stream only depends on room identity/token.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomAccessToken, roomId]);
 
   useEffect(() => {
-    if (!roomId || !roomAccessToken || roomRole === "viewer" || !collaborationBaselineRef.current) return;
+    if (!roomId || !roomAccessToken || roomRole === "viewer" || roomReadonly || roomClosed || !collaborationBaselineRef.current) return;
     if (suppressCollaborationSendRef.current) {
       suppressCollaborationSendRef.current = false;
       return;
@@ -717,7 +786,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       }
     }, COLLABORATION_SEND_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [collaborationClientId, customTemplates, project, renderSettings, roomAccessToken, roomId, roomRole, userAssets, userFonts]);
+  }, [collaborationClientId, customTemplates, project, renderSettings, roomAccessToken, roomId, roomRole, roomReadonly, roomClosed, userAssets, userFonts]);
 
   const storedRoomAccess = (id: string): string | null => loadBrowserValue(
     () => window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`),
@@ -751,6 +820,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
       setRoomAccessToken(access.accessToken);
       setRoomRole(access.role);
       setRoomParticipants([{ id: access.participantId, displayName: access.displayName, role: access.role }]);
+      setRoomMembers(room.members ?? [{ clientId: collaborationClientId, role: "owner", joinedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() }]);
+      setRoomReadonly(room.readonly ?? false);
+      setRoomClosed(room.closed ?? false);
       setRoomInput(room.id);
       collaborationRoomRef.current = room.id;
       collaborationAccessTokenRef.current = access.accessToken;
@@ -796,12 +868,20 @@ function StudioApp({ projectId }: { projectId?: string }) {
       setRoomAccessToken(access.accessToken);
       setRoomRole(room.role ?? access.role);
       setRoomParticipants(room.participants ?? []);
+      setRoomMembers(room.members ?? []);
+      setRoomReadonly(room.readonly ?? false);
+      setRoomClosed(room.closed ?? false);
       setInviteTokenInput("");
       collaborationRoomRef.current = normalizedRoomId;
       collaborationAccessTokenRef.current = access.accessToken;
       applySharedPackage(room.snapshot, room.version);
-      setCollaborationStatus("connected");
-      setCollaborationMessage("已加入房间，后续仅同步增量修改");
+      if (room.closed) {
+        setCollaborationStatus("closed");
+        setCollaborationMessage("房间已关闭，无法继续同步或编辑");
+      } else {
+        setCollaborationStatus("connected");
+        setCollaborationMessage("已加入房间，后续仅同步增量修改");
+      }
     } catch (error) {
       if (error instanceof CollaborationClientError && (error.code === "ROOM_FORBIDDEN" || error.code === "ROOM_NOT_FOUND")) {
         forgetRoomAccess(normalizedRoomId);
@@ -824,11 +904,19 @@ function StudioApp({ projectId }: { projectId?: string }) {
   };
 
   const leaveCollaborationRoom = () => {
+    if (roomId && roomAccessToken) {
+      void leaveRoom(roomId, roomAccessToken, collaborationClientId).catch(() => {
+        // Leaving is best-effort; local state is cleared regardless.
+      });
+    }
     if (roomId) forgetRoomAccess(roomId);
     setRoomId(null);
     setRoomAccessToken(null);
     setRoomRole(null);
     setRoomParticipants([]);
+    setRoomMembers([]);
+    setRoomReadonly(false);
+    setRoomClosed(false);
     setInvitationToken(null);
     collaborationRoomRef.current = null;
     collaborationAccessTokenRef.current = null;
@@ -839,7 +927,27 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setCollaborationMessage("已断开；未连接时不会上传或覆盖工程");
   };
 
-  const canEditSharedProject = roomRole !== "viewer";
+  const setCollaborationRoomAccess = async (action: RoomAccessAction) => {
+    if (!roomId || !roomAccessToken) return;
+    setCollaborationStatus("syncing");
+    try {
+      const updated = await setRoomAccess(roomId, roomAccessToken, collaborationClientId, action);
+      setRoomReadonly(updated.readonly ?? false);
+      if (updated.closed) {
+        setRoomClosed(true);
+        setCollaborationStatus("closed");
+        setCollaborationMessage("房间已关闭，无法继续同步或编辑");
+      } else {
+        setCollaborationStatus("connected");
+        setCollaborationMessage(updated.readonly ? "房间已设为只读" : "房间已恢复可编辑");
+      }
+    } catch (error) {
+      setCollaborationStatus("error");
+      setCollaborationMessage(error instanceof Error ? error.message : "设置房间访问失败");
+    }
+  };
+
+  const canEditSharedProject = roomRole !== "viewer" && !roomReadonly && !roomClosed;
 
   const commitProject = (next: ProjectDocument) => {
     if (!canEditSharedProject) {
@@ -1742,7 +1850,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
       roomInput={roomInput}
       inviteTokenInput={inviteTokenInput}
       roomRole={roomRole}
-      participants={roomParticipants}
+      members={roomMembers}
+      ownClientId={collaborationClientId}
+      roomReadonly={roomReadonly}
+      roomClosed={roomClosed}
       invitationToken={invitationToken}
       hasStoredRoomAccess={hasStoredRoomAccess}
       collaborationStatus={collaborationStatus}
@@ -1755,6 +1866,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onRoomInputChange={setRoomInput}
       onInviteTokenInputChange={setInviteTokenInput}
       onCreateInvitation={(role) => void createCollaborationInvitation(role)}
+      onSetRoomAccess={(action) => void setCollaborationRoomAccess(action)}
       onLeaveRoom={leaveCollaborationRoom}
       onStartRoom={() => void startCollaborationRoom()}
       onJoinRoom={joinCollaborationRoom}

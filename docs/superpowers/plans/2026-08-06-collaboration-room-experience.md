@@ -1,5 +1,7 @@
 # 协作房间体验补全计划（2026-08-06）
 
+> 状态：Task 1（服务端）随 `6e11803` 完成；Task 2（客户端函数 + UI + 断线补同步）随 `feat(collab): client room members, readonly/close UI, and gap backfill` 完成；Task 3 全量验证与记录完成。冻结契约全部落地。
+
 ## 背景
 
 `docs/plans/2026-07-27-map-label-roster-collaboration-improvements.md` 任务 7 明确列出共享编辑房间应支持：成员状态、只读邀请、房主关闭房间、断线重连补操作、资源大对象按哈希上传。当前 `master` 已实现房间创建/加入、快照获取、SSE 操作广播、版本冲突检测（`server/collaboration.ts` + `server/index.ts` 路由 + `src/lib/collaboration-client.ts` + `src/App.tsx` 弹层），但上述五项均未落地。
