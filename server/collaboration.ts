@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   applyCollaborationOperations,
   areValidCollaborationOperations,
-  collaborationPathsOverlap,
+  collaborationOperationsOverlap,
   type CollaborationOperation,
 } from "../src/lib/collaboration-operations";
 
@@ -300,7 +300,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       const canRebase = operations
         && intervening.length === room.version - transaction.baseVersion
         && !operations.some((operation) => intervening.some((entry) =>
-          entry.operations.some((applied) => collaborationPathsOverlap(operation.path, applied.path))
+          entry.operations.some((applied) => collaborationOperationsOverlap(operation, applied))
         ));
       if (!canRebase) throw new CollaborationError("VERSION_CONFLICT", "房间已被其他成员更新", room.version);
     }

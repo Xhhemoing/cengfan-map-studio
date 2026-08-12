@@ -155,6 +155,79 @@ describe("collaboration room store", () => {
     })).toThrowError(expect.objectContaining({ code: "VERSION_CONFLICT", currentVersion: 1 }));
   });
 
+  it("merges stale array-element operations for different ids within the same collection", () => {
+    const store = createRoomStore(() => "STUD01");
+    store.create({ students: [{ id: "A", name: "甲" }, { id: "B", name: "乙" }] }, "client-a");
+    store.apply("STUD01", {
+      txId: "patch-a",
+      clientId: "client-a",
+      baseVersion: 0,
+      operations: [{ type: "array-upsert", path: ["students"], item: { id: "A", name: "甲改" } }],
+    });
+
+    const merged = store.apply("STUD01", {
+      txId: "patch-b",
+      clientId: "client-b",
+      baseVersion: 0,
+      operations: [{ type: "array-upsert", path: ["students"], item: { id: "B", name: "乙改" } }],
+    });
+
+    expect(merged).toMatchObject({ version: 2, rebasedFromVersion: 0 });
+    expect(merged.snapshot).toEqual({ students: [{ id: "A", name: "甲改" }, { id: "B", name: "乙改" }] });
+  });
+
+  it("rejects stale array-element operations that target the same id", () => {
+    const store = createRoomStore(() => "STUD02");
+    store.create({ students: [{ id: "A", name: "甲" }] }, "client-a");
+    store.apply("STUD02", {
+      txId: "patch-a",
+      clientId: "client-a",
+      baseVersion: 0,
+      operations: [{ type: "array-upsert", path: ["students"], item: { id: "A", name: "甲改" } }],
+    });
+
+    expect(() => store.apply("STUD02", {
+      txId: "patch-b",
+      clientId: "client-b",
+      baseVersion: 0,
+      operations: [{ type: "array-upsert", path: ["students"], item: { id: "A", name: "甲再改" } }],
+    })).toThrowError(expect.objectContaining({ code: "VERSION_CONFLICT", currentVersion: 1 }));
+  });
+
+  it("rejects collection-level atomic replacement conflicting with element-level operations in both directions", () => {
+    const store = createRoomStore(() => "STUD03");
+    store.create({ students: [{ id: "A", name: "甲" }] }, "client-a");
+    store.apply("STUD03", {
+      txId: "patch-a",
+      clientId: "client-a",
+      baseVersion: 0,
+      operations: [{ type: "set", path: ["students"], value: [{ id: "A", name: "甲改" }] }],
+    });
+
+    expect(() => store.apply("STUD03", {
+      txId: "patch-b",
+      clientId: "client-b",
+      baseVersion: 0,
+      operations: [{ type: "array-upsert", path: ["students"], item: { id: "A", name: "乙改" } }],
+    })).toThrowError(expect.objectContaining({ code: "VERSION_CONFLICT", currentVersion: 1 }));
+
+    const store2 = createRoomStore(() => "STUD04");
+    store2.create({ students: [{ id: "A", name: "甲" }] }, "client-a");
+    store2.apply("STUD04", {
+      txId: "patch-a",
+      clientId: "client-a",
+      baseVersion: 0,
+      operations: [{ type: "array-upsert", path: ["students"], item: { id: "A", name: "甲改" } }],
+    });
+
+    expect(() => store2.apply("STUD04", {
+      txId: "patch-b",
+      clientId: "client-b",
+      baseVersion: 0,
+      operations: [{ type: "set", path: ["students"], value: [{ id: "A", name: "丙" }] }],
+    })).toThrowError(expect.objectContaining({ code: "VERSION_CONFLICT", currentVersion: 1 }));
+  });
+
   it("creates a room and applies versioned snapshot transactions", () => {
     const store = createRoomStore(() => "ROOM01");
     const room = store.create({ title: "初始" }, "client-a");

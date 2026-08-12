@@ -117,6 +117,37 @@ describe("AgentSession", () => {
     expect(changed.cards.fontSize).toBe(current.cards.fontSize);
   });
 
+  it("preserves a manual edit to a different student when the AI confirms an update_fact", async () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "A", name: "甲", university: "大学", city: "广州", province: "广东", visibility: true },
+        { id: "B", name: "乙", university: "大学", city: "北京", province: "北京", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "call-fact", name: "manage_students", arguments: { action: "update_fact", studentId: "A", fields: { city: "深圳" } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("把甲同学的城市改到深圳");
+
+    const current = {
+      ...project,
+      students: project.students.map((student) => student.id === "B" ? { ...student, name: "乙改" } : student),
+    };
+    const transaction = session.transactionForSteps(new Set(["call-fact"]));
+
+    expect(transaction).not.toBeNull();
+    const applied = transaction!.apply(current);
+    expect(applied.students).toHaveLength(2);
+    expect(applied.students.find((student) => student.id === "A")?.city).toBe("深圳");
+    expect(applied.students.find((student) => student.id === "B")?.name).toBe("乙改");
+    expect(current.students.find((student) => student.id === "A")?.city).toBe("广州");
+  });
+
   it("returns no selected-step transaction for an empty selection", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     vi.stubGlobal("fetch", vi.fn()
