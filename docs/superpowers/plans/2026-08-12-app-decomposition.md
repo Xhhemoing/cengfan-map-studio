@@ -1,6 +1,8 @@
 # App.tsx 分解实施计划（2026-08-12）
 
 > 依据已批准的 `docs/superpowers/specs/2026-08-08-project-optimization-design.md` 阶段 3（App.tsx 按 400 行规范拆分；阶段 1 的 MUI 改造已合并，拆分范围已无约束）。
+>
+> 状态：Task 1（协作生命周期 hook）随 `7eac32b` 完成；Task 2（导出管线 hook）随 `7c0ccda` 完成。Task 3 评估后缓行：workspaceSync 构造闭包与 projectIdRef/editorProjectStore/浏览器存储键深度交织，强制抽取引入时序约束、收益有限（约 150 行且边界模糊），故不在本轮执行。剩余分解（数据导入/模板/场景处理）工作量仍大（App.tsx 2727 行），下一轮建议委托子智能体按域拆分并严格核验。
 
 ## 现状
 
