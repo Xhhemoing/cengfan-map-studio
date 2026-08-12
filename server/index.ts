@@ -498,11 +498,12 @@ export function createAiServer(options: AiServerOptions = {}) {
         const value = request.headers["x-cengfan-room-token"];
         return typeof value === "string" && value.trim() ? value.trim() : null;
       };
-      const roomErrorStatus = (error: CollaborationError): number => error.code === "VERSION_CONFLICT" ? 409
+      const roomErrorStatus = (error: CollaborationError): number => error.code === "VERSION_CONFLICT" || error.code === "ROOM_CLOSED" ? 409
         : error.code === "ROOM_NOT_FOUND" ? 404
           : error.code === "ROOM_LIMIT_REACHED" || error.code === "SUBSCRIBER_LIMIT_REACHED" ? 429
-            : error.code === "ROOM_FORBIDDEN" ? 403
-              : 400;
+            : error.code === "ROOM_FORBIDDEN" || error.code === "FORBIDDEN" || error.code === "READONLY_ROOM" ? 403
+              : error.code === "ROOM_INITIALIZING" ? 425
+                : 400;
       const sendRoomError = (error: CollaborationError) => send(roomErrorStatus(error), {
         error: { code: error.code, message: error.message, currentVersion: error.currentVersion },
       });
@@ -622,6 +623,98 @@ export function createAiServer(options: AiServerOptions = {}) {
         return;
       }
 
+      const memberMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/members$/);
+      if (request.method === "POST" && memberMatch) {
+        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
+        const accessToken = roomAccessToken(request);
+        if (!accessToken) {
+          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
+          return;
+        }
+        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId) {
+          send(400, { error: { code: "VALIDATION_ERROR", message: "clientId 必填" } });
+          return;
+        }
+        try {
+          send(200, roomStore.refreshMember(memberMatch[1]!, accessToken, body.clientId));
+        } catch (error) {
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
+        }
+        return;
+      }
+
+      const leaveMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/leave$/);
+      if (request.method === "POST" && leaveMatch) {
+        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
+        const accessToken = roomAccessToken(request);
+        if (!accessToken) {
+          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
+          return;
+        }
+        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId) {
+          send(400, { error: { code: "VALIDATION_ERROR", message: "clientId 必填" } });
+          return;
+        }
+        try {
+          send(200, roomStore.leave(leaveMatch[1]!, accessToken, body.clientId));
+        } catch (error) {
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
+        }
+        return;
+      }
+
+      const accessMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/access$/);
+      if (request.method === "POST" && accessMatch) {
+        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
+        const accessToken = roomAccessToken(request);
+        if (!accessToken) {
+          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
+          return;
+        }
+        if (!isRecord(body) || typeof body.clientId !== "string" || (body.action !== "set-readonly" && body.action !== "close")) {
+          send(400, { error: { code: "VALIDATION_ERROR", message: "clientId 与 action(set-readonly|close) 必填" } });
+          return;
+        }
+        try {
+          send(200, roomStore.setAccess(accessMatch[1]!, accessToken, body.clientId, body.action));
+        } catch (error) {
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
+        }
+        return;
+      }
+
+      const operationsMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/operations$/);
+      if (request.method === "GET" && operationsMatch) {
+        const accessToken = roomAccessToken(request);
+        if (!accessToken) {
+          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
+          return;
+        }
+        const operationsUrl = new URL(url, "http://localhost");
+        const afterVersionParam = operationsUrl.searchParams.get("afterVersion");
+        const afterVersion = afterVersionParam === null ? Number.NaN : Number(afterVersionParam);
+        if (afterVersionParam === null || !Number.isInteger(afterVersion) || afterVersion < 0) {
+          send(400, { error: { code: "VALIDATION_ERROR", message: "afterVersion 必须是非负整数" } });
+          return;
+        }
+        try {
+          const result = roomStore.getOperations(operationsMatch[1]!, accessToken, afterVersion);
+          send(200, {
+            id: operationsMatch[1]!.toUpperCase(),
+            version: result.version,
+            afterVersion,
+            operations: result.operations,
+          });
+        } catch (error) {
+          if (error instanceof CollaborationError) sendRoomError(error);
+          else throw error;
+        }
+        return;
+      }
+
       const eventsTicketMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/events-ticket$/);
       if (request.method === "POST" && eventsTicketMatch) {
         const accessToken = roomAccessToken(request);
@@ -659,6 +752,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         const knownVersionParam = eventUrl.searchParams.get("version");
         const knownVersion = knownVersionParam === null ? Number.NaN : Number(knownVersionParam);
         let unsubscribe: () => void;
+        let unsubscribeLifecycle: () => void;
         try {
           const room = roomStore.get(eventsMatch[1]!);
           if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
@@ -666,6 +760,18 @@ export function createAiServer(options: AiServerOptions = {}) {
           unsubscribe = roomStore.subscribe(eventsMatch[1]!, ticketRecord.accessToken, (next) => {
             const payload = next.operations || next.updatedBy === participant.id ? { ...next, snapshot: undefined } : next;
             response.write(`event: snapshot\ndata: ${JSON.stringify(payload)}\n\n`);
+          });
+          unsubscribeLifecycle = roomStore.subscribeLifecycle(eventsMatch[1]!, ticketRecord.accessToken, (event) => {
+            if (event.kind === "closed") {
+              response.write(`event: closed\ndata: ${JSON.stringify({ id: event.room.id, version: event.room.version, readonly: event.room.readonly === true, closed: true })}\n\n`);
+              response.end();
+              return;
+            }
+            if (event.kind === "access") {
+              response.write(`event: snapshot\ndata: ${JSON.stringify({ ...event.room, snapshot: undefined })}\n\n`);
+              return;
+            }
+            response.write(`event: members\ndata: ${JSON.stringify(event.members)}\n\n`);
           });
           response.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
@@ -689,6 +795,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         request.on("close", () => {
           clearInterval(heartbeat);
           unsubscribe();
+          unsubscribeLifecycle();
         });
         return;
       }
