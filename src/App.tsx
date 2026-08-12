@@ -59,7 +59,7 @@ import { DataUploadRail, DataUploadWorkspace } from "./components/workspaces/Dat
 import { MapStyleRail, MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
 import { DisplayFrameRail, DisplayFrameWorkspace } from "./components/workspaces/DisplayFrameWorkspace";
 import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
-import { DeliveryRail, DeliveryWorkspace, type DeliveryExportState, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
+import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
 
 import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
@@ -109,12 +109,6 @@ import {
   type CustomTemplateRecord,
 } from "./lib/template-store";
 import {
-  downloadDataUrl,
-  downloadText,
-  serializePosterSvg,
-  svgToPngDataUrl,
-} from "./lib/export-poster";
-import {
   createDecorationElement,
   createLandmarkElement,
   duplicateAssetElement,
@@ -143,13 +137,11 @@ import {
   parseResourcePack,
 } from "./lib/resource-pack";
 import {
-  createProjectPackage,
   createProjectPackageEnvelope,
-  downloadProjectPackage,
-  parseProjectPackage,
   restoreProjectPackage,
   type ProjectPackage,
 } from "./lib/project-package";
+import { usePosterExport } from "./lib/usePosterExport";
 import { applyTypographyFont, type TypographyTarget } from "./lib/typography";
 import type { ImageThemeResult } from "./lib/image-color";
 import {
@@ -267,16 +259,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     status: initialWorkspace ? "saved" : "idle",
     savedAt: initialWorkspace?.exportedAt ?? null,
   });
-  const [exportingPng, setExportingPng] = useState(false);
-  const [exportState, setExportState] = useState<DeliveryExportState>("idle");
-  const [exportError, setExportError] = useState<string>();
-  const lastExportRef = useRef<"png" | "svg" | "project">("png");
-  const [pngScale, setPngScale] = useState(1);
-  const [transparentExport, setTransparentExport] = useState(false);
-  const [showProjectExportDialog, setShowProjectExportDialog] = useState(false);
-
-
-  const [includeResourcesInProjectExport, setIncludeResourcesInProjectExport] = useState(true);
   const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(() =>
     initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
   );
@@ -697,6 +679,24 @@ function StudioApp({ projectId }: { projectId?: string }) {
     workspaceSync.markPending();
   };
 
+  const posterExport = usePosterExport({
+    posterRef,
+    project,
+    userAssets,
+    userFonts,
+    customTemplates,
+    renderSettings,
+    applyImportedPackage: (pack) => {
+      setUserAssets(pack.assets);
+      setUserFonts(pack.fonts);
+      setCustomTemplates(pack.customTemplates);
+      setRenderSettings(pack.renderSettings);
+      commitProject(pack.project);
+      setSelection({ type: "canvas" });
+    },
+    reportStatus: setStatusMessage,
+  });
+
   const canUndo = project.history.past.length > 0;
   const canRedo = project.history.future.length > 0;
   const undoLabel = canUndo
@@ -815,57 +815,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     patchScene(target, { ...patch } as Record<string, unknown>);
   };
 
-  const exportSvg = () => {
-    lastExportRef.current = "svg";
-    setExportState("exporting");
-    setExportError(undefined);
-    try {
-      const svg = posterRef.current;
-      if (!svg) throw new Error("海报预览尚未准备好");
-      const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
-      downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
-      setExportState("success");
-      setStatusMessage("SVG 已导出");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "SVG 导出失败";
-      setExportState("error");
-      setExportError(message);
-      setStatusMessage(message);
-    }
-  };
-
-  const openProjectExportDialog = () => {
-    setIncludeResourcesInProjectExport(true);
-    setShowProjectExportDialog(true);
-  };
-
-  const exportProjectPackage = () => {
-    lastExportRef.current = "project";
-    setExportState("exporting");
-    setExportError(undefined);
-    try {
-      const exportedAssets = includeResourcesInProjectExport ? userAssets : [];
-      const exportedFonts = includeResourcesInProjectExport ? userFonts : [];
-      downloadProjectPackage(createProjectPackage({
-        project,
-        assets: exportedAssets,
-        fonts: exportedFonts,
-        customTemplates,
-        renderSettings,
-      }));
-      setShowProjectExportDialog(false);
-      setExportState("success");
-      setStatusMessage(includeResourcesInProjectExport
-        ? `完整工程包已导出：${project.students.length} 条名单、${exportedAssets.length} 个素材、${exportedFonts.length} 个字体、${customTemplates.length} 个模板`
-        : `工程已导出（未包含资源包）：${project.students.length} 条名单、${customTemplates.length} 个模板`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "工程包导出失败";
-      setExportState("error");
-      setExportError(message);
-      setStatusMessage(message);
-    }
-  };
-
   const saveWorkspaceNow = async (): Promise<void> => {
     const pack = createProjectPackageEnvelope(latestWorkspaceRef.current);
     await workspaceSync.overwrite(pack);
@@ -919,27 +868,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     } else {
       setStatusMessage("强制保存失败：浏览器本地存储不可写，请立即导出工程包");
     }
-  };
-
-  const importProjectPackage = (file: File | null) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const pack = parseProjectPackage(String(reader.result ?? ""));
-        if (!window.confirm(`导入工程将替换当前画布和 ${project.students.length} 条名单，是否继续？`)) return;
-        setUserAssets(pack.assets);
-        setUserFonts(pack.fonts);
-        setCustomTemplates(pack.customTemplates);
-        setRenderSettings(pack.renderSettings);
-        commitProject(pack.project);
-        setSelection({ type: "canvas" });
-        setStatusMessage(`完整工程包已导入：${pack.project.students.length} 条名单、${pack.assets.length} 个素材、${pack.fonts.length} 个字体、${pack.customTemplates.length} 个模板`);
-      } catch (error) {
-        setStatusMessage(error instanceof Error ? error.message : "工程包导入失败");
-      }
-    };
-    reader.readAsText(file);
   };
 
   const addUserAsset = (asset: UserAsset) => {
@@ -1135,40 +1063,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     // Keep the legacy content editor's material context available without letting
     // the dedicated map stage leave its own workflow context.
     if (activeStage === "content" && next.type === "province") setActivePanel("assets");
-  };
-
-  const exportPng = async () => {
-    lastExportRef.current = "png";
-    setExportingPng(true);
-    setExportState("exporting");
-    setExportError(undefined);
-    try {
-      const svg = posterRef.current;
-      if (!svg) throw new Error("海报预览尚未准备好");
-      await ensureUserFontsLoaded(userFonts);
-      const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
-      const dataUrl = await svgToPngDataUrl(source, {
-        width: project.canvas.width * pngScale,
-        height: project.canvas.height * pngScale,
-        transparentBackground: transparentExport,
-      });
-      downloadDataUrl(dataUrl, "我的毕业去向图.png");
-      setExportState("success");
-      setStatusMessage("PNG 已导出");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "PNG 导出失败";
-      setExportState("error");
-      setExportError(message);
-      setStatusMessage(message);
-    } finally {
-      setExportingPng(false);
-    }
-  };
-
-  const retryLastExport = () => {
-    if (lastExportRef.current === "svg") exportSvg();
-    else if (lastExportRef.current === "project") exportProjectPackage();
-    else void exportPng();
   };
 
   const addText = () => {
@@ -1583,8 +1477,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
       collaborationStatus={collaboration.collaborationStatus}
       collaborationMessage={collaboration.collaborationMessage}
       collaborationOpen={collaboration.collaborationOpen}
-      pngScale={pngScale}
-      transparentExport={transparentExport}
+      pngScale={posterExport.pngScale}
+      transparentExport={posterExport.transparentExport}
       syncStatus={syncState.status}
       onSetCollaborationOpen={collaboration.setCollaborationOpen}
       onRoomInputChange={collaboration.setRoomInput}
@@ -1597,11 +1491,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onNewProject={createNewProject}
       onRestoreLocal={restoreLocalProject}
       onSaveLocal={() => void overwriteBrowserStorage()}
-      onPngScaleChange={setPngScale}
-      onTransparentChange={setTransparentExport}
-      onExportSvg={exportSvg}
-      onExportProject={openProjectExportDialog}
-      onImportProject={importProjectPackage}
+      onPngScaleChange={posterExport.setPngScale}
+      onTransparentChange={posterExport.setTransparentExport}
+      onExportSvg={posterExport.exportSvg}
+      onExportProject={posterExport.openProjectExportDialog}
+      onImportProject={posterExport.importProjectPackage}
     />
     </ToolbarGroup>
   );
@@ -2015,19 +1909,19 @@ function StudioApp({ projectId }: { projectId?: string }) {
               layoutIssues={contentLayoutIssues}
               resourceIssues={resourceHealthIssues.filter((issue) => issue.kind === "resource")}
               fontIssues={resourceHealthIssues.filter((issue) => issue.kind === "font")}
-              pngScale={pngScale}
-              transparentExport={transparentExport}
-              includeResources={includeResourcesInProjectExport}
-              exportState={exportState}
-              exportError={exportError}
-              onPngScaleChange={setPngScale}
-              onTransparentExportChange={setTransparentExport}
-              onIncludeResourcesChange={setIncludeResourcesInProjectExport}
+              pngScale={posterExport.pngScale}
+              transparentExport={posterExport.transparentExport}
+              includeResources={posterExport.includeResourcesInProjectExport}
+              exportState={posterExport.exportState}
+              exportError={posterExport.exportError}
+              onPngScaleChange={posterExport.setPngScale}
+              onTransparentExportChange={posterExport.setTransparentExport}
+              onIncludeResourcesChange={posterExport.setIncludeResourcesInProjectExport}
               onLocate={locateDeliveryIssue}
-              onExportPng={() => void exportPng()}
-              onExportSvg={exportSvg}
-              onExportProjectPackage={exportProjectPackage}
-              onRetry={retryLastExport}
+              onExportPng={() => void posterExport.exportPng()}
+              onExportSvg={posterExport.exportSvg}
+              onExportProjectPackage={posterExport.exportProjectPackage}
+              onRetry={posterExport.retryLastExport}
             />
           }
           rightRailLabel="导出与检查"
@@ -2040,19 +1934,19 @@ function StudioApp({ projectId }: { projectId?: string }) {
           layoutIssues={contentLayoutIssues}
           resourceIssues={resourceHealthIssues.filter((issue) => issue.kind === "resource")}
           fontIssues={resourceHealthIssues.filter((issue) => issue.kind === "font")}
-          pngScale={pngScale}
-          transparentExport={transparentExport}
-          includeResources={includeResourcesInProjectExport}
-          exportState={exportState}
-          exportError={exportError}
-          onPngScaleChange={setPngScale}
-          onTransparentExportChange={setTransparentExport}
-          onIncludeResourcesChange={setIncludeResourcesInProjectExport}
+          pngScale={posterExport.pngScale}
+          transparentExport={posterExport.transparentExport}
+          includeResources={posterExport.includeResourcesInProjectExport}
+          exportState={posterExport.exportState}
+          exportError={posterExport.exportError}
+          onPngScaleChange={posterExport.setPngScale}
+          onTransparentExportChange={posterExport.setTransparentExport}
+          onIncludeResourcesChange={posterExport.setIncludeResourcesInProjectExport}
           onLocate={locateDeliveryIssue}
-          onExportPng={() => void exportPng()}
-          onExportSvg={exportSvg}
-          onExportProjectPackage={exportProjectPackage}
-          onRetry={retryLastExport}
+          onExportPng={() => void posterExport.exportPng()}
+          onExportSvg={posterExport.exportSvg}
+          onExportProjectPackage={posterExport.exportProjectPackage}
+          onRetry={posterExport.retryLastExport}
         />
         </StudioEditorShell>
         <StudioAssistantDrawer
@@ -2346,16 +2240,16 @@ function StudioApp({ projectId }: { projectId?: string }) {
           {projectExportActions}
 
           <ToolbarGroup label="导出">
-            <button className="primary-button" onClick={exportPng} disabled={exportingPng}>
-              <ImageDown size={16} /> {exportingPng ? "导出中..." : "导出 PNG"}
+            <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}>
+              <ImageDown size={16} /> {posterExport.exportingPng ? "导出中..." : "导出 PNG"}
             </button>
           </ToolbarGroup>
         </div>
       </header>
 
 
-      {showProjectExportDialog && (
-        <div className="dialog-backdrop" onMouseDown={() => setShowProjectExportDialog(false)}>
+      {posterExport.showProjectExportDialog && (
+        <div className="dialog-backdrop" onMouseDown={() => posterExport.setShowProjectExportDialog(false)}>
           <section
             className="export-project-dialog"
             role="dialog"
@@ -2368,26 +2262,26 @@ function StudioApp({ projectId }: { projectId?: string }) {
                 <h2>确认导出工程</h2>
                 <p>工程文件会保存当前画布、名单、模板和渲染设置。</p>
               </div>
-              <button type="button" aria-label="关闭导出工程确认" onClick={() => setShowProjectExportDialog(false)}>×</button>
+              <button type="button" aria-label="关闭导出工程确认" onClick={() => posterExport.setShowProjectExportDialog(false)}>×</button>
             </header>
             <label className="export-resource-option boolean-control checkbox-row">
               <input
                 type="checkbox"
                 aria-label="导出时包含资源包"
-                checked={includeResourcesInProjectExport}
-                onChange={(event) => setIncludeResourcesInProjectExport(event.target.checked)}
+                checked={posterExport.includeResourcesInProjectExport}
+                onChange={(event) => posterExport.setIncludeResourcesInProjectExport(event.target.checked)}
               />
               <span>
                 <strong>包含资源包</strong>
                 <small>一并打包地图背景、地图贴图、素材和字体；导入后会立刻同步到画布与素材库。</small>
               </span>
             </label>
-            {!includeResourcesInProjectExport && (
+            {!posterExport.includeResourcesInProjectExport && (
               <p className="export-resource-warning">未包含资源包时，其他设备可能缺少素材库条目和自定义字体。</p>
             )}
             <footer>
-              <button type="button" className="secondary-button" onClick={() => setShowProjectExportDialog(false)}>取消</button>
-              <button type="button" className="primary-button" aria-label="确认导出工程" onClick={exportProjectPackage}>确认导出</button>
+              <button type="button" className="secondary-button" onClick={() => posterExport.setShowProjectExportDialog(false)}>取消</button>
+              <button type="button" className="primary-button" aria-label="确认导出工程" onClick={posterExport.exportProjectPackage}>确认导出</button>
             </footer>
           </section>
         </div>
@@ -2611,10 +2505,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
               {exportWarnings.unresolvedStudents.length > 0 && <p className="panel-note">{exportWarnings.unresolvedStudents.length} 个城市未匹配，可返回「名单」修正。</p>}
               {exportWarnings.hiddenStudents.length > 0 && <p className="panel-note">{exportWarnings.hiddenStudents.length} 条记录已隐藏，不会出现在海报中。</p>}
               <ActionGroup label="交付操作" className="workflow-delivery-actions">
-                <button className="wide-button workflow-export-button" type="button" onClick={() => void exportPng()} disabled={exportingPng}><ImageDown size={16} />{exportingPng ? "导出中..." : "导出 PNG"}</button>
-                <CompactButton icon={<Download size={14} aria-hidden />} onClick={exportSvg}>导出 SVG</CompactButton>
+                <button className="wide-button workflow-export-button" type="button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}><ImageDown size={16} />{posterExport.exportingPng ? "导出中..." : "导出 PNG"}</button>
+                <CompactButton icon={<Download size={14} aria-hidden />} onClick={posterExport.exportSvg}>导出 SVG</CompactButton>
                 <CompactButton icon={<Save size={14} aria-hidden />} onClick={() => void overwriteBrowserStorage()} disabled={syncState.status === "saving"}>保存到本机</CompactButton>
-                <CompactButton icon={<PackageOpen size={14} aria-hidden />} onClick={openProjectExportDialog}>导出工程</CompactButton>
+                <CompactButton icon={<PackageOpen size={14} aria-hidden />} onClick={posterExport.openProjectExportDialog}>导出工程</CompactButton>
               </ActionGroup>
             </div>
           )}
