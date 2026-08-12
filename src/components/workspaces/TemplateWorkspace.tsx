@@ -139,9 +139,18 @@ export function TemplateWorkspace({
   return (
     <main className="template-workspace" aria-label="模板选择工作台">
       <header className="template-workspace__header">
+        <div className="template-workspace__heading">
+          <p className="template-workspace__eyebrow">STEP 01 · TEMPLATE</p>
+          <h1>选择地图模板</h1>
+          <span>先确定视觉基调，后续编辑会沿用这里的画布比例与地图样式。</span>
+        </div>
+        <div className="template-workspace__facts" aria-label="当前工程信息">
+          <span><small>工程名单</small><strong>{project.students.length}</strong></span>
+          <span><small>历史记录</small><strong>{project.history.past.length} 步</strong></span>
+        </div>
         <div className="template-workspace__status" aria-live="polite">
-          <strong>{project.students.length}</strong>
-          <span>条名单 · 当前{isCurrent ? "已选" : "待应用"}</span>
+          <span className="template-workspace__status-dot" aria-hidden="true" />
+          <span>当前模板{isCurrent ? "已生效" : "待应用"}</span>
         </div>
       </header>
 

@@ -3181,10 +3181,11 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
 .workbench-shell { min-height: 100vh; padding: 32px clamp(16px, 4vw, 48px); color: var(--editor-ink); background: var(--editor-bg, #e9edf0); }
 .workbench-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1080px; margin: 0 auto 28px; }
 .workbench-brand { display: flex; align-items: center; gap: 12px; }
-.workbench-brand-mark { display: grid; width: 40px; height: 40px; color: #fff; background: var(--editor-accent); border-radius: 10px; place-items: center; }
+.workbench-brand-mark { display: grid; width: 40px; height: 40px; color: #fff; background: var(--editor-accent); border-radius: 8px; place-items: center; }
 .workbench-brand strong { display: block; font-size: 17px; font-weight: 700; color: var(--editor-ink); letter-spacing: 0.02em; }
 .workbench-brand small { display: block; margin-top: 2px; font-size: 12px; color: var(--editor-ink-muted); }
 .workbench-actions { display: flex; align-items: center; gap: 8px; }
+.workbench-file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .workbench-actions .primary-button { color: #fff; background: var(--editor-accent, #245d57); border-color: var(--editor-accent); }
 .workbench-actions .primary-button:hover { background: var(--editor-accent); filter: brightness(1.08); }
 .workbench-actions .secondary-button { color: var(--editor-ink); background: var(--editor-surface-raised, #ffffff); border-color: var(--editor-line, #d3dce2); }
@@ -3193,12 +3194,12 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
 .workbench-loading { max-width: 1080px; margin: 0 auto; padding: 48px 16px; color: var(--editor-ink-muted); font-size: 14px; text-align: center; }
 .workbench-loading .brand { justify-content: center; }
 .workbench-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; max-width: 1080px; margin: 0 auto; }
-.workbench-card { position: relative; display: flex; background: var(--editor-surface-raised, #ffffff); border: 1px solid var(--editor-line, #d3dce2); border-radius: 10px; transition: box-shadow 0.15s ease, transform 0.15s ease; }
+.workbench-card { position: relative; display: flex; background: var(--editor-surface-raised, #ffffff); border: 1px solid var(--editor-line, #d3dce2); border-radius: 8px; transition: box-shadow 0.15s ease, transform 0.15s ease; }
 .workbench-card:hover { box-shadow: 0 6px 18px rgb(28 49 84 / 12%); transform: translateY(-1px); }
-.workbench-card-main { display: grid; flex: 1; min-width: 0; gap: 2px; padding: 18px 44px 18px 18px; color: inherit; text-align: left; background: transparent; border: 0; border-radius: 10px; cursor: pointer; }
+.workbench-card-main { display: grid; flex: 1; min-width: 0; gap: 2px; padding: 18px 44px 18px 18px; color: inherit; text-align: left; background: transparent; border: 0; border-radius: 8px; cursor: pointer; }
 .workbench-card-main:hover { background: var(--editor-accent-soft, #e7f1ef); }
 .workbench-card-main:focus-visible { outline: 2px solid var(--editor-focus, #d6b56d); outline-offset: 2px; }
-.workbench-card-preview { display: grid; width: 56px; height: 56px; margin-bottom: 12px; color: var(--editor-accent); background: var(--editor-accent-soft, #e7f1ef); border-radius: 12px; place-items: center; }
+.workbench-card-preview { display: grid; width: 56px; height: 56px; margin-bottom: 12px; color: var(--editor-accent); background: var(--editor-accent-soft, #e7f1ef); border-radius: 8px; place-items: center; }
 .workbench-card-main strong { overflow: hidden; font-size: 15px; font-weight: 600; color: var(--editor-ink); text-overflow: ellipsis; white-space: nowrap; }
 .workbench-card-main small { font-size: 12px; color: var(--editor-ink-muted); }
 .workbench-card-menu { position: absolute; top: 10px; right: 10px; }
@@ -3216,6 +3217,10 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   .workbench-header { flex-direction: column; align-items: flex-start; }
   .workbench-actions { width: 100%; }
   .workbench-actions button { flex: 1; justify-content: center; }
+}
+@media (max-width: 420px) {
+  .workbench-shell { padding: 20px 12px; }
+  .workbench-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Studio editor shell: stable left rail | center | optional resizable right rail.

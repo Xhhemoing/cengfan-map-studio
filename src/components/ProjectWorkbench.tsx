@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Copy, FolderOpen, MapPinned, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { createEmptyProject, createSampleProject, duplicateStoredProject, type ProjectStore, type StoredProject } from "../lib/project-store";
 import { downloadProjectPackage, parseProjectPackage } from "../lib/project-package";
 import { createId } from "../lib/ids";
+import { ProjectGrid } from "./workbench/ProjectGrid";
+import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
 
 interface ProjectWorkbenchProps {
   store: ProjectStore;
@@ -137,68 +138,11 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
 
   return (
     <main className="workbench-shell">
-      <header className="workbench-header">
-        <div className="workbench-brand">
-          <span className="workbench-brand-mark"><MapPinned size={20} /></span>
-          <span><strong>蹭饭地图工作室</strong><small>项目工作台</small></span>
-        </div>
-        <div className="workbench-actions">
-          <button type="button" className="secondary-button" aria-label="导入工程包" onClick={() => importInputRef.current?.click()}>
-            <FolderOpen size={16} /> 导入
-          </button>
-          <button type="button" className="primary-button" aria-label="新建项目" onClick={() => void createProject()}>
-            <Plus size={16} /> 新建项目
-          </button>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept="application/json,.json"
-            aria-label="导入工程包文件"
-            style={{ display: "none" }}
-            onChange={(event) => void importProject(event.target.files?.[0] ?? null)}
-          />
-        </div>
-      </header>
+      <WorkbenchHeader importInputRef={importInputRef} onCreateProject={() => void createProject()} onImportProject={(file) => void importProject(file)} />
 
       {error && <section className="workbench-error" role="alert">{error}</section>}
 
-      <section className="workbench-grid" aria-label="项目列表">
-        {loading && projects.length === 0 ? (
-          <p className="workbench-empty">正在加载项目…</p>
-        ) : sorted.length === 0 && !error ? (
-          <p className="workbench-empty">还没有项目。点击「新建项目」或「导入」开始。</p>
-        ) : (
-          sorted.map((project) => (
-            <article key={project.id} className="workbench-card">
-              <button type="button" className="workbench-card-main" aria-label={`打开项目 ${project.name}`} onClick={() => openProject(project.id)}>
-                <span className="workbench-card-preview" aria-hidden>
-                  <MapPinned size={28} />
-                </span>
-                <strong>{project.name}</strong>
-                <small>{project.pack.project.students.length} 名学生 · 更新于 {formatUpdatedAt(project.updatedAt)}</small>
-              </button>
-              <div className="workbench-card-menu">
-                <button
-                  type="button"
-                  aria-label="项目菜单"
-                  aria-expanded={openMenuId === project.id}
-                  onClick={() => setOpenMenuId((current) => current === project.id ? null : project.id)}
-                >
-                  <MoreHorizontal size={16} />
-                </button>
-                {openMenuId === project.id && (
-                  <div className="workbench-menu" role="menu">
-                    <button type="button" role="menuitem" onClick={() => void renameProject(project)}><Pencil size={14} /> 重命名</button>
-                    <button type="button" role="menuitem" onClick={() => void duplicateProject(project)}><Copy size={14} /> 复制</button>
-                    <button type="button" role="menuitem" onClick={() => exportProject(project)}><FolderOpen size={14} /> 导出工程包</button>
-                    <button type="button" role="menuitem" onClick={() => void deleteProject(project)}><Trash2 size={14} /> 删除</button>
-                  </div>
-                )}
-              </div>
-            </article>
-          ))
-        )}
-      </section>
+      <ProjectGrid projects={sorted} loading={loading} hasError={Boolean(error)} openMenuId={openMenuId} formatUpdatedAt={formatUpdatedAt} onOpen={openProject} onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)} onRename={(project) => void renameProject(project)} onDuplicate={(project) => void duplicateProject(project)} onExport={exportProject} onDelete={(project) => void deleteProject(project)} />
     </main>
   );
 }
