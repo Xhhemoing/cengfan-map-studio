@@ -60,6 +60,17 @@ describe("StudioEditorShell", () => {
     expect(container.querySelector(".studio-editor-shell__main")?.textContent).toContain("中心");
   });
 
+  it("prepends the collapsible stage guide line to the right rail and the drawer", () => {
+    const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
+
+    const dockedGuide = container.querySelector(".studio-editor-shell__right .studio-stage-guide");
+    expect(dockedGuide?.textContent).toContain("确定地图表达与外观");
+    expect(dockedGuide?.getAttribute("aria-label")).toBe("地图样式说明");
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开地图属性"]')!);
+    expect(document.querySelector(".studio-editor-shell__drawer .studio-stage-guide")?.textContent).toContain("确定地图表达与外观");
+  });
+
   it("expands the center region when no right rail is supplied", () => {
     const { container } = renderShell();
 

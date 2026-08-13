@@ -17,6 +17,7 @@ import {
   type PanelSide,
 } from "../lib/editor-layout";
 import { ResizablePanelDivider } from "./ResizablePanelDivider";
+import { StageGuideLine } from "./StageGuideLine";
 
 export type StudioEditorShellProps = {
   stage: WorkflowStageId;
@@ -92,7 +93,10 @@ export function StudioEditorShell({
       {hasRightRail && (
         <>
           <aside className="studio-editor-shell__right" aria-label={rightRailLabel}>
-            {rightRail}
+            <div className="studio-editor-shell__right-inner">
+              <StageGuideLine stage={stage} />
+              {rightRail}
+            </div>
           </aside>
           <button
             ref={drawerToggleRef}
@@ -124,6 +128,7 @@ export function StudioEditorShell({
                   ×
                 </button>
               </div>
+              <StageGuideLine stage={stage} />
               {rightRail}
             </div>
           </Drawer>

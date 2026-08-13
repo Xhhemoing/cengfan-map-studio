@@ -2797,6 +2797,26 @@ button.data-overview__metric:hover {
 }
 .studio-stage-overview__card--ok { border-color: var(--editor-line); }
 .studio-stage-overview__card--warning { border-color: var(--status-warning, #b26a00); }
+
+.studio-stage-guide {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  color: var(--editor-ink-muted);
+  background: var(--editor-surface-muted);
+  border: 1px solid var(--editor-line);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.studio-stage-guide summary {
+  cursor: pointer;
+  color: var(--editor-ink);
+  font-weight: 600;
+  list-style: none;
+}
+.studio-stage-guide summary::before { content: "▸ "; color: var(--editor-ink-muted); }
+.studio-stage-guide[open] summary::before { content: "▾ "; }
+.studio-stage-guide__body { margin: 4px 0 0; line-height: 1.5; }
+.studio-editor-shell__right-inner { display: grid; gap: 0; }
 .studio-advanced__meta-line {
   display: flex;
   align-items: baseline;
