@@ -1589,6 +1589,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         />
         <StudioEditorShell
           stage={activeStage}
+          leftRail={studioAssistantRail}
           rightRail={
             <TemplateCatalogRail
               templates={templateOptions}
@@ -1667,6 +1668,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         />
         <StudioEditorShell
           stage={activeStage}
+          leftRail={studioAssistantRail}
           rightRail={
             <DataUploadRail
               project={project}
@@ -1737,6 +1739,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         />
         <StudioEditorShell
           stage={activeStage}
+          leftRail={studioAssistantRail}
           rightRail={
             <MapStyleRail
               project={project}
@@ -1845,6 +1848,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         />
         <StudioEditorShell
           stage={activeStage}
+          leftRail={studioAssistantRail}
           rightRail={
             <DisplayFrameRail
               frame={displayFrame}
@@ -1907,6 +1911,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         />
         <StudioEditorShell
           stage={activeStage}
+          leftRail={studioAssistantRail}
           rightRail={
             <DeliveryRail
               project={renderProject}
@@ -2014,6 +2019,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         />
         <StudioEditorShell
           stage={activeStage}
+          leftRail={studioAssistantRail}
           rightRail={
             <ContentLayoutRail
               project={renderProject}

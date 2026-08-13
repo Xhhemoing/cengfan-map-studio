@@ -2,12 +2,12 @@ export const EDITOR_PANEL_LAYOUT_STORAGE_KEY = "cengfan-map-studio:editor-panel-
 export const EDITOR_CENTER_MIN_WIDTH = 480;
 
 export const PANEL_WIDTH_LIMITS = {
-  sidebar: { min: 180, max: 360 },
+  sidebar: { min: 240, max: 380 },
   inspector: { min: 220, max: 420 },
 } as const;
 
 export const DEFAULT_EDITOR_PANEL_LAYOUT = {
-  sidebarWidth: 200,
+  sidebarWidth: 280,
   inspectorWidth: 240,
 } as const;
 

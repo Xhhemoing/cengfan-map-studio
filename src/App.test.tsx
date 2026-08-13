@@ -1537,7 +1537,8 @@ describe("App workflow guidance", () => {
   it("keeps the assistant rail in the default full-screen public editor", () => {
     const container = renderPublicApp();
 
-    expect(container.querySelector('.studio-editor-shell[data-has-left-rail="false"]')).not.toBeNull();
+    expect(container.querySelector('.studio-editor-shell[data-has-left-rail="true"]')).not.toBeNull();
+    expect(container.querySelector(".studio-sidebar .studio-assistant-rail")).not.toBeNull();
     expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(6);
     expect(container.querySelector(".workflow-stage-stepper button")).not.toBeNull();
     expect(container.querySelector('button[aria-label="打开AI助手与高级功能"]')).not.toBeNull();
@@ -1551,9 +1552,11 @@ describe("App workflow guidance", () => {
 
     click(workflowStage(container, "数据与素材"));
     expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(6);
+    expect(container.querySelector(".studio-sidebar .studio-assistant-rail")).not.toBeNull();
 
     click(workflowStage(container, "最终导出"));
     expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(6);
+    expect(container.querySelector(".studio-sidebar .studio-assistant-rail")).not.toBeNull();
   });
 
   it("keeps the left sidebar when Classic opens a focused workspace", () => {
@@ -1563,7 +1566,7 @@ describe("App workflow guidance", () => {
     click(workflowStage(container, "地图样式"));
 
     expect(container.querySelector<HTMLElement>(".app-shell")?.dataset.editorSkin).toBe("classic");
-    expect(container.querySelector('.studio-editor-shell[data-has-left-rail="false"]')).not.toBeNull();
+    expect(container.querySelector('.studio-editor-shell[data-has-left-rail="true"]')).not.toBeNull();
     expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(6);
     expect(container.querySelector(".map-style-workspace")).not.toBeNull();
   });
@@ -1708,7 +1711,8 @@ describe("Top workflow and left assistant rail", () => {
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开AI助手与高级功能"]')!);
     expect(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).toHaveLength(2);
     expect(Array.from(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).map((tab) => tab.textContent)).toEqual(["AI 助手", "高级功能"]);
-    expect(document.querySelectorAll('[data-agent-presentation="docked"]')).toHaveLength(1);
+    // 左侧常驻 rail 与打开的抽屉共用同一会话上下文,各渲染一个 docked 实例。
+    expect(document.querySelectorAll('[data-agent-presentation="docked"]')).toHaveLength(2);
   });
 
   it("opens advanced project settings from the rail without adding an AI-bottom advanced entry", () => {

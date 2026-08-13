@@ -80,7 +80,7 @@ describe("StudioEditorShell", () => {
   });
 
   it("owns keyboard-accessible separators and persists panel widths", async () => {
-    window.localStorage.setItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({ sidebarWidth: 220, inspectorWidth: 260 }));
+    window.localStorage.setItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({ sidebarWidth: 280, inspectorWidth: 260 }));
     const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
 
     const separators = container.querySelectorAll<HTMLElement>('[role="separator"]');
@@ -92,7 +92,7 @@ describe("StudioEditorShell", () => {
       separators[0]!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }));
     });
     const stored = JSON.parse(window.localStorage.getItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY) ?? "{}");
-    expect(stored.sidebarWidth).toBe(228);
+    expect(stored.sidebarWidth).toBe(284);
   });
 
   it("exposes the right rail through a labelled drawer toggle on narrow screens", async () => {

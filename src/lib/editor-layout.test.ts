@@ -10,19 +10,19 @@ import {
 } from "./editor-layout";
 
 describe("editor panel layout", () => {
-  it("defaults to compact side panels so the poster canvas remains the primary work area", () => {
-    expect(DEFAULT_EDITOR_PANEL_LAYOUT).toEqual({ sidebarWidth: 200, inspectorWidth: 240 });
+  it("defaults to a wide AI overview sidebar and a compact inspector", () => {
+    expect(DEFAULT_EDITOR_PANEL_LAYOUT).toEqual({ sidebarWidth: 280, inspectorWidth: 240 });
   });
 
   it("clamps each panel to its own desktop bounds", () => {
-    expect(getPanelWidthBounds("sidebar", 1440, 280)).toEqual({ min: 180, max: 360 });
+    expect(getPanelWidthBounds("sidebar", 1440, 280)).toEqual({ min: 240, max: 380 });
     expect(getPanelWidthBounds("inspector", 1440, 220)).toEqual({ min: 220, max: 420 });
   });
 
   it("keeps the center canvas minimum when both panels are wide", () => {
     expect(normalizeEditorPanelLayout({ sidebarWidth: 999, inspectorWidth: 999 }, 1121)).toEqual({
-      sidebarWidth: 221,
-      inspectorWidth: 420,
+      sidebarWidth: 240,
+      inspectorWidth: 401,
     });
   });
 
@@ -48,7 +48,7 @@ describe("editor panel layout", () => {
     writeEditorPanelLayout(adapter, { sidebarWidth: 10, inspectorWidth: 999 }, 1440);
 
     expect(JSON.parse(storage.get(EDITOR_PANEL_LAYOUT_STORAGE_KEY) ?? "{}")).toEqual({
-      sidebarWidth: 180,
+      sidebarWidth: 240,
       inspectorWidth: 420,
     });
   });

@@ -2766,7 +2766,8 @@ button.data-overview__metric:hover {
 @media (max-width: 760px) {
   .studio-stage-shell { display: block; height: auto; min-height: calc(100vh - 56px); }
   .studio-stage-shell__main { overflow: visible; }
-  .studio-stage-shell .studio-sidebar { display: block; border-right: 0; border-bottom: 1px solid var(--editor-line); }
+  /* 窄屏下左侧 AI/总览栏收起，由顶栏 AI 入口的抽屉替代。 */
+  .studio-stage-shell .studio-sidebar { display: none; }
   .studio-stage-shell .template-workspace,
   .studio-stage-shell .data-upload-workspace,
   .studio-stage-shell .map-style-workspace,
@@ -2776,7 +2777,7 @@ button.data-overview__metric:hover {
   .app-shell[data-editor-skin="atelier"] .topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
   .app-shell[data-editor-skin="atelier"] .studio-stage-shell { display: block; height: auto; min-height: calc(100vh - 52px); }
   .app-shell[data-editor-skin="atelier"] .studio-stage-shell__main { overflow: visible; }
-  .app-shell[data-editor-skin="atelier"] .studio-stage-shell .studio-sidebar,
+  .app-shell[data-editor-skin="atelier"] .studio-stage-shell .studio-sidebar { display: none; }
   .app-shell[data-editor-skin="atelier"] .workspace .studio-sidebar { display: block; border-right: 0; border-bottom: 1px solid var(--editor-line); }
   .app-shell[data-editor-skin="atelier"] .studio-sidebar__rail { max-height: 46vh; overflow-y: auto; }
   .app-shell[data-editor-skin="atelier"] .studio-sidebar__workflow { overflow-x: auto; }
@@ -3315,9 +3316,7 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   }
   .studio-editor-shell .studio-sidebar,
   .studio-editor-shell__left {
-    grid-template-rows: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--editor-line);
+    display: none; /* the topbar AI entry and its drawer replace the inline left rail */
   }
   .studio-editor-shell__right {
     display: none; /* the labelled drawer replaces the inline right rail */
