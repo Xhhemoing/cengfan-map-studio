@@ -1849,3 +1849,42 @@ describe("Responsive editor shell", () => {
     expect(container.querySelector<HTMLButtonElement>("button.global-settings-done")?.textContent).toContain("完成");
   });
 });
+
+describe("Stage slot contract (T0)", () => {
+  // 单一事实源快照：T1 把 rightRailLabel 抽成 STAGE_METADATA 时，此表是回归锚点。
+  const STAGE_SLOTS = [
+    ["选择模板", "模板列表"],
+    ["数据与素材", "数据质量与素材"],
+    ["地图样式", "地图对象属性"],
+    ["展示框样式", "展示框公共样式"],
+    ["内容与排版", "内容对象属性"],
+    ["最终导出", "导出与检查"],
+  ] as const;
+
+  it("maps every workflow stage to its right inspector slot and active step", () => {
+    const container = renderPublicApp();
+    for (const [stageLabel, rightRailLabel] of STAGE_SLOTS) {
+      click(workflowStage(container, stageLabel));
+      expect(
+        container.querySelector('.workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label"),
+      ).toBe(stageLabel);
+      expect(container.querySelector(`aside.studio-editor-shell__right[aria-label="${rightRailLabel}"]`)).not.toBeNull();
+    }
+  });
+
+  it("keeps the assistant overview rail mounted in every focused stage", () => {
+    const container = renderPublicApp();
+    for (const [stageLabel] of STAGE_SLOTS) {
+      click(workflowStage(container, stageLabel));
+      expect(container.querySelector(".studio-sidebar__rail")).not.toBeNull();
+    }
+  });
+
+  it("exposes the six-stage stepper as the single ordered workflow navigation", () => {
+    const container = renderPublicApp();
+    const labels = Array.from(container.querySelectorAll(".workflow-stage-stepper button")).map(
+      (button) => button.getAttribute("aria-label"),
+    );
+    expect(labels).toEqual(STAGE_SLOTS.map(([label]) => label));
+  });
+});
