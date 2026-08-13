@@ -32,6 +32,14 @@
   --studio-control-height: 28px;
   --studio-rail-min: 168px;
   --studio-rail-max: 174px;
+  /* Studio status semantics: single source for stage badges, overview dots
+     and future status surfaces; skins may override below. */
+  --status-success: #2e7d32;
+  --status-warning: #b26a00;
+  --status-error: #c95c49;
+  --status-info: #526575;
+  --focus-ring: #d6b56d;
+  --surface-panel: var(--editor-surface-raised);
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
