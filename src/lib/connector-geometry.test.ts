@@ -110,6 +110,22 @@ describe("connector geometry", () => {
     expect(connectorGeometriesIntersect(first, crossing, 2)).toBe(true);
   });
 
+  it("detects a real crossing whose segment enters the shared-anchor zone from afar", () => {
+    // 两条线尾端相距约 0.7px（触发 sharedAnchor 豁免检查），但 B 的长段
+    // 从远处（start 距锚点 >10px）斜穿 A 的水平中段——必须仍然判交叉。
+    const horizontal: ConnectorGeometry = {
+      port: { x: 500, y: 600, side: "right" },
+      pathData: "",
+      segments: [{ start: { x: 500, y: 600 }, end: { x: 540, y: 600 } }],
+    };
+    const longSegment: ConnectorGeometry = {
+      port: { x: 520, y: 630, side: "top" },
+      pathData: "",
+      segments: [{ start: { x: 520, y: 630 }, end: { x: 539.5, y: 599.5 } }],
+    };
+    expect(connectorGeometriesIntersect(horizontal, longSegment, 2)).toBe(true);
+  });
+
   it("detects a connector entering an expanded card rectangle", () => {
     expect(segmentIntersectsRect(
       { start: { x: 20, y: 50 }, end: { x: 180, y: 50 } },

@@ -586,6 +586,9 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
     cards: {
       ...scene.cards,
       preset: scene.cards.preset === "compact" ? "standard" : scene.cards.preset,
+      // 老项目 preset: "compact" 在此被归一化为 standard + compactLayout，
+      // 保留模板回显 id，让模板选择器仍显示「超紧凑名单」。
+      templateId: scene.cards.templateId ?? (scene.cards.preset === "compact" ? "compact" : undefined),
       compactLayout: scene.cards.compactLayout === true || scene.cards.preset === "compact",
       x: clamp(scene.cards.x, 0, canvasWidth, fallback.cards.x),
       y: clamp(scene.cards.y, 0, canvasHeight, fallback.cards.y),

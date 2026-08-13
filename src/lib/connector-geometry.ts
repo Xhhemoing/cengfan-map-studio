@@ -201,10 +201,13 @@ export function connectorGeometriesIntersect(left: ConnectorGeometry, right: Con
   // 同锚点多卡片呈「花束」状散开，只有远离锚点的中段真正相交才算。
   const sharedAnchor = Boolean(leftTail && rightTail)
     && distanceSquared(leftTail!.end, rightTail!.end) <= (clearance + EPSILON) ** 2;
-  const anchorRadius = Math.max(clearance * 4, 10);
+  // 豁免半径需覆盖曲线采样的最长尾段（curve 用 16 段折线，锚点距离可达 ~24px）；
+  // 同时豁免段必须是「整段都落在锚点半径内」的尾段——一段从远处穿入锚点区
+  // （start 远离锚点）仍可能穿过另一条线的中段，不能豁免。
+  const anchorRadius = Math.max(clearance * 4, 10, 24);
   const nearAnchorEnd = (segment: ConnectorSegment, tail: ConnectorSegment) =>
     distanceSquared(segment.end, tail.end) <= anchorRadius * anchorRadius
-    || distanceSquared(segment.start, tail.end) <= anchorRadius * anchorRadius;
+    && distanceSquared(segment.start, tail.end) <= anchorRadius * anchorRadius;
   return left.segments.some((first) => right.segments.some((second) => {
     if (sharedAnchor && leftTail && rightTail
       && nearAnchorEnd(first, leftTail) && nearAnchorEnd(second, rightTail)) return false;

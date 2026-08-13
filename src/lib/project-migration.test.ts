@@ -119,7 +119,7 @@ describe("project migration", () => {
       backgroundColor: "#f0eadf",
       backgroundImageSrc: "data:image/png;base64,old",
     });
-    expect(migrated.cards).toMatchObject({ preset: "standard", compactLayout: true });
+    expect(migrated.cards).toMatchObject({ preset: "standard", compactLayout: true, templateId: "compact" });
     expect(migrated.cards.visibleFields).toEqual(["name", "city"]);
     expect(migrated.textElements.find((item) => item.role === "note")).toMatchObject({
       id: "text-note",

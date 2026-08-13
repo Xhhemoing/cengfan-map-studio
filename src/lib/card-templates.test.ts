@@ -66,6 +66,23 @@ describe("card-templates", () => {
     expect(flow.displayFrame?.mode).toBe("flow");
   });
 
+  it("applying a plain template clears a previously applied custom display frame", () => {
+    const withCustomFrame: CardSettings = {
+      ...baseCards,
+      templateId: "three-line",
+      displayFrame: {
+        mode: "flow",
+        style: { fontSize: 12, color: "#000000", background: "#ffffff", opacity: 1, padding: 8, margin: 0, align: "left", borderColor: "#000000", borderWidth: 1, borderRadius: 6 },
+        fieldOrder: ["name", "university", "city"],
+        fixed: { items: [] },
+        flow: { blocks: [{ id: "block-1", kind: "field", field: "name", order: 0, spacing: 2, lineHeight: 1.2 }] },
+      },
+    };
+    const patch = applyCardTemplate("standard", withCustomFrame);
+    expect(patch.templateId).toBe("standard");
+    expect(patch.displayFrame).toBeUndefined();
+  });
+
   it("legacy preset mapping works for standard/ticket/photo/borderless/compact", () => {
     expect(getLegacyPresetTemplateId("standard")).toBe("standard");
     expect(getLegacyPresetTemplateId("ticket")).toBe("ticket");

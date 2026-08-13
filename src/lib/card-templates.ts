@@ -144,11 +144,13 @@ const LEGACY_PRESET_MAP: Record<string, string> = {
 export function applyCardTemplate(templateId: string, _currentCards: CardSettings): Partial<CardSettings> {
   const template = getCardTemplateById(templateId) || getCardTemplateById(LEGACY_PRESET_MAP[templateId] || "");
   if (!template) return {};
-  const patch: Partial<CardSettings> = { ...template.cards, templateId: template.id };
-  if (template.displayFrame) {
-    patch.displayFrame = template.displayFrame;
-  }
-  return patch;
+  // displayFrame 显式写入：模板带 displayFrame 则应用，否则清除旧自定义展示框，
+  // 避免切换回普通模板后渲染仍停留在旧的自定义排版。
+  return {
+    ...template.cards,
+    templateId: template.id,
+    displayFrame: template.displayFrame,
+  };
 }
 
 export function getLegacyPresetTemplateId(preset: string): string {
