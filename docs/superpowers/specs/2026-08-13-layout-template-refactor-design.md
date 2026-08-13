@@ -109,6 +109,7 @@ function buildStageSlots(stage: WorkflowStageId, ctx: StageRenderContext): Stage
 4. **尺寸边界**：左右栏最大宽度受视口比例约束，中心画布保留最小宽度；低于阈值自动抽屉；持久化前校验视口
 5. **键盘/焦点/ARIA**：步骤条 `aria-current="step"`；状态徽标有文本（「已完成/有 2 项待处理/进行中」），颜色非唯一信息；告警 `role=status|alert`；抽屉 dialog 语义 + Escape + 焦点循环；分组折叠 `aria-expanded`；图标按钮 accessible name
 6. **用户任务验收矩阵**：新用户能否找到导入/去重/地图样式/导出；能否从告警定位问题；移动端能否开两侧抽屉完成一次编辑；键盘用户能否完成阶段切换+编辑
+7. **阶段内容状态**：每个阶段定义 `loading / empty / blocked / error / success` 及主操作——名单为空/地图未生成/素材缺失时，右栏与总览显示引导而非空白；告警 >1 聚合为「N 项待处理」并展开明细；长文本截断；AI 无响应显示可重试提示；导出失败保留当前配置并给重试入口
 
 ## 五、视觉整洁规范
 
