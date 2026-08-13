@@ -1,5 +1,18 @@
 import chinaFeatures from "../assets/china.geojson?raw";
 
+/**
+ * Lazily parsed once per page load; every consumer shares the same normalized
+ * feature list instead of JSON.parse-ing the 582KB GeoJSON on each call.
+ */
+let cachedMapFeatures: MapFeature[] | null = null;
+
+export function getChinaMapFeatures(): MapFeature[] {
+  if (cachedMapFeatures) return cachedMapFeatures;
+  const collection = JSON.parse(chinaFeatures) as unknown as { features: RawMapFeature[] };
+  cachedMapFeatures = normalizeMapFeatures(collection.features);
+  return cachedMapFeatures;
+}
+
 export type Position = [number, number];
 
 export interface RawMapFeature {
@@ -65,8 +78,7 @@ export function findProvinceFeature(
 }
 
 export function getProvinceNames(): string[] {
-  const collection = JSON.parse(chinaFeatures) as unknown as { features: unknown[] };
-  return normalizeMapFeatures(collection.features as RawMapFeature[]).map((feature) => feature.name);
+  return getChinaMapFeatures().map((feature) => feature.name);
 }
 
 /** Province-level land adjacency used to keep automatically inferred fills distinguishable. */
