@@ -1573,11 +1573,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
     </button>
   );
 
+  const historyActionsNode = (
+    <ToolbarGroup label="历史与缩放" className="topbar-action-group--history">
+      <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
+      <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
+    </ToolbarGroup>
+  );
+
   const projectActionsNode = (
     <>
       {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
       {projectExportActions}
-      <ToolbarGroup label="界面主题">
+      <ToolbarGroup label="界面主题" className="topbar-action-group--theme">
         <SkinSelector skin={skin} onChange={setSkin} />
         <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
       </ToolbarGroup>
@@ -1812,10 +1819,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
         return {
           stageActions: (
             <>
-              <ToolbarGroup label="历史与缩放">
-                <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
-                <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
-              </ToolbarGroup>
               <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={refreshDisplayFramePositions} />
             </>
           ),
@@ -1888,10 +1891,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
         return {
           stageActions: (
             <>
-              <ToolbarGroup label="历史与缩放">
-                <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
-                <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
-              </ToolbarGroup>
               <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={refreshDisplayFramePositions} />
               <ToolbarButton label="返回地图样式" icon={<MapPinned size={18} />} onClick={() => {
                 setActiveStage("map");
@@ -1999,6 +1998,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         skin={skin}
         stage={activeStage}
         assistantEntry={assistantEntryButton}
+        historyActions={historyActionsNode}
         stageActions={slots.stageActions}
         projectActions={projectActionsNode}
         workflowNav={workflowNavNode}

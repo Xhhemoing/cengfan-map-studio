@@ -21,6 +21,8 @@ export type StudioLayoutTemplateProps = {
   stage: WorkflowStageId;
   /** 顶栏 AI/高级功能入口按钮（移动端唤起抽屉）。 */
   assistantEntry: ReactNode;
+  /** 全局高频动作（撤销/重做，所有阶段可见）。 */
+  historyActions?: ReactNode;
   /** 阶段专属顶栏动作（如内容阶段的历史/刷新/返回地图样式）。 */
   stageActions?: ReactNode;
   /** 顶栏右侧工程动作（返回工作台/导出/项目菜单/主题皮肤）。 */
@@ -52,6 +54,7 @@ export function StudioLayoutTemplate({
   skin,
   stage,
   assistantEntry,
+  historyActions,
   stageActions,
   projectActions,
   workflowNav,
@@ -66,6 +69,7 @@ export function StudioLayoutTemplate({
     <div className="app-shell" data-editor-theme={theme} data-editor-skin={skin}>
       <StudioTopbar
         assistantEntry={assistantEntry}
+        historyActions={historyActions}
         stageActions={stageActions}
         projectActions={projectActions}
         workflowNav={workflowNav}

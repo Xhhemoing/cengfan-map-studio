@@ -4,6 +4,8 @@ import { MapPinned } from "lucide-react";
 export type StudioTopbarProps = {
   /** Assistant / advanced-function entry (opens the assistant drawer). */
   assistantEntry?: ReactNode;
+  /** 全局高频动作：撤销/重做（所有阶段可见）。 */
+  historyActions?: ReactNode;
   stageActions?: ReactNode;
   projectActions: ReactNode;
   /** Six-stage workflow navigation, rendered horizontally under the brand (old-style top guidance). */
@@ -17,6 +19,7 @@ export type StudioTopbarProps = {
  */
 export function StudioTopbar({
   assistantEntry,
+  historyActions,
   stageActions,
   projectActions,
   workflowNav,
@@ -32,6 +35,7 @@ export function StudioTopbar({
       {workflowNav && <div className="topbar-workflow">{workflowNav}</div>}
       <div className="topbar-actions">
         {assistantEntry}
+        {historyActions}
         {stageActions}
         {projectActions}
       </div>

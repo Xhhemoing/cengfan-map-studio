@@ -1925,3 +1925,19 @@ describe("Stage overview (T2)", () => {
     expect(exportPanel.textContent).toMatch(/导出状态|导出检查|数据告警|排版问题|资源缺失/);
   });
 });
+
+describe("Topbar action layering (T4)", () => {
+  it("keeps global undo/redo visible in the topbar across every focused stage", () => {
+    const container = renderPublicApp();
+    for (const stage of ["选择模板", "数据与素材", "地图样式", "展示框样式", "内容与排版", "最终导出"]) {
+      click(workflowStage(container, stage));
+      expect(container.querySelector('.topbar-actions [role="group"][aria-label="历史与缩放"]')).not.toBeNull();
+    }
+  });
+
+  it("marks the low-frequency theme group for narrow-screen hiding", () => {
+    const container = renderPublicApp();
+    const themeGroup = container.querySelector('.topbar-actions [role="group"][aria-label="界面主题"]');
+    expect(themeGroup?.className).toContain("topbar-action-group--theme");
+  });
+});
