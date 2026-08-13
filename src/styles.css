@@ -2563,7 +2563,9 @@ button.data-overview__metric:hover {
 .app-shell[data-editor-skin="atelier"] .workspace .canvas-stage { padding: 20px 24px; }
 .app-shell[data-editor-skin="atelier"] .studio-stage-shell {
   display: grid;
-  grid-template-columns: 208px minmax(0, 1fr);
+  /* Columns/rows come from .studio-editor-shell (2-col base, 3-col with
+   * data-has-right-rail); overriding columns here breaks the right rail into
+   * an implicit second row and collapses the canvas row. */
   height: calc(100vh - 52px);
   min-height: 0;
   background: var(--editor-bg);
@@ -2803,8 +2805,7 @@ button.data-overview__metric:hover {
 @media (max-width: 1120px) {
   .studio-stage-shell { grid-template-columns: 200px minmax(0, 1fr); }
   .app-shell[data-editor-skin="atelier"] .topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .app-shell[data-editor-skin="atelier"] .workspace,
-  .app-shell[data-editor-skin="atelier"] .studio-stage-shell { grid-template-columns: 200px minmax(0, 1fr); }
+  .app-shell[data-editor-skin="atelier"] .workspace { grid-template-columns: 200px minmax(0, 1fr); }
   .app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stepper__label { font-size: 11px; }
 }
 @media (max-width: 760px) {

@@ -279,6 +279,8 @@ export function AgentAssistant({
     if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
       persistTimerRef.current = null;
+      // 环境销毁(jsdom teardown)后定时器仍可能触发;挂载守卫避免卸载后 setState。
+      if (!mountedRef.current) return;
       const records = conversations.map(persistedConversation);
       saveAssistantConversationState(storage, project, { mode, activeId, conversations: records });
       if (records.some((record, index) => record.status === "failed" && conversations[index]?.steps.length)) {
