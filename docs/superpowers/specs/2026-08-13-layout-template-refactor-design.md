@@ -27,9 +27,9 @@ App 渲染优先级，T1 只收敛「focused stage」，其余路径保持原样
 
 ```
 projectLoading / projectMissing
-  → globalSettingsSection（全局设置，覆盖层）
-  → legacyEditorEnabled（旧版编辑器，兼容路径）
+  → globalSettingsSection（全局设置，覆盖层，优先于阶段）
   → focused stage（本模板化范围，6 个阶段）
+  → legacy 编辑器（兼容回退，仅 content 阶段 + legacy flag 时）
 ```
 
 ### 1. 全局布局模板 `StudioLayoutTemplate`
