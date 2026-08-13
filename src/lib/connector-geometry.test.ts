@@ -85,6 +85,31 @@ describe("connector geometry", () => {
     expect(connectorGeometriesIntersect(geometry({ x: 0, y: 0 }, { x: 10, y: 0 }), geometry({ x: 0, y: 4 }, { x: 10, y: 4 }), 1)).toBe(false);
   });
 
+  it("does not count a shared geographic anchor as a crossing (bouquet fan-out)", () => {
+    const anchor = { x: 515.9, y: 605.4 };
+    const first = buildConnectorGeometry({
+      card: { x: 376, y: 560.4, width: 170, height: 90 },
+      anchor,
+      preferredSide: "left",
+      style: "curve",
+    });
+    const second = buildConnectorGeometry({
+      card: { x: 376, y: 327.4, width: 170, height: 90 },
+      anchor,
+      preferredSide: "left",
+      style: "curve",
+    });
+    // 同锚点双卡：两条曲线在锚点处会合，但中间段不交叉。
+    expect(connectorGeometriesIntersect(first, second, 2)).toBe(false);
+    // 中间段真正交叉的仍要检出：一条从上方斜穿 first 水平曲线中段的直线。
+    const crossing: ConnectorGeometry = {
+      port: { x: 540, y: 585, side: "top" },
+      pathData: "",
+      segments: [{ start: { x: 540, y: 585 }, end: { x: 520, y: 625 } }],
+    };
+    expect(connectorGeometriesIntersect(first, crossing, 2)).toBe(true);
+  });
+
   it("detects a connector entering an expanded card rectangle", () => {
     expect(segmentIntersectsRect(
       { start: { x: 20, y: 50 }, end: { x: 180, y: 50 } },

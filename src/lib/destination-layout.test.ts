@@ -47,7 +47,17 @@ describe("destination card layout", () => {
     expect(Math.abs(east.y + east.height / 2 - 480)).toBeLessThanOrEqual(56);
   });
 
-  it("keeps a manually moved card outside the map frame while preserving the nearest available position", () => {
+  it("keeps a manually moved card on map-frame whitespace when no occupied geography is provided as blockers", () => {
+    const position = clampDestinationCardPosition({ x: 600, y: 400, width: 250, height: 112 }, {
+      ...bounds,
+      occupiedAreas: [],
+      occupiedPolygons: [],
+    });
+
+    expect(position).toEqual({ x: 600, y: 400 });
+  });
+
+  it("still keeps a manually moved card off the map union when that union is the only known occupied region", () => {
     const position = clampDestinationCardPosition({ x: 600, y: 400, width: 250, height: 112 }, bounds);
 
     expect(position.x).toBeGreaterThanOrEqual(bounds.margin);

@@ -217,7 +217,7 @@ function centerOf(area: CardArea): { x: number; y: number } {
 }
 
 function protectedZones(bounds: CardLayoutBounds): CardArea[] {
-  if (bounds.occupiedAreas && bounds.occupiedAreas.length) return bounds.occupiedAreas;
+  if (bounds.occupiedAreas !== undefined) return bounds.occupiedAreas;
   if (bounds.occupiedPolygons && bounds.occupiedPolygons.length) return [];
   return bounds.allowMapOverlap ? [] : [bounds.map];
 }
@@ -1196,7 +1196,8 @@ export function layoutCards(
 
 /**
  * Clamp a manually dragged card position so it stays inside the canvas margin
- * and outside protected areas. Map geometry is optional via `allowMapOverlap`.
+ * and outside protected areas. Only actual occupied geography is blocked;
+ * map-frame whitespace is coverable unless `bounds.map` is the sole fallback.
  */
 export function clampCardPosition(
   position: { x: number; y: number; width: number; height: number },
@@ -1204,9 +1205,8 @@ export function clampCardPosition(
 ): { x: number; y: number } {
   const blockers = bounds.allowMapOverlap
     ? [...(bounds.occupiedAreas ?? [])]
-    : bounds.occupiedAreas && bounds.occupiedAreas.length
-      ? [bounds.map, ...protectedZones(bounds)]
-      : [bounds.map];
+    : [...protectedZones(bounds)];
+  const polygons = bounds.allowMapOverlap ? [] : (bounds.occupiedPolygons ?? []);
   const minX = bounds.margin;
   const minY = bounds.margin;
   const maxX = bounds.width - bounds.margin - position.width;
@@ -1215,21 +1215,25 @@ export function clampCardPosition(
     x: clamp(position.x, minX, maxX),
     y: clamp(position.y, minY, maxY),
   };
-  const isFree = (x: number, y: number) => !blockers.some((blocker) => overlaps({
-    x,
-    y,
-    width: position.width,
-    height: position.height,
-  }, blocker));
+  const isFree = (x: number, y: number) => {
+    const card = { x, y, width: position.width, height: position.height };
+    return !blockers.some((blocker) => overlaps(card, blocker))
+      && !polygons.some((polygon) => rectangleIntersectsPolygon(card, polygon, 0));
+  };
   if (isFree(origin.x, origin.y)) return origin;
 
   const xCandidates = new Set([origin.x, minX, maxX]);
   const yCandidates = new Set([origin.y, minY, maxY]);
-  for (const blocker of blockers) {
-    xCandidates.add(clamp(blocker.x - position.width, minX, maxX));
-    xCandidates.add(clamp(blocker.x + blocker.width, minX, maxX));
-    yCandidates.add(clamp(blocker.y - position.height, minY, maxY));
-    yCandidates.add(clamp(blocker.y + blocker.height, minY, maxY));
+  const addRectCandidates = (rect: CardArea) => {
+    xCandidates.add(clamp(rect.x - position.width, minX, maxX));
+    xCandidates.add(clamp(rect.x + rect.width, minX, maxX));
+    yCandidates.add(clamp(rect.y - position.height, minY, maxY));
+    yCandidates.add(clamp(rect.y + rect.height, minY, maxY));
+  };
+  for (const blocker of blockers) addRectCandidates(blocker);
+  for (const polygon of polygons) {
+    const rect = polygonBounds(polygon);
+    if (rect) addRectCandidates(rect);
   }
 
   let best: { x: number; y: number } | null = null;
