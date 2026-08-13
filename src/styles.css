@@ -2080,6 +2080,7 @@ button.data-overview__metric:hover {
   .topbar { grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; }
   .topbar-workflow { justify-content: flex-start; }
   .workflow-stepper, .workflow-stage-stepper { justify-content: flex-start; overflow-x: auto; scrollbar-width: thin; }
+  .workflow-stage-stepper button { min-width: 56px; justify-content: flex-start; }
   .inspector-toggle-group { display: inline-flex; }
   .inspector-toggle-group .icon-button {
     display: grid;
@@ -2120,6 +2121,10 @@ button.data-overview__metric:hover {
   .topbar-workflow { overflow-x: auto; }
   .workflow-stage-stepper { justify-content: flex-start; gap: 1px; overflow-x: auto; scrollbar-width: thin; }
   .workflow-stage-stepper button { min-width: 44px; min-height: 44px; height: 44px; padding: 0 8px; justify-content: center; }
+  /* 顶部步骤引导在窄屏独占一行，横向滚动，避免被品牌与操作区裁切。 */
+  .studio-topbar { grid-template-rows: auto auto; padding: 0; }
+  .studio-topbar .topbar-workflow { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; width: 100%; border-top: 1px solid rgb(255 255 255 / 12%); }
+  .studio-topbar .topbar-workflow .workflow-stage-stepper { justify-content: flex-start; }
   .inspector-toggle-group { display: inline-flex; }
   .inspector-toggle-group .icon-button { width: 44px; min-width: 44px; min-height: 44px; }
   .topbar-actions .theme-toggle { display: grid !important; width: 44px; min-width: 44px; min-height: 44px; }
@@ -2599,58 +2604,8 @@ button.data-overview__metric:hover {
   font-size: 10px;
   font-weight: 600;
 }
-.app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stage-stepper {
-  display: grid;
-  align-items: stretch;
-  gap: 2px;
-  overflow: visible;
-}
-.app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stage-stepper button {
-  position: relative;
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  height: 34px;
-  gap: 7px;
-  padding: 0 8px;
-  color: var(--editor-ink-muted);
-  text-align: left;
-  border: 1px solid transparent;
-  border-radius: 5px;
-}
-.app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stage-stepper button:hover {
-  color: var(--editor-ink);
-  background: var(--editor-surface-muted);
-  border-color: transparent;
-}
-.app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stage-stepper button.is-active {
-  color: var(--editor-ink);
-  background: var(--editor-accent-soft);
-  border-color: transparent;
-  box-shadow: none;
-}
-.app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stage-stepper button.is-active::before {
-  position: absolute;
-  top: 9px;
-  left: 0;
-  width: 2px;
-  height: 16px;
-  content: "";
-  background: var(--editor-accent);
-}
-.app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stepper__number {
-  width: auto;
-  height: auto;
-  color: currentColor;
-  background: transparent;
-  border-radius: 0;
-  font: 500 10px "DM Mono", monospace;
-}
-.app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stage-stepper button.is-active .workflow-stepper__number {
-  color: var(--editor-accent);
-  background: transparent;
-}
-.app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stepper__label { overflow: hidden; text-overflow: ellipsis; }
-.app-shell[data-editor-skin="atelier"] .studio-sidebar .workflow-stepper__status { justify-self: end; }
+/* The stage stepper now lives in the topbar (old-style guidance); no
+ * sidebar-specific overrides remain. */
 .app-shell[data-editor-skin="atelier"] .studio-sidebar__panel {
   min-height: 0;
   overflow: auto;
@@ -3260,6 +3215,13 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
 .studio-editor-shell[data-has-right-rail="true"] {
   grid-template-columns: var(--studio-left-width, 200px) minmax(0, 1fr) var(--studio-right-width, 240px);
 }
+/* Old-style top workflow guidance: no left rail — canvas | right rail only. */
+.studio-editor-shell[data-has-left-rail="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.studio-editor-shell[data-has-left-rail="false"][data-has-right-rail="true"] {
+  grid-template-columns: minmax(0, 1fr) var(--studio-right-width, 240px);
+}
 .studio-editor-shell .studio-sidebar,
 .studio-editor-shell__left {
   display: grid;
@@ -3282,32 +3244,6 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   padding: 12px;
   background: var(--editor-surface-muted);
   border-left: 1px solid var(--editor-line);
-  overscroll-behavior: contain;
-}
-/* Persistent left workflow rail: stage navigation on top, assistant content below. */
-.studio-left-rail {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-}
-.studio-left-rail__nav {
-  display: flex;
-  min-width: 0;
-  padding: 8px 7px 7px;
-  overflow: hidden;
-  border-bottom: 1px solid var(--editor-line);
-}
-.studio-left-rail__nav .workflow-stage-stepper {
-  width: 100%;
-  justify-content: flex-start;
-}
-.studio-left-rail__content {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-height: 0;
-  padding: 9px 8px;
-  overflow: auto;
   overscroll-behavior: contain;
 }
 /* Right-rail drawer toggle: hidden on desktop, floating control on narrow screens. */
@@ -3382,22 +3318,6 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
     grid-template-rows: auto;
     border-right: 0;
     border-bottom: 1px solid var(--editor-line);
-  }
-  .studio-left-rail {
-    grid-template-rows: auto auto;
-  }
-  .studio-left-rail__nav {
-    padding: 6px 4px;
-    overflow-x: auto;
-    scrollbar-width: thin;
-  }
-  .studio-left-rail__nav .workflow-stage-stepper {
-    width: max-content;
-    gap: 2px;
-  }
-  .studio-left-rail__content {
-    max-height: 220px;
-    padding: 8px;
   }
   .studio-editor-shell__right {
     display: none; /* the labelled drawer replaces the inline right rail */

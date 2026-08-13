@@ -45,7 +45,7 @@ import { editorProjectStore } from "./lib/editor-project-store";
 import { AssistantConversationProvider } from "./components/AgentAssistant";
 import { ProjectMenu } from "./components/ProjectMenu";
 import { StudioTopbar } from "./components/StudioTopbar";
-import { StudioLeftRail } from "./components/StudioLeftRail";
+import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioEditorShell } from "./components/StudioEditorShell";
 import { StudioAssistantDrawer } from "./components/StudioAssistantDrawer";
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
@@ -63,7 +63,6 @@ import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "./component
 
 import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
-import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import {
   LEGACY_PANEL_TO_WORKFLOW_STAGE,
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
@@ -1579,17 +1578,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
               </ToolbarGroup>
             </>
           }
+          workflowNav={
+            <WorkflowStageStepper
+              activeId={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChange={handleWorkflowStageChange}
+            />
+          }
         />
         <StudioEditorShell
           stage={activeStage}
-          leftRail={
-            <StudioLeftRail
-              activeStage={activeStage}
-              project={project}
-              progress={workflowProgress}
-              onChangeStage={handleWorkflowStageChange}
-            />
-          }
           rightRail={
             <TemplateCatalogRail
               templates={templateOptions}
@@ -1657,17 +1656,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
               </ToolbarGroup>
             </>
           }
+          workflowNav={
+            <WorkflowStageStepper
+              activeId={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChange={handleWorkflowStageChange}
+            />
+          }
         />
         <StudioEditorShell
           stage={activeStage}
-          leftRail={
-            <StudioLeftRail
-              activeStage={activeStage}
-              project={project}
-              progress={workflowProgress}
-              onChangeStage={handleWorkflowStageChange}
-            />
-          }
           rightRail={
             <DataUploadRail
               project={project}
@@ -1727,17 +1726,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
               </ToolbarGroup>
             </>
           }
+          workflowNav={
+            <WorkflowStageStepper
+              activeId={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChange={handleWorkflowStageChange}
+            />
+          }
         />
         <StudioEditorShell
           stage={activeStage}
-          leftRail={
-            <StudioLeftRail
-              activeStage={activeStage}
-              project={project}
-              progress={workflowProgress}
-              onChangeStage={handleWorkflowStageChange}
-            />
-          }
           rightRail={
             <MapStyleRail
               project={project}
@@ -1835,17 +1834,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
               </ToolbarGroup>
             </>
           }
+          workflowNav={
+            <WorkflowStageStepper
+              activeId={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChange={handleWorkflowStageChange}
+            />
+          }
         />
         <StudioEditorShell
           stage={activeStage}
-          leftRail={
-            <StudioLeftRail
-              activeStage={activeStage}
-              project={project}
-              progress={workflowProgress}
-              onChangeStage={handleWorkflowStageChange}
-            />
-          }
           rightRail={
             <DisplayFrameRail
               frame={displayFrame}
@@ -1897,17 +1896,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
               </ToolbarGroup>
             </>
           }
+          workflowNav={
+            <WorkflowStageStepper
+              activeId={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChange={handleWorkflowStageChange}
+            />
+          }
         />
         <StudioEditorShell
           stage={activeStage}
-          leftRail={
-            <StudioLeftRail
-              activeStage={activeStage}
-              project={project}
-              progress={workflowProgress}
-              onChangeStage={handleWorkflowStageChange}
-            />
-          }
           rightRail={
             <DeliveryRail
               project={renderProject}
@@ -2004,17 +2003,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
               </ToolbarGroup>
             </>
           }
+          workflowNav={
+            <WorkflowStageStepper
+              activeId={activeStage}
+              project={project}
+              progress={workflowProgress}
+              onChange={handleWorkflowStageChange}
+            />
+          }
         />
         <StudioEditorShell
           stage={activeStage}
-          leftRail={
-            <StudioLeftRail
-              activeStage={activeStage}
-              project={project}
-              progress={workflowProgress}
-              onChangeStage={handleWorkflowStageChange}
-            />
-          }
           rightRail={
             <ContentLayoutRail
               project={renderProject}

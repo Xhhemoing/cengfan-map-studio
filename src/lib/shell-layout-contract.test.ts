@@ -27,6 +27,13 @@ describe("editor shell layout contract", () => {
     expect(body).toMatch(/var\(--studio-right-width/);
   });
 
+  it("collapses the shell to canvas plus right rail without a left rail", () => {
+    const body = ruleBody('.studio-editor-shell[data-has-left-rail="false"][data-has-right-rail="true"]');
+    expect(body).toMatch(/minmax\(0\s*,\s*1fr\)\s+var\(--studio-right-width/);
+    const plain = ruleBody('.studio-editor-shell[data-has-left-rail="false"]');
+    expect(plain).toMatch(/grid-template-columns:\s*minmax\(0\s*,\s*1fr\)/);
+  });
+
   it("keeps the shell grid on a single full-height row", () => {
     const body = ruleBody(".studio-editor-shell");
     expect(body).toMatch(/grid-template-rows:\s*minmax\(0\s*,\s*1fr\)/);

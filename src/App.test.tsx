@@ -1537,8 +1537,8 @@ describe("App workflow guidance", () => {
   it("keeps the assistant rail in the default full-screen public editor", () => {
     const container = renderPublicApp();
 
-    expect(container.querySelector(".studio-stage-shell .studio-sidebar")).not.toBeNull();
-    expect(container.querySelectorAll(".workflow-stage-stepper button")).toHaveLength(6);
+    expect(container.querySelector('.studio-editor-shell[data-has-left-rail="false"]')).not.toBeNull();
+    expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(6);
     expect(container.querySelector(".workflow-stage-stepper button")).not.toBeNull();
     expect(container.querySelector('button[aria-label="打开AI助手与高级功能"]')).not.toBeNull();
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开AI助手与高级功能"]')!);
@@ -1550,12 +1550,10 @@ describe("App workflow guidance", () => {
     const container = renderApp();
 
     click(workflowStage(container, "数据与素材"));
-    expect(container.querySelector('.studio-stage-shell .studio-sidebar')).not.toBeNull();
-    expect(container.querySelector('.studio-left-rail .workflow-stage-stepper')).not.toBeNull();
+    expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(6);
 
     click(workflowStage(container, "最终导出"));
-    expect(container.querySelector('.studio-stage-shell .studio-sidebar')).not.toBeNull();
-    expect(container.querySelectorAll('.workflow-stage-stepper button')).toHaveLength(6);
+    expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(6);
   });
 
   it("keeps the left sidebar when Classic opens a focused workspace", () => {
@@ -1565,7 +1563,8 @@ describe("App workflow guidance", () => {
     click(workflowStage(container, "地图样式"));
 
     expect(container.querySelector<HTMLElement>(".app-shell")?.dataset.editorSkin).toBe("classic");
-    expect(container.querySelector(".studio-stage-shell .studio-sidebar")).not.toBeNull();
+    expect(container.querySelector('.studio-editor-shell[data-has-left-rail="false"]')).not.toBeNull();
+    expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(6);
     expect(container.querySelector(".map-style-workspace")).not.toBeNull();
   });
 

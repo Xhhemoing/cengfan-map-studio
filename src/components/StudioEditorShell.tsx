@@ -20,18 +20,20 @@ import { ResizablePanelDivider } from "./ResizablePanelDivider";
 
 export type StudioEditorShellProps = {
   stage: WorkflowStageId;
-  leftRail: ReactNode;
+  leftRail?: ReactNode;
   rightRail?: ReactNode;
   rightRailLabel?: string;
   children: ReactNode;
 };
 
 /**
- * Desktop grid shell for the formal editing stages: stable left rail | center |
- * optional resizable right rail. Owns both `ResizablePanelDivider` resizers and
- * persists their widths through `editor-layout`. At <=760px the right rail is
- * presented as a labelled MUI `Drawer` (Escape + focus return handled by MUI's
- * Modal) while the left rail collapses to a horizontal scroll strip via CSS.
+ * Desktop grid shell for the formal editing stages: optional left rail |
+ * center | optional resizable right rail. Owns both `ResizablePanelDivider`
+ * resizers and persists their widths through `editor-layout`. The workflow
+ * guidance lives in the topbar (old-style), so most stages render without a
+ * left rail; when one is omitted the shell collapses to canvas + right rail.
+ * At <=760px the right rail is presented as a labelled MUI `Drawer` (Escape +
+ * focus return handled by MUI's Modal).
  */
 export function StudioEditorShell({
   stage,
@@ -49,6 +51,7 @@ export function StudioEditorShell({
   const sidebarBounds = getPanelWidthBounds("sidebar", viewportWidth, panelLayout.inspectorWidth);
   const inspectorBounds = getPanelWidthBounds("inspector", viewportWidth, panelLayout.sidebarWidth);
   const hasRightRail = Boolean(rightRail);
+  const hasLeftRail = Boolean(leftRail);
 
   useEffect(() => {
     try {
@@ -76,12 +79,15 @@ export function StudioEditorShell({
       style={shellStyle}
       data-stage={stage}
       data-has-right-rail={hasRightRail ? "true" : "false"}
+      data-has-left-rail={hasLeftRail ? "true" : "false"}
       data-editor-resizing={resizingPanel ? "true" : undefined}
       data-resizing-panel={resizingPanel ?? undefined}
     >
-      <aside className="studio-sidebar studio-editor-shell__left">
-        <div className="studio-sidebar__rail">{leftRail}</div>
-      </aside>
+      {hasLeftRail && (
+        <aside className="studio-sidebar studio-editor-shell__left">
+          <div className="studio-sidebar__rail">{leftRail}</div>
+        </aside>
+      )}
       <div className="studio-stage-shell__main studio-editor-shell__main">{children}</div>
       {hasRightRail && (
         <>
@@ -123,16 +129,18 @@ export function StudioEditorShell({
           </Drawer>
         </>
       )}
-      <ResizablePanelDivider
-        side="sidebar"
-        value={panelLayout.sidebarWidth}
-        min={sidebarBounds.min}
-        max={sidebarBounds.max}
-        ariaLabel="调整左侧栏宽度"
-        onChange={(value) => updatePanelWidth("sidebar", value)}
-        onResizeStart={() => setResizingPanel("sidebar")}
-        onResizeEnd={() => setResizingPanel(null)}
-      />
+      {hasLeftRail && (
+        <ResizablePanelDivider
+          side="sidebar"
+          value={panelLayout.sidebarWidth}
+          min={sidebarBounds.min}
+          max={sidebarBounds.max}
+          ariaLabel="调整左侧栏宽度"
+          onChange={(value) => updatePanelWidth("sidebar", value)}
+          onResizeStart={() => setResizingPanel("sidebar")}
+          onResizeEnd={() => setResizingPanel(null)}
+        />
+      )}
       {hasRightRail && (
         <ResizablePanelDivider
           side="inspector"

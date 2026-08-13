@@ -4,10 +4,6 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { StudioEditorShell } from "./StudioEditorShell";
-import { StudioLeftRail } from "./StudioLeftRail";
-import { createProjectDocument } from "../lib/project-document";
-import { sampleStudents } from "../lib/project-data";
-import { computeWorkflowProgress } from "../lib/workflow-progress";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "../lib/editor-layout";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -15,22 +11,20 @@ const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 function renderShell({
   rightRail,
   rightRailLabel,
+  leftRail = <div aria-label="编辑器左侧栏">左栏</div>,
 }: {
   rightRail?: ReactNode;
   rightRailLabel?: string;
+  leftRail?: ReactNode | null;
 } = {}) {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   roots.push({ root, container });
-  const project = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
-  const progress = computeWorkflowProgress(project);
   flushSync(() => root.render(
     <StudioEditorShell
       stage="map"
-      leftRail={
-        <StudioLeftRail activeStage="map" project={project} progress={progress} onChangeStage={vi.fn()} />
-      }
+      leftRail={leftRail ?? undefined}
       rightRail={rightRail}
       rightRailLabel={rightRailLabel}
     >
@@ -71,6 +65,18 @@ describe("StudioEditorShell", () => {
 
     expect(container.querySelector('[data-has-right-rail="false"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="地图属性"]')).toBeNull();
+  });
+
+  it("omits the left rail for the old-style top guidance and marks the shell", () => {
+    const { container } = renderShell({ leftRail: null, rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
+
+    expect(container.querySelector('[data-has-left-rail="false"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="编辑器左侧栏"]')).toBeNull();
+    expect(container.querySelector(".studio-editor-shell__main")?.textContent).toContain("中心");
+    // Only the inspector separator remains when there is no left rail.
+    const separators = container.querySelectorAll<HTMLElement>('[role="separator"]');
+    expect(separators).toHaveLength(1);
+    expect(separators[0]?.getAttribute("aria-label")).toBe("调整右侧栏宽度");
   });
 
   it("owns keyboard-accessible separators and persists panel widths", async () => {
