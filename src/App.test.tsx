@@ -1887,4 +1887,15 @@ describe("Stage slot contract (T0)", () => {
     );
     expect(labels).toEqual(STAGE_SLOTS.map(([label]) => label));
   });
+
+  it("opens the global settings screen over any focused stage in public mode", () => {
+    const container = renderPublicApp();
+    openGlobalSettingsSection(container, "canvas");
+    expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).not.toBeNull();
+    expect(container.querySelector(".studio-editor-shell")).toBeNull();
+
+    closeGlobalSettings(container);
+    expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).toBeNull();
+    expect(container.querySelector(".studio-editor-shell")).not.toBeNull();
+  });
 });

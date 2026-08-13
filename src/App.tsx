@@ -1552,6 +1552,74 @@ function StudioApp({ projectId }: { projectId?: string }) {
       </main>
     );
   }
+  if (globalSettingsSection) {
+    return (
+      <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
+        <header className="topbar">
+          <div className="brand">
+            <MapPinned size={24} />
+            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
+            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
+            <em>Beta</em>
+          </div>
+          <div className="topbar-workflow">
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          </div>
+          <div className="topbar-actions">
+            {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+          </div>
+        </header>
+        <GlobalSettingsScreen
+        project={project}
+        userFonts={userFonts}
+        initialSection={globalSettingsSection}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        undoLabel={undoLabel}
+        redoLabel={redoLabel}
+        onClose={() => setGlobalSettingsSection(null)}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onPatch={patchScene}
+        onReset={resetSceneTarget}
+        selectedStudentId={dataWorkspaceProps.selectedStudentId}
+        onSelectStudent={dataWorkspaceProps.onSelectStudent}
+        onChangeDataView={dataWorkspaceProps.onChangeDataView}
+        onAppendStudents={dataWorkspaceProps.onAppendStudents}
+        onReplaceStudents={dataWorkspaceProps.onReplaceStudents}
+        onUpdateStudent={dataWorkspaceProps.onUpdateStudent}
+        onToggleStudentVisibility={dataWorkspaceProps.onToggleVisibility}
+        onDeleteStudent={dataWorkspaceProps.onDeleteStudent}
+        onSetStudentsVisibility={dataWorkspaceProps.onSetStudentsVisibility}
+        provinces={provinceNames}
+        onApplyFont={applyFont}
+        onUploadFont={(font) => {
+          setUserFonts((current) => [...current, font]);
+          setStatusMessage(`已上传字体：${font.label}`);
+        }}
+        onDeleteUserFont={deleteUserFont}
+        workflowProgress={workflowProgress}
+        workflowActiveStep={activeWorkflowStep}
+        templates={(["original", "cartoon", "grain", "q", "scenery"] as const).map((templateId) => ({
+          id: templateId,
+          name: createSystemTemplate(templateId).name,
+        }))}
+        currentTemplateId={template}
+        customTemplates={customTemplates.map(({ id, name, scope }) => ({ id, name, scope }))}
+        onApplyTemplate={applySystemTemplate}
+        onApplyCustomTemplate={(record) => {
+          const full = customTemplates.find((item) => item.id === record.id);
+          if (full) applyCustomTemplateRecord(full);
+        }}
+          onSaveTemplate={saveCurrentTemplate}
+          onOpenGlobalData={openGlobalData}
+          themeMode={themeMode}
+          resolvedTheme={resolvedTheme}
+          onThemeChange={setThemeMode}
+          />
+      </div>
+    );
+  }
 
   if (activeStage === "template") {
     return (
@@ -2116,75 +2184,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
         >
           {studioAssistantRail}
         </StudioAssistantDrawer>
-      </div>
-    );
-  }
-
-  if (globalSettingsSection) {
-    return (
-      <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
-        <header className="topbar">
-          <div className="brand">
-            <MapPinned size={24} />
-            <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-            <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-            <em>Beta</em>
-          </div>
-          <div className="topbar-workflow">
-            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
-          </div>
-          <div className="topbar-actions">
-            {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
-          </div>
-        </header>
-        <GlobalSettingsScreen
-        project={project}
-        userFonts={userFonts}
-        initialSection={globalSettingsSection}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        undoLabel={undoLabel}
-        redoLabel={redoLabel}
-        onClose={() => setGlobalSettingsSection(null)}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onPatch={patchScene}
-        onReset={resetSceneTarget}
-        selectedStudentId={dataWorkspaceProps.selectedStudentId}
-        onSelectStudent={dataWorkspaceProps.onSelectStudent}
-        onChangeDataView={dataWorkspaceProps.onChangeDataView}
-        onAppendStudents={dataWorkspaceProps.onAppendStudents}
-        onReplaceStudents={dataWorkspaceProps.onReplaceStudents}
-        onUpdateStudent={dataWorkspaceProps.onUpdateStudent}
-        onToggleStudentVisibility={dataWorkspaceProps.onToggleVisibility}
-        onDeleteStudent={dataWorkspaceProps.onDeleteStudent}
-        onSetStudentsVisibility={dataWorkspaceProps.onSetStudentsVisibility}
-        provinces={provinceNames}
-        onApplyFont={applyFont}
-        onUploadFont={(font) => {
-          setUserFonts((current) => [...current, font]);
-          setStatusMessage(`已上传字体：${font.label}`);
-        }}
-        onDeleteUserFont={deleteUserFont}
-        workflowProgress={workflowProgress}
-        workflowActiveStep={activeWorkflowStep}
-        templates={(["original", "cartoon", "grain", "q", "scenery"] as const).map((templateId) => ({
-          id: templateId,
-          name: createSystemTemplate(templateId).name,
-        }))}
-        currentTemplateId={template}
-        customTemplates={customTemplates.map(({ id, name, scope }) => ({ id, name, scope }))}
-        onApplyTemplate={applySystemTemplate}
-        onApplyCustomTemplate={(record) => {
-          const full = customTemplates.find((item) => item.id === record.id);
-          if (full) applyCustomTemplateRecord(full);
-        }}
-          onSaveTemplate={saveCurrentTemplate}
-          onOpenGlobalData={openGlobalData}
-          themeMode={themeMode}
-          resolvedTheme={resolvedTheme}
-          onThemeChange={setThemeMode}
-          />
       </div>
     );
   }
