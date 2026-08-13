@@ -40,15 +40,27 @@ describe("CardsInspector", () => {
     flushSync(() => root.unmount());
   });
 
-  it("offers compact layout independently from visual presets", () => {
+  it("offers compact layout independently from visual templates", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
     const container = document.createElement("div");
     const root = createRoot(container);
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
-    const presets = container.querySelector("#cards-preset") as HTMLSelectElement;
-    expect(Array.from(presets.options).map((option) => option.value)).toEqual(["standard", "ticket", "photo", "borderless"]);
+    const presets = container.querySelector("#cards-template") as HTMLSelectElement;
+    expect(Array.from(presets.options).map((option) => option.value)).toEqual([
+      "standard",
+      "ticket",
+      "photo",
+      "borderless",
+      "compact",
+      "ticket-with-texture",
+      "academic",
+      "city-story",
+      "three-line",
+      "flow-custom",
+      "custom",
+    ]);
     const compact = container.querySelector("#cards-compact-layout") as HTMLInputElement;
     expect(compact.closest("label")?.classList).toContain("boolean-control");
     expect(compact.closest("label")?.classList).toContain("checkbox-row");
@@ -60,6 +72,27 @@ describe("CardsInspector", () => {
     expect(showCount.checked).toBe(true);
     flushSync(() => showCount.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ showCount: false });
+
+    flushSync(() => root.unmount());
+  });
+
+  it("opens the display-frame editor when the custom template is chosen", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const onPatch = vi.fn();
+    const onOpenDisplayFrame = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} onOpenDisplayFrame={onOpenDisplayFrame} />,
+    ));
+
+    const presets = container.querySelector("#cards-template") as HTMLSelectElement;
+    expect(presets.value).toBe("standard");
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+    setter?.call(presets, "custom");
+    flushSync(() => presets.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(onOpenDisplayFrame).toHaveBeenCalledTimes(1);
+    expect(onPatch).not.toHaveBeenCalled();
 
     flushSync(() => root.unmount());
   });
@@ -251,8 +284,8 @@ describe("CardsInspector", () => {
     expect(details?.querySelector("#cards-connector-dash")).not.toBeNull();
     expect(details?.querySelector("#cards-visible-name")).not.toBeNull();
     // 核心控件保持在折叠之外
-    expect(container.querySelector(".property-panel__advanced #cards-preset")).toBeNull();
-    expect(container.querySelector("#cards-preset")).not.toBeNull();
+    expect(container.querySelector(".property-panel__advanced #cards-template")).toBeNull();
+    expect(container.querySelector("#cards-template")).not.toBeNull();
     expect(container.querySelector(".property-panel__advanced #cards-connector-color")).toBeNull();
 
     root.unmount();

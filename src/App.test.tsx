@@ -907,7 +907,7 @@ describe("App student editing", () => {
     const container = renderApp(false);
     openGlobalSettingsSection(container, "cards");
 
-    expect(container.querySelector<HTMLSelectElement>("#cards-preset")?.value).toBe("standard");
+    expect(container.querySelector<HTMLSelectElement>("#cards-template")?.value).toBe("standard");
     expect(container.querySelector<HTMLInputElement>("#cards-compact-layout")?.checked).toBe(true);
     expect(container.querySelector<HTMLInputElement>("#cards-background")?.value).toBe(project.cards.background);
   });

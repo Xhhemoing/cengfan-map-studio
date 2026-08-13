@@ -1913,6 +1913,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
                 setStatusMessage(`已上传字体：${font.label}`);
               }}
               onDeleteUserFont={deleteUserFont}
+              onOpenDisplayFrame={() => setActiveStage("frame")}
             />
           ),
           workspace: (
@@ -2513,7 +2514,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               setStatusMessage(`已上传字体：${font.label}`);
             }}
             onDeleteUserFont={deleteUserFont}
-
+            onOpenDisplayFrame={() => setActiveStage("frame")}
           />
           <details className="project-summary">
             <summary>项目摘要</summary>

@@ -3,6 +3,7 @@ import type { CardFontField, CardSettings } from "../../lib/scene-document";
 import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { DEFAULT_FONT_ID, type UserFont } from "../../lib/fonts";
+import { applyCardTemplate, getCardTemplateById, getLegacyPresetTemplateId, listCardTemplates } from "../../lib/card-templates";
 import { DeferredInput } from "../DeferredInput";
 import { FontEditor } from "../FontEditor";
 import { ActionGroup, IconButton, InspectorHeader } from "../StudioUi";
@@ -19,7 +20,7 @@ const fontFields: Array<{ id: CardFontField; label: string }> = [
   { id: "city", label: "城市" },
 ];
 
-export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode = "all", collapsible = false }: {
+export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode = "all", collapsible = false, onOpenDisplayFrame }: {
   cards: CardSettings;
   userFonts?: UserFont[];
   onPatch: (patch: Partial<CardSettings>) => void;
@@ -27,7 +28,21 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
   mode?: "all" | "global" | "placement";
   /** 折叠低频设置（内容表达、留白细节、字段字体、线条纹理、显示字段）。 */
   collapsible?: boolean;
+  /** 打开自定义展示框编辑器（展示框 stage）。 */
+  onOpenDisplayFrame?: () => void;
 }) {
+  const templates = listCardTemplates();
+  const currentTemplateId = cards.templateId
+    ?? (cards.displayFrame
+      ? "custom"
+      : getCardTemplateById(cards.preset)?.id || getLegacyPresetTemplateId(cards.preset) || "standard");
+  const handleTemplateChange = (templateId: string) => {
+    if (templateId === "custom") {
+      onOpenDisplayFrame?.();
+      return;
+    }
+    onPatch(applyCardTemplate(templateId, cards));
+  };
 
   const number = (key: "x" | "y" | "maxWidth" | "padding" | "horizontalPadding" | "bottomPadding" | "gap" | "fontSize", value: number, min: number, max: number, label: string) => {
     const id = key === "fontSize" ? "font-size" : key === "horizontalPadding" ? "horizontal-padding" : key === "bottomPadding" ? "bottom-padding" : key;
@@ -130,7 +145,15 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
   );
 
   return <section className="property-panel"><InspectorHeader title="卡片属性" actions={<IconButton label="重置卡片" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} />} />
-    <label htmlFor="cards-preset">视觉样式<select id="cards-preset" value={cards.preset === "compact" ? "standard" : cards.preset} onChange={(event) => onPatch({ preset: event.target.value as CardSettings["preset"] })}><option value="standard">标准</option><option value="ticket">票券</option><option value="photo">照片</option><option value="borderless">无边框</option></select></label>
+    <label htmlFor="cards-template">视觉样式
+      <select id="cards-template" value={currentTemplateId} onChange={(event) => handleTemplateChange(event.target.value)}>
+        {templates.map((tpl) => (
+          <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+        ))}
+        <option value="custom">✨ 自定义展示框（打开编辑器）</option>
+      </select>
+      <span className="property-panel__hint">模板自动应用样式组合；「自定义」打开可视化编辑器设计字段顺序与静态文本。</span>
+    </label>
     <label htmlFor="cards-compact-layout" className="boolean-control checkbox-row"><input id="cards-compact-layout" type="checkbox" checked={cards.compactLayout === true || cards.preset === "compact"} onChange={(event) => onPatch({ compactLayout: event.target.checked })} />紧凑排版</label>
     <label htmlFor="cards-show-count" className="boolean-control checkbox-row"><input id="cards-show-count" type="checkbox" checked={cards.showCount !== false} onChange={(event) => onPatch({ showCount: event.target.checked })} />显示人数</label>
     <label htmlFor="cards-grouping">分组<select id="cards-grouping" value={cards.grouping} onChange={(event) => onPatch({ grouping: event.target.value as CardSettings["grouping"] })}><option value="province">省份</option><option value="city">城市</option><option value="university">院校</option></select></label>

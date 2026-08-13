@@ -1,12 +1,29 @@
 import type { CardSettings } from "../lib/scene-document";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../lib/edge-styles";
+import { applyCardTemplate, getCardTemplateById, listCardTemplates, getLegacyPresetTemplateId } from "../lib/card-templates";
 import { DeferredInput } from "./DeferredInput";
 import { PanelHeader } from "./StudioUi";
 
-export function BlockStylePanel({ cards, onPatch }: {
+export function BlockStylePanel({ cards, onPatch, onOpenDisplayFrameEditor }: {
   cards: CardSettings;
   onPatch: (patch: Partial<CardSettings>) => void;
+  onOpenDisplayFrameEditor?: () => void;
 }) {
+  const templates = listCardTemplates();
+  const currentTemplateId = cards.templateId
+    ?? (cards.displayFrame
+      ? "custom"
+      : getCardTemplateById(cards.preset)?.id || getLegacyPresetTemplateId(cards.preset) || "standard");
+
+  const handleTemplateChange = (templateId: string) => {
+    if (templateId === "custom") {
+      onOpenDisplayFrameEditor?.();
+      return;
+    }
+    const patch = applyCardTemplate(templateId, cards);
+    onPatch(patch);
+  };
+
   const number = (key: "opacity" | "fontSize" | "gap" | "padding" | "horizontalPadding" | "bottomPadding" | "maxWidth" | "connectorWidth", value: number, min: number, max: number, id: string) => (
     <DeferredInput id={id} type="number" min={min} max={max} step={key === "opacity" ? 0.05 : key === "connectorWidth" ? 0.5 : 1} value={value} onCommit={(draft) => {
       const next = Number(draft);
@@ -16,20 +33,40 @@ export function BlockStylePanel({ cards, onPatch }: {
   const color = (key: "background" | "textColor" | "connectorColor", value: string, id: string) => (
     <DeferredInput id={id} type="color" value={value} onCommit={(next) => onPatch({ [key]: next })} />
   );
+
   return (
     <div className="block-style-panel">
       <PanelHeader title="板块样式" meta="卡片与连接线" />
 
       <div className="block-style-section">
-        <h3>卡片格式</h3>
-        <label htmlFor="block-card-preset">视觉样式
-          <select id="block-card-preset" value={cards.preset === "compact" ? "standard" : cards.preset} onChange={(event) => onPatch({ preset: event.target.value as CardSettings["preset"] })}>
-            <option value="standard">标准</option>
-            <option value="ticket">票券</option>
-            <option value="photo">照片</option>
-            <option value="borderless">无边框</option>
+        <h3>展示框模板</h3>
+        <label htmlFor="block-card-template">选择模板
+          <select
+            id="block-card-template"
+            value={currentTemplateId}
+            onChange={(event) => handleTemplateChange(event.target.value)}
+          >
+            {templates.map((tpl) => (
+              <option key={tpl.id} value={tpl.id}>{tpl.name} · {tpl.description}</option>
+            ))}
+            <option value="custom">✨ 自定义展示框（进入编辑器）</option>
           </select>
         </label>
+        <p className="panel-note">选择模板后自动应用。点击「自定义」可进入可视化编辑器自由设计字段顺序、静态文本和装饰。</p>
+
+        <div className="block-style-actions">
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => onOpenDisplayFrameEditor?.()}
+          >
+            打开自定义展示框编辑器
+          </button>
+        </div>
+      </div>
+
+      <div className="block-style-section">
+        <h3>卡片快速设置</h3>
         <label htmlFor="block-card-compact" className="boolean-control checkbox-row">
           <input id="block-card-compact" type="checkbox" checked={cards.compactLayout === true || cards.preset === "compact"} onChange={(event) => onPatch({ compactLayout: event.target.checked })} />
           紧凑排版

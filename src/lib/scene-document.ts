@@ -182,6 +182,8 @@ export interface TextStyleOverride {
 
 export interface CardSettings {
   preset: CardPreset;
+  /** 最近一次应用的展示框模板 id（src/lib/card-templates.ts），用于选择器回显。 */
+  templateId?: string;
   /** Local display-frame definition; final card placement remains in positions. */
   displayFrame?: DisplayFrameDefinition;
   /** Reduce card row spacing without changing its visual preset. */

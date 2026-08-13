@@ -38,6 +38,8 @@ export interface ContentLayoutWorkspaceProps {
   onDeleteUserFont?: (fontId: string) => void;
   onSelectStudent?: (id: string) => void;
   selectedStudentId?: string | null;
+  /** 打开自定义展示框编辑器（展示框 stage）。 */
+  onOpenDisplayFrame?: () => void;
 }
 
 const EMPTY_ASSET_PANEL_PROPS: ContentAssetPanelProps = {
@@ -83,6 +85,7 @@ export function ContentLayoutRail({
   onApplyFont,
   onUploadFont,
   onDeleteUserFont,
+  onOpenDisplayFrame,
 }: ContentLayoutRailProps) {
   return (
     <aside className="content-layout-workspace__context" aria-label="内容对象属性">
@@ -97,6 +100,7 @@ export function ContentLayoutRail({
           onApplyFont={onApplyFont}
           onUploadFont={onUploadFont}
           onDeleteUserFont={onDeleteUserFont}
+          onOpenDisplayFrame={onOpenDisplayFrame}
         />
       </section>
       <details open className="content-layout-workspace__assets" aria-label="内容素材上下文">
