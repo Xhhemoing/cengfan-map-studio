@@ -64,8 +64,10 @@ import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStep
 import {
   LEGACY_PANEL_TO_WORKFLOW_STAGE,
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
+  deriveWorkflowStageProgress,
   type WorkflowStageId,
 } from "./lib/workflow-stages";
+import { deriveStageOverviewModel, type StageOverviewAction } from "./lib/stage-overview";
 import { STAGE_METADATA } from "./lib/stage-metadata";
 import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
 import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
@@ -1497,6 +1499,44 @@ function StudioApp({ projectId }: { projectId?: string }) {
     />
     </ToolbarGroup>
   );
+  const stageOverview = useMemo(
+    () => deriveStageOverviewModel({
+      stage: activeStage,
+      project,
+      stageProgress: deriveWorkflowStageProgress(project, workflowProgress),
+      dataHealth,
+      dataIssues,
+      layoutIssues: contentLayoutIssues,
+      resourceIssues: resourceHealthIssues.filter((issue) => issue.kind === "resource"),
+      dataViewLabel: dataViews.find((view) => view.id === dataView)?.name ?? dataView,
+      exportState: posterExport.exportState,
+    }),
+    [activeStage, project, workflowProgress, dataHealth, dataIssues, contentLayoutIssues, resourceHealthIssues, dataView, posterExport.exportState],
+  );
+
+  const handleStageOverviewAction = (action: StageOverviewAction) => {
+    if (action.kind === "data-diagnostics") {
+      openDataDiagnostics();
+      return;
+    }
+    if (action.kind === "locate-layout") {
+      locateLayoutIssue(action.issue);
+      return;
+    }
+    if (action.kind === "locate-delivery") {
+      locateDeliveryIssue(action.issue);
+      return;
+    }
+    if (action.kind === "stage") {
+      setActiveStage(action.stage);
+      return;
+    }
+    if (action.kind === "export-png") {
+      void posterExport.exportPng();
+      return;
+    }
+  };
+
   const studioAssistantRail = (
     <StudioAssistantRail
       project={project}
@@ -1516,6 +1556,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onLocateLayoutIssue={locateLayoutIssue}
       onPreview={setAgentPreview}
       onCommit={commitProjectTransaction}
+      stageOverview={stageOverview}
+      onStageOverviewAction={handleStageOverviewAction}
     />
   );
 

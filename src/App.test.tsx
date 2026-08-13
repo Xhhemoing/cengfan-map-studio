@@ -1084,8 +1084,8 @@ describe("App student editing", () => {
     expect(container.querySelector(".workflow-stepper")).toBeNull();
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开AI助手与高级功能"]')!);
     expect(document.querySelector('.MuiDrawer-root .studio-assistant-rail')).not.toBeNull();
-    expect(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).toHaveLength(2);
-    expect(Array.from(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).map((tab) => tab.textContent)).toEqual(["AI 助手", "高级功能"]);
+    expect(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).toHaveLength(3);
+    expect(Array.from(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).map((tab) => tab.textContent)).toEqual(["AI 助手", "本阶段", "高级功能"]);
   });
 
   it("restores the latest workspace stage from a valid browser session", () => {
@@ -1531,7 +1531,7 @@ describe("App workflow guidance", () => {
     expect(container.querySelector(".topbar-workflow")?.getAttribute("aria-hidden")).toBeNull();
     expect(container.querySelector(".topbar .project-menu")).not.toBeNull();
     expect(container.querySelector(".studio-sidebar .studio-assistant-rail")).not.toBeNull();
-    expect(container.querySelectorAll('.studio-assistant-rail [role="tab"]')).toHaveLength(2);
+    expect(container.querySelectorAll('.studio-assistant-rail [role="tab"]')).toHaveLength(3);
   });
 
   it("keeps the assistant rail in the default full-screen public editor", () => {
@@ -1709,8 +1709,8 @@ describe("Top workflow and left assistant rail", () => {
 
     expect(container.querySelector('.workflow-stage-stepper[aria-label="制作步骤"]')).not.toBeNull();
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开AI助手与高级功能"]')!);
-    expect(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).toHaveLength(2);
-    expect(Array.from(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).map((tab) => tab.textContent)).toEqual(["AI 助手", "高级功能"]);
+    expect(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).toHaveLength(3);
+    expect(Array.from(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).map((tab) => tab.textContent)).toEqual(["AI 助手", "本阶段", "高级功能"]);
     // 左侧常驻 rail 与打开的抽屉共用同一会话上下文,各渲染一个 docked 实例。
     expect(document.querySelectorAll('[data-agent-presentation="docked"]')).toHaveLength(2);
   });
@@ -1897,5 +1897,31 @@ describe("Stage slot contract (T0)", () => {
     closeGlobalSettings(container);
     expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).toBeNull();
     expect(container.querySelector(".studio-editor-shell")).not.toBeNull();
+  });
+});
+
+describe("Stage overview (T2)", () => {
+  it("shows the stage overview in the left rail with progress badge and cards", () => {
+    const container = renderPublicApp();
+    click(workflowStage(container, "数据与素材"));
+    click(container.querySelector('[role="tab"][aria-controls="studio-stage-panel"]')!);
+
+    const panel = container.querySelector("#studio-stage-panel");
+    expect(panel).not.toBeNull();
+    expect(panel!.textContent).toContain("数据与素材");
+    expect(panel!.querySelector("[data-stage-status]")).not.toBeNull();
+    expect(panel!.querySelectorAll(".studio-stage-overview__card").length).toBeGreaterThan(0);
+  });
+
+  it("keeps the overview in sync with the active stage", () => {
+    const container = renderPublicApp();
+    click(container.querySelector('[role="tab"][aria-controls="studio-stage-panel"]')!);
+
+    const templatePanel = container.querySelector("#studio-stage-panel")!;
+    expect(templatePanel.textContent).toMatch(/选择模板|已选择模板/);
+
+    click(workflowStage(container, "最终导出"));
+    const exportPanel = container.querySelector("#studio-stage-panel")!;
+    expect(exportPanel.textContent).toMatch(/导出状态|导出检查|数据告警|排版问题|资源缺失/);
   });
 });

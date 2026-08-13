@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { AgentAssistant } from "./AgentAssistant";
+import { StageOverviewPanel } from "./StageOverviewPanel";
+import type { StageOverviewAction, StageOverviewModel } from "../lib/stage-overview";
 import type { UserAsset } from "../lib/assets";
 import type { LocalOverwriteStatus } from "../lib/incremental-workspace-sync";
 import type { ProjectDocument, ProjectTransaction } from "../lib/project-document";
@@ -26,6 +28,9 @@ export interface StudioAssistantRailProps {
   onLocateLayoutIssue: (issue: LayoutHealthIssue) => void;
   onPreview: (project: ProjectDocument | null) => void;
   onCommit: (transaction: ProjectTransaction) => void;
+  /** 本阶段总览模型（T2 窄只读 DTO）。 */
+  stageOverview: StageOverviewModel;
+  onStageOverviewAction: (action: StageOverviewAction) => void;
 }
 
 const SYNC_LABELS: Record<LocalOverwriteStatus, string> = {
@@ -80,8 +85,10 @@ export function StudioAssistantRail({
   onLocateLayoutIssue,
   onPreview,
   onCommit,
+  stageOverview,
+  onStageOverviewAction,
 }: StudioAssistantRailProps) {
-  const [activeTab, setActiveTab] = useState<"ai" | "advanced">("ai");
+  const [activeTab, setActiveTab] = useState<"ai" | "stage" | "advanced">("ai");
   const [advancedView, setAdvancedView] = useState<"operations" | "elements">("operations");
   const outline = useMemo(() => [
     { selection: { type: "canvas" } as const, label: "画布" },
@@ -114,6 +121,16 @@ export function StudioAssistantRail({
         <button
           type="button"
           role="tab"
+          id="studio-stage-tab"
+          aria-selected={activeTab === "stage"}
+          aria-controls="studio-stage-panel"
+          onClick={() => setActiveTab("stage")}
+        >
+          本阶段
+        </button>
+        <button
+          type="button"
+          role="tab"
           id="studio-advanced-tab"
           aria-selected={activeTab === "advanced"}
           aria-controls="studio-advanced-panel"
@@ -134,6 +151,30 @@ export function StudioAssistantRail({
           aria-label="AI 助手"
         >
           <AgentAssistant presentation="docked" project={project} assets={assets} onPreview={onPreview} onCommit={onCommit} />
+        </section>
+      ) : activeTab === "stage" ? (
+        <section
+          className="studio-assistant-rail__panel"
+          role="tabpanel"
+          id="studio-stage-panel"
+          aria-labelledby="studio-stage-tab"
+          aria-label="本阶段"
+        >
+          <StageOverviewPanel
+            model={stageOverview}
+            saveLabel={SYNC_LABELS[syncStatus]}
+            collaborationLabel={collaboration.roomId
+              ? `房间 ${collaboration.roomId} · ${COLLABORATION_LABELS[collaboration.status]}`
+              : COLLABORATION_LABELS[collaboration.status]}
+            onAction={(action) => {
+              if (action.kind === "elements") {
+                setActiveTab("advanced");
+                setAdvancedView("elements");
+                return;
+              }
+              onStageOverviewAction(action);
+            }}
+          />
         </section>
       ) : (
         <section

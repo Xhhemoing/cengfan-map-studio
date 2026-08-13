@@ -41,6 +41,14 @@ function renderDrawerWithRail(overrides: Partial<StudioAssistantRailProps> = {})
     onLocateLayoutIssue: vi.fn(),
     onPreview: vi.fn(),
     onCommit: vi.fn(),
+    stageOverview: {
+      stage: "data",
+      progressStatus: "ready",
+      cards: [
+        { id: "data-clean", question: "名单数据健康", status: "0 人 · 无缺失、无重复、全部可定位", severity: "ok" },
+      ],
+    },
+    onStageOverviewAction: vi.fn(),
     ...overrides,
   };
   const onClose = vi.fn();

@@ -31,6 +31,14 @@ function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
     onLocateLayoutIssue: vi.fn(),
     onPreview: vi.fn(),
     onCommit: vi.fn(),
+    stageOverview: {
+      stage: "data",
+      progressStatus: "warning",
+      cards: [
+        { id: "data-missing", question: "补全缺失字段", status: "2 条记录缺少姓名/院校/城市", severity: "warning", action: { kind: "data-diagnostics" } },
+      ],
+    },
+    onStageOverviewAction: vi.fn(),
     ...overrides,
   };
   flushSync(() => root.render(
@@ -98,5 +106,42 @@ describe("StudioAssistantRail", () => {
     click(container.querySelector('button[aria-label="打开元素查看"]'));
     click(container.querySelector('[role="option"]'));
     expect(onSelectElement).toHaveBeenCalledWith({ type: "canvas" });
+  });
+
+  it("renders the stage overview tab with cards and dispatches card actions", () => {
+    const onStageOverviewAction = vi.fn();
+    const { container } = renderRail({ onStageOverviewAction });
+
+    const stageTab = container.querySelector('[role="tab"][aria-controls="studio-stage-panel"]');
+    expect(stageTab).not.toBeNull();
+    click(stageTab);
+
+    expect(container.querySelector("#studio-stage-panel")).not.toBeNull();
+    expect(container.textContent).toContain("本阶段");
+    expect(container.textContent).toContain("补全缺失字段");
+    expect(container.textContent).toContain("待处理");
+
+    click(container.querySelector("button.studio-stage-overview__card--action")!);
+    expect(onStageOverviewAction).toHaveBeenCalledWith({ kind: "data-diagnostics" });
+  });
+
+  it("opens the element view straight from the stage overview elements card", () => {
+    const onStageOverviewAction = vi.fn();
+    const { container } = renderRail({
+      onStageOverviewAction,
+      stageOverview: {
+        stage: "content",
+        progressStatus: "ready",
+        cards: [
+          { id: "content-elements", question: "画布元素", status: "2 个元素", severity: "info", action: { kind: "elements" } },
+        ],
+      },
+    });
+    click(container.querySelector('[role="tab"][aria-controls="studio-stage-panel"]')!);
+    click(container.querySelector("button.studio-stage-overview__card--action")!);
+
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("高级功能");
+    expect(container.textContent).toContain("元素查看");
+    expect(onStageOverviewAction).not.toHaveBeenCalled();
   });
 });
