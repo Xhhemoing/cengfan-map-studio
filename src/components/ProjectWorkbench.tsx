@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEmptyProject, createSampleProject, duplicateStoredProject, type ProjectStore, type StoredProject } from "../lib/project-store";
 import { downloadProjectPackage, parseProjectPackage } from "../lib/project-package";
 import { createId } from "../lib/ids";
+import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
+import { ContinueEditingCard } from "./workbench/ContinueEditingCard";
 
 interface ProjectWorkbenchProps {
   store: ProjectStore;
@@ -27,6 +29,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [localEntry, setLocalEntry] = useState<LocalWorkspaceEntry | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const seededRef = useRef(false);
 
@@ -41,6 +44,14 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       setLoading(false);
     }
   }, [store]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadLocalWorkspaceEntry().then((entry) => {
+      if (!cancelled) setLocalEntry(entry);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +75,33 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   }, [refresh, store]);
 
   const openProject = (id: string) => go(`#/project/${encodeURIComponent(id)}`);
+
+  const continueEditing = async () => {
+    if (!localEntry) return;
+    try {
+      const existing = projects.find((project) => project.pack.exportedAt === localEntry.pack.exportedAt);
+      if (existing) {
+        openProject(existing.id);
+        return;
+      }
+      const savedAt = localEntry.pack.exportedAt;
+      const time = Date.parse(savedAt);
+      const label = Number.isFinite(time)
+        ? `本地内容 · ${new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(time))}`
+        : "本地内容";
+      const created: StoredProject = {
+        id: createId("proj"),
+        name: label,
+        createdAt: savedAt,
+        updatedAt: savedAt,
+        pack: localEntry.pack,
+      };
+      await store.put(created);
+      openProject(created.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? `继续编辑失败：${reason.message}` : "继续编辑失败");
+    }
+  };
 
   const createProject = async () => {
     try {
@@ -141,6 +179,8 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       <WorkbenchHeader importInputRef={importInputRef} onCreateProject={() => void createProject()} onImportProject={(file) => void importProject(file)} />
 
       {error && <section className="workbench-error" role="alert">{error}</section>}
+
+      {localEntry && <ContinueEditingCard entry={localEntry} onResume={() => void continueEditing()} />}
 
       <ProjectGrid projects={sorted} loading={loading} hasError={Boolean(error)} openMenuId={openMenuId} formatUpdatedAt={formatUpdatedAt} onOpen={openProject} onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)} onRename={(project) => void renameProject(project)} onDuplicate={(project) => void duplicateProject(project)} onExport={exportProject} onDelete={(project) => void deleteProject(project)} />
     </main>

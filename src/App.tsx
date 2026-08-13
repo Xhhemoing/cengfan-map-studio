@@ -1540,9 +1540,15 @@ function StudioApp({ projectId }: { projectId?: string }) {
   if (projectMissing) {
     return (
       <main className="workbench-shell">
-        <section className="workbench-error" role="alert">
+        <section className="workbench-error workbench-error--recover" role="alert">
+          <span className="workbench-brand-mark"><MapPinned size={22} /></span>
           <strong>项目不存在或已删除</strong>
-          <WorkbenchBackButton />
+          <p>这个链接指向的项目已经不在本机项目列表中了。可以回到项目列表继续编辑其他项目。</p>
+          <div className="workbench-error-actions">
+            <button type="button" className="primary-button" aria-label="返回项目列表" onClick={() => { window.location.hash = "#/"; }}>
+              返回项目列表
+            </button>
+          </div>
         </section>
       </main>
     );

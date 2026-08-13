@@ -5,6 +5,7 @@ import { App } from "./App";
 import { WorkflowPrototype } from "./components/WorkflowPrototype";
 import { ProjectWorkbench } from "./components/ProjectWorkbench";
 import { StudioMuiProvider } from "./components/StudioMuiProvider";
+import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { createIndexedDbProjectStore } from "./lib/project-store";
 import "./styles.css";
 
@@ -31,7 +32,7 @@ function renderView(container: HTMLElement, view: ReactElement) {
   }
   if (!root) root = createRoot(container);
   const activeRoot: Root = root; // const 捕获,避免闭包内 TS18047 窄化丢失
-  flushSync(() => activeRoot.render(<StrictMode><StudioMuiProvider>{view}</StudioMuiProvider></StrictMode>));
+  flushSync(() => activeRoot.render(<StrictMode><StudioMuiProvider><AppErrorBoundary>{view}</AppErrorBoundary></StudioMuiProvider></StrictMode>));
 }
 
 export function renderApp(container: HTMLElement): void {
