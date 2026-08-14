@@ -32,7 +32,7 @@ const DEFAULT_GUESTS: GuestPanelSettings = {
   people: [],
 };
 
-export function InspectorPanel({ project, selection, userFonts = [], provinces = [], onPatch, onReset, onDeleteText, onDeleteAsset, onDuplicateAsset, onLayerChange, onAddUserAsset, onOpenGlobalSettings, onApplyFont, onUploadFont, onDeleteUserFont, onOpenDisplayFrame }: {
+export function InspectorPanel({ project, selection, userFonts = [], provinces = [], onPatch, onReset, onDeleteText, onDeleteAsset, onDuplicateAsset, onLayerChange, onAddUserAsset, onOpenGlobalSettings, onApplyFont, onUploadFont, onDeleteUserFont }: {
   project: ProjectDocument;
   selection: SceneSelection;
   userFonts?: UserFont[];
@@ -49,9 +49,6 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
   onApplyFont?: (target: TypographyTarget, fontId: string, applyToAll: boolean) => void;
   onUploadFont?: (font: UserFont) => void;
   onDeleteUserFont?: (fontId: string) => void;
-  /** 打开自定义展示框编辑器（展示框 stage）。 */
-  onOpenDisplayFrame?: () => void;
-
 }) {
   const guests = project.guests ?? DEFAULT_GUESTS;
 
@@ -76,7 +73,6 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
       userFonts={userFonts}
       onPatch={(patch) => onPatch(selection, patch)}
       onReset={() => onReset(selection)}
-      onOpenDisplayFrame={onOpenDisplayFrame}
     />;
   } else if (selection.type === "guests") {
     panel = <GuestsInspector guests={guests} onPatch={(patch) => onPatch(selection, patch)} />;

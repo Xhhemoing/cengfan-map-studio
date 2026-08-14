@@ -20,7 +20,7 @@ const fontFields: Array<{ id: CardFontField; label: string }> = [
   { id: "city", label: "城市" },
 ];
 
-export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode = "all", collapsible = false, onOpenDisplayFrame }: {
+export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode = "all", collapsible = false }: {
   cards: CardSettings;
   userFonts?: UserFont[];
   onPatch: (patch: Partial<CardSettings>) => void;
@@ -28,19 +28,11 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
   mode?: "all" | "global" | "placement";
   /** 折叠低频设置（内容表达、留白细节、字段字体、线条纹理、显示字段）。 */
   collapsible?: boolean;
-  /** 打开自定义展示框编辑器（展示框 stage）。 */
-  onOpenDisplayFrame?: () => void;
 }) {
   const templates = listCardTemplates();
   const currentTemplateId = cards.templateId
-    ?? (cards.displayFrame
-      ? "custom"
-      : getCardTemplateById(cards.preset)?.id || getLegacyPresetTemplateId(cards.preset) || "standard");
+    ?? (getCardTemplateById(cards.preset)?.id || getLegacyPresetTemplateId(cards.preset) || "standard");
   const handleTemplateChange = (templateId: string) => {
-    if (templateId === "custom") {
-      onOpenDisplayFrame?.();
-      return;
-    }
     onPatch(applyCardTemplate(templateId, cards));
   };
 
@@ -150,9 +142,8 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
         {templates.map((tpl) => (
           <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
         ))}
-        <option value="custom">✨ 自定义展示框（打开编辑器）</option>
       </select>
-      <span className="property-panel__hint">模板自动应用样式组合；「自定义」打开可视化编辑器设计字段顺序与静态文本。</span>
+      <span className="property-panel__hint">四类参考海报样式直接使用真实名单、地图锚点和导出渲染。</span>
     </label>
     <label htmlFor="cards-compact-layout" className="boolean-control checkbox-row"><input id="cards-compact-layout" type="checkbox" checked={cards.compactLayout === true || cards.preset === "compact"} onChange={(event) => onPatch({ compactLayout: event.target.checked })} />紧凑排版</label>
     <label htmlFor="cards-show-count" className="boolean-control checkbox-row"><input id="cards-show-count" type="checkbox" checked={cards.showCount !== false} onChange={(event) => onPatch({ showCount: event.target.checked })} />显示人数</label>

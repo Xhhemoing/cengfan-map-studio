@@ -11,11 +11,11 @@ export interface WorkspaceSession {
 }
 
 export const DEFAULT_WORKSPACE_SESSION: WorkspaceSession = {
-  stage: "template",
+  stage: "data",
   savedAt: "",
 };
 
-const STAGES = new Set<WorkflowStageId>(["template", "data", "map", "frame", "content", "export"]);
+const STAGES = new Set<WorkflowStageId>(["data", "map", "frame", "content", "export"]);
 
 export function serializeWorkspaceSession(session: WorkspaceSession): string {
   return JSON.stringify(session);

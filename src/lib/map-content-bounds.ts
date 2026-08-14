@@ -122,7 +122,17 @@ export function computeMapContentBounds(input: ContentBoundsInput): ContentBound
 
   const provinceUnion = union(computeMapOccupiedAreas(input));
   if (provinceUnion && provinceUnion.width > 1 && provinceUnion.height > 1) {
-    return provinceUnion;
+    return expandBounds(provinceUnion, map.mapBoundaryMargin ?? 16);
   }
-  return frame;
+  return expandBounds(frame, map.mapBoundaryMargin ?? 16);
+}
+
+function expandBounds(bounds: ContentBounds, margin: number): ContentBounds {
+  if (!Number.isFinite(margin) || margin <= 0) return bounds;
+  return {
+    x: bounds.x - margin,
+    y: bounds.y - margin,
+    width: bounds.width + margin * 2,
+    height: bounds.height + margin * 2,
+  };
 }

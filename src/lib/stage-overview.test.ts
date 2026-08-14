@@ -15,7 +15,6 @@ import { createTextElement } from "./canvas-data";
 function makeInput(overrides: Partial<StageOverviewInput> = {}): StageOverviewInput {
   const project = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
   const stageProgress = {
-    template: { id: "template", status: "empty", counts: { total: 0, unresolved: 0, international: 0, hidden: 0 } },
     data: { id: "data", status: "empty", counts: { total: 0, unresolved: 0, international: 0, hidden: 0 } },
     map: { id: "map", status: "empty", counts: { total: 0, unresolved: 0, international: 0, hidden: 0 } },
     frame: { id: "frame", status: "empty", counts: { total: 0, unresolved: 0, international: 0, hidden: 0 } },
@@ -23,7 +22,7 @@ function makeInput(overrides: Partial<StageOverviewInput> = {}): StageOverviewIn
     export: { id: "export", status: "empty", counts: { total: 0, unresolved: 0, international: 0, hidden: 0 } },
   } as StageOverviewInput["stageProgress"];
   return {
-    stage: "template",
+    stage: "data",
     project,
     stageProgress,
     dataHealth: { total: 0, visible: 0, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 },
@@ -37,21 +36,6 @@ function makeInput(overrides: Partial<StageOverviewInput> = {}): StageOverviewIn
 }
 
 describe("deriveStageOverviewCards", () => {
-  it("warns to pick a template when none is chosen, and reports it once chosen", () => {
-    const blankProject = { ...makeInput().project, templateId: "" } as unknown as StageOverviewInput["project"];
-    const empty = deriveStageOverviewCards(makeInput({ stage: "template", project: blankProject }));
-    expect(empty).toHaveLength(1);
-    expect(empty[0]).toMatchObject({ severity: "warning", question: "选择视觉模板" });
-
-    const withTemplate = deriveStageOverviewCards(
-      makeInput({
-        stage: "template",
-        project: createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" }),
-      }),
-    );
-    expect(withTemplate[0]).toMatchObject({ severity: "ok" });
-  });
-
   it("surfaces the data decisions that matter: missing fields, duplicates, unresolvable locations", () => {
     const health: DataHealthSummary = { total: 3, visible: 3, hidden: 0, international: 0, unresolved: 1, missingRequired: 2, duplicate: 1 };
     const cards = deriveStageOverviewCards(makeInput({ stage: "data", dataHealth: health }));

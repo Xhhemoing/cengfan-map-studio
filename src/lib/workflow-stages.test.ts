@@ -5,7 +5,6 @@ import { computeWorkflowProgress } from "./workflow-progress";
 import {
   WORKFLOW_STAGES,
   deriveWorkflowStageProgress,
-  getWorkflowStageStatus,
   LEGACY_PANEL_TO_WORKFLOW_STAGE,
   LEGACY_WORKFLOW_STEP_TO_STAGE,
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
@@ -15,9 +14,8 @@ import {
 } from "./workflow-stages";
 
 describe("workflow stages", () => {
-  it("defines the six public production stages in order", () => {
+  it("defines the five public production stages in order", () => {
     expect(WORKFLOW_STAGES.map((stage) => stage.id)).toEqual([
-      "template",
       "data",
       "map",
       "frame",
@@ -25,7 +23,6 @@ describe("workflow stages", () => {
       "export",
     ]);
     expect(WORKFLOW_STAGES.map((stage) => stage.label)).toEqual([
-      "选择模板",
       "数据与素材",
       "地图样式",
       "展示框样式",
@@ -68,21 +65,19 @@ describe("workflow stages", () => {
     }
     expect(legacyPanelToWorkflowStage("layout")).toBe("frame");
     expect(legacyWorkflowStepToStage("layout")).toBe("frame");
-    expect(legacyPanelToWorkflowStage("unknown")).toBe("template");
+    expect(legacyPanelToWorkflowStage("unknown")).toBe("data");
   });
 
-  it("adapts legacy progress to six-stage status without changing its source API", () => {
+  it("adapts legacy progress to five-stage status without changing its source API", () => {
     const project = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
     const progress = computeWorkflowProgress(project);
     const stages = deriveWorkflowStageProgress(project, progress);
 
-    expect(Object.keys(stages)).toEqual(["template", "data", "map", "frame", "content", "export"]);
-    expect(stages.template).toMatchObject({ id: "template", status: "ready" });
+    expect(Object.keys(stages)).toEqual(["data", "map", "frame", "content", "export"]);
     expect(stages.data).toMatchObject({ id: "data", status: progress.roster.status });
     expect(stages.map).toMatchObject({ id: "map", status: progress.presentation.status });
     expect(stages.frame).toMatchObject({ id: "frame", status: progress.layout.status });
     expect(stages.content).toMatchObject({ id: "content", status: progress.local.status });
     expect(stages.export).toMatchObject({ id: "export", status: progress.exportStep.status });
-    expect(getWorkflowStageStatus("template", project, progress)).toBe("ready");
   });
 });

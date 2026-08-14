@@ -47,9 +47,23 @@ function provinceFill(
   if (style.appearance?.kind === "manual-color") return style.appearance.color;
   if (style.fill) return style.fill;
   if (count === 0) return settings.emptyProvinceFill === "transparent" ? "transparent" : settings.landColor;
+  if (settings.dataPalette && settings.dataPalette !== "single") return posterPaletteColor(feature, settings.dataPalette);
   return (settings.fillMode === "heat" || dataView === "heat")
     ? heatColor(count, settings, heatColors)
     : settings.activeColor;
+}
+
+const POSTER_PALETTES = {
+  playful: ["#e95646", "#f3c847", "#efb8c6", "#3d8fc2", "#263b78"],
+  pastel: ["#f6c4cf", "#f2d08b", "#a9d9ce", "#9fc8df", "#c4b5dc"],
+  muted: ["#d8c6bd", "#c6d2c2", "#bac9d6", "#d8cda8", "#cdbdce"],
+} as const;
+
+function posterPaletteColor(feature: MapFeature, palette: keyof typeof POSTER_PALETTES): string {
+  const colors = POSTER_PALETTES[palette];
+  let hash = 0;
+  for (const character of feature.name) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return colors[hash % colors.length]!;
 }
 
 function heatColor(count: number, settings: MapSettings, heatColors?: readonly string[]): string {
@@ -117,6 +131,9 @@ function provinceFillReference(
     if (style.fill) return style.fill;
     // Solid land underfill so contain/small-scale images don't punch a hole in the map.
     return settings.landColor;
+  }
+  if (!style.appearance && !style.fill && count > 0 && settings.dataPalette && settings.dataPalette !== "single") {
+    return posterPaletteColor(feature, settings.dataPalette);
   }
   if (!style.appearance && !style.fill && count > 0 && (settings.fillMode === "heat" || dataView === "heat")) {
     if (settings.heatScale) return heatColorForCount(count, settings.heatScale);

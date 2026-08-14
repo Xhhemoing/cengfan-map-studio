@@ -239,9 +239,6 @@ describe("App in project mode", () => {
     const container = mountApp(sample.id);
     await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
 
-    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="选择模板"]')!);
-    await vi.waitFor(() => expect(container.textContent).toContain("毕业海报"));
-
     click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
     await vi.waitFor(async () => {
       const record = await editorProjectStore.get(sample.id);

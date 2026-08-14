@@ -1,6 +1,5 @@
 import type { CardSettings } from "./scene-document";
-import type { DisplayFrameDefinition } from "./display-frame";
-import { createId } from "./ids";
+
 
 export interface CardTemplate {
   id: string;
@@ -8,11 +7,42 @@ export interface CardTemplate {
   description: string;
   category: "classic" | "ticket" | "photo" | "minimal" | "compact" | "flow" | "grouped";
   cards: Partial<CardSettings>;
-  displayFrame?: DisplayFrameDefinition;
   builtin: boolean;
 }
 
 const BUILTIN_TEMPLATES: CardTemplate[] = [
+  {
+    id: "color-pill",
+    name: "彩色胶囊省份卡",
+    description: "省名叠放、圆角纯色卡片，适合活泼班级海报",
+    category: "compact",
+    cards: { presentation: "color-pill", preset: "borderless", grouping: "province", compactLayout: true, showCount: false, citySubgroups: false, connectorStyle: "straight", connectorDash: "dotted", opacity: 1, padding: 9, horizontalPadding: 15, bottomPadding: 10, maxWidth: 210 },
+    builtin: true,
+  },
+  {
+    id: "emblem-list",
+    name: "校徽开放名单",
+    description: "无底框地区标题、校徽与学校姓名名单，适合粉彩海报",
+    category: "minimal",
+    cards: { presentation: "emblem-list", preset: "borderless", grouping: "province", compactLayout: false, showCount: false, showProvinceTexture: false, connectorStyle: "curve", connectorDash: "solid", opacity: 0, padding: 8, horizontalPadding: 8, bottomPadding: 8, maxWidth: 245 },
+    builtin: true,
+  },
+  {
+    id: "city-label",
+    name: "城市自由标注",
+    description: "大城市标题与开放式学校名单，适合地图内外交错排版",
+    category: "minimal",
+    cards: { presentation: "city-label", preset: "borderless", grouping: "city", compactLayout: true, showCount: false, showProvinceTexture: false, connectorStyle: "curve", connectorDash: "dotted", allowMapOverlap: true, opacity: 0, padding: 6, horizontalPadding: 6, bottomPadding: 6, maxWidth: 220 },
+    builtin: true,
+  },
+  {
+    id: "glass-stat",
+    name: "半透明统计卡",
+    description: "省份顶栏、人数与城市分组，适合信息密集型版图",
+    category: "grouped",
+    cards: { presentation: "glass-stat", preset: "standard", grouping: "province", compactLayout: true, showCount: true, citySubgroups: true, connectorStyle: "straight", connectorDash: "dashed", opacity: 0.78, padding: 8, horizontalPadding: 10, bottomPadding: 8, maxWidth: 230 },
+    builtin: true,
+  },
   {
     id: "standard",
     name: "标准毕业去向表",
@@ -77,52 +107,6 @@ const BUILTIN_TEMPLATES: CardTemplate[] = [
     cards: { preset: "standard", compactLayout: false, showCount: true, showProvinceTexture: false, grouping: "city", connectorStyle: "elbow", connectorDash: "rail" },
     builtin: true,
   },
-  {
-    id: "three-line",
-    name: "姓名+大学+城市三行紧凑",
-    description: "flow模式三行紧凑模板（姓名在上、大学中、城市下）",
-    category: "flow",
-    cards: { preset: "standard", compactLayout: true, showCount: true, grouping: "province" },
-    displayFrame: {
-      mode: "flow",
-      style: { fontSize: 12, color: "#1c3154", background: "#ffffff", opacity: 1, padding: 8, margin: 0, align: "left", borderColor: "#1c3154", borderWidth: 1, borderRadius: 6 },
-      fieldOrder: ["name", "university", "city"],
-      fixed: { items: [] },
-      flow: {
-        blocks: [
-          { id: createId("block"), kind: "field", field: "name", order: 0, spacing: 2, lineHeight: 1.2 },
-          { id: createId("block"), kind: "text", content: "·", order: 1, spacing: 2, lineHeight: 1.2 },
-          { id: createId("block"), kind: "field", field: "university", order: 2, spacing: 2, lineHeight: 1.2 },
-          { id: createId("block"), kind: "text", content: "·", order: 3, spacing: 2, lineHeight: 1.2 },
-          { id: createId("block"), kind: "field", field: "city", order: 4, spacing: 2, lineHeight: 1.2 },
-        ],
-      },
-    },
-    builtin: true,
-  },
-  {
-    id: "flow-custom",
-    name: "Flow 模式自定义样板",
-    description: "flow 模式基础样板，支持静态文本「去往」等",
-    category: "flow",
-    cards: { preset: "standard", compactLayout: false, showCount: true, grouping: "province" },
-    displayFrame: {
-      mode: "flow",
-      style: { fontSize: 13, color: "#1c3154", background: "#ffffff", opacity: 1, padding: 10, margin: 2, align: "left", borderColor: "#1c3154", borderWidth: 1, borderRadius: 4 },
-      fieldOrder: ["name", "university", "city"],
-      fixed: { items: [] },
-      flow: {
-        blocks: [
-          { id: createId("block"), kind: "field", field: "name", order: 0, spacing: 4, lineHeight: 1.3 },
-          { id: createId("block"), kind: "text", content: "去往", order: 1, spacing: 4, lineHeight: 1.3 },
-          { id: createId("block"), kind: "field", field: "university", order: 2, spacing: 4, lineHeight: 1.3 },
-          { id: createId("block"), kind: "text", content: "·", order: 3, spacing: 4, lineHeight: 1.3 },
-          { id: createId("block"), kind: "field", field: "city", order: 4, spacing: 4, lineHeight: 1.3 },
-        ],
-      },
-    },
-    builtin: true,
-  },
 ];
 
 export function listCardTemplates(): CardTemplate[] {
@@ -144,12 +128,10 @@ const LEGACY_PRESET_MAP: Record<string, string> = {
 export function applyCardTemplate(templateId: string, _currentCards: CardSettings): Partial<CardSettings> {
   const template = getCardTemplateById(templateId) || getCardTemplateById(LEGACY_PRESET_MAP[templateId] || "");
   if (!template) return {};
-  // displayFrame 显式写入：模板带 displayFrame 则应用，否则清除旧自定义展示框，
-  // 避免切换回普通模板后渲染仍停留在旧的自定义排版。
   return {
     ...template.cards,
     templateId: template.id,
-    displayFrame: template.displayFrame,
+    displayFrame: undefined,
   };
 }
 

@@ -1,7 +1,7 @@
 import type { ProjectDocument } from "./project-document";
 import type { WorkflowProgress, WorkflowStepStatus } from "./workflow-progress";
 
-export type WorkflowStageId = "template" | "data" | "map" | "frame" | "content" | "export";
+export type WorkflowStageId = "data" | "map" | "frame" | "content" | "export";
 
 export interface WorkflowStageDefinition {
   id: WorkflowStageId;
@@ -16,7 +16,6 @@ export interface WorkflowStageProgress {
 }
 
 export const WORKFLOW_STAGES: readonly WorkflowStageDefinition[] = [
-  { id: "template", label: "选择模板", description: "先确定海报的视觉基础" },
   { id: "data", label: "数据与素材", description: "导入名单并准备地图素材" },
   { id: "map", label: "地图样式", description: "确定地图表达与外观" },
   { id: "frame", label: "展示框样式", description: "设计数据展示框" },
@@ -50,19 +49,18 @@ export const WORKFLOW_STAGE_TO_LEGACY_PANEL: Partial<Record<WorkflowStageId, "ro
 };
 
 export function legacyPanelToWorkflowStage(value: string | null | undefined): WorkflowStageId {
-  return value && LEGACY_PANEL_TO_WORKFLOW_STAGE[value] ? LEGACY_PANEL_TO_WORKFLOW_STAGE[value] : "template";
+  return value && LEGACY_PANEL_TO_WORKFLOW_STAGE[value] ? LEGACY_PANEL_TO_WORKFLOW_STAGE[value] : "data";
 }
 
 export function legacyWorkflowStepToStage(value: string | null | undefined): WorkflowStageId {
-  return value && LEGACY_WORKFLOW_STEP_TO_STAGE[value] ? LEGACY_WORKFLOW_STEP_TO_STAGE[value] : "template";
+  return value && LEGACY_WORKFLOW_STEP_TO_STAGE[value] ? LEGACY_WORKFLOW_STEP_TO_STAGE[value] : "data";
 }
 
 export function deriveWorkflowStageProgress(
-  project: ProjectDocument,
+  _project: ProjectDocument,
   progress: WorkflowProgress,
 ): Record<WorkflowStageId, WorkflowStageProgress> {
   return {
-    template: { id: "template", status: project.templateId ? "ready" : "empty", counts: progress.roster.counts },
     data: { id: "data", status: progress.roster.status, counts: progress.roster.counts },
     map: { id: "map", status: progress.presentation.status, counts: progress.presentation.counts },
     frame: { id: "frame", status: progress.layout.status, counts: progress.layout.counts },
@@ -73,10 +71,9 @@ export function deriveWorkflowStageProgress(
 
 export function getWorkflowStageStatus(
   stage: WorkflowStageId,
-  project: ProjectDocument,
+  _project: ProjectDocument,
   progress: WorkflowProgress,
 ): WorkflowStepStatus {
-  if (stage === "template") return project.templateId ? "ready" : "empty";
   if (stage === "data") return progress.roster.status;
   if (stage === "map") return progress.presentation.status;
   if (stage === "frame") return progress.layout.status;

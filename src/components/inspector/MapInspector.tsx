@@ -265,6 +265,7 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
           {number("height", map.height, 1, 6000, 1, "高度")}
         </div>
         {number("scale", map.scale, 0.1, 3, 0.01, "缩放")}
+        {number("mapBoundaryMargin", map.mapBoundaryMargin ?? 16, 0, 200, 1, "地图边界安全距离")}
         <label htmlFor="map-zindex">层级
           <DeferredInput
             id="map-zindex"
@@ -300,6 +301,18 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
             onChange={(event) => onPatch({ opacity: Number(event.target.value) })}
           />
           <output htmlFor="map-opacity">{Math.round((map.opacity ?? 1) * 100)}%</output>
+        </label>
+        <label htmlFor="map-data-palette">数据省份配色
+          <select id="map-data-palette" value={map.dataPalette ?? "single"} onChange={(event) => onPatch({ dataPalette: event.target.value as MapSettings["dataPalette"] })}>
+            <option value="single">单色</option>
+            <option value="playful">活泼多色</option>
+            <option value="pastel">柔和粉彩</option>
+            <option value="muted">低饱和纸感</option>
+          </select>
+        </label>
+        <label htmlFor="map-shadow" className="boolean-control checkbox-row">
+          <input id="map-shadow" type="checkbox" checked={map.shadow === true} onChange={(event) => onPatch({ shadow: event.target.checked })} />
+          <span>地图投影</span>
         </label>
         <div className="map-edge-styles" aria-label="省界线纹理">
         <div className="asset-section__heading"><strong>省界线纹理</strong><small>{selectedEdge.description}</small></div>

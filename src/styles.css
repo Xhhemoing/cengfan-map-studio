@@ -3216,7 +3216,25 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   html[data-editor-skin="atelier"] *::after { animation-duration: .01ms !important; }
 }
 
-/* 项目工作台 */
+
+.reference-card-style-workspace { height: 100%; min-height: 0; padding: 22px; overflow: auto; color: var(--editor-ink, #263b4e); background: var(--editor-bg, #eef2f3); }
+.reference-card-style-workspace__header { max-width: 1120px; margin: 0 auto 18px; }
+.reference-card-style-workspace__header h2 { margin: 0; font-size: 20px; }
+.reference-card-style-workspace__header p { margin: 5px 0 0; color: var(--editor-ink-muted, #64748b); font-size: 12px; }
+.reference-card-style-workspace__grid { display: grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap: 14px; max-width: 1120px; margin: 0 auto; }
+.reference-card-style-option { position: relative; display: grid; grid-template-columns: 190px minmax(0, 1fr) 22px; min-height: 172px; align-items: center; gap: 16px; padding: 14px; color: inherit; text-align: left; background: var(--editor-surface-raised, #fff); border: 1px solid var(--editor-line, #d3dce2); border-radius: 7px; cursor: pointer; }
+.reference-card-style-option:hover, .reference-card-style-option.is-selected { border-color: var(--editor-accent, #2e7d6b); box-shadow: 0 4px 14px rgb(38 59 78 / 9%); }
+.reference-card-style-option.is-selected > svg { color: var(--editor-accent, #2e7d6b); }
+.reference-card-style-option__preview { position: relative; display: grid; min-height: 138px; align-content: center; gap: 6px; padding: 18px; overflow: hidden; color: #263b78; background: #f7f4ed; border: 1px solid #d9d3c5; border-radius: 5px; }
+.reference-card-style-option__preview b { font-size: 15px; }.reference-card-style-option__preview small { font-size: 10px; }
+.reference-card-style-option__preview.is-color-pill i { position: absolute; inset: 48px 12px 18px; background: #e95646; border-radius: 28px; }.reference-card-style-option__preview.is-color-pill b, .reference-card-style-option__preview.is-color-pill small { position: relative; text-align: center; }.reference-card-style-option__preview.is-color-pill small { color: #fff; }
+.reference-card-style-option__preview.is-emblem-list { background: #fffaf0; border-color: transparent; }.reference-card-style-option__preview.is-emblem-list i { position: absolute; top: 28px; left: 16px; width: 112px; height: 12px; background: #f1c84b; border-radius: 50%; transform: rotate(-4deg); }
+.reference-card-style-option__preview.is-city-label { background: #eef4e9; border-color: transparent; }.reference-card-style-option__preview.is-city-label b { color: #3d8fc2; font-size: 20px; text-shadow: 0 0 0 #fff; }
+.reference-card-style-option__preview.is-glass-stat { background: linear-gradient(135deg, #dce8e4, #f5f4ee); }.reference-card-style-option__preview.is-glass-stat i { position: absolute; inset: 14px; background: rgb(255 255 255 / 72%); border: 1px solid #59716a; border-radius: 4px; }.reference-card-style-option__preview.is-glass-stat b, .reference-card-style-option__preview.is-glass-stat small { position: relative; }
+.reference-card-style-option__copy { display: grid; gap: 7px; }.reference-card-style-option__copy strong { font-size: 14px; }.reference-card-style-option__copy small { color: var(--editor-ink-muted, #64748b); font-size: 11px; line-height: 1.55; }
+@media (max-width: 900px) { .reference-card-style-workspace__grid { grid-template-columns: 1fr; }.reference-card-style-option { grid-template-columns: 160px minmax(0, 1fr) 22px; } }
+@media (max-width: 560px) { .reference-card-style-workspace { padding: 12px; }.reference-card-style-option { grid-template-columns: 1fr 22px; }.reference-card-style-option__preview { grid-column: 1 / -1; }.reference-card-style-option__copy { grid-column: 1; } }
+
 .workbench-shell { min-height: 100vh; padding: 32px clamp(16px, 4vw, 48px); color: var(--editor-ink); background: var(--editor-bg, #e9edf0); }
 .workbench-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1080px; margin: 0 auto 28px; }
 .workbench-brand { display: flex; align-items: center; gap: 12px; }

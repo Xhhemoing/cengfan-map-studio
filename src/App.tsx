@@ -1,5 +1,4 @@
 import {
-  ArrowLeft,
   Bot,
   Download,
   ImageDown,
@@ -12,8 +11,6 @@ import {
   Undo2,
   PackageOpen,
   RefreshCw,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import {
   useEffect,
@@ -23,6 +20,11 @@ import {
   type CSSProperties,
 } from "react";
 import { createNoteElement, createTextElement } from "./lib/canvas-data";
+import {
+  loadInitialProject,
+  loadBrowserValue,
+  WorkbenchBackButton,
+} from "./lib/app-initialization";
 import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
 import {
   DRAFT_KEY,
@@ -35,7 +37,6 @@ import {
 } from "./lib/app-constants";
 import {
   buildProvinceSummary,
-  sampleStudents,
   type DataViewId,
   type MapTemplateId,
 } from "./lib/project-data";
@@ -52,14 +53,15 @@ import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
 import "./components/workflow-workspaces.css";
 import { GlobalSettingsScreen, type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
-import { TemplateCatalogRail, TemplateWorkspace, type TemplateSelection } from "./components/workspaces/TemplateWorkspace";
 import { DataUploadRail, DataUploadWorkspace } from "./components/workspaces/DataUploadWorkspace";
 import { MapStyleRail, MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
-import { DisplayFrameRail, DisplayFrameWorkspace } from "./components/workspaces/DisplayFrameWorkspace";
+import { ReferenceCardStyleWorkspace } from "./components/workspaces/ReferenceCardStyleWorkspace";
 import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
 import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
 
 import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
+import { CardsInspector } from "./components/inspector/CardsInspector";
+import { ZoomControls } from "./components/ZoomControls";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
 import {
   LEGACY_PANEL_TO_WORKFLOW_STAGE,
@@ -84,7 +86,6 @@ import {
   applyTransaction,
   createProjectDocument,
   redoTransaction,
-  restoreProjectDocument,
   serializeProjectDocument,
   undoTransaction,
   type ProjectDocument,
@@ -115,7 +116,7 @@ import {
 } from "./lib/asset-elements";
 import { PosterCanvas } from "./components/canvas/PosterCanvas";
 import { createDefaultScene, type ProvinceAppearance, type SceneSelection } from "./lib/scene-document";
-import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame } from "./lib/display-frame";
+
 import { createProvinceThemeTransaction, createSceneTransaction, deleteAsset, deleteText } from "./lib/inspector-operations";
 import { InspectorPanel } from "./components/inspector/InspectorPanel";
 import { MapInspector } from "./components/inspector/MapInspector";
@@ -191,53 +192,6 @@ import {
 import { applyCollaborationOperations, diffCollaborationDocument } from "./lib/collaboration-operations";
 import { useCollaborationRoom } from "./lib/useCollaborationRoom";
 
-function createInitialProject(): ProjectDocument {
-  return createProjectDocument({
-    students: sampleStudents,
-    templateId: "original",
-    dataView: "province",
-    textElements: [
-      {
-        id: "text-wish",
-        content: "山高水长，来日再聚",
-        x: 745,
-        y: 905,
-        fontSize: 20,
-        color: "#c85d4b",
-      },
-    ],
-  });
-}
-
-function loadInitialProject(): ProjectDocument {
-  if (typeof window === "undefined") return createInitialProject();
-  try {
-    const raw = window.localStorage.getItem(DRAFT_KEY);
-    if (!raw) return createInitialProject();
-    const restored = restoreProjectDocument(raw);
-    if (restored.students.length === 0) restored.students = sampleStudents;
-    return restored;
-  } catch {
-    return createInitialProject();
-  }
-}
-
-function loadBrowserValue<T>(load: () => T, fallback: T): T {
-  try {
-    return load();
-  } catch {
-    return fallback;
-  }
-}
-
-function WorkbenchBackButton({ onClick = () => { window.location.hash = "#/"; } }: { onClick?: () => void }) {
-  return (
-    <button type="button" className="secondary-button" aria-label="返回项目列表" onClick={onClick}>
-      <ArrowLeft size={16} /> 返回列表
-    </button>
-  );
-}
-
 function StudioApp({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
   const [initialWorkspace] = useState(() => loadBrowserWorkspaceMirror(browserStores.mirror));
@@ -262,7 +216,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(() =>
     initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
   );
-  const [templateSelection, setTemplateSelection] = useState<TemplateSelection | null>(null);
+  // templateSelection state removed
   const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
   const [projectMissing, setProjectMissing] = useState(false);
   const [projectLoading, setProjectLoading] = useState(() => Boolean(projectId));
@@ -352,7 +306,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [legacyEditorEnabled] = useState(() => typeof window !== "undefined"
     && loadBrowserValue(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false));
   const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => legacyEditorEnabled ? "content" : workspaceSession.stage);
-  const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "template" || activeStage === "data" ? "content" : activeStage);
+  const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "data" ? "content" : activeStage);
   const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
   const assistantEntryRef = useRef<HTMLButtonElement>(null);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
@@ -1235,7 +1189,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setSelectedStudentId(null);
     setActivePanel("roster");
     setActiveWorkflowStep("roster");
-    setActiveStage("template");
+    setActiveStage("data");
     setStatusMessage("已新建空项目");
   };
 
@@ -1246,12 +1200,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setSelection({ type: "canvas" });
     setActivePanel("roster");
     setActiveWorkflowStep("roster");
-    setActiveStage("template");
+    setActiveStage("data");
     setStatusMessage("已恢复本机最近项目");
   };
 
   const openGlobalData = () => {
-    if (activeStage !== "data" && activeStage !== "template") lastNonTemplateStageRef.current = activeStage;
+    if (activeStage !== "data") lastNonTemplateStageRef.current = activeStage;
     setGlobalSettingsSection(null);
     setActivePanel("roster");
     setActiveWorkflowStep("roster");
@@ -1260,12 +1214,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const handleWorkflowStageChange = (stage: WorkflowStageId) => {
     setGlobalSettingsSection(null);
-    if (stage !== "template" && stage !== "data") lastNonTemplateStageRef.current = stage;
+    if (stage !== "data") lastNonTemplateStageRef.current = stage;
     setActiveStage(stage);
-    if (stage === "template") {
-      setGlobalSettingsSection(null);
-      return;
-    }
     if (stage === "data") {
       openGlobalData();
       return;
@@ -1437,11 +1387,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setActiveWorkflowStep(workflowId);
   };
 
-  const systemTemplateIds = ["original", "cartoon", "grain", "q", "scenery", "regional"] as const;
-  const templateOptions = systemTemplateIds.map((templateId) => ({
-    id: templateId,
-    name: createSystemTemplate(templateId).name,
-  }));
   const openStudioSettings = () => {
     setActiveWorkflowStep("layout");
     setGlobalSettingsSection("canvas");
@@ -1703,39 +1648,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const buildStageSlots = (stage: WorkflowStageId): StageSlots => {
     switch (stage) {
-      case "template":
-        return {
-          rightRail: (
-            <TemplateCatalogRail
-              templates={templateOptions}
-              customTemplates={customTemplates}
-              currentTemplateId={project.templateId}
-              selection={templateSelection}
-              onSelect={setTemplateSelection}
-            />
-          ),
-          workspace: (
-            <TemplateWorkspace
-              project={project}
-              templates={templateOptions}
-              customTemplates={customTemplates}
-              onApplyTemplate={(templateId) => {
-                applySystemTemplate(templateId);
-                setTemplateSelection(null);
-                setActiveStage("content");
-                setActivePanel("content");
-              }}
-              onApplyCustomTemplate={(templateRecord) => {
-                applyCustomTemplateRecord(templateRecord);
-                setTemplateSelection(null);
-                setActiveStage("content");
-                setActivePanel("content");
-              }}
-              selection={templateSelection}
-              onSelect={setTemplateSelection}
-            />
-          ),
-        };
       case "data":
         return {
           rightRail: (
@@ -1813,9 +1725,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
           ),
         };
       case "frame": {
-        const displayFrame = project.cards.displayFrame === undefined
-          ? deriveFixedDisplayFrameFromCardSettings(project.cards)
-          : normalizeDisplayFrame(project.cards.displayFrame);
         return {
           stageActions: (
             <>
@@ -1823,17 +1732,19 @@ function StudioApp({ projectId }: { projectId?: string }) {
             </>
           ),
           rightRail: (
-            <DisplayFrameRail
-              frame={displayFrame}
-              onPatchStyle={(patch) => patchScene({ type: "cards" }, { displayFrame: { ...displayFrame, style: { ...displayFrame.style, ...patch } } })}
-            />
-          ),
-          workspace: (
-            <DisplayFrameWorkspace
+            <CardsInspector
               cards={project.cards}
               userFonts={userFonts}
               onPatch={(patch) => patchScene({ type: "cards" }, patch)}
-              onRefreshPositions={refreshDisplayFramePositions}
+              onReset={() => resetSceneTarget({ type: "cards" })}
+              mode="global"
+              collapsible
+            />
+          ),
+          workspace: (
+            <ReferenceCardStyleWorkspace
+              cards={project.cards}
+              onPatch={(patch) => patchScene({ type: "cards" }, patch)}
             />
           ),
         };
@@ -1913,7 +1824,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
                 setStatusMessage(`已上传字体：${font.label}`);
               }}
               onDeleteUserFont={deleteUserFont}
-              onOpenDisplayFrame={() => setActiveStage("frame")}
             />
           ),
           workspace: (
@@ -2045,16 +1955,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
               disabled={!canRedo}
               onClick={handleRedo}
             />
-            <span className="zoom-label" aria-label="当前缩放">{zoomPercent}%</span>
-            <ToolbarButton
-              label="缩小画布"
-              icon={<ZoomOut size={17} />}
-              onClick={() => setZoomPercent((value) => Math.max(25, value - 10))}
-            />
-            <ToolbarButton
-              label="放大画布"
-              icon={<ZoomIn size={17} />}
-              onClick={() => setZoomPercent((value) => Math.min(300, value + 10))}
+            <ZoomControls
+              zoomPercent={zoomPercent}
+              onZoomOut={() => setZoomPercent((v) => Math.max(25, v - 10))}
+              onZoomIn={() => setZoomPercent((v) => Math.min(300, v + 10))}
             />
           </ToolbarGroup>
 
@@ -2514,7 +2418,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
               setStatusMessage(`已上传字体：${font.label}`);
             }}
             onDeleteUserFont={deleteUserFont}
-            onOpenDisplayFrame={() => setActiveStage("frame")}
           />
           <details className="project-summary">
             <summary>项目摘要</summary>

@@ -32,9 +32,9 @@ describe("WorkflowStageStepper", () => {
       />,
     ));
 
-    expect(container.querySelectorAll("button")).toHaveLength(6);
+    expect(container.querySelectorAll("button")).toHaveLength(5);
     expect(container.querySelector("nav")?.getAttribute("aria-label")).toBe("制作步骤");
-    expect(container.textContent).toContain("选择模板");
+    expect(container.textContent).toContain("展示框样式");
     expect(container.textContent).toContain("数据与素材");
     expect(container.querySelector('[aria-current="step"]')?.textContent).toContain("展示框样式");
     flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="最终导出"]')?.click());

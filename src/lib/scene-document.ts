@@ -7,6 +7,7 @@ import { normalizeCardExpressionTemplates, type CardExpressionTemplates } from "
 import { DEFAULT_NAME_FORMAT, normalizeNameFormat } from "./name-format";
 import { normalizeDisplayFrame, type DisplayFrameDefinition } from "./display-frame";
 
+
 export type CanvasTextRole =
   | "eyebrow"
   | "title"
@@ -83,6 +84,10 @@ export interface MapSettings {
   /** Fold South China Sea islands into a bottom-right inset frame to free map area. */
   collapseSouthChinaSea?: boolean;
   fillMode?: "heat" | "manual";
+  /** Multi-color poster palette for provinces with destination data. */
+  dataPalette?: "single" | "playful" | "pastel" | "muted";
+  /** Adds a soft lifted-paper shadow behind the vector map. */
+  shadow?: boolean;
   /** Count range and endpoint colors used for heat-map province fills. */
   heatScale?: HeatScale;
   emptyProvinceFill?: "land-color" | "transparent";
@@ -90,6 +95,8 @@ export interface MapSettings {
   provinceStyles?: Record<string, ProvinceStyle>;
   /** Optional shared map-local width/height for every active province texture. */
   provinceTextureUniformSize?: ProvinceTextureUniformSize;
+  /** Extra clearance (canvas pixels) around the map content that cards and display-frame items should avoid. Default 16. */
+  mapBoundaryMargin?: number;
 }
 
 export type MapImageComposition = "replace" | "overlay";
@@ -174,6 +181,7 @@ export interface ProvinceStyle {
 }
 
 export type CardFontField = "title" | VisibleField;
+export type CardPresentation = "standard" | "color-pill" | "emblem-list" | "city-label" | "glass-stat";
 
 export interface TextStyleOverride {
   fontSize?: number;
@@ -182,9 +190,11 @@ export interface TextStyleOverride {
 
 export interface CardSettings {
   preset: CardPreset;
+  /** Semantic renderer used by data-driven reference poster styles. */
+  presentation?: CardPresentation;
   /** 最近一次应用的展示框模板 id（src/lib/card-templates.ts），用于选择器回显。 */
   templateId?: string;
-  /** Local display-frame definition; final card placement remains in positions. */
+  /** @deprecated legacy fixed/flow definition */
   displayFrame?: DisplayFrameDefinition;
   /** Reduce card row spacing without changing its visual preset. */
   compactLayout?: boolean;
@@ -490,6 +500,8 @@ export function createDefaultScene(templateId: MapTemplateId): SceneDocument {
       showProvinceLabels: template.map.showProvinceLabels,
       collapseSouthChinaSea: false,
       fillMode: "heat",
+      dataPalette: "single",
+      shadow: false,
       heatScale: { ...DEFAULT_HEAT_SCALE },
       emptyProvinceFill: "land-color",
       renderSource: { kind: "vector" },
@@ -498,6 +510,7 @@ export function createDefaultScene(templateId: MapTemplateId): SceneDocument {
     },
     cards: {
       preset: template.cards.preset,
+      presentation: "standard",
       compactLayout: false,
       grouping: template.cards.grouping,
       x: 1140,
@@ -564,6 +577,8 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       provinceLabelTypography: normalizeTextStyleOverride(scene.map.provinceLabelTypography),
       collapseSouthChinaSea: scene.map.collapseSouthChinaSea === true,
       fillMode: scene.map.fillMode === "manual" ? "manual" : "heat",
+      dataPalette: scene.map.dataPalette === "playful" || scene.map.dataPalette === "pastel" || scene.map.dataPalette === "muted" ? scene.map.dataPalette : "single",
+      shadow: scene.map.shadow === true,
       heatScale: normalizeHeatScale(scene.map.heatScale),
       emptyProvinceFill: scene.map.emptyProvinceFill === "transparent" ? "transparent" : "land-color",
       renderSource: normalizeMapRenderSource(scene.map.renderSource),
@@ -586,6 +601,7 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
     cards: {
       ...scene.cards,
       preset: scene.cards.preset === "compact" ? "standard" : scene.cards.preset,
+      presentation: normalizeCardPresentation(scene.cards.presentation),
       // 老项目 preset: "compact" 在此被归一化为 standard + compactLayout，
       // 保留模板回显 id，让模板选择器仍显示「超紧凑名单」。
       templateId: scene.cards.templateId ?? (scene.cards.preset === "compact" ? "compact" : undefined),
@@ -622,6 +638,7 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       autoBalance: scene.cards.autoBalance !== false,
       allowMapOverlap: scene.cards.allowMapOverlap === true,
       showProvinceTexture: scene.cards.showProvinceTexture === true,
+
       ...(scene.cards.displayFrame !== undefined
         ? { displayFrame: normalizeDisplayFrame(scene.cards.displayFrame, fallback.cards.displayFrame) }
         : {}),
@@ -638,6 +655,12 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       visibility: asset.visibility !== false,
     })),
   };
+}
+
+function normalizeCardPresentation(value: CardPresentation | undefined): CardPresentation {
+  return value === "color-pill" || value === "emblem-list" || value === "city-label" || value === "glass-stat"
+    ? value
+    : "standard";
 }
 
 function normalizeProvinceTextureUniformSize(

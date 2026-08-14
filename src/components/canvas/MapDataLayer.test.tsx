@@ -103,6 +103,24 @@ describe("MapDataLayer", () => {
     container.remove();
   });
 
+  it("applies a deterministic poster palette to active provinces and keeps manual overrides", () => {
+    const { container, root } = renderMap({
+      fillMode: "manual",
+      dataPalette: "playful",
+      provinceStyles: {
+        北京市: { appearance: { kind: "manual-color", color: "#102030" } },
+      },
+    });
+
+    expect(container.querySelector('[data-province-id="beijing"]')?.getAttribute("fill")).toBe("#102030");
+    expect(["#e95646", "#f3c847", "#efb8c6", "#3d8fc2", "#263b78"]).toContain(
+      container.querySelector('[data-province-id="zhejiang"]')?.getAttribute("fill"),
+    );
+
+    root.unmount();
+    container.remove();
+  });
+
   it("shows the canvas background through zero-count provinces when enabled", () => {
     const { container, root } = renderMap({ emptyProvinceFill: "transparent" });
 

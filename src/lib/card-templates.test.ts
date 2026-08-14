@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { listCardTemplates, getCardTemplateById, applyCardTemplate, getLegacyPresetTemplateId } from "./card-templates";
 import type { CardSettings } from "./scene-document";
-import { normalizeDisplayFrame } from "./display-frame";
+
 
 const baseCards: CardSettings = {
   preset: "standard",
@@ -61,9 +61,20 @@ describe("card-templates", () => {
     expect(patch.templateId).toBe("city-story");
     expect(patch.grouping).toBe("city");
     expect(patch.preset).toBe("standard");
-    const flow = applyCardTemplate("three-line", baseCards);
-    expect(flow.templateId).toBe("three-line");
-    expect(flow.displayFrame?.mode).toBe("flow");
+
+  });
+
+  it.each([
+    ["color-pill", "color-pill"],
+    ["emblem-list", "emblem-list"],
+    ["city-label", "city-label"],
+    ["glass-stat", "glass-stat"],
+  ] as const)("applies the reference poster template %s", (templateId, presentation) => {
+    const patch = applyCardTemplate(templateId, baseCards);
+
+    expect(patch.presentation).toBe(presentation);
+    expect(patch.displayFrame).toBeUndefined();
+
   });
 
   it("applying a plain template clears a previously applied custom display frame", () => {
@@ -92,11 +103,9 @@ describe("card-templates", () => {
     expect(getLegacyPresetTemplateId("unknown")).toBe("standard");
   });
 
-  it("templates with displayFrame have valid normalized frames", () => {
-    const flowTemplates = listCardTemplates().filter(t => t.displayFrame);
-    expect(flowTemplates.length).toBeGreaterThanOrEqual(2);
-    flowTemplates.forEach(t => {
-      expect(() => normalizeDisplayFrame(t.displayFrame!)).not.toThrow();
-    });
+  it("does not expose the retired free-form display-frame templates", () => {
+    expect(getCardTemplateById("three-line")).toBeUndefined();
+    expect(getCardTemplateById("flow-custom")).toBeUndefined();
+    expect(listCardTemplates().every((template) => template.cards.displayFrame === undefined)).toBe(true);
   });
 });

@@ -1,6 +1,5 @@
 import type { LucideIcon } from "lucide-react";
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
-import Button, { type ButtonProps } from "@mui/material/Button";
 
 type NavigationItem<Id extends string> = {
   id: Id;
@@ -162,21 +161,19 @@ export function CompactButton({
   type = "button",
   ...props
 }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "color"> & {
-  color?: ButtonProps["color"];
   icon?: ReactNode;
   variant?: ButtonVariant;
 }) {
   return (
-    <Button
+    <button
       {...props}
       type={type}
-      variant="text"
       className={["compact-button", `compact-button${variantClass(variant)}`, className].filter(Boolean).join(" ")}
       data-studio-density="compact"
     >
       {icon}
       {children}
-    </Button>
+    </button>
   );
 }
 

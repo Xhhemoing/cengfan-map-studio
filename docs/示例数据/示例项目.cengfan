@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "projectName": "示例班级-2026",
+  "createdAt": "2026-08-14T08:12:51.790551",
+  "data": {
+    "totalStudents": 200,
+    "source": "docs/示例数据/毕业名单-脱敏.csv",
+    "note": "脱敏示例数据，真实使用时请替换为实际名单"
+  },
+  "settings": {
+    "template": "compact",
+    "colors": {
+      "primary": "#1976D2",
+      "secondary": "#FFC107"
+    },
+    "font": "system-default"
+  },
+  "exportedFrom": "cengfan-map-studio"
+}

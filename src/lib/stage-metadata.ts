@@ -12,7 +12,6 @@ export interface StageShellMetadata {
 }
 
 export const STAGE_METADATA = {
-  template: { rightRailLabel: "模板列表" },
   data: { rightRailLabel: "数据质量与素材" },
   map: { rightRailLabel: "地图对象属性" },
   frame: { rightRailLabel: "展示框公共样式" },

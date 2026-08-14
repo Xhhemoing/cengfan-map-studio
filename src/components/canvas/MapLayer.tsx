@@ -337,7 +337,7 @@ export function MapLayer({
         fill="transparent"
         pointerEvents="all"
       />
-      <g data-map-content opacity={settings.opacity ?? 1}>
+      <g data-map-content opacity={settings.opacity ?? 1} style={settings.shadow ? { filter: "drop-shadow(0 8px 7px rgba(57, 67, 78, 0.24))" } : undefined}>
       {/* Vector fills under overlay images; hidden in replace mode. Textures deferred to top pass. */}
       <MapDataLayer
         settings={settings}

@@ -79,8 +79,6 @@ export function deriveStageOverviewModel(input: StageOverviewInput): StageOvervi
 
 export function deriveStageOverviewCards(input: StageOverviewInput): StageOverviewCard[] {
   switch (input.stage) {
-    case "template":
-      return templateCards(input);
     case "data":
       return dataCards(input);
     case "map":
@@ -92,13 +90,6 @@ export function deriveStageOverviewCards(input: StageOverviewInput): StageOvervi
     case "export":
       return exportCards(input);
   }
-}
-
-function templateCards(input: StageOverviewInput): StageOverviewCard[] {
-  if (input.project.templateId) {
-    return [{ id: "template-chosen", question: "已选择模板", status: `模板 ${input.project.templateId} 已应用`, severity: "ok" }];
-  }
-  return [{ id: "template-pick", question: "选择视觉模板", status: "尚未选择模板，海报缺少视觉基础", severity: "warning" }];
 }
 
 function dataCards(input: StageOverviewInput): StageOverviewCard[] {

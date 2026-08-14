@@ -49,6 +49,10 @@ describe("CardsInspector", () => {
 
     const presets = container.querySelector("#cards-template") as HTMLSelectElement;
     expect(Array.from(presets.options).map((option) => option.value)).toEqual([
+      "color-pill",
+      "emblem-list",
+      "city-label",
+      "glass-stat",
       "standard",
       "ticket",
       "photo",
@@ -57,9 +61,6 @@ describe("CardsInspector", () => {
       "ticket-with-texture",
       "academic",
       "city-story",
-      "three-line",
-      "flow-custom",
-      "custom",
     ]);
     const compact = container.querySelector("#cards-compact-layout") as HTMLInputElement;
     expect(compact.closest("label")?.classList).toContain("boolean-control");
@@ -76,23 +77,25 @@ describe("CardsInspector", () => {
     flushSync(() => root.unmount());
   });
 
-  it("opens the display-frame editor when the custom template is chosen", () => {
+  it("applies a reference style directly instead of opening the retired custom editor", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const onOpenDisplayFrame = vi.fn();
     const container = document.createElement("div");
     const root = createRoot(container);
     flushSync(() => root.render(
-      <CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} onOpenDisplayFrame={onOpenDisplayFrame} />,
+      <CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />,
     ));
 
     const presets = container.querySelector("#cards-template") as HTMLSelectElement;
     expect(presets.value).toBe("standard");
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-    setter?.call(presets, "custom");
+    setter?.call(presets, "emblem-list");
     flushSync(() => presets.dispatchEvent(new Event("change", { bubbles: true })));
-    expect(onOpenDisplayFrame).toHaveBeenCalledTimes(1);
-    expect(onPatch).not.toHaveBeenCalled();
+    expect(onPatch).toHaveBeenCalledWith(expect.objectContaining({
+      templateId: "emblem-list",
+      presentation: "emblem-list",
+      displayFrame: undefined,
+    }));
 
     flushSync(() => root.unmount());
   });

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- 背景圆 -->
+  <circle cx="100" cy="100" r="90" fill="#1976D2"/>
+  
+  <!-- 地图轮廓（简化中国地图） -->
+  <path d="M60 70 Q80 55 110 65 Q130 75 140 95 Q135 115 115 125 Q90 130 70 115 Q55 95 60 70" 
+        fill="none" stroke="#FFC107" stroke-width="8" stroke-linejoin="round"/>
+  
+  <!-- 省份标记点 -->
+  <circle cx="85" cy="85" r="6" fill="#FFC107"/>
+  <circle cx="110" cy="95" r="6" fill="#FFC107"/>
+  <circle cx="100" cy="110" r="6" fill="#FFC107"/>
+  
+  <!-- 文字 -->
+  <text x="100" y="160" font-family="sans-serif" font-size="28" font-weight="bold" 
+        fill="white" text-anchor="middle">蹭饭图</text>
+  
+  <!-- 英文 -->
+  <text x="100" y="180" font-family="sans-serif" font-size="12" 
+        fill="#E3F2FD" text-anchor="middle">Cengfan Map</text>
+</svg>

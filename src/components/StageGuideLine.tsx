@@ -14,7 +14,6 @@ export function StageGuideLine({ stage }: { stage: WorkflowStageId }) {
       <summary>{definition.description}</summary>
       <p className="studio-stage-guide__body">
         完成本阶段的关键动作后，步骤条会标记为已完成，即可进入下一步。
-        {stage === "template" ? " 建议先选择模板再导入名单。" : ""}
       </p>
     </details>
   );

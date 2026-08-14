@@ -5,7 +5,7 @@ import { StudioMuiProvider } from "./StudioMuiProvider";
 import { CompactButton } from "./StudioUi";
 
 describe("StudioMuiProvider", () => {
-  it("renders compact MUI buttons with studio density under the provider", () => {
+  it("preserves shared compact-button density under the provider", () => {
     const container = document.createElement("div");
     const root = createRoot(container);
 
@@ -17,7 +17,7 @@ describe("StudioMuiProvider", () => {
       ),
     );
 
-    const button = container.querySelector<HTMLElement>(".MuiButton-root");
+    const button = container.querySelector<HTMLElement>(".compact-button");
     expect(button).not.toBeNull();
     expect(button?.getAttribute("data-studio-density")).toBe("compact");
 
