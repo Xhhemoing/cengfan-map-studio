@@ -29,3 +29,7 @@ graphify-out/graph.html
 
 # 校徽原始素材（258MB，不提交；由 sync 脚本压缩进 public/emblems）
 assets-src/
+
+# AI agent 生成的规划与预览文件（不入库，避免污染主仓库）
+docs/plans/
+docs/previews/

@@ -2,64 +2,106 @@
 
 面向毕业班的去向地图(蹭饭图)编辑器:导入学生名单、编辑地图、管理字体/图片素材、智能布局、协作保存与高清导出。
 
-## 技术栈
+## 快速上手 (5 分钟)
 
-- 前端:React + Vite + TypeScript,`d3-geo` 地图投影,`pinyin-pro` 拼音排序,`xlsx` 表格导入导出
-- 后端:`src/server` 内嵌 API(默认端口 `8787`,Vite 代理 `/api`),含 AI 助手(`server/ai`,LLM 客户端 + agent 循环)与协作模块
-- 测试:Vitest(jsdom,覆盖 `src/**` 与 `server/**`)
-
-## 快速开始
+### 1. 安装依赖
 
 ```bash
 npm install
-cp .env.example .env        # 配置 API/LLM 密钥等
-npm run dev                 # 同时启动 Vite(5173)与 API(8787)
 ```
 
-打开 `http://localhost:5173/` 先进入**项目工作台**(项目列表),点「新建项目」或项目卡片进入编辑器;支持多项目新建/复制/重命名/删除/导出/导入,编辑内容自动保存到浏览器本地。
+### 2. 配置环境变量（可选）
 
-AI agent 使用 OpenAI 兼容接口。旧变量 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL` 继续可用；生产环境建议使用 `AI_PRIMARY_API_KEY`、`AI_PRIMARY_BASE_URL`、`AI_PRIMARY_MODEL` 和可选的 `AI_FALLBACK_*`。未配置主模型时 agent 使用本地确定性规则。生产部署、状态文件、启动门禁、`/api/live`、`/api/ready` 与回滚流程见 [AI 生产部署手册](docs/deployment/ai-production.md)。运行中的配置状态、路由与任务限制可通过 `GET /api/health` 查看，健康响应不会暴露密钥。
+```bash
+cp .env.example .env
+```
+
+- 如需使用 AI 助手功能，需在 `.env` 中配置 OpenAI 兼容接口的 API Key
+- 仅本地编辑功能可跳过此步
+
+### 3. 启动开发服务器
+
+```bash
+npm run dev
+```
+
+- 前端: http://localhost:5173
+- API: http://localhost:8787
+
+### 4. 创建你的第一个项目
+
+1. 打开浏览器访问 http://localhost:5173
+2. 点击「新建项目」，输入班级名称
+3. 进入编辑器后：
+   - 左侧可切换「项目工作台」或「编辑画布」
+   - 点击地图省份即可选中并编辑卡片
+   - 右侧面板可调整卡片样式、布局、字体
+   - 支持导入 Excel/CSV 学生名单
+
+### 5. 导出与分享
+
+- 点击右上角「导出」按钮可生成高清 PNG/PDF
+- 支持导出项目为 `.cengfan` 文件（可导入到其他设备）
+
+## 功能概览
+
+| 功能 | 说明 |
+|------|------|
+| 地图编辑 | 点击省份选中，拖拽卡片，智能避让布局 |
+| 素材库 | 上传字体、贴图、校徽，支持按省份绑定 |
+| 学生名单 | Excel/CSV 导入，自动匹配姓名与去向 |
+| 智能布局 | 自动/手动混合布局，卡片不重叠 |
+| 协作 | 创建房间邀请他人实时编辑 |
+| 导出 | 高清 PNG / PDF / 项目包 |
 
 ## 常用命令
 
 | 命令 | 说明 |
-| --- | --- |
-| `npm run dev` | 开发(web + API 并行) |
-| `npm run dev:web` | 仅 Vite |
-| `npm run dev:ai` | 仅 API 服务 |
-| `npm test` | 全量 Vitest |
-| `npm run test:watch` | 监听模式 |
-| `npm run lint` | ESLint |
-| `npm run build` / `npm run start` | 构建与生产启动 |
+|------|------|
+| `npm run dev` | 开发模式（web + API） |
+| `npm run dev:web` | 仅启动 Vite 前端 |
+| `npm run dev:ai` | 仅启动 API 服务 |
+| `npm run build` | 生产构建 |
+| `npm run start` | 生产启动 |
+| `npm test` | 运行测试 |
+| `npm run lint` | 代码检查 |
 
-重操作(测试/lint/build)经 `scripts/run-heavy.mjs` 串行化,避免多任务并发争抢小内存 VM。
+## 技术栈
 
-## 行政区划数据(省/市)
-
-浏览器使用的省/市目录是**检入仓库的静态数据** `src/data/china-locations.ts`:构建与运行时直接读取该文件,**不会发起任何运行时位置数据请求**。目录主体为省级与地级市(州/盟)数据,并可能包含极少量有明确边界的县级/历史兼容记录(如 `济源市`),仅用于保持历史导入的旧城市名可解析;**不含任何区县/乡镇载荷**(省/自治区直辖县级行政区划等占位行也会被排除)。
-
-仅在需要维护/升级目录时,才运行同步脚本(此时才会从 npm 下载 `province-city-china` 包):
-
-```bash
-npm run data:sync:china-locations                # 同步到 latest 版本
-npm run data:sync:china-locations -- --version 8.5.8   # 固定版本,结果可复现
-```
-
-脚本只读取包内 `province.json` 与 `city.json`(从不触碰 district/town 数据),并在内存中校验通过后才覆盖静态文件;直辖市/港澳/台湾等兼容条目、历史别名与县级/历史兼容记录由脚本在生成时合成。
+- **前端**: React 19 + Vite + TypeScript + MUI + d3-geo
+- **后端**: Node.js 内嵌 API（认证、协作、AI）
+- **测试**: Vitest + jsdom
+- **数据**: 静态省/市数据（`src/data/china-locations.ts`）
 
 ## 目录结构
 
-- `src/` — React 前端(`App.tsx` 编辑器画布,`components/ProjectWorkbench.tsx` 项目工作台,`components/` 组件,`lib/` 工具与 AI 客户端(含 IndexedDB 项目存储),`data/` 静态数据)
-- `server/` — Node API(认证、协作、AI agent 循环、导入导出)
-- `scripts/` — dev/build/start 与重任务包装
-- `docs/` — 设计规格与需求文档
-- `.data/` — 运行时数据(不入库)
+```
+src/
+├── components/     # UI 组件（画布、面板、检查器）
+├── lib/            # 工具函数、场景文档、ID 生成
+├── data/           # 静态地图数据
+├── server/         # Node API（认证、协作、AI）
+└── App.tsx         # 应用入口
 
-## 共享协作
+scripts/            # 构建、开发、数据同步脚本
+docs/               # 设计文档与使用手册
+```
 
-共享房间保存在 API 进程内，空闲一段时间后会过期。创建者可以生成“可编辑”或“仅查看”的单次邀请凭证；该凭证与房间访问 token 都是访问权限，应通过私密渠道发送。成员 token 仅保存在当前浏览器的本地存储中，离开房间、令牌失效或房间过期都不会删除本机工程草稿。当前实现不提供账户身份审计、永久历史、跨实例持久化或端到端加密。
+## 常见问题
 
-## 验证与提交
+**Q: 端口 8787 被占用怎么办？**
+A: 修改 `.env` 中的 `PORT` 或使用 `PORT=9000 npm run dev`
 
-- 行为变更遵循 TDD:先写失败测试,再最小实现,重跑同一检查;完成报告记录 failure → cause → fix → recheck。
-- 提交前运行 `npm run lint` 与 `npm test`;破坏性变更需说明回滚方案。
+**Q: 构建失败？**
+A: 先运行 `npm run lint`，确保无语法错误；必要时删除 `node_modules` 重新安装
+
+**Q: 如何贡献代码？**
+A: 参考 `AGENTS.md` 中的开发规范，提交前请运行 `npm run lint && npm test`
+
+## 许可证
+
+MIT License — 详见 [LICENSE](LICENSE) 文件
+
+---
+
+> **提示**: 本项目聚焦「毕业班去向地图」场景，欢迎提交 Issue 和 PR 共同完善！
