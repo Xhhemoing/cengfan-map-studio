@@ -116,9 +116,6 @@ export function DisplayFrameSubcanvas({
           const nx = Math.round(Number(m[1]));
           const ny = Math.round(Number(m[2]));
           onChangeItem(preview.id, { x: nx, y: ny });
-        } else if (drag) {
-          // Fallback for environments where RAF/transform was not applied (jsdom etc.)
-          const nx = Math.round(drag.originX + (drag.startX !== undefined ? 0 : 0)); // will be recomputed below using last known drag if needed
         }
       }
     }

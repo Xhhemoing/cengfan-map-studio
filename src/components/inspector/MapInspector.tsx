@@ -54,7 +54,7 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
 }) {
   const showGlobal = mode !== "placement";
   const showPlacement = mode !== "global";
-  const number = (key: "x" | "y" | "width" | "height" | "scale" | "edgeWidth", value: number, min: number, max: number, step: number, label: string) => (
+  const number = (key: "x" | "y" | "width" | "height" | "scale" | "edgeWidth" | "mapBoundaryMargin", value: number, min: number, max: number, step: number, label: string) => (
     <label htmlFor={`map-${key}`}>{label}
       <DeferredInput id={`map-${key}`} type="number" min={min} max={max} step={step} value={value} onCommit={(draft) => {
         const next = Number(draft);
