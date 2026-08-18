@@ -1,5 +1,6 @@
 import { FolderOpen, MapPinned, Plus } from "lucide-react";
 import type { RefObject } from "react";
+import { PROJECT_PACKAGE_FILE_ACCEPT } from "../../lib/project-package";
 
 export function WorkbenchHeader({ importInputRef, onCreateProject, onImportProject }: {
   importInputRef: RefObject<HTMLInputElement | null>;
@@ -19,7 +20,7 @@ export function WorkbenchHeader({ importInputRef, onCreateProject, onImportProje
         <button type="button" className="primary-button" aria-label="新建项目" onClick={onCreateProject}>
           <Plus size={16} /> 新建项目
         </button>
-        <input ref={importInputRef} type="file" accept="application/json,.json" aria-label="导入工程包文件" className="workbench-file-input" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
+        <input ref={importInputRef} type="file" accept={PROJECT_PACKAGE_FILE_ACCEPT} aria-label="导入工程包文件" className="workbench-file-input" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
       </div>
     </header>
   );

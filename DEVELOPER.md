@@ -86,9 +86,11 @@ public/                     # 静态资源（Logo、校徽）
 
 ## 五、贡献流程
 
+完整约定见仓库根目录 [CONTRIBUTING.md](CONTRIBUTING.md)。国内镜像见 [docs/宣发/Gitee镜像清单.md](docs/宣发/Gitee镜像清单.md)。
+
 ### 1. 认领 Issue
 - 查看 [GitHub Issues](https://github.com/Xhhemoing/cengfan-map-studio/issues)
-- 优先认领 `good first issue` 或 `help wanted`
+- 优先认领 `good first issue` 或 `help wanted`（候选：[docs/宣发/good-first-issues.md](docs/宣发/good-first-issues.md)）
 - 在 Issue 下留言「我来做」
 
 ### 2. 开发规范
@@ -156,17 +158,18 @@ npx vitest run -t "pattern" # 按名称过滤
 
 ## 九、社区与支持
 
-- **GitHub Discussions**：功能讨论、Q&A
-- **微信/QQ 群**：实时交流（见 README）
-- **Issues**：Bug 报告、功能请求
+- **GitHub Issues**：用模板选 Bug / 功能建议 / 使用意见
+- **GitHub Discussions**：方向讨论（开启后把「征求意见」置顶）
+- **开发者群**：只聊意见与 PR，见 `docs/私域/开发者群运营手册.md`
+- **用户群**：导入出图，开发者不要把用户群当论坛
 
 ---
 
 ## 十、License
 
-MIT License — 详见 [LICENSE](LICENSE)
+GNU AGPL v3 only — 详见 [LICENSE](LICENSE) 与 [docs/开源与收费边界.md](docs/开源与收费边界.md)
 
 ---
 
 **维护者**：蹭饭图团队  
-**更新**：2026-08-14
+**更新**：2026-08-15

@@ -1,19 +1,33 @@
 {
-  "version": "1.0",
-  "projectName": "示例班级-2026",
-  "createdAt": "2026-08-14T08:12:51.790551",
-  "data": {
-    "totalStudents": 200,
-    "source": "docs/示例数据/毕业名单-脱敏.csv",
-    "note": "脱敏示例数据，真实使用时请替换为实际名单"
+  "kind": "cengfan-project-package",
+  "version": 2,
+  "exportedAt": "2026-08-14T08:12:51.790Z",
+  "project": {
+    "schemaVersion": 2,
+    "students": [
+      { "id": "student-1", "name": "林舟", "university": "北京大学", "city": "北京市", "visibility": true },
+      { "id": "student-2", "name": "陈宁", "university": "清华大学", "city": "北京市", "visibility": true },
+      { "id": "student-3", "name": "苏禾", "university": "浙江大学", "city": "杭州市", "visibility": true },
+      { "id": "student-4", "name": "顾言", "university": "复旦大学", "city": "上海市", "visibility": true },
+      { "id": "student-5", "name": "沈青", "university": "南京大学", "city": "南京市", "visibility": true },
+      { "id": "student-6", "name": "唐诺", "university": "武汉大学", "city": "武汉市", "visibility": true },
+      { "id": "student-7", "name": "程川", "university": "四川大学", "city": "成都市", "visibility": true },
+      { "id": "student-8", "name": "江月", "university": "中山大学", "city": "广州市", "visibility": true },
+      { "id": "student-9", "name": "温然", "university": "西安交通大学", "city": "西安市", "visibility": true },
+      { "id": "student-10", "name": "陆迟", "university": "哈尔滨工业大学", "city": "哈尔滨市", "visibility": true },
+      { "id": "student-11", "name": "周野", "university": "厦门大学", "city": "厦门市", "visibility": true },
+      { "id": "student-12", "name": "许棠", "university": "湖南大学", "city": "长沙市", "visibility": true }
+    ],
+    "templateId": "original",
+    "dataView": "province",
+    "version": 0,
+    "history": { "past": [], "future": [] }
   },
-  "settings": {
-    "template": "compact",
-    "colors": {
-      "primary": "#1976D2",
-      "secondary": "#FFC107"
-    },
-    "font": "system-default"
-  },
-  "exportedFrom": "cengfan-map-studio"
+  "assets": [],
+  "fonts": [],
+  "customTemplates": [],
+  "renderSettings": {
+    "mode": "normal",
+    "fixedFps": 20
+  }
 }

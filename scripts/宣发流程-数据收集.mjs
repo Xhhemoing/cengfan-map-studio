@@ -28,9 +28,9 @@ if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 if (!existsSync(REPORT_DIR)) mkdirSync(REPORT_DIR, { recursive: true });
 
 const KPI_TARGETS = {
-  '1个月': { githubStar: 500, xhsFans: 1000, cases: 20, seeds: 50, kol: 3 },
-  '3个月': { githubStar: 2000, xhsFans: 5000, cases: 100, seeds: 300, kol: 10 },
-  '6个月': { githubStar: 5000, xhsFans: 15000, cases: 300, seeds: 1000, kol: 30 }
+  '8周淡季': { githubStar: 80, xhsFans: 400, cases: 5, issues: 15, contributors: 3 },
+  '2027预热前': { githubStar: 300, xhsFans: 1000, cases: 20, issues: 40, contributors: 8 },
+  '2027毕业季': { githubStar: 1000, xhsFans: 3000, cases: 80, issues: 100, contributors: 20 }
 };
 
 const CURRENT_DATA_FILE = join(DATA_DIR, 'current.json');
@@ -42,14 +42,18 @@ function loadCurrentData() {
   }
   return {
     date: new Date().toISOString().slice(0, 10),
-    github: { star: 0, fork: 0, issue: 0, pr: 0 },
+    github: { star: 0, fork: 0, issue: 0, pr: 0, discussion: 0 },
+    gitee: { star: 0 },
     xhs: { fans: 0, note: 0, read: 0, like: 0, collect: 0 },
     douyin: { fans: 0, video: 0, play: 0, like: 0 },
     bilibili: { fans: 0, video: 0, play: 0, like: 0 },
+    juejin: { articles: 0, read: 0 },
+    v2ex: { posts: 0, replies: 0 },
     cases: { total: 0, quality: { high: 0, medium: 0, low: 0 } },
     seeds: { total: 0, active: 0 },
     kol: { tier1: 0, tier2: 0, tier3: 0 },
-    private: { group: 0, activeRate: 0 }
+    private: { userGroup: 0, devGroup: 0, activeRate: 0 },
+    demo: { weeklyOpens: 0, exports: 0 }
   };
 }
 
@@ -109,22 +113,23 @@ function generateReport() {
 
   // KPI 对比
   report += '## 一、KPI 完成情况\n\n';
-  report += '| 指标 | 当前值 | 1个月目标 | 完成率 | 3个月目标 | 6个月目标 |\n';
-  report += '|------|--------|-----------|--------|-----------|-----------|\n';
+  report += '| 指标 | 当前值 | 8周淡季 | 完成率 | 2027预热前 | 2027毕业季 |\n';
+  report += '|------|--------|---------|--------|------------|------------|\n';
 
-  const targets1m = KPI_TARGETS['1个月'];
-  const githubStarRate = ((current.github.star / targets1m.githubStar) * 100).toFixed(1);
-  const xhsFansRate = ((current.xhs.fans / targets1m.xhsFans) * 100).toFixed(1);
-  const casesRate = ((current.cases.total / targets1m.cases) * 100).toFixed(1);
-  const seedsRate = ((current.seeds.total / targets1m.seeds) * 100).toFixed(1);
-  const kolRate = (((current.kol.tier1 + current.kol.tier2 + current.kol.tier3) / targets1m.kol) * 100).toFixed(1);
+  const t0 = KPI_TARGETS['8周淡季'];
+  const t1 = KPI_TARGETS['2027预热前'];
+  const t2 = KPI_TARGETS['2027毕业季'];
+  const starNow = (current.github?.star || 0) + (current.gitee?.star || 0);
+  const issueNow = current.github?.issue || 0;
+  const pct = (n, d) => (d ? ((n / d) * 100).toFixed(1) : '0.0');
 
-  report += `| GitHub Star | ${current.github.star} | ${targets1m.githubStar} | ${githubStarRate}% | ${KPI_TARGETS['3个月'].githubStar} | ${KPI_TARGETS['6个月'].githubStar} |\n`;
-  report += `| 小红书粉丝 | ${current.xhs.fans} | ${targets1m.xhsFans} | ${xhsFansRate}% | ${KPI_TARGETS['3个月'].xhsFans} | ${KPI_TARGETS['6个月'].xhsFans} |\n`;
-  report += `| 真实案例作品 | ${current.cases.total} | ${targets1m.cases} | ${casesRate}% | ${KPI_TARGETS['3个月'].cases} | ${KPI_TARGETS['6个月'].cases} |\n`;
-  report += `| 种子用户 | ${current.seeds.total} | ${targets1m.seeds} | ${seedsRate}% | ${KPI_TARGETS['3个月'].seeds} | ${KPI_TARGETS['6个月'].seeds} |\n`;
-  report += `| KOL 合作 | ${current.kol.tier1 + current.kol.tier2 + current.kol.tier3} | ${targets1m.kol} | ${kolRate}% | ${KPI_TARGETS['3个月'].kol} | ${KPI_TARGETS['6个月'].kol} |\n`;
+  report += `| Star（GitHub+Gitee） | ${starNow} | ${t0.githubStar} | ${pct(starNow, t0.githubStar)}% | ${t1.githubStar} | ${t2.githubStar} |\n`;
+  report += `| 小红书粉丝 | ${current.xhs.fans} | ${t0.xhsFans} | ${pct(current.xhs.fans, t0.xhsFans)}% | ${t1.xhsFans} | ${t2.xhsFans} |\n`;
+  report += `| 真实案例 | ${current.cases.total} | ${t0.cases} | ${pct(current.cases.total, t0.cases)}% | ${t1.cases} | ${t2.cases} |\n`;
+  report += `| 外部 Issue | ${issueNow} | ${t0.issues} | ${pct(issueNow, t0.issues)}% | ${t1.issues} | ${t2.issues} |\n`;
+  report += `| Demo 周打开 / 导出 | ${current.demo?.weeklyOpens || 0} / ${current.demo?.exports || 0} | 有数据即可 | — | 200 打开 | 1000 打开 |\n`;
   report += '\n';
+  report += '对照总流程：阅读高试用低 → 查 Demo；试用高意见少 → 查反馈入口；意见多回复慢 → 先停投放。\n\n';
 
   // 内容表现
   report += '## 二、内容表现分析\n\n';
@@ -152,9 +157,11 @@ function generateReport() {
 
   // 私域健康度
   report += '## 四、私域健康度\n\n';
-  report += `- 群成员：${current.private.group}\n`;
+  report += `- 用户群：${current.private.userGroup ?? current.private.group ?? 0}\n`;
+  report += `- 开发者群：${current.private.devGroup ?? 0}\n`;
   report += `- 活跃率：${current.private.activeRate}%\n`;
-  report += `- 种子用户活跃：${current.seeds.active} / ${current.seeds.total}\n\n`;
+  report += `- 种子用户活跃：${current.seeds.active} / ${current.seeds.total}\n`;
+  report += `- 掘金阅读：${current.juejin?.read || 0} · V2EX 回复：${current.v2ex?.replies || 0}\n\n`;
 
   // 问题与改进
   report += '## 五、本周期问题与改进\n\n';

@@ -20,6 +20,10 @@ dev-server*.log
 tmp-shot*.png
 nul
 
+# 本地收费 / 支付 / 套餐（永不提交；见 docs/开源与收费边界.md）
+.local-commercial/
+.local-billing/
+
 # Generated graph cache; keep the tracked report and graph artifacts only.
 graphify-out/cache/ast/
 graphify-out/cache/

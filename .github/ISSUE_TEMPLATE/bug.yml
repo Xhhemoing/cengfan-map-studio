@@ -1,0 +1,55 @@
+name: Bug 报告
+description: 导入失败、布局错乱、导出异常、页面报错
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请不要粘贴真实学生姓名 + 去向。截图打码后再传。
+        维护者会在 48 小时内回复。
+  - type: dropdown
+    id: who
+    attributes:
+      label: 我是
+      options:
+        - 班主任 / 老师
+        - 班委 / 学生
+        - 开发者
+        - 其他
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: 运行方式
+      options:
+        - 浏览器打开公网 / Demo
+        - 本机 npm run dev
+        - 本机 npm run build && npm run start
+        - 不清楚
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 系统与浏览器
+      placeholder: 例如 Windows 11 + Chrome 128
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: 1. 导入哪类文件 2. 点了哪里 3. 看到什么
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望 vs 实际
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 控制台报错或脱敏截图
+      description: 可拖拽图片。不要出现完整名单。

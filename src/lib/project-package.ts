@@ -209,6 +209,13 @@ export function restoreProjectPackage(value: unknown): ProjectPackage {
   };
 }
 
+/** File picker filter for `.json` / `.cengfan` project packages. */
+export const PROJECT_PACKAGE_FILE_ACCEPT = "application/json,.json,.cengfan";
+
+export function projectPackageDisplayName(filename: string): string {
+  return filename.replace(/\.(json|cengfan)$/i, "") || "导入的项目";
+}
+
 export function downloadProjectPackage(pack: ProjectPackage, filename = `cengfan-project-${pack.exportedAt.slice(0, 10)}.json`): void {
   const blob = new Blob([serializeProjectPackage(pack)], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);

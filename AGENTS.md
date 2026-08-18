@@ -28,3 +28,7 @@
 ## 导入导出规范
 
 涉及学生数据导入/导出时,使用 `.agents/skills/cengfan-data-import/SKILL.md` 中的模板下载、表头智能识别与校验流程。
+
+涉及国内宣发、投放文案、用户/开发者意见收集时,使用 `.agents/skills/cengfan-promo/SKILL.md`，总流程在 `docs/宣发/国内互联网宣发总流程.md`。
+
+许可证为 AGPL-3.0-only。支付、套餐、模板手续费结算不得进入本仓库，见 `docs/开源与收费边界.md`。

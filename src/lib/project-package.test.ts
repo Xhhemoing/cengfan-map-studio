@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createProjectDocument } from "./project-document";
 import { applyTransaction } from "./project-document";
@@ -5,6 +8,7 @@ import {
   createProjectPackage,
   createProjectPackageEnvelope,
   parseProjectPackage,
+  projectPackageDisplayName,
   restoreProjectPackage,
   serializeProjectPackage,
 } from "./project-package";
@@ -243,5 +247,18 @@ describe("project package", () => {
     expect(parsed.assets[0]?.provinceIds).toEqual(["浙江省", "江苏省"]);
     expect(parsed.project.map.provinceStyles?.浙江省?.appearance).toMatchObject({ assetId: "texture-good", src: "data:image/png;base64,SAME" });
     expect(parsed.project.map.provinceStyles?.北京市?.appearance).toMatchObject({ assetId: "missing-src", src: "data:image/png;base64,BEIJING" });
+  });
+
+  it("strips json and cengfan extensions from imported package names", () => {
+    expect(projectPackageDisplayName("示例项目.cengfan")).toBe("示例项目");
+    expect(projectPackageDisplayName("project.json")).toBe("project");
+    expect(projectPackageDisplayName(".json")).toBe("导入的项目");
+  });
+
+  it("keeps the published sample package importable", () => {
+    const raw = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../docs/示例数据/示例项目.cengfan"), "utf8");
+    const pack = parseProjectPackage(raw);
+    expect(pack.kind).toBe("cengfan-project-package");
+    expect(pack.project.students.length).toBeGreaterThan(0);
   });
 });

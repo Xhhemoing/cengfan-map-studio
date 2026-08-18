@@ -57,6 +57,7 @@ export interface AiServerOptions {
   rateLimiters?: {
     agent?: ReturnType<typeof createRateLimiter>;
     otherAi?: ReturnType<typeof createRateLimiter>;
+    rooms?: ReturnType<typeof createRateLimiter>;
   };
   aiLogger?: ReturnType<typeof createAiLogger>;
   maxJsonBodyBytes?: number;
@@ -74,6 +75,7 @@ export interface AiServerOptions {
   rateLimitOptions?: {
     agent?: { limit: number; windowMs: number; maxEntries?: number };
     otherAi?: { limit: number; windowMs: number; maxEntries?: number };
+    rooms?: { limit: number; windowMs: number; maxEntries?: number };
   };
   onAiStateUnavailable?: () => void;
   productionConfig?: ReturnType<typeof validateProductionConfig>;
@@ -343,6 +345,11 @@ export function createAiServer(options: AiServerOptions = {}) {
     restored: restoredState.rateLimits.otherAi,
     onChange: (snapshot) => enqueueStateUpdate((state) => ({ ...state, rateLimits: { ...state.rateLimits, otherAi: snapshot } })),
   });
+  const roomCreateRateLimiter = options.rateLimiters?.rooms ?? createRateLimiter({
+    limit: options.rateLimitOptions?.rooms?.limit ?? 20,
+    windowMs: options.rateLimitOptions?.rooms?.windowMs ?? 60_000,
+    maxEntries: options.rateLimitOptions?.rooms?.maxEntries,
+  });
   const aiLogger = options.aiLogger ?? createAiLogger();
   const maxJsonBodyBytes = options.maxJsonBodyBytes ?? DEFAULT_MAX_JSON_BODY_BYTES;
   const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
@@ -514,6 +521,11 @@ export function createAiServer(options: AiServerOptions = {}) {
       };
 
       if (request.method === "POST" && pathname === "/api/rooms") {
+        const roomLimit = roomCreateRateLimiter.check(clientIp(request, trustProxy));
+        if (!roomLimit.allowed) {
+          send(429, { error: { code: "ROOM_RATE_LIMITED", message: "创建房间过于频繁，请稍后重试。" } });
+          return;
+        }
         const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
         if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId || typeof body.displayName !== "string" || !body.displayName.trim()) {
           send( 400, { error: { code: "VALIDATION_ERROR", message: "clientId 和 displayName 必填" } });

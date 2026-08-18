@@ -1,5 +1,5 @@
 import { geoMercator, geoPath } from "d3-geo";
-import { Fragment, useEffect, useMemo, useRef, type PointerEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, type PointerEvent, type ReactNode, type RefObject } from "react";
 import { clampDestinationCardPosition, type CardArea, type CardLayoutMode, type CardPoint, type CardPolygon } from "../../lib/card-layout";
 import { createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
@@ -13,7 +13,7 @@ import {
 } from "../../lib/layout";
 import { buildProvinceSummary, getVisibleStudents } from "../../lib/project-data";
 import { CANVAS_LAYER_Z } from "../../lib/scene-document";
-import type { CanvasText, CardFontField, SceneSelection } from "../../lib/scene-document";
+import type { AssetElement, CanvasText, CardFontField, SceneSelection } from "../../lib/scene-document";
 import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame, type DisplayFrameFixedItem } from "../../lib/display-frame";
 import type { ProjectDocument } from "../../lib/project-document";
 import { resolveStudentLocation } from "../../lib/student-data";
@@ -38,6 +38,13 @@ const features = getChinaMapFeatures();
 const openMapSplit = splitMapFeaturesForSouthChinaSea(features, false);
 const foldedMapSplit = splitMapFeaturesForSouthChinaSea(features, true);
 const HEAT_COLORS = ["#d9f0e5", "#8ccfb6", "#4da184", "#17675e"] as const;
+const LANDMARK_ASSET_KINDS: AssetElement["kind"][] = ["landmark"];
+const EMPTY_USER_FONTS: UserFont[] = [];
+
+const MemoizedMapLayer = memo(MapLayer);
+const MemoizedRegionalAssetLayer = memo(RegionalAssetLayer);
+const MemoizedDecorationLayer = memo(DecorationLayer);
+const MemoizedTextLayer = memo(TextLayer);
 
 /** Truncate a single-line guest text (name / title / note) with an ellipsis. */
 function truncateGuestText(text: string, maxChars: number): string {
@@ -431,7 +438,7 @@ export function PosterCanvas({
   onMoveCard,
   onMoveGuests,
   onCardPositionsResolved,
-  userFonts = [],
+  userFonts = EMPTY_USER_FONTS,
   showGrid = false,
   gridSize = DEFAULT_GRID_SIZE,
   renderIntervalMs = 0,
@@ -855,6 +862,20 @@ export function PosterCanvas({
 
   const guestX = guests.x;
   const guestY = guests.y;
+  const decorationAssets = useMemo(
+    () => project.assetElements.filter((asset) => asset.kind === "decoration"),
+    [project.assetElements],
+  );
+  const mapPins = useMemo(
+    () => project.dataView === "pins" ? pins : selectedStudentId ? pins.filter((pin) => pin.id === selectedStudentId) : [],
+    [pins, project.dataView, selectedStudentId],
+  );
+  const mapTheme = useMemo(() => ({ ink: project.map.edgeColor, heatColors: HEAT_COLORS }), [project.map.edgeColor]);
+  const selectMap = useCallback(() => onSelect?.({ type: "map" }), [onSelect]);
+  const selectProvince = useCallback((province: string) => onSelect?.({ type: "province", province }), [onSelect]);
+  const selectAsset = useCallback((id: string) => onSelect?.({ type: "asset", id }), [onSelect]);
+  const mapPathForAsset = useCallback((feature: MapFeature) => mapPath(feature as never), [mapPath]);
+  const selectText = useCallback((id: string) => onSelect?.({ type: "text", id }), [onSelect]);
 
   const canvasPoint = (event: PointerEvent<SVGGElement>) => {
     const svg = event.currentTarget.ownerSVGElement;
@@ -885,13 +906,13 @@ export function PosterCanvas({
       z: mapLayerZ,
       node: (
         <>
-          <MapLayer
+          <MemoizedMapLayer
             settings={project.map}
             features={features}
             counts={counts}
             dataView={project.dataView}
-            theme={{ ink: project.map.edgeColor, heatColors: HEAT_COLORS }}
-            pins={project.dataView === "pins" ? pins : selectedStudentId ? pins.filter((pin) => pin.id === selectedStudentId) : []}
+            theme={mapTheme}
+            pins={mapPins}
             selectedStudentId={selectedStudentId}
             onSelectStudent={onSelectStudent}
             assets={project.assetElements}
@@ -900,25 +921,25 @@ export function PosterCanvas({
             selected={!exportMode && mapSelected}
             renderIntervalMs={renderIntervalMs}
             onResizeMapImage={onResizeMapImage}
-            onSelectMap={() => onSelect?.({ type: "map" })}
-            onSelectProvince={(province) => onSelect?.({ type: "province", province })}
+            onSelectMap={selectMap}
+            onSelectProvince={selectProvince}
             selectedProvince={selectedProvince}
             onMoveProvinceTexture={onMoveProvinceTexture}
-            onSelectAsset={(id) => onSelect?.({ type: "asset", id })}
+            onSelectAsset={selectAsset}
             onAssetLoadError={onAssetLoadError}
             userFonts={userFonts}
           />
 
-          <RegionalAssetLayer
+          <MemoizedRegionalAssetLayer
             settings={project.map}
             features={features}
-            path={(feature) => mapPath(feature as never)}
+            path={mapPathForAsset}
             assets={project.assetElements}
-            kinds={["landmark"]}
+            kinds={LANDMARK_ASSET_KINDS}
             selectedAssetId={selectedAssetId}
             exportMode={exportMode}
             renderIntervalMs={renderIntervalMs}
-            onSelectAsset={(id) => onSelect?.({ type: "asset", id })}
+            onSelectAsset={selectAsset}
             onAssetLoadError={onAssetLoadError}
             onMoveAsset={onMoveAsset}
             onResizeAsset={onResizeAsset}
@@ -1465,12 +1486,12 @@ export function PosterCanvas({
       key: "decorations",
       z: CANVAS_LAYER_Z.decorations,
       node: (
-        <DecorationLayer
-          assets={project.assetElements.filter((asset) => asset.kind === "decoration")}
+        <MemoizedDecorationLayer
+          assets={decorationAssets}
           selectedAssetId={selectedAssetId}
           exportMode={exportMode}
           renderIntervalMs={renderIntervalMs}
-          onSelectAsset={(id) => onSelect?.({ type: "asset", id })}
+          onSelectAsset={selectAsset}
           onAssetLoadError={onAssetLoadError}
           onMoveAsset={onMoveAsset}
           onResizeAsset={onResizeAsset}
@@ -1481,12 +1502,12 @@ export function PosterCanvas({
       key: "texts",
       z: CANVAS_LAYER_Z.texts,
       node: (
-        <TextLayer
+        <MemoizedTextLayer
           textElements={project.textElements}
           selectedTextId={selectedTextId}
           exportMode={exportMode}
           userFonts={userFonts}
-          onSelectText={(id) => onSelect?.({ type: "text", id })}
+          onSelectText={selectText}
           onMoveText={onMoveText}
         />
       ),

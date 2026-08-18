@@ -1,0 +1,44 @@
+name: 使用意见（不一定是功能）
+description: 第一印象、哪里劝退、文案或流程槽点
+title: "[意见] "
+labels: ["user-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        一句真话比一份功能清单有用。编号回答即可。
+        开发向的架构讨论也可以写在这里。
+  - type: dropdown
+    id: who
+    attributes:
+      label: 我是
+      options:
+        - 使用者（出图）
+        - 开发者（跑仓库）
+        - 两者都是
+    validations:
+      required: true
+  - type: checkboxes
+    id: area
+    attributes:
+      label: 主要槽点（可多选）
+      options:
+        - label: 安装 / 打不开 / 不知道 Demo 在哪
+        - label: 导入与表头识别
+        - label: 地图卡片布局
+        - label: 样式 / 校徽 / 字体
+        - label: 导出打印
+        - label: 文档或贡献流程
+        - label: 其他
+  - type: textarea
+    id: comment
+    attributes:
+      label: 意见
+      placeholder: 例如「我用班上的表，去向列叫录取结果，完全没识别到」
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: 如需我回访（选填）
+      placeholder: GitHub ID 即可，不要留学生信息

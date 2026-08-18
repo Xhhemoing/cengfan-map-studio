@@ -216,7 +216,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(() =>
     initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
   );
-  // templateSelection state removed
   const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
   const [projectMissing, setProjectMissing] = useState(false);
   const [projectLoading, setProjectLoading] = useState(() => Boolean(projectId));

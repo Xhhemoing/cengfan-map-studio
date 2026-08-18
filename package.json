@@ -2,6 +2,7 @@
   "name": "cengfan-map-studio",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -18,7 +19,10 @@
     "data:sync:china-universities": "node scripts/sync-china-universities.mjs",
     "preview": "npm run start",
     "check": "npm run lint && npm run security:audit",
-    "data:sync:china-university-emblems": "node scripts/sync-china-university-emblems.mjs"
+    "data:sync:china-university-emblems": "node scripts/sync-china-university-emblems.mjs",
+    "promo:check": "node scripts/宣发流程-素材检查.mjs",
+    "promo:content": "node scripts/宣发流程-内容生成.mjs",
+    "promo:report": "node scripts/宣发流程-数据收集.mjs --report"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

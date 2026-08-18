@@ -23,6 +23,17 @@ afterEach(() => {
 });
 
 describe("ProjectWorkbench", () => {
+  it("applies the saved atelier skin tokens on the workbench shell", async () => {
+    window.localStorage.setItem("cengfan-map-studio:ui-skin", "atelier");
+    const store = createMemoryProjectStore();
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector(".workbench-shell")).not.toBeNull());
+    const shell = container.querySelector(".workbench-shell")!;
+    expect(shell.classList.contains("app-shell")).toBe(true);
+    expect(shell.getAttribute("data-editor-skin")).toBe("atelier");
+    expect(shell.getAttribute("data-editor-theme")).toMatch(/^(light|dark)$/);
+  });
+
   it("seeds the sample project when the store is empty", async () => {
     const store = createMemoryProjectStore();
     const { container } = renderWorkbench(store);
@@ -95,6 +106,24 @@ describe("ProjectWorkbench", () => {
     await vi.waitFor(async () => {
       const projects = await store.list();
       expect(projects.some((p) => p.name.includes("副本"))).toBe(true);
+    });
+  });
+
+  it("imports a cengfan sample package and keeps the display name", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const file = new File([serializeProjectPackage(sample.pack)], "示例项目.cengfan", { type: "application/json" });
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('input[type="file"]')).not.toBeNull());
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input?.accept).toContain(".cengfan");
+    Object.defineProperty(input!, "files", { value: [file] as unknown as FileList, configurable: true });
+    input!.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(async () => {
+      const projects = await store.list();
+      expect(projects).toHaveLength(2);
+      expect(projects.some((p) => p.name === "示例项目")).toBe(true);
     });
   });
 

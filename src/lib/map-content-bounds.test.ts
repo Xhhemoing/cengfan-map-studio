@@ -17,8 +17,17 @@ function vectorMap(overrides: Partial<MapSettings> = {}): MapSettings {
   };
 }
 
+function expand(bounds: { x: number; y: number; width: number; height: number }, margin = 16) {
+  return {
+    x: bounds.x - margin,
+    y: bounds.y - margin,
+    width: bounds.width + margin * 2,
+    height: bounds.height + margin * 2,
+  };
+}
+
 describe("computeMapContentBounds", () => {
-  it("returns the union of province AABBs in vector mode", () => {
+  it("returns the union of province AABBs in vector mode, expanded by the default boundary margin", () => {
     const map = vectorMap();
     const result = computeMapContentBounds({
       map,
@@ -27,13 +36,13 @@ describe("computeMapContentBounds", () => {
         { x: 600, y: 300, width: 240, height: 260 },
       ],
     });
-    expect(result).toEqual({ x: 400, y: 180, width: 440, height: 380 });
+    expect(result).toEqual(expand({ x: 400, y: 180, width: 440, height: 380 }));
   });
 
   it("falls back to the map frame when province AABBs are empty", () => {
     const map = vectorMap();
     const result = computeMapContentBounds({ map, provinceAreas: [] });
-    expect(result).toEqual({ x: 350, y: 120, width: 800, height: 690 });
+    expect(result).toEqual(expand({ x: 350, y: 120, width: 800, height: 690 }));
   });
 
   it("falls back to the frame when province AABBs are degenerate", () => {
@@ -42,7 +51,19 @@ describe("computeMapContentBounds", () => {
       map,
       provinceAreas: [{ x: 0, y: 0, width: 0, height: 0 }],
     });
-    expect(result).toEqual({ x: 350, y: 120, width: 800, height: 690 });
+    expect(result).toEqual(expand({ x: 350, y: 120, width: 800, height: 690 }));
+  });
+
+  it("does not expand vector bounds when mapBoundaryMargin is 0", () => {
+    const map = vectorMap({ mapBoundaryMargin: 0 });
+    const result = computeMapContentBounds({
+      map,
+      provinceAreas: [
+        { x: 400, y: 180, width: 200, height: 160 },
+        { x: 600, y: 300, width: 240, height: 260 },
+      ],
+    });
+    expect(result).toEqual({ x: 400, y: 180, width: 440, height: 380 });
   });
 
   it("uses the aligned image rect (offset by the frame) in image mode", () => {

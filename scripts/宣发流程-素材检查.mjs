@@ -62,13 +62,28 @@ const CHECKLIST = [
     items: [
       { name: '用户群运营手册', path: join(DOCS_DIR, '私域/用户群运营手册.md'), required: true },
       { name: '毕业季 checklist', path: join(DOCS_DIR, '私域/毕业季-checklist.md'), required: true },
-      { name: '需求收集表', path: join(DOCS_DIR, '私域/需求收集表.md'), required: false }
+      { name: '需求收集表', path: join(DOCS_DIR, '私域/需求收集表.md'), required: true },
+      { name: '案例投稿模板', path: join(DOCS_DIR, '私域/案例投稿模板.md'), required: true },
+      { name: '每周推送模板', path: join(DOCS_DIR, '私域/每周推送模板.md'), required: true },
+      { name: '开发者群运营手册', path: join(DOCS_DIR, '私域/开发者群运营手册.md'), required: true }
+    ]
+  },
+  {
+    category: '国内宣发流程',
+    items: [
+      { name: '国内互联网宣发总流程', path: join(DOCS_DIR, '宣发/国内互联网宣发总流程.md'), required: true },
+      { name: '开发者投放文案', path: join(DOCS_DIR, '宣发/投放文案-开发者社区.md'), required: true },
+      { name: '用户侧投放文案', path: join(DOCS_DIR, '宣发/投放文案-用户侧.md'), required: true },
+      { name: '反馈收集 SOP', path: join(DOCS_DIR, '宣发/反馈收集SOP.md'), required: true },
+      { name: 'CONTRIBUTING.md', path: join(ROOT, 'CONTRIBUTING.md'), required: true },
+      { name: 'GitHub Issue 模板', path: join(ROOT, '.github/ISSUE_TEMPLATE/config.yml'), required: true },
+      { name: '开源与收费边界', path: join(DOCS_DIR, '开源与收费边界.md'), required: true }
     ]
   },
   {
     category: '脱敏示例数据',
     items: [
-      { name: '示例 Excel（脱敏）', path: join(DOCS_DIR, '示例数据/毕业名单-脱敏.xlsx'), required: true },
+      { name: '示例 Excel（脱敏）', path: join(DOCS_DIR, '示例数据/毕业名单-脱敏.xlsx'), required: false },
       { name: '示例 CSV（脱敏）', path: join(DOCS_DIR, '示例数据/毕业名单-脱敏.csv'), required: true },
       { name: '示例项目包（.cengfan）', path: join(DOCS_DIR, '示例数据/示例项目.cengfan'), required: false }
     ]
@@ -125,10 +140,11 @@ function runCheck() {
     console.log(`  3. 脚本库：参考 docs/宣发政策-小红书与社交平台.md 的「内容策略」章节`);
     console.log(`  4. KOL/私域：参考 docs/宣发政策-小红书与社交平台.md 的「KOL 策略」与「UGC 裂变」章节`);
   } else {
-    console.log(`\n✅ 所有必需素材已齐全，可以开始宣发！`);
+    console.log(`\n✅ 文档与素材检查通过。发用户向内容前仍需确认：HTTPS Demo、用户群二维码。`);
   }
 
-  console.log(`\n下次检查：首月复盘后更新此脚本的 CHECKLIST`);
+  console.log(`\n总流程：docs/宣发/国内互联网宣发总流程.md`);
+  console.log(`没有 HTTPS Demo 时，不要把 git clone 当班主任主 CTA。`);
 }
 
 runCheck();

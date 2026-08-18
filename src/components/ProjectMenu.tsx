@@ -6,6 +6,7 @@
 import { Copy, Download, FolderOpen, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
 import type { CollaborationRole, RoomAccessAction, RoomMember } from "../lib/collaboration-client";
 import type { LocalOverwriteStatus } from "../lib/incremental-workspace-sync";
+import { PROJECT_PACKAGE_FILE_ACCEPT } from "../lib/project-package";
 
 export type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error" | "closed";
 
@@ -186,7 +187,7 @@ export function ProjectMenu({
           </button>
           <button type="button" onClick={onExportProject}><PackageOpen size={16} /> 导出工程</button>
           <label className="project-menu__file"><PackageOpen size={16} /> 导入工程
-            <input type="file" accept="application/json,.json" aria-label="导入完整工程包" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
+            <input type="file" accept={PROJECT_PACKAGE_FILE_ACCEPT} aria-label="导入完整工程包" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
           </label>
         </section>
       </div>

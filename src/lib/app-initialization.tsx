@@ -1,4 +1,5 @@
-import { createProjectDocument } from "./project-document";
+import { DRAFT_KEY } from "./app-constants";
+import { createProjectDocument, restoreProjectDocument } from "./project-document";
 import { sampleStudents } from "./project-data";
 import type { ProjectDocument } from "./project-document";
 import { ArrowLeft } from "lucide-react";
@@ -40,9 +41,10 @@ export function createInitialProject(): ProjectDocument {
 export function loadInitialProject(): ProjectDocument {
   if (typeof window === "undefined") return createInitialProject();
   try {
-    const raw = window.localStorage.getItem("editor:draft:v1");
+    const raw = window.localStorage.getItem(DRAFT_KEY)
+      ?? window.localStorage.getItem("editor:draft:v1");
     if (!raw) return createInitialProject();
-    const restored = JSON.parse(raw) as ProjectDocument;
+    const restored = restoreProjectDocument(raw);
     if (restored.students.length === 0) restored.students = sampleStudents;
     return restored;
   } catch {

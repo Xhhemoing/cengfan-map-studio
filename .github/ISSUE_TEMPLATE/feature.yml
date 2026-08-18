@@ -1,0 +1,54 @@
+name: 功能建议
+description: 想要的能力、导入/布局/导出怎么更好用
+title: "[建议] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: 大功能请先在这里讨论，不要直接发巨大 PR。
+  - type: dropdown
+    id: who
+    attributes:
+      label: 我是
+      options:
+        - 班主任 / 老师
+        - 班委 / 学生
+        - 开发者
+        - 其他
+    validations:
+      required: true
+  - type: dropdown
+    id: scene
+    attributes:
+      label: 主要场景
+      options:
+        - 开学 / 班级建设
+        - 毕业去向墙
+        - 校庆 / 同学会
+        - 自己部署 / 二次开发
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 现在卡在哪（没有这个功能时）
+      placeholder: 例如 60 人卡片叠在一起，只能手拖半小时
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你希望变成什么样
+    validations:
+      required: true
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: 你愿意怎么跟进
+      options:
+        - 只提意见
+        - 可以补文档 / 模板 / 测试
+        - 可以写代码（请先等维护者确认方向）
+    validations:
+      required: true

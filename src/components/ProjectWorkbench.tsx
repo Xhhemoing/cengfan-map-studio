@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEmptyProject, createSampleProject, duplicateStoredProject, type ProjectStore, type StoredProject } from "../lib/project-store";
-import { downloadProjectPackage, parseProjectPackage } from "../lib/project-package";
+import { downloadProjectPackage, parseProjectPackage, projectPackageDisplayName } from "../lib/project-package";
 import { createId } from "../lib/ids";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
+import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
 import { ContinueEditingCard } from "./workbench/ContinueEditingCard";
@@ -30,8 +31,13 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   const [error, setError] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [localEntry, setLocalEntry] = useState<LocalWorkspaceEntry | null>(null);
+  const [skin] = useState(() => loadStudioSkin());
+  const [themeMode] = useState(() => loadThemeMode());
+  const [prefersDark] = useState(() => typeof window !== "undefined"
+    && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const seededRef = useRef(false);
+  const resolvedTheme = resolveTheme(themeMode, prefersDark);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -158,7 +164,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       const pack = parseProjectPackage(await file.text());
       await store.put({
         id: createId("proj"),
-        name: file.name.replace(/\.json$/i, "") || "导入的项目",
+        name: projectPackageDisplayName(file.name),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         pack,
@@ -175,7 +181,11 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   const sorted = useMemo(() => [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [projects]);
 
   return (
-    <main className="workbench-shell">
+    <main
+      className="app-shell workbench-shell"
+      data-editor-skin={skin}
+      data-editor-theme={resolvedTheme}
+    >
       <WorkbenchHeader importInputRef={importInputRef} onCreateProject={() => void createProject()} onImportProject={(file) => void importProject(file)} />
 
       {error && <section className="workbench-error" role="alert">{error}</section>}

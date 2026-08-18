@@ -285,6 +285,19 @@ describe("unified application server", () => {
     expect(JSON.parse(response.body)).toMatchObject({ requestId: "validation-standard", error: { code: "AI_VALIDATION_ERROR" } });
   });
 
+  it("rate-limits anonymous room creation independently of AI windows", async () => {
+    const server = createAiServer({
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = { clientId: "client-a", displayName: "协作者", snapshot: { title: "room" } };
+    expect((await fetch(`${origin}/api/rooms`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).status).toBe(201);
+    const limited = await fetch(`${origin}/api/rooms`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    expect(limited.status).toBe(429);
+    await expect(limited.json()).resolves.toMatchObject({ error: { code: "ROOM_RATE_LIMITED" } });
+  });
+
   it("requires a room token before returning private room data", async () => {
     const server = createAiServer();
     servers.push(server);
