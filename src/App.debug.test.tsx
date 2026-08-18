@@ -3,12 +3,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { App } from "./App";
 import { WORKSPACE_SESSION_STORAGE_KEY } from "./lib/workspace-session";
+import { preloadStudioWorkspaces } from "./components/workspaces/stage-components";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 beforeAll(async () => {
-  await import("./components/GlobalSettingsScreen");
-  await import("./components/workspaces/DataUploadWorkspace");
+  await preloadStudioWorkspaces();
 });
 
 function mountApp(): HTMLDivElement {

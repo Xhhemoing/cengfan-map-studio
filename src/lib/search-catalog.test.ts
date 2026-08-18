@@ -1,17 +1,24 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { chinaCities } from "../data/china-locations";
 import { chinaUniversities as universityCatalog } from "../data/china-universities";
 import {
   resolveCity,
   resolveProvinceName,
-  resolveUniversity,
   searchCities,
   searchProvinces,
-  searchUniversities,
   type CityResolution,
 } from "./search-catalog";
+import {
+  resolveUniversity,
+  searchUniversities,
+} from "./search-university-catalog";
 
 describe("local search catalog", () => {
+  it("keeps the city catalog free of the university list", () => {
+    expect(readFileSync("src/lib/search-catalog.ts", "utf-8")).not.toContain("china-universities");
+    expect(readFileSync("src/components/canvas/PosterCanvas.tsx", "utf-8")).not.toContain("university-emblems");
+  });
   it("finds Hangzhou with its canonical city and province", () => {
     expect(searchCities("杭州", 5)[0]).toMatchObject({
       name: "杭州市",

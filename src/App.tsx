@@ -40,12 +40,22 @@ import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayout
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
 
 import "./components/workflow-workspaces.css";
-import { GlobalSettingsScreen, type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
-import { DataUploadRail, DataUploadWorkspace } from "./components/workspaces/DataUploadWorkspace";
-import { MapStyleRail, MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
-import { ReferenceCardStyleWorkspace } from "./components/workspaces/ReferenceCardStyleWorkspace";
-import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
-import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
+import { type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
+import {
+  ContentLayoutRail,
+  ContentLayoutWorkspace,
+  DataUploadRail,
+  DataUploadWorkspace,
+  DeliveryRail,
+  DeliveryWorkspace,
+  GlobalSettingsScreen,
+  MapStyleRail,
+  MapStyleWorkspace,
+  ReferenceCardStyleWorkspace,
+  WorkspaceSuspense,
+} from "./components/workspaces/stage-components";
+import type { ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
+import type { DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
 
 import { ToolbarButton, ToolbarGroup } from "./components/StudioUi";
 import { CardsInspector } from "./components/inspector/CardsInspector";
@@ -56,6 +66,7 @@ import {
 import { deriveStageOverviewModel, type StageOverviewAction } from "./lib/stage-overview";
 import { STAGE_METADATA } from "./lib/stage-metadata";
 import { loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
+import { useNarrowViewport } from "./lib/use-narrow-viewport";
 import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { SkinSelector } from "./components/SkinSelector";
@@ -267,6 +278,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => workspaceSession.stage);
   const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "data" ? "content" : activeStage);
   const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
+  const [assistantTab, setAssistantTab] = useState<"ai" | "stage" | "advanced">("stage");
+  const compactChrome = useNarrowViewport();
   const assistantEntryRef = useRef<HTMLButtonElement>(null);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
@@ -1264,7 +1277,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onCommit={commitProjectTransaction}
       stageOverview={stageOverview}
       onStageOverviewAction={handleStageOverviewAction}
+      activeTab={assistantTab}
+      onTabChange={setAssistantTab}
     />
+  );
+
+  const saveStatusChip = (
+    <p className="studio-save-chip" data-sync-status={syncState.status} role="status">
+      <strong>
+        {syncState.status === "saving" ? "正在覆盖本地数据" : syncState.status === "saved" ? "全部数据已保存" : syncState.status === "failed" ? "本地保存失败" : "有未保存修改"}
+      </strong>
+      <small>仅点击强制保存时覆盖本地数据{syncState.savedAt ? ` · ${new Date(syncState.savedAt).toLocaleTimeString("zh-CN", { hour12: false })}` : ""}</small>
+    </p>
   );
 
   const assistantEntryButton = (
@@ -1272,8 +1296,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
       ref={assistantEntryRef}
       type="button"
       aria-label="打开AI助手与高级功能"
-      aria-expanded={assistantDrawerOpen}
-      onClick={() => setAssistantDrawerOpen(true)}
+      aria-expanded={compactChrome ? assistantDrawerOpen : assistantTab === "ai"}
+      onClick={() => {
+        setAssistantTab("ai");
+        if (compactChrome) setAssistantDrawerOpen(true);
+      }}
     >
       <Bot size={17} />
     </button>
@@ -1340,6 +1367,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   }
   if (globalSettingsSection) {
     return (
+      <WorkspaceSuspense>
       <div className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
         <header className="topbar">
           <div className="brand">
@@ -1404,6 +1432,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onThemeChange={setThemeMode}
           />
       </div>
+      </WorkspaceSuspense>
     );
   }
 
@@ -1702,6 +1731,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           </section>
         </div>
       )}
+      <WorkspaceSuspense>
       <StudioLayoutTemplate
         theme={resolvedTheme}
         skin={skin}
@@ -1709,30 +1739,24 @@ function StudioApp({ projectId }: { projectId?: string }) {
         assistantEntry={assistantEntryButton}
         historyActions={historyActionsNode}
         stageActions={slots.stageActions}
+        statusChip={saveStatusChip}
         projectActions={projectActionsNode}
         workflowNav={workflowNavNode}
         leftRail={(
           <>
             {studioAssistantRail}
-            <div className="studio-local-save-policy" data-sync-status={syncState.status}>
-              <p className="status" role="status">
-                {syncState.status === "saving" ? "正在覆盖本地数据" : syncState.status === "saved" ? "全部数据已保存" : syncState.status === "failed" ? "本地保存失败" : "有未保存修改"}
-              </p>
-              <p className="panel-note">
-                本地：仅点击强制保存时覆盖本地数据
-                {syncState.savedAt && ` · ${new Date(syncState.savedAt).toLocaleTimeString("zh-CN", { hour12: false })}`}
-              </p>
-            </div>
             {statusMessage ? <p className="panel-note" role="status">{statusMessage}</p> : null}
           </>
         )}
         rightRail={slots.rightRail}
         rightRailLabel={STAGE_METADATA[activeStage].rightRailLabel}
+        compactChrome={compactChrome}
         drawerOpen={assistantDrawerOpen}
         onDrawerClose={() => setAssistantDrawerOpen(false)}
       >
         {slots.workspace}
       </StudioLayoutTemplate>
+      </WorkspaceSuspense>
     </>
   );
 
