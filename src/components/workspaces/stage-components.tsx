@@ -1,8 +1,8 @@
+/* eslint-disable react-refresh/only-export-components -- lazy stage registry plus test preload helper */
 import { createElement, lazy, Suspense, type ComponentType, type ReactNode } from "react";
 
 // Heterogeneous cache of preloaded stage screens. `any` is required so rails
 // with distinct props can share one Map without fighting ComponentType variance.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
 type AnyComponent = ComponentType<any>;
 
 const workspaceCache = new Map<string, AnyComponent>();

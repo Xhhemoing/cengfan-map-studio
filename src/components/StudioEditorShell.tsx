@@ -56,10 +56,9 @@ export function StudioEditorShell({
   const hasLeftRail = Boolean(leftRail);
   const dockRightRail = hasRightRail && !compactChrome;
   const drawerRightRail = hasRightRail && compactChrome;
-
-  useEffect(() => {
-    if (!compactChrome) setDrawerOpen(false);
-  }, [compactChrome]);
+  if (!compactChrome && drawerOpen) {
+    setDrawerOpen(false);
+  }
 
   useEffect(() => {
     try {

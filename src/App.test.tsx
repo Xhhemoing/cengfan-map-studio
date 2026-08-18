@@ -81,10 +81,15 @@ function saveWorkspaceMirror(project: ReturnType<typeof createProjectDocument>):
   })));
 }
 
+// Compact chrome reads matchMedia. Tests that stub a narrow viewport must restore
+// both innerWidth and matchMedia, otherwise later desktop assertions see drawers.
+const defaultInnerWidth = window.innerWidth;
+const defaultMatchMedia = window.matchMedia;
+
 function stubEditorViewport(width: number): void {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
   window.matchMedia = vi.fn((query: string) => ({
-    matches: query.includes("760") && width <= 760,
+    matches: query.includes("max-width: 760") ? width <= 760 : false,
     media: query,
     onchange: null,
     addEventListener: vi.fn(),
@@ -93,6 +98,11 @@ function stubEditorViewport(width: number): void {
     removeListener: vi.fn(),
     dispatchEvent: vi.fn(),
   })) as unknown as typeof window.matchMedia;
+}
+
+function restoreEditorViewport(): void {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: defaultInnerWidth });
+  window.matchMedia = defaultMatchMedia;
 }
 
 function click(element: Element): void {
@@ -159,6 +169,7 @@ afterEach(() => {
   window.localStorage.clear();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  restoreEditorViewport();
 });
 
 describe("delivery issue target locations", () => {
@@ -1817,24 +1828,19 @@ describe("Responsive editor shell", () => {
   });
 
   it("opens and closes the inspector through an explicit toolbar control", () => {
-    const previousInnerWidth = window.innerWidth;
     stubEditorViewport(600);
-    try {
-      const container = renderApp();
-      const openButton = container.querySelector<HTMLButtonElement>('button[aria-label="打开内容对象属性"]');
+    const container = renderApp();
+    const openButton = container.querySelector<HTMLButtonElement>('button[aria-label="打开内容对象属性"]');
 
-      expect(openButton).not.toBeNull();
-      expect(openButton?.getAttribute("aria-expanded")).toBe("false");
-      click(openButton!);
+    expect(openButton).not.toBeNull();
+    expect(openButton?.getAttribute("aria-expanded")).toBe("false");
+    click(openButton!);
 
-      expect(openButton?.getAttribute("aria-expanded")).toBe("true");
-      expect(document.querySelector('.MuiDrawer-root [aria-label="内容对象属性"]')).not.toBeNull();
+    expect(openButton?.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('.MuiDrawer-root [aria-label="内容对象属性"]')).not.toBeNull();
 
-      click(document.querySelector<HTMLButtonElement>('button[aria-label="关闭内容对象属性"]')!);
-      expect(openButton?.getAttribute("aria-expanded")).toBe("false");
-    } finally {
-      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousInnerWidth });
-    }
+    click(document.querySelector<HTMLButtonElement>('button[aria-label="关闭内容对象属性"]')!);
+    expect(openButton?.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("keeps the top stepper as the only workflow navigation entry", () => {

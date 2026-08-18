@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- bootstrap exports mount helpers for tests */
 import { lazy, StrictMode, Suspense, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";

@@ -44,10 +44,17 @@ function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
   flushSync(() => root.render(
     <AssistantConversationProvider><StudioAssistantRail {...props} /></AssistantConversationProvider>,
   ));
+  roots.push({ root, container });
   return { container, root, props };
 }
 
+const roots: Array<{ root: ReturnType<typeof createRoot>; container: HTMLDivElement }> = [];
+
 afterEach(() => {
+  roots.splice(0).forEach(({ root, container }) => {
+    flushSync(() => root.unmount());
+    container.remove();
+  });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
