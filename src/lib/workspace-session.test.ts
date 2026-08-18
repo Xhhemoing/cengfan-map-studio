@@ -10,7 +10,7 @@ import {
 } from "./workspace-session";
 
 describe("workspace session", () => {
-  it("exports the explicit legacy compatibility storage key", () => {
+  it("keeps the retired legacy editor storage key for old browsers", () => {
     expect(LEGACY_EDITOR_STORAGE_KEY).toBe("cengfan-legacy-editor");
   });
   it("round-trips a valid session without putting it in the project document", () => {

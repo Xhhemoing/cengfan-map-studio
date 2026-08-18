@@ -18,6 +18,7 @@
     "data:sync:china-locations": "node scripts/sync-china-locations.mjs",
     "data:sync:china-universities": "node scripts/sync-china-universities.mjs",
     "preview": "npm run start",
+    "typecheck": "tsc -b --pretty false",
     "check": "npm run lint && npm run security:audit",
     "data:sync:china-university-emblems": "node scripts/sync-china-university-emblems.mjs",
     "promo:check": "node scripts/宣发流程-素材检查.mjs",

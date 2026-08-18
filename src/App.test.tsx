@@ -30,23 +30,45 @@ function mountApp(): HTMLDivElement {
   return container;
 }
 
-function renderApp(clearStorage = true): HTMLDivElement {
-  return renderLegacyApp({ clearStorage });
-}
-
-function renderPublicApp({ clearStorage = true } = {}): HTMLDivElement {
-  if (clearStorage) window.localStorage.clear();
-  return mountApp();
-}
-
-function renderLegacyApp({ clearStorage = true } = {}): HTMLDivElement {
+function renderEditor({ clearStorage = true, stage }: { clearStorage?: boolean; stage?: "data" | "map" | "frame" | "content" | "export" } = {}): HTMLDivElement {
   try {
     if (clearStorage) window.localStorage.clear();
-    window.localStorage.setItem(LEGACY_EDITOR_STORAGE_KEY, "1");
+    if (stage && !window.localStorage.getItem(WORKSPACE_SESSION_STORAGE_KEY)) {
+      window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+        stage,
+        savedAt: "2026-08-18T00:00:00.000Z",
+      }));
+    }
   } catch {
     // Storage-failure tests intentionally exercise the public fallback.
   }
   return mountApp();
+}
+
+function renderApp(clearStorage = true): HTMLDivElement {
+  return renderEditor({ clearStorage, stage: "content" });
+}
+
+function renderPublicApp({ clearStorage = true } = {}): HTMLDivElement {
+  return renderEditor({ clearStorage });
+}
+
+function renderLegacyApp({ clearStorage = true } = {}): HTMLDivElement {
+  // The three-column flag is ignored; content stage still shows the poster.
+  return renderEditor({ clearStorage, stage: "content" });
+}
+
+function openAssetLibrary(container: HTMLElement): void {
+  const tab = container.querySelector<HTMLButtonElement>("#data-rail-assets-tab")
+    ?? document.querySelector<HTMLButtonElement>("#data-rail-assets-tab");
+  if (tab) {
+    click(tab);
+    return;
+  }
+  if (!container.querySelector("#asset-svg-canvas-upload") && !document.querySelector("#asset-svg-canvas-upload")) {
+    const railToggle = container.querySelector<HTMLButtonElement>(".studio-editor-shell__rail-toggle");
+    if (railToggle) click(railToggle);
+  }
 }
 
 function saveWorkspaceMirror(project: ReturnType<typeof createProjectDocument>): void {
@@ -166,9 +188,12 @@ describe("App student editing", () => {
     expect(container.querySelector(".workspace")).toBeNull();
   });
 
-  it("enables the legacy workspace only for flag 1", () => {
-    const container = renderLegacyApp();
-    expect(container.querySelector(".workspace")).not.toBeNull();
+  it("ignores the legacy editor flag and keeps the five-stage shell", () => {
+    window.localStorage.setItem(LEGACY_EDITOR_STORAGE_KEY, "1");
+    const container = renderPublicApp({ clearStorage: false });
+    expect(container.querySelector('main[aria-label="数据与素材工作台"]')).not.toBeNull();
+    expect(container.querySelector(".workspace")).toBeNull();
+    expect(container.querySelector(".workflow-stepper")).toBeNull();
   });
 
   it("opens the content and layout workspace when the saved stage is content", () => {
@@ -179,7 +204,8 @@ describe("App student editing", () => {
 
     const container = renderLegacyApp({ clearStorage: false });
 
-    expect(container.querySelector(".workspace")).not.toBeNull();
+    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
+    expect(container.querySelector(".workspace")).toBeNull();
   });
 
   it("opens the full-screen final export workspace from the workflow stage", () => {
@@ -693,7 +719,7 @@ describe("App student editing", () => {
 
     expect(container.querySelector('[data-background-image]')?.getAttribute("href")).toBe("data:image/png;base64,QkFDS0dST1VORA==");
     expect(container.querySelector('[data-province-texture]')?.getAttribute("href")).toBe("data:image/png;base64,VEVYVFVSRS==");
-    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
+    openAssetLibrary(container);
     expect(container.textContent).toContain("导入的北京贴图");
   }, 30_000);
 
@@ -805,7 +831,7 @@ describe("App student editing", () => {
 
   it("applies valid material panel actions without offering built-in landmarks or decorations", () => {
     const container = renderApp();
-    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
+    openAssetLibrary(container);
 
     const background = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent?.includes("设为背景"))!;
@@ -826,9 +852,10 @@ describe("App student editing", () => {
     }
     vi.stubGlobal("FileReader", ImmediateFileReader);
     const container = renderApp();
-    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
+    openAssetLibrary(container);
 
-    const input = container.querySelector<HTMLInputElement>("#asset-svg-canvas-upload")!;
+    const input = (container.querySelector<HTMLInputElement>("#asset-svg-canvas-upload")
+      ?? document.querySelector<HTMLInputElement>("#asset-svg-canvas-upload"))!;
     Object.defineProperty(input, "files", {
       configurable: true,
       value: [new File(["<svg />"], "校徽.svg", { type: "image/svg+xml" })],
@@ -839,13 +866,13 @@ describe("App student editing", () => {
       .find((element) => element.getAttribute("href") === "data:image/svg+xml;base64,PHN2Zy8+");
     expect(image).not.toBeUndefined();
     expect(container.querySelector("[data-resize-handles]")).not.toBeNull();
-    expect(container.textContent).toContain("已导入画布：校徽");
+    expect(`${container.textContent ?? ""}${document.body.textContent ?? ""}`).toContain("已导入画布：校徽");
     vi.stubGlobal("FileReader", originalFileReader);
   });
 
   it("keeps the province texture library available after removing landmark presets", () => {
     const container = renderApp();
-    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
+    openAssetLibrary(container);
     expect(container.textContent).toContain("省份外观");
     expect(container.querySelector("#asset-province")).not.toBeNull();
     expect(container.textContent).not.toContain("地标和装饰");
@@ -1040,7 +1067,8 @@ describe("App student editing", () => {
     leaveFocusedWorkspace(container);
 
     expect(container.querySelector('main[aria-label="数据与素材工作台"]')).toBeNull();
-    expect(container.querySelector(".workspace")).not.toBeNull();
+    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
+    expect(container.querySelector(".workspace")).toBeNull();
     expect(container.querySelector('.workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("内容与排版");
   });
 
@@ -1080,7 +1108,7 @@ describe("App student editing", () => {
     const container = renderApp(false);
 
     expect(container.querySelector('.workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("内容与排版");
-    expect(container.querySelector(".workflow-panel--content")).not.toBeNull();
+    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
   });
 
   it("does not restore a stale province after the canvas selection is cleared", () => {
@@ -1126,7 +1154,8 @@ describe("App student editing", () => {
 
     click(workflowStage(container, "内容与排版"));
     expect(container.querySelector('main[aria-label="展示框样式"]')).toBeNull();
-    expect(container.querySelector(".workspace")).not.toBeNull();
+    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
+    expect(container.querySelector(".workspace")).toBeNull();
   });
 
   it("keeps the unified topbar with five-stage navigation while editing data", () => {
@@ -1210,7 +1239,7 @@ describe("App student editing", () => {
     const container = renderLegacyApp();
 
     expect(container.querySelector(".topbar")).not.toBeNull();
-    expect(container.querySelector(".workspace")).not.toBeNull();
+    expect(container.querySelector(".studio-editor-shell")).not.toBeNull();
 
     openRailAdvancedTab(container);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
@@ -1219,6 +1248,7 @@ describe("App student editing", () => {
     expect(container.querySelector(".topbar")).not.toBeNull();
     expect(container.querySelectorAll(".workflow-stage-stepper button")).toHaveLength(5);
     expect(container.querySelector(".workspace")).toBeNull();
+    expect(container.querySelector(".studio-editor-shell")).toBeNull();
     expect(container.querySelector(".sidebar")).toBeNull();
     expect(container.querySelector(".inspector")).toBeNull();
 
@@ -1226,7 +1256,7 @@ describe("App student editing", () => {
 
     expect(container.querySelector('main[aria-label="全局设置"]')).toBeNull();
     expect(container.querySelector(".topbar")).not.toBeNull();
-    expect(container.querySelector(".workspace")).not.toBeNull();
+    expect(container.querySelector(".studio-editor-shell")).not.toBeNull();
     expect(container.querySelector("#canvas-width")).toBeNull();
   });
 
@@ -1342,7 +1372,7 @@ describe("App student editing", () => {
     expect(container.querySelector("#cards-maxWidth")).not.toBeNull();
     expect(container.querySelector("#cards-layout-mode")).not.toBeNull();
     expect(container.querySelector('button[aria-label="一键智能排版"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="刷新展示框位置"]')).toBeNull();
+    expect(container.querySelector('aside[aria-label="内容对象属性"] button[aria-label="刷新展示框位置"]')).toBeNull();
 
     click(container.querySelector<SVGGElement>('[aria-label="特邀嘉宾"]')!);
     expect(container.querySelector("#guests-x")).not.toBeNull();
@@ -1360,7 +1390,7 @@ describe("App student editing", () => {
     expect(topbar.textContent).not.toContain("存模板");
     expect(topbar.querySelector('[aria-label="在线协作"]')).toBeNull();
 
-    expect(topbar.querySelector(".primary-button")?.textContent).toContain("导出 PNG");
+    expect(topbar.querySelector(".primary-button")).toBeNull();
     const projectMenu = container.querySelector(".topbar .project-menu")!;
     expect(projectMenu).not.toBeNull();
     expect(projectMenu.textContent).toContain("导出 SVG");
@@ -1375,7 +1405,7 @@ describe("App student editing", () => {
     const container = renderApp();
     expect(container.querySelector(".editor-toolbar-actions")).toBeNull();
     expect(container.querySelectorAll(".control-cluster")).toHaveLength(0);
-    expect(container.querySelector(".canvas-stage .poster")).not.toBeNull();
+    expect(container.querySelector("svg.poster")).not.toBeNull();
   });
 
   it("opens global typography settings and applies one province font to the live map", () => {
@@ -1595,9 +1625,9 @@ describe("App workflow guidance", () => {
   it("keeps a province selection when entering the material workspace", () => {
     const container = renderApp();
     click(container.querySelector("[data-province-hit]")!);
-    click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
+    openAssetLibrary(container);
 
-    expect(container.querySelector(".inspector h2")?.textContent).toContain("北京市");
+    expect(container.querySelector(".inspector-header h2")?.textContent).toContain("北京市");
   });
 
   it("applies a glass statistics style from the dedicated display-frame stage", () => {
@@ -1609,7 +1639,7 @@ describe("App workflow guidance", () => {
     click(workflowStage(container, "内容与排版"));
 
     expect(container.querySelector('[data-card-presentation="glass-stat"]')).not.toBeNull();
-    expect(container.querySelector(".project-summary")?.textContent).toContain("已记录 1 步");
+    expect(container.querySelector('button[aria-label^="撤销"]')).not.toBeNull();
   });
 
   it("shows the current workflow context without duplicating workflow controls", () => {
@@ -1644,7 +1674,7 @@ describe("App workflow guidance", () => {
     expect(picker!.querySelector(".workflow-template-grid button.selected")?.textContent).toContain("卡通画风");
     // 完成设置后项目历史已记录模板应用
     closeGlobalSettings(container);
-    expect(container.querySelector(".project-summary")?.textContent).toContain("已记录 1 步");
+    expect(container.querySelector('button[aria-label^="撤销"]')).not.toBeNull();
   });
 
   it("shows the roster step badge on the data section nav entry", () => {
@@ -1752,8 +1782,7 @@ describe("Shell CSS contract", () => {
     // The assistant rail owns the AI/advanced tab pair the CSS styles.
     expect(container.querySelector(".studio-assistant-rail")).not.toBeNull();
 
-    // The narrow-screen inspector access control remains discoverable in the topbar.
-    expect(container.querySelector(".inspector-toggle-group")).not.toBeNull();
+    expect(container.querySelector(".studio-editor-shell__rail-toggle")).not.toBeNull();
   });
 });
 
@@ -1764,10 +1793,10 @@ describe("Responsive editor shell", () => {
     window.localStorage.setItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({ sidebarWidth: 270, inspectorWidth: 330 }));
     try {
       const container = renderApp(false);
-      const workspace = container.querySelector<HTMLElement>(".workspace");
+      const workspace = container.querySelector<HTMLElement>(".studio-editor-shell");
 
-      expect(workspace?.style.getPropertyValue("--sidebar-width")).toBe("270px");
-      expect(workspace?.style.getPropertyValue("--inspector-width")).toBe("330px");
+      expect(workspace?.style.getPropertyValue("--studio-left-width")).toBe("270px");
+      expect(workspace?.style.getPropertyValue("--studio-right-width")).toBe("330px");
       expect(container.querySelectorAll('[role="separator"]')).toHaveLength(2);
       expect(container.querySelector<HTMLElement>('[role="separator"][aria-label="调整左侧栏宽度"]')?.getAttribute("aria-valuenow")).toBe("270");
       expect(container.querySelector<HTMLElement>('[role="separator"][aria-label="调整右侧栏宽度"]')?.getAttribute("aria-valuenow")).toBe("330");
@@ -1778,17 +1807,17 @@ describe("Responsive editor shell", () => {
 
   it("opens and closes the inspector through an explicit toolbar control", () => {
     const container = renderApp();
-    const openButton = container.querySelector<HTMLButtonElement>('button[aria-label="打开属性面板"]');
+    const openButton = container.querySelector<HTMLButtonElement>('button[aria-label="打开内容对象属性"]');
 
     expect(openButton).not.toBeNull();
     expect(openButton?.getAttribute("aria-expanded")).toBe("false");
     click(openButton!);
 
-    expect(container.querySelector(".inspector")?.className).toContain("is-open");
     expect(openButton?.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('.MuiDrawer-root [aria-label="内容对象属性"]')).not.toBeNull();
 
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="关闭属性面板"]')!);
-    expect(container.querySelector(".inspector")?.className).not.toContain("is-open");
+    click(document.querySelector<HTMLButtonElement>('button[aria-label="关闭内容对象属性"]')!);
+    expect(openButton?.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("keeps the top stepper as the only workflow navigation entry", () => {

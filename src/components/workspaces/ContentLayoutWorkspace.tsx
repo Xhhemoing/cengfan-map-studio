@@ -38,6 +38,8 @@ export interface ContentLayoutWorkspaceProps {
   onDeleteUserFont?: (fontId: string) => void;
   onSelectStudent?: (id: string) => void;
   selectedStudentId?: string | null;
+  /** Minimum interval between local drag-preview paints on the content canvas. */
+  renderIntervalMs?: number;
 }
 
 const EMPTY_ASSET_PANEL_PROPS: ContentAssetPanelProps = {
@@ -70,6 +72,7 @@ export type ContentLayoutRailProps = Omit<
   | "onMoveText" | "onMoveAsset" | "onResizeAsset"
   | "onMoveProvinceTexture" | "onResizeMapImage"
   | "onMoveCard" | "onMoveGuests" | "onCardPositionsResolved"
+  | "renderIntervalMs"
 >;
 
 export function ContentLayoutRail({
@@ -128,6 +131,7 @@ export function ContentLayoutWorkspace({
   onCardPositionsResolved,
   onSelectStudent,
   selectedStudentId = null,
+  renderIntervalMs = 0,
 }: ContentLayoutWorkspaceProps) {
   return (
     <main className="content-layout-workspace workflow-panel--content" aria-label="内容与排版">
@@ -142,6 +146,7 @@ export function ContentLayoutWorkspace({
               selectedProvince={selection.type === "province" ? selection.province : null}
               selectedStudentId={selectedStudentId}
               userFonts={userFonts}
+              renderIntervalMs={renderIntervalMs}
               onSelect={onSelect}
               onMoveText={onMoveText}
               onMoveAsset={onMoveAsset}

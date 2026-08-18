@@ -1,15 +1,8 @@
 import {
   Bot,
-  Download,
-  ImageDown,
   MapPinned,
-  PanelRight,
-  PanelRightClose,
-  Plus,
   Redo2,
-  Save,
   Undo2,
-  PackageOpen,
   RefreshCw,
 } from "lucide-react";
 import {
@@ -17,9 +10,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
-import { createNoteElement, createTextElement } from "./lib/canvas-data";
 import {
   loadInitialProject,
   loadBrowserValue,
@@ -33,7 +24,6 @@ import {
   COLLABORATION_SEND_DELAY_MS,
   provinceNames,
   dataViews,
-  type ActivePanel,
 } from "./lib/app-constants";
 import {
   buildProvinceSummary,
@@ -49,8 +39,6 @@ import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayoutTemplate";
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
 
-import { AssetPanel } from "./components/AssetPanel";
-import { DataWorkspace } from "./components/DataWorkspace";
 import "./components/workflow-workspaces.css";
 import { GlobalSettingsScreen, type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
 import { DataUploadRail, DataUploadWorkspace } from "./components/workspaces/DataUploadWorkspace";
@@ -59,25 +47,20 @@ import { ReferenceCardStyleWorkspace } from "./components/workspaces/ReferenceCa
 import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
 import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
 
-import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
+import { ToolbarButton, ToolbarGroup } from "./components/StudioUi";
 import { CardsInspector } from "./components/inspector/CardsInspector";
-import { ZoomControls } from "./components/ZoomControls";
-import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
 import {
-  LEGACY_PANEL_TO_WORKFLOW_STAGE,
-  WORKFLOW_STAGE_TO_LEGACY_PANEL,
   deriveWorkflowStageProgress,
   type WorkflowStageId,
 } from "./lib/workflow-stages";
 import { deriveStageOverviewModel, type StageOverviewAction } from "./lib/stage-overview";
 import { STAGE_METADATA } from "./lib/stage-metadata";
-import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
+import { loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
 import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { SkinSelector } from "./components/SkinSelector";
-import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
 import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
-import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
+import { computeWorkflowProgress, type WorkflowStepId } from "./lib/workflow-progress";
 import {
   previewEditorCommands,
   type EditorCommand,
@@ -99,27 +82,19 @@ import {
 
   removeUserAsset,
   removeUserFont,
-  STYLE_LAYER_TARGETS,
 } from "./lib/catalog-usage";
 
-import { createSystemTemplate, mergeTemplateDocuments } from "./lib/template-document";
+import { createSystemTemplate } from "./lib/template-document";
 import {
   applyCustomTemplateToProject,
   createCustomTemplateFromProject,
   loadCustomTemplates,
   type CustomTemplateRecord,
 } from "./lib/template-store";
-import {
-  createDecorationElement,
-  createLandmarkElement,
-  duplicateAssetElement,
-} from "./lib/asset-elements";
-import { PosterCanvas } from "./components/canvas/PosterCanvas";
-import { createDefaultScene, type ProvinceAppearance, type SceneSelection } from "./lib/scene-document";
+import { createDecorationElement } from "./lib/asset-elements";
+import { createDefaultScene, type SceneSelection } from "./lib/scene-document";
 
-import { createProvinceThemeTransaction, createSceneTransaction, deleteAsset, deleteText } from "./lib/inspector-operations";
-import { InspectorPanel } from "./components/inspector/InspectorPanel";
-import { MapInspector } from "./components/inspector/MapInspector";
+import { createProvinceThemeTransaction, createSceneTransaction } from "./lib/inspector-operations";
 import {
   buildFontFaceCss,
   ensureUserFontsLoaded,
@@ -144,7 +119,6 @@ import {
 } from "./lib/project-package";
 import { usePosterExport } from "./lib/usePosterExport";
 import { applyTypographyFont, type TypographyTarget } from "./lib/typography";
-import type { ImageThemeResult } from "./lib/image-color";
 import {
   loadStudioSkin,
   loadThemeMode,
@@ -153,20 +127,11 @@ import {
   saveThemeMode,
   type ThemeMode,
 } from "./lib/theme";
-import {
-  getPanelWidthBounds,
-  normalizeEditorPanelLayout,
-  readEditorPanelLayout,
-  writeEditorPanelLayout,
-  type EditorPanelLayout,
-  type PanelSide,
-} from "./lib/editor-layout";
 import { checkLayoutHealth } from "./lib/layout-health";
 import { listResourceHealthIssues } from "./lib/resource-health";
 
 import {
   DEFAULT_GRID_SIZE,
-  fitZoomPercent,
   snapPoint,
 } from "./lib/grid";
 import {
@@ -245,7 +210,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
       return { ...DEFAULT_RENDER_SETTINGS };
     }
   });
-  const [zoomPercent, setZoomPercent] = useState(100);
   const [collaborationClientId] = useState(() => createId("collab-client"));
 
   const projectIdRef = useRef<string | null>(projectId ?? null);
@@ -300,22 +264,15 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const backfillInFlightRef = useRef(false);
 
   const posterRef = useRef<SVGSVGElement>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
-  const [activePanel, setActivePanel] = useState<ActivePanel>(() => WORKFLOW_STAGE_TO_LEGACY_PANEL[workspaceSession.stage] ?? "roster");
-  const [legacyEditorEnabled] = useState(() => typeof window !== "undefined"
-    && loadBrowserValue(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false));
-  const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => legacyEditorEnabled ? "content" : workspaceSession.stage);
+  const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => workspaceSession.stage);
   const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "data" ? "content" : activeStage);
   const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
   const assistantEntryRef = useRef<HTMLButtonElement>(null);
-  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => typeof window === "undefined" ? "system" : loadThemeMode());
   const [skin, setSkin] = useState(() => typeof window === "undefined" ? "atelier" : loadStudioSkin());
   const [prefersDark, setPrefersDark] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true);
-  const [panelLayout, setPanelLayout] = useState<EditorPanelLayout>(() => readEditorPanelLayout());
-  const [resizingPanel, setResizingPanel] = useState<PanelSide | null>(null);
 
   const resolvedRenderInterval = renderIntervalMs(renderSettings);
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
@@ -336,19 +293,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
   }, [activeStage, selection, workspaceSession]);
   const dataHealth = useMemo(() => buildDataHealthSummary(project), [project]);
   const dataIssues = useMemo(() => listDataIssues(project), [project]);
-  const exportWarnings = useMemo(() => listStudentWarnings(project), [project]);
   const resourceHealthIssues = useMemo(
     () => listResourceHealthIssues(project, userAssets, userFonts),
     [project, userAssets, userFonts],
   );
   const resolvedTheme = resolveTheme(themeMode, prefersDark);
-  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
-  const sidebarBounds = getPanelWidthBounds("sidebar", viewportWidth, panelLayout.inspectorWidth);
-  const inspectorBounds = getPanelWidthBounds("inspector", viewportWidth, panelLayout.sidebarWidth);
-  const workspaceStyle = {
-    "--sidebar-width": `${panelLayout.sidebarWidth}px`,
-    "--inspector-width": `${panelLayout.inspectorWidth}px`,
-  } as CSSProperties;
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -372,29 +321,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     root.dataset.editorSkin = skin;
     root.style.colorScheme = resolvedTheme === "dark" ? "dark" : "light";
   }, [resolvedTheme, skin]);
-
-  useEffect(() => {
-    try {
-      writeEditorPanelLayout(window.localStorage, panelLayout, window.innerWidth);
-    } catch {
-      // Panel sizing remains usable when browser storage is unavailable.
-    }
-  }, [panelLayout]);
-
-  useEffect(() => {
-    const onResize = () => {
-      setPanelLayout((current) => normalizeEditorPanelLayout(current, window.innerWidth));
-    };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  const updatePanelWidth = (side: PanelSide, value: number) => {
-    setPanelLayout((current) => normalizeEditorPanelLayout({
-      ...current,
-      [side === "sidebar" ? "sidebarWidth" : "inspectorWidth"]: value,
-    }, viewportWidth));
-  };
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -426,37 +352,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const dataView = renderProject.dataView;
   const students = renderProject.students;
 
-  const style = renderProject.style;
-  const selectedTextId = selection.type === "text" ? selection.id : null;
   const summary = buildProvinceSummary(students);
-  const resolvedTemplate = useMemo(() => {
-    const base = createSystemTemplate(template);
-    return mergeTemplateDocuments(base, {
-      background: {
-        ...base.background,
-        color: renderProject.canvas.backgroundColor || base.background.color,
-        imageSrc: renderProject.canvas.backgroundImageSrc,
-        type: renderProject.canvas.backgroundImageSrc ? "image" : "color",
-      },
-      map: {
-        ...base.map,
-        scale: renderProject.map.scale,
-        edgeColor: renderProject.map.edgeColor,
-        edgeStyle: renderProject.map.edgeStyle ?? "solid",
-        edgeWidth: renderProject.map.edgeWidth ?? 1,
-        landColor: renderProject.map.landColor,
-        activeColor: renderProject.map.activeColor,
-        showProvinceLabels: renderProject.map.showProvinceLabels,
-        provinceStyles: renderProject.map.provinceStyles ?? {},
-      },
-      cards: {
-        ...base.cards,
-        preset: renderProject.cards.preset,
-      },
-      visibleFields: renderProject.cards.visibleFields,
-      regionalAssets: style.regionalAssets,
-    });
-  }, [renderProject, style, template]);
 
   useEffect(() => {
     latestWorkspaceRef.current = { project, assets: userAssets, fonts: userFonts, customTemplates, renderSettings };
@@ -669,21 +565,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     commitProject(redoTransaction(project));
   };
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia?.("(max-width: 1120px)").matches) return;
-    const timer = window.setTimeout(() => {
-      const stage = stageRef.current;
-      if (!stage) return;
-      setZoomPercent(fitZoomPercent({
-        stageWidth: stage.clientWidth,
-        stageHeight: stage.clientHeight,
-        canvasWidth: project.canvas.width,
-        canvasHeight: project.canvas.height,
-      }));
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [project.canvas.height, project.canvas.width]);
-
   const maybeSnap = (x: number, y: number) => {
     if (!showGrid) return { x: Math.round(x), y: Math.round(y) };
     return snapPoint({ x, y }, gridSize);
@@ -890,26 +771,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
   }, [project, userAssets]);
 
 
-  const selectStyleLayer = (target: (typeof STYLE_LAYER_TARGETS)[number]) => {
-    if (target.type === "text") {
-      setSelection({ type: "text", id: target.id });
-      return;
-    }
-    if (target.type === "map") {
-      setSelection({ type: "map" });
-      return;
-    }
-    if (target.type === "canvas") {
-      setSelection({ type: "canvas" });
-      return;
-    }
-    if (target.type === "guests") {
-      setSelection({ type: "guests" });
-      return;
-    }
-    setSelection({ type: "cards" });
-  };
-
   const exportResourcePack = () => {
     if (userAssets.length === 0 && userFonts.length === 0) {
       setStatusMessage("本地素材库为空，请先上传图片或字体");
@@ -966,13 +827,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
     if (item.kind === "data") {
       setSelectedStudentId(item.issue.studentId);
       setActiveStage("data");
-      setActivePanel("roster");
       return;
     }
     if (item.kind === "layout") {
       locateLayoutIssue(item.issue);
       setActiveStage("content");
-      setActivePanel("content");
       return;
     }
     const target = item.issue.target;
@@ -986,7 +845,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
       setSelection({ type: location.selectionKind, id: location.id! });
     }
     setActiveStage(location.stage);
-    setActivePanel(location.stage === "frame" ? "layout" : location.stage === "map" ? "map" : "content");
   };
 
   const contentLayoutIssues = useMemo(() => checkLayoutHealth({
@@ -1010,79 +868,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
       ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
     ],
   }), [project]);
-
-  const handleLegacySceneSelect = (next: SceneSelection) => {
-    handleSceneSelect(next);
-    // Keep the legacy content editor's material context available without letting
-    // the dedicated map stage leave its own workflow context.
-    if (activeStage === "content" && next.type === "province") setActivePanel("assets");
-  };
-
-  const addText = () => {
-    const element = createTextElement("给未来的一封信", 720, 870);
-    commitProject(
-      applyTransaction(project, {
-        id: createId("tx-text"),
-        label: "添加文本框",
-        source: "manual",
-        apply: (current) => ({
-          ...current,
-          textElements: [...current.textElements, element],
-        }),
-      }),
-    );
-    setSelection({ type: "text", id: element.id });
-  };
-
-  const addNote = () => {
-    const element = createNoteElement("山高水长，来日再聚", 745, 905);
-    commitProject(applyTransaction(project, {
-      id: createId("tx-note"),
-      label: "添加特别备注",
-      source: "manual",
-      apply: (current) => ({ ...current, textElements: [...current.textElements, element] }),
-    }));
-    setSelection({ type: "text", id: element.id });
-  };
-
-  const removeText = (id: string) => {
-    commitProject(applyTransaction(project, {
-      id: `tx-text-delete-${id}`,
-      label: "删除文本",
-      source: "manual",
-      apply: (current) => deleteText(current, id),
-    }));
-    setSelection({ type: "canvas" });
-  };
-
-  const removeAsset = (id: string) => {
-    commitProject(applyTransaction(project, {
-      id: `tx-asset-delete-${id}`,
-      label: "删除素材实例",
-      source: "manual",
-      apply: (current) => deleteAsset(current, id),
-    }));
-    setSelection({ type: "canvas" });
-  };
-
-  const duplicateAsset = (id: string) => {
-    const source = project.assetElements.find((asset) => asset.id === id);
-    if (!source) return;
-    const copy = duplicateAssetElement(source);
-    commitProject(applyTransaction(project, {
-      id: `tx-asset-duplicate-${id}`,
-      label: "复制素材实例",
-      source: "manual",
-      apply: (current) => ({ ...current, assetElements: [...current.assetElements, copy] }),
-    }));
-    setSelection({ type: "asset", id: copy.id });
-  };
-
-  const changeAssetLayer = (id: string, delta: -1 | 1) => {
-    const asset = project.assetElements.find((item) => item.id === id);
-    if (!asset) return;
-    patchScene({ type: "asset", id }, { zIndex: asset.zIndex + delta });
-  };
 
   const applySystemTemplate = (templateId: MapTemplateId) => {
     const scene = createDefaultScene(templateId);
@@ -1186,7 +971,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setPreviewCommands([]);
     setSelection({ type: "canvas" });
     setSelectedStudentId(null);
-    setActivePanel("roster");
     setActiveWorkflowStep("roster");
     setActiveStage("data");
     setStatusMessage("已新建空项目");
@@ -1197,7 +981,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setProject(next);
     setPreviewCommands([]);
     setSelection({ type: "canvas" });
-    setActivePanel("roster");
     setActiveWorkflowStep("roster");
     setActiveStage("data");
     setStatusMessage("已恢复本机最近项目");
@@ -1206,7 +989,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const openGlobalData = () => {
     if (activeStage !== "data") lastNonTemplateStageRef.current = activeStage;
     setGlobalSettingsSection(null);
-    setActivePanel("roster");
     setActiveWorkflowStep("roster");
     setActiveStage("data");
   };
@@ -1219,9 +1001,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
       openGlobalData();
       return;
     }
-    const legacyPanel = WORKFLOW_STAGE_TO_LEGACY_PANEL[stage];
-    if (!legacyPanel) return;
-    setActivePanel(legacyPanel);
     setActiveWorkflowStep(stage === "map" ? "presentation" : stage === "frame" ? "layout" : stage === "export" ? "export" : "local");
   };
 
@@ -1364,26 +1143,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
     onAddUserAsset: addUserAsset,
     onReplaceUserAsset: replaceUserAsset,
     onDeleteUserAsset: deleteUserAsset,
+    onCreateDecoration: handleCreateDecoration,
     onExportResourcePack: exportResourcePack,
     onImportResourcePack: importResourcePack,
-  };
-
-  const handleWorkflowStepChange = (id: WorkflowPanelId) => {
-    const nextStage = LEGACY_PANEL_TO_WORKFLOW_STAGE[id];
-    setActiveStage(nextStage);
-    if (id === "roster") {
-      openGlobalData();
-      return;
-    }
-    setActivePanel(id);
-    const workflowId: WorkflowStepId = id === "map"
-      ? "presentation"
-      : id === "layout"
-        ? "layout"
-        : id === "deliver"
-          ? "export"
-          : "local";
-    setActiveWorkflowStep(workflowId);
   };
 
   const openStudioSettings = () => {
@@ -1804,7 +1566,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
               <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={refreshDisplayFramePositions} />
               <ToolbarButton label="返回地图样式" icon={<MapPinned size={18} />} onClick={() => {
                 setActiveStage("map");
-                setActivePanel("map");
               }} />
             </>
           ),
@@ -1842,12 +1603,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
             onRefreshPositions={refreshDisplayFramePositions}
             onBackToMap={() => {
               setActiveStage("map");
-              setActivePanel("map");
             }}
             onUndo={handleUndo}
             onRedo={handleRedo}
             selectedStudentId={selectedStudentId}
             onSelectStudent={setSelectedStudentId}
+            renderIntervalMs={resolvedRenderInterval}
             onApplyFont={applyFont}
             onUploadFont={(font) => {
               setUserFonts((current) => [...current, font]);
@@ -1900,94 +1661,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
     }
   };
 
-  if (activeStage !== "content" || !legacyEditorEnabled) {
-    const slots = buildStageSlots(activeStage);
-    return (
-      <StudioLayoutTemplate
-        theme={resolvedTheme}
-        skin={skin}
-        stage={activeStage}
-        assistantEntry={assistantEntryButton}
-        historyActions={historyActionsNode}
-        stageActions={slots.stageActions}
-        projectActions={projectActionsNode}
-        workflowNav={workflowNavNode}
-        leftRail={studioAssistantRail}
-        rightRail={slots.rightRail}
-        rightRailLabel={STAGE_METADATA[activeStage].rightRailLabel}
-        drawerOpen={assistantDrawerOpen}
-        onDrawerClose={() => setAssistantDrawerOpen(false)}
-      >
-        {slots.workspace}
-      </StudioLayoutTemplate>
-    );
-  }
-
-
+  const slots = buildStageSlots(activeStage);
   return (
-    <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
-      <header className="topbar">
-        <div className="brand">
-          <MapPinned size={24} />
-          <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-          <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-          <em>Beta</em>
-        </div>
-        <div className="topbar-workflow">
-          <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
-          <div className="topbar-workflow__legacy" aria-hidden="true">
-            <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
-          </div>
-        </div>
-        <div className="topbar-actions">
-          {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
-          <ToolbarGroup label="历史与缩放">
-            <ToolbarButton
-              label={undoLabel}
-              icon={<Undo2 size={18} />}
-              disabled={!canUndo}
-              onClick={handleUndo}
-            />
-            <ToolbarButton
-              label={redoLabel}
-              icon={<Redo2 size={18} />}
-              disabled={!canRedo}
-              onClick={handleRedo}
-            />
-            <ZoomControls
-              zoomPercent={zoomPercent}
-              onZoomOut={() => setZoomPercent((v) => Math.max(25, v - 10))}
-              onZoomIn={() => setZoomPercent((v) => Math.min(300, v + 10))}
-            />
-          </ToolbarGroup>
-
-          <ToolbarGroup label="属性面板" className="inspector-toggle-group">
-            <ToolbarButton
-              className="inspector-toggle"
-              label={mobileInspectorOpen ? "关闭属性面板" : "打开属性面板"}
-              icon={mobileInspectorOpen ? <PanelRightClose size={17} /> : <PanelRight size={17} />}
-              aria-expanded={mobileInspectorOpen}
-              aria-controls="editor-inspector"
-              onClick={() => setMobileInspectorOpen((open) => !open)}
-            />
-          </ToolbarGroup>
-
-          <ToolbarGroup label="界面主题">
-            <SkinSelector skin={skin} onChange={setSkin} />
-            <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-          </ToolbarGroup>
-
-          {projectExportActions}
-
-          <ToolbarGroup label="导出">
-            <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}>
-              <ImageDown size={16} /> {posterExport.exportingPng ? "导出中..." : "导出 PNG"}
-            </button>
-          </ToolbarGroup>
-        </div>
-      </header>
-
-
+    <>
       {posterExport.showProjectExportDialog && (
         <div className="dialog-backdrop" onMouseDown={() => posterExport.setShowProjectExportDialog(false)}>
           <section
@@ -2026,439 +1702,40 @@ function StudioApp({ projectId }: { projectId?: string }) {
           </section>
         </div>
       )}
-
-      <section
-        className="workspace"
-        style={workspaceStyle}
-        data-editor-resizing={resizingPanel ? "true" : undefined}
-        data-resizing-panel={resizingPanel ?? undefined}
+      <StudioLayoutTemplate
+        theme={resolvedTheme}
+        skin={skin}
+        stage={activeStage}
+        assistantEntry={assistantEntryButton}
+        historyActions={historyActionsNode}
+        stageActions={slots.stageActions}
+        projectActions={projectActionsNode}
+        workflowNav={workflowNavNode}
+        leftRail={(
+          <>
+            {studioAssistantRail}
+            <div className="studio-local-save-policy" data-sync-status={syncState.status}>
+              <p className="status" role="status">
+                {syncState.status === "saving" ? "正在覆盖本地数据" : syncState.status === "saved" ? "全部数据已保存" : syncState.status === "failed" ? "本地保存失败" : "有未保存修改"}
+              </p>
+              <p className="panel-note">
+                本地：仅点击强制保存时覆盖本地数据
+                {syncState.savedAt && ` · ${new Date(syncState.savedAt).toLocaleTimeString("zh-CN", { hour12: false })}`}
+              </p>
+            </div>
+            {statusMessage ? <p className="panel-note" role="status">{statusMessage}</p> : null}
+          </>
+        )}
+        rightRail={slots.rightRail}
+        rightRailLabel={STAGE_METADATA[activeStage].rightRailLabel}
+        drawerOpen={assistantDrawerOpen}
+        onDrawerClose={() => setAssistantDrawerOpen(false)}
       >
-        <aside className="sidebar studio-sidebar">
-          <div className="studio-sidebar__rail">{studioAssistantRail}</div>
-
-          <div className="studio-sidebar__panel">
-          {activePanel === "roster" && (
-            <div className="panel-content workflow-panel workflow-panel--roster">
-              <div className="panel-heading"><span>名单检查</span><small>{project.students.length} 条记录</small></div>
-              <DataWorkspace {...dataWorkspaceProps} />
-            </div>
-          )}
-
-          {activePanel === "map" && (
-            <div className="panel-content workflow-panel workflow-panel--map">
-              <div className="panel-heading"><span>地图表达</span><small>选择读图方式</small></div>
-              <SegmentedControl
-                label="地图表达"
-                activeId={dataView}
-                items={dataViews.map((view) => ({ id: view.id, label: view.name.replace("卡片", ""), ariaLabel: `${view.name}：${view.description}` }))}
-                onChange={(view) => commitProjectTransaction({ id: createId(`tx-data-view-${view}`), label: `切换数据呈现：${view}`, source: "manual", apply: (current) => applyDataViewChange(current, view) })}
-                className="workflow-data-views"
-              />
-              <MapInspector map={project.map} mode="global" collapsible onPatch={(patch) => patchScene({ type: "map" }, patch)} onReset={() => resetSceneTarget({ type: "map" })} />
-            </div>
-          )}
-
-          {activePanel === "layout" && (
-            <div className="panel-content">
-              <div className="panel-heading">
-                <span>内置模板</span>
-                <small>应用整套地图元素</small>
-              </div>
-              <div className="template-grid" aria-label="内置整体模板">
-                {(["original", "cartoon", "grain", "q", "scenery"] as const).map((templateId) => {
-                  const template = createSystemTemplate(templateId);
-                  return <button
-                    key={templateId}
-                    type="button"
-                    className={`template-card ${project.templateId === templateId ? "selected" : ""}`}
-                    onClick={() => applySystemTemplate(templateId)}
-                  >
-                    <span className={`template-card__preview template-card__preview--${templateId}`} />
-                    <strong>{template.name}</strong>
-                  </button>;
-                })}
-              </div>
-              <button className="wide-button" type="button" onClick={saveCurrentTemplate}><Save size={16} /> 保存当前整体模板</button>
-
-              {customTemplates.length > 0 && (
-                <>
-                  <div className="panel-heading data-heading">
-                    <span>我的模板</span>
-                    <small>{customTemplates.length}</small>
-                  </div>
-                  <div className="view-list">
-                    {customTemplates.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => applyCustomTemplateRecord(item)}
-                      >
-                        <strong>{item.name}</strong>
-                        <span>
-                          {item.scope === "visual" ? "视觉样式" : "布局倾向"} ·{" "}
-                          {item.baseTemplateId}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-
-          {activePanel === "assets" && (
-            <div className="panel-content">
-              <AssetPanel
-                instances={project.assetElements
-                  .filter((element) => element.kind !== "province-texture")
-                  .map((element) => ({
-                    id: element.id,
-                    assetId: element.assetId,
-                    label: element.label,
-                    kind: element.kind,
-                  }))}
-                provinces={provinceNames}
-                dataProvinces={summary.map((item) => item.province)}
-                selectedProvince={selection.type === "province" ? selection.province : ""}
-                selectedProvinceStyle={selection.type === "province" ? project.map.provinceStyles?.[selection.province] : undefined}
-                provinceStyles={project.map.provinceStyles}
-                provinceAdjacency={CHINA_PROVINCE_ADJACENCY}
-                mapBaseColor={project.map.landColor}
-                posterBackground={project.canvas.backgroundColor}
-                provinceTextureUniformSize={project.map.provinceTextureUniformSize}
-                userAssets={userAssets}
-                assetUsageById={assetUsageById}
-                onPatchProvinceTextureUniformSize={(provinceTextureUniformSize) => {
-                  patchScene({ type: "map" }, { provinceTextureUniformSize });
-                }}
-
-                onSelectProvince={(province) => {
-                  if (province) {
-                    setSelection({ type: "province", province });
-                    setActivePanel("assets");
-                  }
-                }}
-                onSelectInstance={(id) => setSelection({ type: "asset", id })}
-                onApplyBackground={(asset) => {
-                  commitProject(
-                    applyTransaction(project, {
-                      id: createId("tx-bg"),
-                      label: `应用背景：${asset.label}`,
-                      source: "manual",
-                      apply: (current) => ({
-                        ...current,
-                        canvas: {
-                          ...current.canvas,
-                          backgroundImageSrc: asset.src,
-                        },
-                        style: {
-                          ...current.style,
-                          backgroundImageSrc: asset.src,
-                        },
-                      }),
-                    }),
-                  );
-                }}
-                onCreateLandmark={(asset) => {
-                  const selectedProvince = selection.type === "province" ? selection.province : "";
-                  const element = createLandmarkElement(asset, selectedProvince || "全国", {
-                    x: project.map.x + project.map.width / 2 - 60,
-                    y: project.map.y + project.map.height / 2 - 60,
-                  });
-                  commitProject(
-                    applyTransaction(project, {
-                      id: createId("tx-landmark"),
-                      label: `添加地标：${asset.label}`,
-                      source: "manual",
-                      apply: (current) => ({
-                        ...current,
-                        assetElements: [...current.assetElements, element],
-                      }),
-                    }),
-                  );
-                  setSelection({ type: "asset", id: element.id });
-                }}
-                onCreateDecoration={(asset) => {
-                  const element = createDecorationElement(asset, {
-                    x: project.canvas.width - 180,
-                    y: project.canvas.height - 180,
-                  });
-                  commitProject(
-                    applyTransaction(project, {
-                      id: createId("tx-decoration"),
-                      label: `添加装饰：${asset.label}`,
-                      source: "manual",
-                      apply: (current) => ({
-                        ...current,
-                        assetElements: [...current.assetElements, element],
-                      }),
-                    }),
-                  );
-                  setSelection({ type: "asset", id: element.id });
-                }}
-                onApplyProvinceAppearance={(province, appearance: ProvinceAppearance, fill?: string) => {
-                  try {
-                    setSelection({ type: "province", province });
-                    setActivePanel("assets");
-                    patchScene({ type: "province", province }, { appearance, ...(fill ? { fill } : {}) });
-                    setStatusMessage(`已应用到地图：${province}`);
-                  } catch (error) {
-                    setStatusMessage(error instanceof Error ? error.message : "应用省份贴图失败");
-                  }
-                }}
-                onApplyProvinceThemes={(themeResults: Record<string, ImageThemeResult>) => {
-                  const entries = Object.entries(themeResults);
-                  if (entries.length === 0) return;
-                  const transaction = createProvinceThemeTransaction(themeResults);
-                  commitProjectTransaction({
-                    ...transaction,
-                    apply: (current) => ({ ...transaction.apply(current), cards: freezeCardPositionsForMapChange(current) }),
-                  });
-                  setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
-                }}
-                onResetProvinceAppearance={(province) => {
-                  try {
-                    setSelection({ type: "province", province });
-                    setActivePanel("assets");
-                    patchScene({ type: "province", province }, { appearance: undefined, fill: undefined, textureSrc: undefined });
-                    setStatusMessage(`已恢复系统默认：${province}`);
-                  } catch (error) {
-                    setStatusMessage(error instanceof Error ? error.message : "恢复省份外观失败");
-                  }
-                }}
-                onAddUserAsset={addUserAsset}
-                onReplaceUserAsset={replaceUserAsset}
-                onDeleteUserAsset={deleteUserAsset}
-                onExportResourcePack={exportResourcePack}
-                onImportResourcePack={importResourcePack}
-              />
-            </div>
-          )}
-
-          {activePanel === "deliver" && (
-            <div className="panel-content workflow-panel workflow-panel--deliver">
-              <div className="panel-heading"><span>交付检查</span><small>{exportWarnings.unresolvedStudents.length || exportWarnings.hiddenStudents.length ? "需检查" : "可以导出"}</small></div>
-              <div className="workflow-delivery-checks">
-                <div><strong>{project.students.length}</strong><span>名单记录</span></div>
-                <div><strong>{summary.length}</strong><span>目的省市</span></div>
-              </div>
-              {exportWarnings.unresolvedStudents.length > 0 && <p className="panel-note">{exportWarnings.unresolvedStudents.length} 个城市未匹配，可返回「名单」修正。</p>}
-              {exportWarnings.hiddenStudents.length > 0 && <p className="panel-note">{exportWarnings.hiddenStudents.length} 条记录已隐藏，不会出现在海报中。</p>}
-              <ActionGroup label="交付操作" className="workflow-delivery-actions">
-                <button className="wide-button workflow-export-button" type="button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}><ImageDown size={16} />{posterExport.exportingPng ? "导出中..." : "导出 PNG"}</button>
-                <CompactButton icon={<Download size={14} aria-hidden />} onClick={posterExport.exportSvg}>导出 SVG</CompactButton>
-                <CompactButton icon={<Save size={14} aria-hidden />} onClick={() => void overwriteBrowserStorage()} disabled={syncState.status === "saving"}>保存到本机</CompactButton>
-                <CompactButton icon={<PackageOpen size={14} aria-hidden />} onClick={posterExport.openProjectExportDialog}>导出工程</CompactButton>
-              </ActionGroup>
-            </div>
-          )}
-
-          {activePanel === "content" && (
-            <div className="panel-content workflow-panel workflow-panel--content">
-              <>
-                  <div className="panel-heading">
-                    <span>画布元素</span>
-                    <small>可编辑图层</small>
-                  </div>
-                  <ActionGroup label="添加画布元素" className="content-add-actions">
-                    <CompactButton icon={<Plus size={14} aria-hidden />} onClick={addText}>添加文本框</CompactButton>
-                    <CompactButton icon={<Plus size={14} aria-hidden />} onClick={addNote}>添加特别备注</CompactButton>
-                  </ActionGroup>
-
-                  <div className="element-list" role="list" aria-label="画布图层">
-                    {STYLE_LAYER_TARGETS.map((target) => {
-                      const selected = target.type === "text"
-                        ? selection.type === "text" && selection.id === target.id
-                        : selection.type === target.type;
-                      const dotClass = target.type === "text"
-                        ? (target.id === "text-title" ? "title-dot" : "subtitle-dot")
-                        : target.type === "map"
-                          ? "map-dot"
-                          : target.type === "cards"
-                            ? "cards-dot"
-                            : target.type === "guests"
-                              ? "guests-dot"
-                              : "canvas-dot";
-                      return (
-                        <button
-                          key={target.label}
-                          type="button"
-                          role="listitem"
-                          className={selected ? "is-active" : undefined}
-                          aria-pressed={selected}
-                          onClick={() => selectStyleLayer(target)}
-                        >
-                          <span className={`layer-dot ${dotClass}`} />
-                          {target.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="panel-note">点击图层可在右侧打开对应属性面板；数据卡片会同时切换到「板块」页。可管理画布、标题、地图、卡片与特邀嘉宾。</p>
-                  <p className="panel-note">
-                    当前模板参数：scale {resolvedTemplate.map.scale.toFixed(2)} ·{" "}
-                    {resolvedTemplate.cards.preset} · 字段{" "}
-                    {resolvedTemplate.visibleFields.join("/")}
-                  </p>
-                </>
-            </div>
-          )}
-          </div>
-        </aside>
-
-        <section className="editor-area">
-          <div className="canvas-stage" ref={stageRef}>
-            <div
-              className="canvas-zoom-shell"
-              style={{
-                width: Math.round(project.canvas.width * zoomPercent / 100),
-                height: Math.round(project.canvas.height * zoomPercent / 100),
-              }}
-            >
-              <div
-                className="canvas-zoom-inner"
-                style={{
-                  width: project.canvas.width,
-                  height: project.canvas.height,
-                  transform: `scale(${zoomPercent / 100})`,
-                  transformOrigin: "top left",
-                }}
-              >
-                <PosterCanvas
-                  project={renderProject}
-                  posterRef={posterRef}
-                  selectedTextId={selectedTextId}
-                  selectedAssetId={selection.type === "asset" ? selection.id : null}
-                  selectedProvince={selection.type === "province" ? selection.province : null}
-                  userFonts={userFonts}
-                  showGrid={showGrid}
-                  gridSize={gridSize}
-                  renderIntervalMs={resolvedRenderInterval}
-                  onSelect={handleLegacySceneSelect}
-                  onMoveText={(id, x, y) => {
-                    const point = maybeSnap(x, y);
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "text", id }, point)),
-                    );
-                  }}
-                  onMoveAsset={(id, x, y) => {
-                    const point = maybeSnap(x, y);
-                    const current = project.assetElements.find((asset) => asset.id === id);
-                    if (!current || (current.x === point.x && current.y === point.y)) return;
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "asset", id }, point)),
-                    );
-                  }}
-                  onResizeAsset={(id, x, y, width, height) => {
-                    const point = maybeSnap(x, y);
-                    const current = project.assetElements.find((asset) => asset.id === id);
-                    if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height })),
-                    );
-                  }}
-                  mapSelected={selection.type === "map"}
-                  onMoveProvinceTexture={(province, offsetX, offsetY) => {
-                    const appearance = project.map.provinceStyles?.[province]?.appearance;
-                    if (!appearance || appearance.kind === "manual-color") return;
-                    patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
-                  }}
-                  onResizeMapImage={(alignment) => {
-                    const rs = project.map.renderSource;
-                    if (rs?.kind !== "image" || !rs.alignment) return;
-                    patchScene({ type: "map" }, { renderSource: { ...rs, alignment: { ...rs.alignment, ...alignment } } });
-                  }}
-                  onCardPositionsResolved={captureCardPositions}
-                  selectedStudentId={selectedStudentId}
-                  onSelectStudent={setSelectedStudentId}
-                  onMoveCard={(id, x, y) => {
-                    const point = maybeSnap(x, y);
-                    commitProject(
-                      applyTransaction(project, {
-                        id: createId(`tx-card-position-${id}`),
-                        label: "调整数据框位置",
-                        source: "manual",
-                        apply: (current) => ({
-                          ...current,
-                          cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } },
-                        }),
-                      }),
-                    );
-                  }}
-                  onMoveGuests={(x, y) => {
-                    const point = maybeSnap(x, y);
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "guests" }, point)),
-                    );
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <aside id="editor-inspector" className={`inspector${mobileInspectorOpen ? " is-open" : ""}`}>
-          <InspectorPanel
-            project={renderProject}
-            selection={selection}
-            userFonts={userFonts}
-            onPatch={patchScene}
-            onReset={resetSceneTarget}
-            onDeleteText={removeText}
-            onDeleteAsset={removeAsset}
-            onDuplicateAsset={duplicateAsset}
-            onLayerChange={changeAssetLayer}
-            onAddUserAsset={addUserAsset}
-            provinces={provinceNames}
-            onOpenGlobalSettings={setGlobalSettingsSection}
-            onApplyFont={applyFont}
-            onUploadFont={(font) => {
-              setUserFonts((current) => [...current, font]);
-              setStatusMessage(`已上传字体：${font.label}`);
-            }}
-            onDeleteUserFont={deleteUserFont}
-          />
-          <details className="project-summary">
-            <summary>项目摘要</summary>
-            <div className="summary-number"><strong>{students.length}</strong><span>学生</span></div>
-            <div className="summary-number"><strong>{summary.length}</strong><span>目的省市</span></div>
-            <p>{dataViews.find((view) => view.id === dataView)?.description}</p>
-            <p>已记录 {project.history.past.length} 步，可重做 {project.history.future.length} 步。</p>
-            <div className="status" data-sync-status={syncState.status}>
-              <span />
-              {syncState.status === "saving" ? "正在覆盖本地数据" : syncState.status === "saved" ? "全部数据已保存" : syncState.status === "failed" ? "本地保存失败" : "有未保存修改"}
-            </div>
-            <p className="panel-note">
-              本地：仅点击强制保存时覆盖本地数据
-              {syncState.savedAt && ` · ${new Date(syncState.savedAt).toLocaleTimeString("zh-CN", { hour12: false })}`}
-            </p>
-            {statusMessage && <p className="panel-note">{statusMessage}</p>}
-          </details>
-        </aside>
-
-        <ResizablePanelDivider
-          side="sidebar"
-          value={panelLayout.sidebarWidth}
-          min={sidebarBounds.min}
-          max={sidebarBounds.max}
-          ariaLabel="调整左侧栏宽度"
-          onChange={(value) => updatePanelWidth("sidebar", value)}
-          onResizeStart={() => setResizingPanel("sidebar")}
-          onResizeEnd={() => setResizingPanel(null)}
-        />
-        <ResizablePanelDivider
-          side="inspector"
-          value={panelLayout.inspectorWidth}
-          min={inspectorBounds.min}
-          max={inspectorBounds.max}
-          ariaLabel="调整右侧栏宽度"
-          onChange={(value) => updatePanelWidth("inspector", value)}
-          onResizeStart={() => setResizingPanel("inspector")}
-          onResizeEnd={() => setResizingPanel(null)}
-        />
-      </section>
-    </main>
+        {slots.workspace}
+      </StudioLayoutTemplate>
+    </>
   );
+
 }
 
 export function App({ projectId }: { projectId?: string }) {
