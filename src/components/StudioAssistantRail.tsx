@@ -31,6 +31,9 @@ export interface StudioAssistantRailProps {
   /** 本阶段总览模型（T2 窄只读 DTO）。 */
   stageOverview: StageOverviewModel;
   onStageOverviewAction: (action: StageOverviewAction) => void;
+  /** Controlled tab; defaults to 本阶段 so class operators land on the current step. */
+  activeTab?: "ai" | "stage" | "advanced";
+  onTabChange?: (tab: "ai" | "stage" | "advanced") => void;
 }
 
 const SYNC_LABELS: Record<LocalOverwriteStatus, string> = {
@@ -87,8 +90,12 @@ export function StudioAssistantRail({
   onCommit,
   stageOverview,
   onStageOverviewAction,
+  activeTab: activeTabProp,
+  onTabChange,
 }: StudioAssistantRailProps) {
-  const [activeTab, setActiveTab] = useState<"ai" | "stage" | "advanced">("ai");
+  const [uncontrolledTab, setUncontrolledTab] = useState<"ai" | "stage" | "advanced">("stage");
+  const activeTab = activeTabProp ?? uncontrolledTab;
+  const setActiveTab = onTabChange ?? setUncontrolledTab;
   const [advancedView, setAdvancedView] = useState<"operations" | "elements">("operations");
   const outline = useMemo(() => [
     { selection: { type: "canvas" } as const, label: "画布" },

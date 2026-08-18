@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { universityEmblems } from "../data/university-emblems";
+import { loadUniversityEmblemMap, peekUniversityEmblem } from "../lib/university-emblem-lookup";
 
 export interface UniversityEmblemProps {
   /** 大学名称（用于查校徽资源与占位首字）。为空时不渲染。 */
@@ -21,7 +21,16 @@ export function UniversityEmblem({ university, size = 24, className, alt }: Univ
   // 无 IntersectionObserver 的环境（旧浏览器）直接视为已入视口。
   const [inView, setInView] = useState(() => typeof IntersectionObserver === "undefined");
   const [failed, setFailed] = useState(false);
+  const [src, setSrc] = useState(() => peekUniversityEmblem(university));
   const hostRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadUniversityEmblemMap().then((map) => {
+      if (!cancelled) setSrc(map[university]);
+    });
+    return () => { cancelled = true; };
+  }, [university]);
 
   useEffect(() => {
     const el = hostRef.current;
@@ -44,7 +53,6 @@ export function UniversityEmblem({ university, size = 24, className, alt }: Univ
 
   if (!university) return null;
 
-  const src = universityEmblems[university];
   const initial = university.trim().charAt(0) || "校";
   const style = { width: size, height: size };
   const showImage = inView && src && !failed;

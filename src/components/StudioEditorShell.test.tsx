@@ -12,10 +12,12 @@ function renderShell({
   rightRail,
   rightRailLabel,
   leftRail = <div aria-label="编辑器左侧栏">左栏</div>,
+  compactChrome = false,
 }: {
   rightRail?: ReactNode;
   rightRailLabel?: string;
   leftRail?: ReactNode | null;
+  compactChrome?: boolean;
 } = {}) {
   const container = document.createElement("div");
   document.body.append(container);
@@ -27,6 +29,7 @@ function renderShell({
       leftRail={leftRail ?? undefined}
       rightRail={rightRail}
       rightRailLabel={rightRailLabel}
+      compactChrome={compactChrome}
     >
       <div>中心</div>
     </StudioEditorShell>,
@@ -60,15 +63,19 @@ describe("StudioEditorShell", () => {
     expect(container.querySelector(".studio-editor-shell__main")?.textContent).toContain("中心");
   });
 
-  it("prepends the collapsible stage guide line to the right rail and the drawer", () => {
+  it("prepends the collapsible stage guide line to the docked right rail", () => {
     const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
 
     const dockedGuide = container.querySelector(".studio-editor-shell__right .studio-stage-guide");
     expect(dockedGuide?.textContent).toContain("确定地图表达与外观");
     expect(dockedGuide?.getAttribute("aria-label")).toBe("地图样式说明");
+    expect(container.querySelector('button[aria-label="打开地图属性"]')).toBeNull();
+  });
 
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开地图属性"]')!);
-    expect(document.querySelector(".studio-editor-shell__drawer .studio-stage-guide")?.textContent).toContain("确定地图表达与外观");
+  it("does not mount a second drawer copy of the right rail on desktop", () => {
+    const { container } = renderShell({ rightRail: <div id="rail-once">右栏内容</div>, rightRailLabel: "地图属性" });
+    expect(container.querySelectorAll("#rail-once")).toHaveLength(1);
+    expect(document.querySelector(".MuiDrawer-root")).toBeNull();
   });
 
   it("expands the center region when no right rail is supplied", () => {
@@ -107,8 +114,13 @@ describe("StudioEditorShell", () => {
   });
 
   it("exposes the right rail through a labelled drawer toggle on narrow screens", async () => {
-    const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
+    const { container } = renderShell({
+      rightRail: <div>右栏内容</div>,
+      rightRailLabel: "地图属性",
+      compactChrome: true,
+    });
 
+    expect(container.querySelector(".studio-editor-shell__right")).toBeNull();
     const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="打开地图属性"]');
     expect(toggle).not.toBeNull();
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
@@ -117,6 +129,7 @@ describe("StudioEditorShell", () => {
     click(toggle);
     expect(document.querySelector(".MuiDrawer-root")).not.toBeNull();
     expect(document.querySelector(".MuiDrawer-root")?.textContent).toContain("右栏内容");
+    expect(document.querySelector(".studio-editor-shell__drawer .studio-stage-guide")?.textContent).toContain("确定地图表达与外观");
 
     // Dispatch on an element inside the drawer paper so MUI Modal's document-level listener catches it.
     await act(async () => {

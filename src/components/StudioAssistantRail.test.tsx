@@ -44,10 +44,17 @@ function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
   flushSync(() => root.render(
     <AssistantConversationProvider><StudioAssistantRail {...props} /></AssistantConversationProvider>,
   ));
+  roots.push({ root, container });
   return { container, root, props };
 }
 
+const roots: Array<{ root: ReturnType<typeof createRoot>; container: HTMLDivElement }> = [];
+
 afterEach(() => {
+  roots.splice(0).forEach(({ root, container }) => {
+    flushSync(() => root.unmount());
+    container.remove();
+  });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -57,7 +64,7 @@ describe("StudioAssistantRail", () => {
     const onOpenSettings = vi.fn();
     const { container } = renderRail({ onOpenSettings });
 
-    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("AI 助手");
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("本阶段");
     expect(container.textContent).not.toContain("工程状态");
     expect(Array.from(container.querySelectorAll("button")).filter((button) => button.textContent?.includes("高级功能"))).toHaveLength(1);
 
@@ -70,6 +77,7 @@ describe("StudioAssistantRail", () => {
 
   it("keeps the docked assistant as the only AI surface with no duplicate advanced entry", () => {
     const { container } = renderRail();
+    click(container.querySelector('[role="tab"][aria-controls="studio-ai-panel"]')!);
     expect(container.querySelectorAll('[data-agent-presentation="docked"]')).toHaveLength(1);
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(Array.from(container.querySelectorAll("button")).filter((button) => button.textContent?.includes("高级功能"))).toHaveLength(1);

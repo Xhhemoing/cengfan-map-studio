@@ -1278,6 +1278,27 @@ button { font: inherit; }
 .topbar-actions .icon-button { width: 28px; min-height: 30px; }
 .topbar-actions .primary-button { min-height: 30px; padding: 0 9px; }
 .topbar-actions .project-menu .secondary-button { min-height: 30px; padding: 0 9px; color: var(--editor-ink); background: var(--editor-surface-muted); border-color: var(--editor-line); }
+.studio-save-chip {
+  display: grid;
+  min-width: 0;
+  max-width: 168px;
+  margin: 0;
+  padding: 2px 8px;
+  color: var(--editor-ink);
+  background: var(--editor-surface-muted);
+  border: 1px solid var(--editor-line);
+  border-radius: 5px;
+  line-height: 1.2;
+}
+.studio-save-chip strong { font-size: 11px; font-weight: 700; white-space: nowrap; }
+.studio-save-chip small { overflow: hidden; color: var(--editor-ink-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.studio-workspace-loading {
+  display: grid;
+  min-height: 40vh;
+  place-items: center;
+  color: var(--editor-ink-muted);
+  font-size: 13px;
+}
 
 .workflow-stepper,
 .workflow-stage-stepper { display: flex; min-width: 0; align-items: center; justify-content: center; gap: 2px; overflow: hidden; }
@@ -3572,9 +3593,22 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   border-left: 1px solid var(--editor-line);
   overscroll-behavior: contain;
 }
-/* Right-rail drawer toggle: hidden on desktop, floating control on narrow screens. */
+/* Right-rail drawer toggle: only mounted in compact chrome, so it can stay visible. */
 .studio-editor-shell__rail-toggle {
-  display: none;
+  display: grid;
+  position: fixed;
+  z-index: 60;
+  right: 12px;
+  bottom: 14px;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  color: var(--editor-surface-raised);
+  background: var(--editor-accent);
+  border: 1px solid var(--editor-accent);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgb(28 31 26 / 18%);
+  cursor: pointer;
 }
 /* Drawer carrying the right rail on narrow screens. */
 .studio-editor-shell__drawer {

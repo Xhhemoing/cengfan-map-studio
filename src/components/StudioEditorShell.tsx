@@ -24,23 +24,24 @@ export type StudioEditorShellProps = {
   leftRail?: ReactNode;
   rightRail?: ReactNode;
   rightRailLabel?: string;
+  /** When true, the right rail is a drawer instead of a docked aside. */
+  compactChrome?: boolean;
   children: ReactNode;
 };
 
 /**
  * Desktop grid shell for the formal editing stages: optional left rail |
  * center | optional resizable right rail. Owns both `ResizablePanelDivider`
- * resizers and persists their widths through `editor-layout`. The workflow
- * guidance lives in the topbar (old-style), so most stages render without a
- * left rail; when one is omitted the shell collapses to canvas + right rail.
- * At <=760px the right rail is presented as a labelled MUI `Drawer` (Escape +
- * focus return handled by MUI's Modal).
+ * resizers and persists their widths through `editor-layout`. At compact
+ * chrome (<=760px) the right rail is a labelled MUI Drawer and the docked
+ * aside is not mounted, so inspector/asset trees exist once.
  */
 export function StudioEditorShell({
   stage,
   leftRail,
   rightRail,
   rightRailLabel = "右侧栏",
+  compactChrome = false,
   children,
 }: StudioEditorShellProps) {
   const [panelLayout, setPanelLayout] = useState<EditorPanelLayout>(() => readEditorPanelLayout());
@@ -53,6 +54,11 @@ export function StudioEditorShell({
   const inspectorBounds = getPanelWidthBounds("inspector", viewportWidth, panelLayout.sidebarWidth);
   const hasRightRail = Boolean(rightRail);
   const hasLeftRail = Boolean(leftRail);
+  const dockRightRail = hasRightRail && !compactChrome;
+  const drawerRightRail = hasRightRail && compactChrome;
+  if (!compactChrome && drawerOpen) {
+    setDrawerOpen(false);
+  }
 
   useEffect(() => {
     try {
@@ -81,6 +87,7 @@ export function StudioEditorShell({
       data-stage={stage}
       data-has-right-rail={hasRightRail ? "true" : "false"}
       data-has-left-rail={hasLeftRail ? "true" : "false"}
+      data-compact-chrome={compactChrome ? "true" : "false"}
       data-editor-resizing={resizingPanel ? "true" : undefined}
       data-resizing-panel={resizingPanel ?? undefined}
     >
@@ -90,14 +97,16 @@ export function StudioEditorShell({
         </aside>
       )}
       <div className="studio-stage-shell__main studio-editor-shell__main">{children}</div>
-      {hasRightRail && (
+      {dockRightRail && (
+        <aside className="studio-editor-shell__right" aria-label={rightRailLabel}>
+          <div className="studio-editor-shell__right-inner">
+            <StageGuideLine stage={stage} />
+            {rightRail}
+          </div>
+        </aside>
+      )}
+      {drawerRightRail && (
         <>
-          <aside className="studio-editor-shell__right" aria-label={rightRailLabel}>
-            <div className="studio-editor-shell__right-inner">
-              <StageGuideLine stage={stage} />
-              {rightRail}
-            </div>
-          </aside>
           <button
             ref={drawerToggleRef}
             type="button"
@@ -134,7 +143,7 @@ export function StudioEditorShell({
           </Drawer>
         </>
       )}
-      {hasLeftRail && (
+      {hasLeftRail && !compactChrome && (
         <ResizablePanelDivider
           side="sidebar"
           value={panelLayout.sidebarWidth}
@@ -146,7 +155,7 @@ export function StudioEditorShell({
           onResizeEnd={() => setResizingPanel(null)}
         />
       )}
-      {hasRightRail && (
+      {dockRightRail && (
         <ResizablePanelDivider
           side="inspector"
           value={panelLayout.inspectorWidth}

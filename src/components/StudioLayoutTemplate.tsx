@@ -19,22 +19,26 @@ export type StudioLayoutTemplateProps = {
   theme: string;
   skin: string;
   stage: WorkflowStageId;
-  /** 顶栏 AI/高级功能入口按钮（移动端唤起抽屉）。 */
+  /** 顶栏 AI/高级功能入口按钮（移动端唤起抽屉，桌面切到 AI 标签）。 */
   assistantEntry: ReactNode;
   /** 全局高频动作（撤销/重做，所有阶段可见）。 */
   historyActions?: ReactNode;
   /** 阶段专属顶栏动作（如内容阶段的历史/刷新/返回地图样式）。 */
   stageActions?: ReactNode;
+  /** Compact save-status chip in the topbar action cluster. */
+  statusChip?: ReactNode;
   /** 顶栏右侧工程动作（返回工作台/导出/项目菜单/主题皮肤）。 */
   projectActions: ReactNode;
   /** 顶栏六步工作流导航。 */
   workflowNav: ReactNode;
-  /** 左栏：AI 助手 + 高级功能总览。 */
+  /** 左栏：本阶段总览 + AI / 高级功能。 */
   leftRail: ReactNode;
   /** 右栏：本阶段具体编辑工具。 */
   rightRail: ReactNode;
   /** 右栏标题（检查器/编辑工具的 aria-label）。 */
   rightRailLabel: string;
+  /** Narrow viewport: right rail and assistant live in drawers, not docked asides. */
+  compactChrome?: boolean;
   /** 移动端 AI 抽屉开关状态。 */
   drawerOpen: boolean;
   onDrawerClose: () => void;
@@ -56,11 +60,13 @@ export function StudioLayoutTemplate({
   assistantEntry,
   historyActions,
   stageActions,
+  statusChip,
   projectActions,
   workflowNav,
   leftRail,
   rightRail,
   rightRailLabel,
+  compactChrome = false,
   drawerOpen,
   onDrawerClose,
   children,
@@ -71,15 +77,24 @@ export function StudioLayoutTemplate({
         assistantEntry={assistantEntry}
         historyActions={historyActions}
         stageActions={stageActions}
+        statusChip={statusChip}
         projectActions={projectActions}
         workflowNav={workflowNav}
       />
-      <StudioEditorShell stage={stage} leftRail={leftRail} rightRail={rightRail} rightRailLabel={rightRailLabel}>
+      <StudioEditorShell
+        stage={stage}
+        leftRail={compactChrome ? undefined : leftRail}
+        rightRail={rightRail}
+        rightRailLabel={rightRailLabel}
+        compactChrome={compactChrome}
+      >
         {children}
       </StudioEditorShell>
-      <StudioAssistantDrawer open={drawerOpen} onClose={onDrawerClose} label="AI 助手与高级功能">
-        {leftRail}
-      </StudioAssistantDrawer>
+      {compactChrome ? (
+        <StudioAssistantDrawer open={drawerOpen} onClose={onDrawerClose} label="AI 助手与高级功能">
+          {drawerOpen ? leftRail : null}
+        </StudioAssistantDrawer>
+      ) : null}
     </div>
   );
 }

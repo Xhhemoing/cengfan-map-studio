@@ -1,5 +1,5 @@
 import { geoMercator, geoPath } from "d3-geo";
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, type PointerEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from "react";
 import { clampDestinationCardPosition, type CardArea, type CardLayoutMode, type CardPoint, type CardPolygon } from "../../lib/card-layout";
 import { createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
@@ -24,7 +24,7 @@ import { resolveFontFamily, buildFontFaceCss, type UserFont } from "../../lib/fo
 import { clampGridSize, DEFAULT_GRID_SIZE } from "../../lib/grid";
 import { DEFAULT_CARD_EXPRESSION_TEMPLATES, formatCardExpression } from "../../lib/card-expression";
 import { DEFAULT_NAME_FORMAT, formatStudentName } from "../../lib/name-format";
-import { universityEmblems } from "../../data/university-emblems";
+import { loadUniversityEmblemMap } from "../../lib/university-emblem-lookup";
 import { wrapCardText, type CardTextFragment, type CardTextLine } from "../../lib/card-text-layout";
 import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
 import { DecorationLayer } from "./DecorationLayer";
@@ -280,6 +280,7 @@ function renderReferenceCardVisual({
   fontSize,
   edgeColor,
   titleFont,
+  emblems,
 }: {
   presentation: Exclude<import("../../lib/scene-document").CardPresentation, "standard">;
   group: ReturnType<typeof buildLayoutGroups>[number];
@@ -293,6 +294,7 @@ function renderReferenceCardVisual({
   fontSize: number;
   edgeColor: string;
   titleFont?: string;
+  emblems: Record<string, string>;
 }): ReactNode {
   const bodyRows = rows.filter((row) => !row.cityHeading || presentation === "glass-stat");
   const textFor = (row: PreparedCardRow) => row.lines.map((line) => line.map((part) => part.text).join("")).join(" ");
@@ -318,7 +320,7 @@ function renderReferenceCardVisual({
         <text x={24} y={20} fill="#263b78" fontSize={fontSize + 5} fontWeight={800} fontFamily={titleFont}>{group.title}</text>
         {bodyRows.map((row, index) => {
           const y = 40 + index * Math.max(22, lineHeight + 3);
-          const emblem = row.university ? universityEmblems[row.university] : undefined;
+          const emblem = row.university ? emblems[row.university] : undefined;
           return <g key={row.key}>{emblem && <image href={emblem} x={7} y={y - 14} width={18} height={18} preserveAspectRatio="xMidYMid meet" />}<text x={emblem ? 31 : 9} y={y} fill={textColor} fontSize={fontSize} fontWeight={500}>{textFor(row)}</text></g>;
         })}
       </g>
@@ -331,7 +333,7 @@ function renderReferenceCardVisual({
         <text x={6} y={fontSize + 8} fill={accent} stroke="#ffffff" strokeWidth={2.5} paintOrder="stroke" fontSize={fontSize + 8} fontWeight={900} fontFamily={titleFont}>{group.title}</text>
         {bodyRows.map((row, index) => {
           const y = 39 + index * lineHeight;
-          const emblem = row.university ? universityEmblems[row.university] : undefined;
+          const emblem = row.university ? emblems[row.university] : undefined;
           return <g key={row.key}>{emblem && <image href={emblem} x={7} y={y - 13} width={16} height={16} preserveAspectRatio="xMidYMid meet" />}<text x={emblem ? 29 : 8} y={y} fill={textColor} fontSize={fontSize} fontWeight={600}>{textFor(row)}</text></g>;
         })}
       </g>
@@ -443,6 +445,14 @@ export function PosterCanvas({
   gridSize = DEFAULT_GRID_SIZE,
   renderIntervalMs = 0,
 }: PosterCanvasProps) {
+  const [emblems, setEmblems] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    void loadUniversityEmblemMap().then((map) => {
+      if (!cancelled) setEmblems(map);
+    });
+    return () => { cancelled = true; };
+  }, []);
   const resolvedGridSize = clampGridSize(gridSize);
   const cardDrag = useRef<{
     id: string;
@@ -1128,6 +1138,7 @@ export function PosterCanvas({
                         fontSize: project.cards.fontSize,
                         edgeColor: project.map.edgeColor,
                         titleFont: resolveFontFamily(project.cards.fieldFonts?.title, userFonts),
+                        emblems,
                       }) : <>
                       <rect
                         data-display-frame-surface

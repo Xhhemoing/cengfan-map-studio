@@ -1,13 +1,15 @@
-import { StrictMode, type ReactElement } from "react";
+/* eslint-disable react-refresh/only-export-components -- bootstrap exports mount helpers for tests */
+import { lazy, StrictMode, Suspense, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { App } from "./App";
-import { WorkflowPrototype } from "./components/WorkflowPrototype";
 import { ProjectWorkbench } from "./components/ProjectWorkbench";
 import { StudioMuiProvider } from "./components/StudioMuiProvider";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { createIndexedDbProjectStore } from "./lib/project-store";
 import "./styles.css";
+
+const EditorApp = lazy(() => import("./App").then((mod) => ({ default: mod.App })));
+const WorkflowPrototype = lazy(() => import("./components/WorkflowPrototype").then((mod) => ({ default: mod.WorkflowPrototype })));
 
 export const workbenchStore = createIndexedDbProjectStore();
 
@@ -32,7 +34,17 @@ function renderView(container: HTMLElement, view: ReactElement) {
   }
   if (!root) root = createRoot(container);
   const activeRoot: Root = root; // const 捕获,避免闭包内 TS18047 窄化丢失
-  flushSync(() => activeRoot.render(<StrictMode><StudioMuiProvider><AppErrorBoundary>{view}</AppErrorBoundary></StudioMuiProvider></StrictMode>));
+  flushSync(() => activeRoot.render(
+    <StrictMode>
+      <StudioMuiProvider>
+        <AppErrorBoundary>
+          <Suspense fallback={<div className="workbench-loading" role="status" aria-label="正在加载界面">加载中…</div>}>
+            {view}
+          </Suspense>
+        </AppErrorBoundary>
+      </StudioMuiProvider>
+    </StrictMode>,
+  ));
 }
 
 export function renderApp(container: HTMLElement): void {
@@ -43,7 +55,7 @@ export function renderApp(container: HTMLElement): void {
     }
     const projectId = projectIdFromHash(window.location.hash);
     if (projectId) {
-      renderView(container, <App projectId={projectId} />);
+      renderView(container, <EditorApp projectId={projectId} />);
       return;
     }
     renderView(container, <ProjectWorkbench store={workbenchStore} />);

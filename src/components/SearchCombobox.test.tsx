@@ -2,7 +2,8 @@ import { type ReactElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it } from "vitest";
-import { searchCities, searchUniversities } from "../lib/search-catalog";
+import { searchCities } from "../lib/search-catalog";
+import { searchUniversities } from "../lib/search-university-catalog";
 import {
   SearchCombobox,
   type SearchComboboxOption,

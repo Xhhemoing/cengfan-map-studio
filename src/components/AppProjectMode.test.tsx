@@ -6,12 +6,10 @@ import { editorProjectStore } from "../lib/editor-project-store";
 import { createSampleProject, type StoredProject } from "../lib/project-store";
 import { createCustomTemplateFromProject } from "../lib/template-store";
 import { WORKSPACE_SESSION_STORAGE_KEY } from "../lib/workspace-session";
+import { preloadStudioWorkspaces } from "./workspaces/stage-components";
 
-// App.tsx lazy-loads the full-screen settings panel; preload its module so the
-// first test that opens it renders synchronously after a single act flush.
 beforeAll(async () => {
-  await import("../components/GlobalSettingsScreen");
-  await import("../components/workspaces/DataUploadWorkspace");
+  await preloadStudioWorkspaces();
 });
 
 // jsdom 没有 IndexedDB;App 在 projectId 模式下会调用 editorProjectStore.get/put,

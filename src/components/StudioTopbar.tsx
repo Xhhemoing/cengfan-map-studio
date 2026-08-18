@@ -7,6 +7,8 @@ export type StudioTopbarProps = {
   /** 全局高频动作：撤销/重做（所有阶段可见）。 */
   historyActions?: ReactNode;
   stageActions?: ReactNode;
+  /** Compact local-save status shown beside project actions. */
+  statusChip?: ReactNode;
   projectActions: ReactNode;
   /** Six-stage workflow navigation, rendered horizontally under the brand (old-style top guidance). */
   workflowNav?: ReactNode;
@@ -21,6 +23,7 @@ export function StudioTopbar({
   assistantEntry,
   historyActions,
   stageActions,
+  statusChip,
   projectActions,
   workflowNav,
 }: StudioTopbarProps) {
@@ -37,6 +40,7 @@ export function StudioTopbar({
         {assistantEntry}
         {historyActions}
         {stageActions}
+        {statusChip}
         {projectActions}
       </div>
     </header>

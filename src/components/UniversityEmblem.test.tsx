@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { UniversityEmblem } from "./UniversityEmblem";
+import { resetUniversityEmblemMapForTests } from "../lib/university-emblem-lookup";
 
 function render(element: ReactElement): HTMLElement {
   const host = document.createElement("div");
@@ -41,6 +42,7 @@ describe("UniversityEmblem", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     vi.unstubAllGlobals();
+    resetUniversityEmblemMapForTests();
   });
 
   it("renders nothing for an empty university", () => {
@@ -55,20 +57,21 @@ describe("UniversityEmblem", () => {
     expect(host.querySelector(".university-emblem__placeholder")?.textContent).toBe("浙");
   });
 
-  it("loads the emblem image only after entering the viewport", () => {
+  it("loads the emblem image only after entering the viewport", async () => {
     const observer = installIntersectionObserver(true);
     const host = render(<UniversityEmblem university="浙江大学" />);
     observer.fire();
+    await vi.waitFor(() => expect(host.querySelector("img")).not.toBeNull());
     const img = host.querySelector("img") as HTMLImageElement;
-    expect(img).not.toBeNull();
     expect(img.getAttribute("src")).toBe("/emblems/浙江大学.webp");
     expect(img.getAttribute("loading")).toBe("lazy");
   });
 
-  it("falls back to the placeholder when the image fails to load", () => {
+  it("falls back to the placeholder when the image fails to load", async () => {
     const observer = installIntersectionObserver(true);
     const host = render(<UniversityEmblem university="浙江大学" />);
     observer.fire();
+    await vi.waitFor(() => expect(host.querySelector("img")).not.toBeNull());
     const img = host.querySelector("img") as HTMLImageElement;
     act(() => {
       img.dispatchEvent(new Event("error"));
@@ -77,10 +80,10 @@ describe("UniversityEmblem", () => {
     expect(host.querySelector("img")).toBeNull();
   });
 
-  it("shows the first-character placeholder for universities without an emblem", () => {
+  it("shows the first-character placeholder for universities without an emblem", async () => {
     installIntersectionObserver(true);
     const host = render(<UniversityEmblem university="北京航空航天大学北海学院" />);
+    await vi.waitFor(() => expect(host.querySelector(".university-emblem__placeholder")?.textContent).toBe("北"));
     expect(host.querySelector("img")).toBeNull();
-    expect(host.querySelector(".university-emblem__placeholder")?.textContent).toBe("北");
   });
 });

@@ -3,7 +3,7 @@ import {
   buildStudentRecords,
   type StudentIssue,
 } from "./student-data";
-import { resolveUniversity } from "./search-catalog";
+import { resolveUniversity } from "./search-university-catalog";
 import type { Student } from "./project-data";
 
 export interface StudentDraft {

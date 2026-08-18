@@ -1,8 +1,4 @@
 import { chinaCities, chinaProvinces, type CityCatalogEntry } from "../data/china-locations";
-import {
-  chinaUniversities,
-  type UniversityCatalogEntry,
-} from "../data/china-universities";
 import { getProvinceNames, toShortProvinceName } from "./map-data";
 
 export type CityResolution = {
@@ -11,7 +7,7 @@ export type CityResolution = {
   status: "resolved" | "unresolved";
 };
 
-function normalizeCatalogText(value: string): string {
+export function normalizeCatalogText(value: string): string {
   return value
     .trim()
     .toLocaleLowerCase("zh-CN")
@@ -59,7 +55,7 @@ function getAliasRank(query: string, value: string): number | null {
   return null;
 }
 
-function searchCatalog<T extends { name: string; aliases: string[] }>(
+export function searchCatalog<T extends { name: string; aliases: string[] }>(
   entries: T[],
   query: string,
   limit: number,
@@ -84,56 +80,6 @@ function searchCatalog<T extends { name: string; aliases: string[] }>(
 
 export function searchCities(query: string, limit = 8): CityCatalogEntry[] {
   return searchCatalog(chinaCities, query, limit);
-}
-
-export function searchUniversities(query: string, limit = 8): UniversityCatalogEntry[] {
-  return searchCatalog(chinaUniversities, query, limit);
-}
-
-export type UniversityResolution = {
-  university: string;
-  city: string;
-  province: string;
-  status: "resolved" | "unresolved";
-};
-
-/**
- * Exact-match lookup used by `resolveUniversity`: the query must equal a
- * university's canonical name or one of its aliases exactly (after
- * normalization). Substring/prefix/loose-suffix matches never resolve, so
- * partial input like `浙江` cannot silently turn into `浙江大学`. The first
- * catalog match wins (the catalog is sorted by name, so canonical rows precede
- * look-alikes with the same variants, e.g. `安徽大学` before `安徽大学江淮学院`).
- */
-function findExactUniversity(query: string): UniversityCatalogEntry | undefined {
-  const normalized = normalizeCatalogText(query);
-  return chinaUniversities.find((entry) => {
-    if (normalizeCatalogText(entry.name) === normalized) return true;
-    return (entry.aliases ?? []).some((alias) => normalizeCatalogText(alias) === normalized);
-  });
-}
-
-/**
- * Map a university onto its canonical city and province. Returns the exact
- * catalog school name so a typed alias (`浙大`) normalizes to `浙江大学`;
- * unknown schools stay unresolved so callers can fall back to manual input.
- */
-export function resolveUniversity(university: string): UniversityResolution {
-  const normalizedInput = university.trim();
-  if (!normalizedInput) {
-    return { university: "", city: "", province: "", status: "unresolved" };
-  }
-  const matched = findExactUniversity(normalizedInput);
-  if (!matched) {
-    return { university: normalizedInput, city: "", province: "", status: "unresolved" };
-  }
-  const cityResolution = resolveCity(matched.city);
-  return {
-    university: matched.name,
-    city: cityResolution.status === "resolved" ? cityResolution.city : matched.city,
-    province: resolveProvinceName(matched.province),
-    status: "resolved",
-  };
 }
 
 export function searchProvinces(query: string, limit = 8): string[] {
