@@ -22,7 +22,9 @@ describe("grid helpers", () => {
 
   it("provides stable canvas size presets", () => {
     expect(CANVAS_SIZE_PRESETS.some((item) => item.width === 1500 && item.height === 1000)).toBe(true);
-    expect(CANVAS_SIZE_PRESETS.every((item) => item.width >= 320 && item.height >= 320)).toBe(true);
+    expect(CANVAS_SIZE_PRESETS.some((item) => item.id === "a3-150" && item.label.includes("A3"))).toBe(true);
+    expect(CANVAS_SIZE_PRESETS.some((item) => item.id === "board-90x60")).toBe(true);
+    expect(CANVAS_SIZE_PRESETS.every((item) => item.width >= 320 && item.height >= 320 && item.width <= 6000)).toBe(true);
   });
 
   it("computes a fit zoom that keeps the canvas inside the stage", () => {

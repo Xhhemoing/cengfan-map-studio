@@ -18,6 +18,7 @@ describe("InspectorPanel", () => {
     expect(container.querySelector("#canvas-background-opacity")).not.toBeNull();
     expect(container.querySelector('.property-panel__pair[data-property-pair="canvas-size"] #canvas-width')).not.toBeNull();
     expect(container.querySelector('.property-panel__pair[data-property-pair="canvas-size"] #canvas-height')).not.toBeNull();
+    expect(container.querySelector("[data-canvas-print-size]")?.textContent).toContain("约合印刷");
     const width = container.querySelector("#canvas-width") as HTMLInputElement;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     flushSync(() => {
@@ -35,6 +36,12 @@ describe("InspectorPanel", () => {
       preset.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(onPatch).toHaveBeenCalledWith({ type: "canvas" }, { width: 1080, height: 1080 });
+
+    flushSync(() => {
+      presetSetter?.call(preset, "a3-150");
+      preset.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(onPatch).toHaveBeenCalledWith({ type: "canvas" }, { width: 2480, height: 1754 });
 
     flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "map" }} onPatch={onPatch} onReset={vi.fn()} />));
     expect(container.textContent).toContain("地图属性");

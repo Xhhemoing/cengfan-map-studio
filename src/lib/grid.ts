@@ -1,10 +1,25 @@
+import { NAMED_PRINT_SIZES, printSizeToPixels, type NamedPrintSize } from "./print-size";
+
 export const DEFAULT_GRID_SIZE = 20;
+
+function pixelsForPrintId(id: NamedPrintSize["id"]): { width: number; height: number } {
+  const size = NAMED_PRINT_SIZES.find((item) => item.id === id);
+  if (!size) throw new Error(`未找到印刷尺寸 ${id}`);
+  return printSizeToPixels(size);
+}
+
+const a3Print = pixelsForPrintId("a3-150");
+const a2Print = pixelsForPrintId("a2-150");
+const boardPrint = pixelsForPrintId("board-90x60");
 
 export const CANVAS_SIZE_PRESETS = [
   { id: "square-1080", label: "1080 方图", width: 1080, height: 1080 },
   { id: "poster-1500", label: "1500×1000 海报", width: 1500, height: 1000 },
   { id: "wide-1920", label: "1920×1080 横版", width: 1920, height: 1080 },
   { id: "story-1080", label: "1080×1920 竖版", width: 1080, height: 1920 },
+  { id: "a3-150", label: "A3 展板（约 150dpi）", width: a3Print.width, height: a3Print.height },
+  { id: "a2-150", label: "A2 展板（约 150dpi）", width: a2Print.width, height: a2Print.height },
+  { id: "board-90x60", label: "展板 90×60cm（约 100dpi）", width: boardPrint.width, height: boardPrint.height },
 ] as const;
 
 export type CanvasSizePresetId = (typeof CANVAS_SIZE_PRESETS)[number]["id"];

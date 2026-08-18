@@ -5,6 +5,7 @@ import type { LayoutHealthIssue } from "../../lib/layout-health";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
 import type { UserFont } from "../../lib/fonts";
+import { describeExportPrintHint } from "../../lib/print-size";
 import { PosterCanvas } from "../canvas/PosterCanvas";
 
 export type DeliveryIssue =
@@ -111,6 +112,7 @@ export function DeliveryRail({
       <section className="delivery-workspace__controls" aria-label="导出设置">
         <label htmlFor="delivery-png-scale">PNG 倍率<select id="delivery-png-scale" aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option></select></label>
         <span>最终像素尺寸：{project.canvas.width * pngScale} × {project.canvas.height * pngScale} px</span>
+        <span data-export-print-size>{describeExportPrintHint(project.canvas.width, project.canvas.height, pngScale)}</span>
         <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="透明背景" checked={transparentExport} onChange={(event) => onTransparentExportChange(event.target.checked)} />透明背景</label>
         <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="工程包包含资源" checked={includeResources} onChange={(event) => onIncludeResourcesChange(event.target.checked)} />工程包包含资源</label>
       </section>
