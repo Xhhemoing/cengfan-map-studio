@@ -5,7 +5,7 @@ import { App } from "../App";
 import { editorProjectStore } from "../lib/editor-project-store";
 import { createSampleProject, type StoredProject } from "../lib/project-store";
 import { createCustomTemplateFromProject } from "../lib/template-store";
-import { LEGACY_EDITOR_STORAGE_KEY } from "../lib/workspace-session";
+import { WORKSPACE_SESSION_STORAGE_KEY } from "../lib/workspace-session";
 
 // App.tsx lazy-loads the full-screen settings panel; preload its module so the
 // first test that opens it renders synchronously after a single act flush.
@@ -71,7 +71,10 @@ function changeInput(input: HTMLInputElement | HTMLTextAreaElement, value: strin
 beforeEach(async () => {
   window.localStorage.clear();
   window.location.hash = "";
-  window.localStorage.setItem(LEGACY_EDITOR_STORAGE_KEY, "1");
+  window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+    stage: "content",
+    savedAt: "2026-08-18T00:00:00.000Z",
+  }));
   sample = createSampleProject();
   await editorProjectStore.put(sample);
 });

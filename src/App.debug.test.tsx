@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { App } from "./App";
-import { LEGACY_EDITOR_STORAGE_KEY } from "./lib/workspace-session";
+import { WORKSPACE_SESSION_STORAGE_KEY } from "./lib/workspace-session";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -22,7 +22,10 @@ function mountApp(): HTMLDivElement {
 
 function renderLegacyApp(): HTMLDivElement {
   window.localStorage.clear();
-  window.localStorage.setItem(LEGACY_EDITOR_STORAGE_KEY, "1");
+  window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+    stage: "content",
+    savedAt: "2026-08-18T00:00:00.000Z",
+  }));
   return mountApp();
 }
 

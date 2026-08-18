@@ -1,6 +1,7 @@
 import type { WorkflowStageId } from "./workflow-stages";
 
 export const WORKSPACE_SESSION_STORAGE_KEY = "cengfan-map-studio:workspace-session";
+/** @deprecated Kept so old localStorage values do not crash. The three-column editor is gone. */
 export const LEGACY_EDITOR_STORAGE_KEY = "cengfan-legacy-editor";
 
 export interface WorkspaceSession {
