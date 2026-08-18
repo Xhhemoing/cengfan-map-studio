@@ -26,7 +26,7 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
       <div className="workbench-empty">
         <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} /></span>
         <strong>还没有项目</strong>
-        <p>点击「新建项目」或「导入」开始制作毕业去向图。</p>
+        <p>点击「新建项目」或「导入」，做毕业去向、开学合影或校庆班级图。</p>
       </div>
     ) : projects.map((project) => (
       <ProjectCard

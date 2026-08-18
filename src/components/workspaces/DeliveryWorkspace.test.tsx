@@ -81,6 +81,7 @@ describe("DeliveryWorkspace", () => {
     expect(container.querySelector('aside[aria-label="交付检查"]')).not.toBeNull();
     expect(container.querySelector('section[aria-label="导出设置"]')).not.toBeNull();
     expect(container.textContent).toContain("1500 × 1000 px");
+    expect(container.querySelector("[data-export-print-size]")?.textContent).toContain("约合印刷：50.8 × 33.9 cm @ 150dpi");
     expect(container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')?.value).toBe("2");
     expect(container.querySelector<HTMLInputElement>('input[aria-label="透明背景"]')?.checked).toBe(true);
     expect(container.querySelector<HTMLInputElement>('input[aria-label="工程包包含资源"]')?.checked).toBe(true);

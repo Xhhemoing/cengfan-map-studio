@@ -1,5 +1,6 @@
 import { ImageUp, RotateCcw, Trash2 } from "lucide-react";
 import { CANVAS_SIZE_PRESETS, type CanvasSizePresetId } from "../../lib/grid";
+import { describePhysicalSize } from "../../lib/print-size";
 import type { CanvasSettings } from "../../lib/scene-document";
 import { FileDropzone } from "../FileDropzone";
 import { DeferredInput } from "../DeferredInput";
@@ -56,6 +57,9 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
         {number("width", canvas.width, 320, 6000, "宽度")}
         {number("height", canvas.height, 320, 6000, "高度")}
       </div>
+      <p className="property-panel__hint" data-canvas-print-size>
+        约合印刷：{describePhysicalSize(canvas.width, canvas.height)}。发给打印店时带上这行。
+      </p>
       {number("safeMargin", canvas.safeMargin, 0, 3000, "安全边距")}
       <label htmlFor="canvas-background">背景色
         <DeferredInput
