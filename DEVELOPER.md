@@ -1,6 +1,6 @@
 # 蹭饭图开发者指南
 
-> 目标：让开发者快速上手、贡献代码、参与社区建设。
+> 目标：让开发者快速上手、贡献代码。
 
 ---
 
@@ -46,7 +46,7 @@ src/
 └── styles.css              # 全局样式
 
 scripts/                    # 构建、开发、数据同步脚本
-docs/                       # 设计文档、宣发策略、案例模板
+docs/                       # 产品、设计、部署与示例
 public/                     # 静态资源（Logo、校徽）
 ```
 
@@ -86,30 +86,29 @@ public/                     # 静态资源（Logo、校徽）
 
 ## 五、贡献流程
 
-完整约定见仓库根目录 [CONTRIBUTING.md](CONTRIBUTING.md)。国内镜像见 [docs/宣发/Gitee镜像清单.md](docs/宣发/Gitee镜像清单.md)。
+完整约定见仓库根目录 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ### 1. 认领 Issue
 - 查看 [GitHub Issues](https://github.com/Xhhemoing/cengfan-map-studio/issues)
-- 优先认领 `good first issue` 或 `help wanted`（候选：[docs/宣发/good-first-issues.md](docs/宣发/good-first-issues.md)）
+- 优先认领 `good first issue` 或 `help wanted`
 - 在 Issue 下留言「我来做」
 
 ### 2. 开发规范
-- 遵循 [AGENTS.md](AGENTS.md) 的 TDD + 验证纪律
+- 遵循 [AGENTS.md](AGENTS.md) 的验证纪律
 - 新功能先写测试 → 最小实现 → 重跑测试
-- 提交前运行 `npm run lint && npm test`
+- 提交前运行相关测试与 `npm run lint`
 
 ### 3. 提交 PR
 - Fork → 创建分支 → 开发 → 提交 PR
-- PR 描述需包含：功能说明、测试截图、回滚方案
+- PR 描述需包含：功能说明、如何验收、回滚方案
 - 等待 Code Review 后合并
 
 ### 4. 贡献类型
-- 🐛 Bug 修复
-- ✨ 新功能（需先开 Issue 讨论）
-- 📝 文档改进
-- 🎨 UI/UX 优化
-- 🧪 测试覆盖
-- 🌍 国际化
+- Bug 修复
+- 新功能（需先开 Issue 讨论）
+- 文档改进
+- UI/UX 优化
+- 测试覆盖
 
 ---
 
@@ -141,35 +140,21 @@ npx vitest run -t "pattern" # 按名称过滤
 ```
 
 **测试覆盖要求**：
-- 新功能 ≥ 80% 覆盖率
+- 新功能先补回归测试
 - Bug 修复必须有回归测试
 - UI 交互需用 `@testing-library/react`
 
 ---
 
-## 八、发布流程
-
-1. 更新 `CHANGELOG.md`
-2. 打 tag：`git tag v0.2.0`
-3. 推送到 GitHub：`git push --tags`
-4. GitHub Actions 自动构建并发布 Release
-
----
-
-## 九、社区与支持
+## 八、社区与支持
 
 - **GitHub Issues**：用模板选 Bug / 功能建议 / 使用意见
-- **GitHub Discussions**：方向讨论（开启后把「征求意见」置顶）
-- **开发者群**：只聊意见与 PR，见 `docs/私域/开发者群运营手册.md`
-- **用户群**：导入出图，开发者不要把用户群当论坛
+- **GitHub Discussions**：方向讨论（若已开启）
+
+不要把真实学生名单、密钥或本机部署细节提交进仓库。
 
 ---
 
-## 十、License
+## 九、License
 
 GNU AGPL v3 only — 详见 [LICENSE](LICENSE) 与 [docs/开源与收费边界.md](docs/开源与收费边界.md)
-
----
-
-**维护者**：蹭饭图团队  
-**更新**：2026-08-15

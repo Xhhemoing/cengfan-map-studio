@@ -1,97 +1,37 @@
-# 蹭饭图 · 服务器部署与 API 配置
+# 自建部署
 
-> 部署目标:121.5.16.236 (hermes) · Ubuntu 24.04 · Node v24.18.0
-> 项目路径:`/home/ubuntu/work/蹭饭图` · 服务端口:`8787`
+默认用法是本机 `npm run dev`，或 `npm run build` 后 `npm run start`。把改过的版本作为网络服务提供给他人时，须遵守 [AGPL-3.0-only](LICENSE)，向使用者提供对应源码。
 
-## 一、当前运行状态(2026-08-07)
+生产环境变量与 AI 运行时契约见 [docs/deployment/ai-production.md](docs/deployment/ai-production.md)。密钥只放在服务器上的 `.env`，不要写进仓库。
 
-| 项目 | 状态 |
-|---|---|
-| 代码版本 | `b350c5f`(GitHub main,已同步) |
-| 依赖 | `npm ci` 全新安装,0 漏洞,xlsx 0.20.3 |
-| 构建 | `npm run build` 成功(前端 + API 同服务) |
-| 服务 | systemd 用户服务 `cengfan-8787`,enabled + linger |
-| 探针 | `/api/live` 200 · `/api/ready` 200 · `/api/health` 200 |
-| AI | 远程 key **已耗尽**(需更换),自动回退本地规则 |
-
-## 二、API 配置(关键!)
-
-编辑 `/home/ubuntu/work/蹭饭图/.env`:
+## 构建与启动
 
 ```bash
-cd /home/ubuntu/work/蹭饭图 && nano .env
+npm ci
+npm run build
+NODE_ENV=production npm run start
 ```
 
-### 1. 更换有效的 AI 密钥(当前失效)
+健康检查：
 
-```env
-AI_API_KEY=sk-你的新密钥
-AI_BASE_URL=https://api.deepseek.com/v1        # 或你的 OpenAI 兼容端点
-AI_MODEL=deepseek-chat
-```
+- `GET /api/live`：进程能处理 HTTP 请求
+- `GET /api/ready`：配置有效且服务未进入 draining
+- `GET /api/health`：兼容摘要，不含密钥、prompt 或上游响应
 
-> 也支持多级配置:`AI_PRIMARY_*`(主模型)、`AI_FALLBACK_*`(备选)。
-> 只填 `AI_API_KEY` 时 agent 主模型会自动回退到它。
+## 环境变量
 
-### 2. 生产必填项(已配置,一般不用动)
+复制 `.env.example` 为 `.env`。生产环境至少需要：
 
-```env
-NODE_ENV=production
-AI_BUDGET_RECEIPT_SECRET=<已生成40字符随机串>   # 会话回执签名,重启后续聊有效
-AI_PUBLIC_ACCESS=1                            # 1=允许无 token 的公网 AI 请求
-TRUST_PROXY=0                                 # 未用反向代理保持 0
-DATA_DIR=.data
-SHUTDOWN_TIMEOUT_MS=10000
-```
+- `AI_BUDGET_RECEIPT_SECRET`：不少于 32 个字符
+- 配置远程模型时设置 `WORKSPACE_API_TOKEN`，或明确 `AI_PUBLIC_ACCESS=1`
+- `DATA_DIR` 建议指向持久目录（默认 `.data`，已在 `.gitignore`）
 
-### 3. 管理后台(可选)
+可选：`WORKSPACE_API_TOKEN` 保护 `/api/workspace` 读写。设置后请求需带 `Authorization: Bearer <token>`。
 
-管理员用户名/密码在 `/home/ubuntu/.config/cengfan/admin.env`:
+不要把真实 API key、管理员密码或公网 IP 写进文档或提交进 Git。
 
-```env
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=<你的密码>
-```
+## 进程托管
 
-后台页面 `http://<IP>:8787/admin`,访问统计 `GET /api/admin/visits`。
+可用 systemd 用户服务或其他进程管理器托管 `npm run start`。unit 文件里的路径按本机安装位置编写，不要把机器专属路径提交回本仓库。
 
-### 4. 工作区 API token(可选,保护 /api/workspace 读写)
-
-```env
-WORKSPACE_API_TOKEN=<随机长字符串>
-```
-
-> 注意:设置后 `GET/PUT /api/workspace` 需要 `Authorization: Bearer <token>`。
-> `AI_PUBLIC_ACCESS=1` 时 AI 端点不要求此 token。
-
-### 5. 修改后重启
-
-```bash
-systemctl --user restart cengfan-8787
-journalctl --user -u cengfan-8787 -n 20     # 查看日志
-```
-
-## 三、日常运维
-
-```bash
-# 查看状态
-systemctl --user status cengfan-8787
-curl http://127.0.0.1:8787/api/health
-
-# 更新代码(服务器可直连 npm,但 GitHub 直连不稳,从本地打包上传)
-# 本地: tar czf /tmp/deploy.tgz --exclude=node_modules --exclude=.git --exclude=.data .
-# 服务器: tar xzf deploy.tgz && npm ci && npm run build && systemctl --user restart cengfan-8787
-
-# 备份数据(房间/访问统计/工作区/回执)
-tar czf ~/backups/cengfan-data-$(date +%F).tgz /home/ubuntu/work/蹭饭图/.data
-
-# 回滚: 恢复到上一个构建
-# git checkout <上一版本> && npm ci && npm run build && systemctl --user restart cengfan-8787
-```
-
-## 四、已知边界
-
-- **单实例部署契约**:`ai-runtime-state.json` 只支持一个写实例,不要开多个副本。
-- 协作房间是进程内内存,空闲 30 分钟过期;重启会丢失未保存的房间。
-- 当前服务器内存仅 1.9G,构建和运行已够用,但勿同时跑多个重型服务。
-- 公网直连 8787(无 HTTPS、无反向代理)。如需 HTTPS 建议加 Caddy/Nginx 反代。
+协作房间保存在进程内存中，空闲约 30 分钟过期，重启会丢失未保存的房间。AI 状态文件只支持一个写实例。
