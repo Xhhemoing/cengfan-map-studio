@@ -1,5 +1,7 @@
 # 蹭饭图 · 服务器部署与 API 配置
 
+> 若只想给大家打开编辑器参观：用静态站（Cloudflare Pages / GitHub Pages），见 [docs/deployment/public-demo.md](docs/deployment/public-demo.md)。本文是带 Node API 的 VPS 部署。
+
 > 部署目标:121.5.16.236 (hermes) · Ubuntu 24.04 · Node v24.18.0
 > 项目路径:`/home/ubuntu/work/蹭饭图` · 服务端口:`8787`
 

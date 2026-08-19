@@ -28,6 +28,16 @@ describe("collaboration client", () => {
     });
   });
 
+  it("explains a missing JSON API on static hosts instead of throwing a parse error", async () => {
+    const request = vi.fn(() => Promise.resolve(new Response("<!doctype html>", {
+      status: 404,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    })));
+    await expect(createRoom({ clientId: "c1", displayName: "创建者", request })).rejects.toMatchObject({
+      code: "API_UNAVAILABLE",
+    });
+  });
+
   it("creates an initializing room without serializing an initial snapshot", async () => {
     const request = vi.fn(() => ok({ room: { id: "FAST01", version: 0, ready: false }, access: { accessToken: "owner-token" } }, 201));
 

@@ -1,3 +1,4 @@
+import { copyFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 
 function run(command, args) {
@@ -14,6 +15,8 @@ function run(command, args) {
 try {
   await run("tsc", ["-b"]);
   await run("vite", ["build"]);
+  // GitHub Pages serves 404.html for unknown paths such as /prototype.
+  await copyFile("dist/index.html", "dist/404.html");
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;

@@ -6,11 +6,15 @@ import { createMemoryProjectStore, createSampleProject } from "../lib/project-st
 import { serializeProjectPackage } from "../lib/project-package";
 
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
-function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, navigate = vi.fn()) {
+function renderWorkbench(
+  store: ReturnType<typeof createMemoryProjectStore>,
+  navigate = vi.fn(),
+  options: { publicDemo?: boolean } = {},
+) {
   const container = document.createElement("div");
   const root = createRoot(container);
   roots.push({ root, container });
-  flushSync(() => root.render(<ProjectWorkbench store={store} navigate={navigate} />));
+  flushSync(() => root.render(<ProjectWorkbench store={store} navigate={navigate} publicDemo={options.publicDemo} />));
   return { container, navigate };
 }
 
@@ -39,6 +43,15 @@ describe("ProjectWorkbench", () => {
     const { container } = renderWorkbench(store);
     await vi.waitFor(() => expect(container.textContent).toContain("示例：2026届毕业去向"));
     expect(await store.list()).toHaveLength(1);
+  });
+
+  it("explains the static demo limits when publicDemo is on", async () => {
+    const store = createMemoryProjectStore();
+    const { container } = renderWorkbench(store, vi.fn(), { publicDemo: true });
+    await vi.waitFor(() => expect(container.querySelector(".workbench-notice")).not.toBeNull());
+    expect(container.querySelector(".workbench-notice")?.textContent).toContain("公开演示站");
+    expect(container.querySelector(".workbench-notice a")?.getAttribute("href")).toContain("cengfan-map-studio");
+    expect(container.querySelector(".workbench-notice a")?.getAttribute("target")).toBe("_blank");
   });
 
   it("renders existing projects as cards", async () => {
