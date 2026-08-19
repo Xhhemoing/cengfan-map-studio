@@ -1,4 +1,5 @@
 import type { CollaborationOperation } from "./collaboration-operations";
+import { STATIC_HOST_API_HINT } from "./public-base-path";
 
 export type CollaborationRole = "owner" | "editor" | "viewer";
 
@@ -86,7 +87,16 @@ function roomTokenHeaders(accessToken: string, headers: Record<string, string> =
 
 async function jsonRequest<T>(request: Promise<Response>): Promise<T> {
   const response = await request;
-  const body = await response.json() as { error?: { code?: string; message?: string; currentVersion?: number } } & T;
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType && !contentType.includes("application/json")) {
+    throw new CollaborationClientError("API_UNAVAILABLE", STATIC_HOST_API_HINT);
+  }
+  let body: { error?: { code?: string; message?: string; currentVersion?: number } } & T;
+  try {
+    body = await response.json() as typeof body;
+  } catch {
+    throw new CollaborationClientError("API_UNAVAILABLE", STATIC_HOST_API_HINT);
+  }
   if (!response.ok) {
     throw new CollaborationClientError(body.error?.code ?? "REQUEST_FAILED", body.error?.message ?? "协作请求失败", body.error?.currentVersion);
   }

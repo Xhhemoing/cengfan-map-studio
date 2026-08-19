@@ -3,6 +3,7 @@ import { createEmptyProject, createSampleProject, duplicateStoredProject, type P
 import { downloadProjectPackage, parseProjectPackage, projectPackageDisplayName } from "../lib/project-package";
 import { createId } from "../lib/ids";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
+import { isPublicDemoBuild, PROJECT_SOURCE_URL } from "../lib/public-base-path";
 import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
@@ -11,6 +12,7 @@ import { ContinueEditingCard } from "./workbench/ContinueEditingCard";
 interface ProjectWorkbenchProps {
   store: ProjectStore;
   navigate?: (hash: string) => void;
+  publicDemo?: boolean;
 }
 
 function formatUpdatedAt(value: string): string {
@@ -24,7 +26,7 @@ function formatUpdatedAt(value: string): string {
     : new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 }
 
-export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
+export function ProjectWorkbench({ store, navigate, publicDemo = isPublicDemoBuild() }: ProjectWorkbenchProps) {
   const go = navigate ?? ((hash: string) => { window.location.hash = hash; });
   const [projects, setProjects] = useState<StoredProject[]>([]);
   const [loading, setLoading] = useState(true);
@@ -187,6 +189,14 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       data-editor-theme={resolvedTheme}
     >
       <WorkbenchHeader importInputRef={importInputRef} onCreateProject={() => void createProject()} onImportProject={(file) => void importProject(file)} />
+
+      {publicDemo && (
+        <section className="workbench-notice" role="note">
+          这是公开演示站：导入、排版、导出都在你的浏览器完成，名单不会上传。协作房间和智能助手需要自建 Node API，本站未开启。
+          {" "}
+          <a href={PROJECT_SOURCE_URL} rel="noopener noreferrer" target="_blank">源码（AGPL-3.0）</a>
+        </section>
+      )}
 
       {error && <section className="workbench-error" role="alert">{error}</section>}
 

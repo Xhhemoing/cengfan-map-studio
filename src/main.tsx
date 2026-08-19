@@ -7,6 +7,7 @@ import { ProjectWorkbench } from "./components/ProjectWorkbench";
 import { StudioMuiProvider } from "./components/StudioMuiProvider";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { createIndexedDbProjectStore } from "./lib/project-store";
+import { isPrototypePath } from "./lib/public-base-path";
 import "./styles.css";
 
 export const workbenchStore = createIndexedDbProjectStore();
@@ -37,7 +38,7 @@ function renderView(container: HTMLElement, view: ReactElement) {
 
 export function renderApp(container: HTMLElement): void {
   const render = () => {
-    if (window.location.pathname === "/prototype") {
+    if (isPrototypePath(window.location.pathname)) {
       renderView(container, <WorkflowPrototype />);
       return;
     }
