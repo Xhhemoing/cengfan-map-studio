@@ -7,7 +7,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
 
 export default defineConfig([
   {
-    ignores: ["dist/**", "node_modules/**", ".superpowers/**", "graphify-out/**"],
+    ignores: ["dist/**", "node_modules/**", ".superpowers/**", ".learnings/**", ".pi/**", "graphify-out/**"],
   },
   {
     files: ["src/**/*.{ts,tsx}", "server/**/*.{ts,tsx}"],

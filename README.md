@@ -8,7 +8,7 @@
 打开仓库即可看样例：下面这张图就是内置示例项目导出的成品（虚构姓名，已脱敏）。本机 `npm run dev` 后点开「示例：2026届毕业去向」，看到的是同一张图。
 
 <p align="center">
-  <img src="docs/宣发草稿/配图/07-成品图-导出.png" alt="示例成品：我们的毕业去向图" width="920">
+  <img src="docs/screenshots/07-成品图-导出.png" alt="示例成品：我们的毕业去向图" width="920">
 </p>
 
 <p align="center">
@@ -31,10 +31,10 @@
 
 | 工作台（首次打开即有示例项目） | 导入名单 → 自动匹配省份 |
 | --- | --- |
-| <img src="docs/宣发草稿/配图/01-工作台首页.png" alt="项目工作台，已放入示例：2026届毕业去向" width="440"> | <img src="docs/宣发草稿/配图/02-数据与素材-学生名单.png" alt="数据与素材：12 条示例名单" width="440"> |
+| <img src="docs/screenshots/01-工作台首页.png" alt="项目工作台，已放入示例：2026届毕业去向" width="440"> | <img src="docs/screenshots/02-数据与素材-学生名单.png" alt="数据与素材：12 条示例名单" width="440"> |
 
 <p align="center">
-  <img src="docs/宣发草稿/配图/06-最终导出.png" alt="编辑器：画布预览与 PNG / SVG / 工程包导出" width="920">
+  <img src="docs/screenshots/06-最终导出.png" alt="编辑器：画布预览与 PNG / SVG / 工程包导出" width="920">
 </p>
 
 <p align="center"><sub>从左到右：工作台 → 名单 → 画布微调 → 导出 PNG / SVG / <code>.cengfan</code> 工程包。</sub></p>
@@ -69,8 +69,6 @@ npm run dev
 
 用自己的名单：Excel / CSV 至少三列 **姓名、去向、省份**（或城市）。新建项目 → 导入表格 → 微调重叠卡片 → 导出。逐步说明见 [USER_GUIDE.md](USER_GUIDE.md)。
 
-国内克隆若 GitHub 不稳定，见 [Gitee 镜像清单](docs/宣发/Gitee镜像清单.md)。
-
 ---
 
 ## 功能
@@ -94,8 +92,6 @@ npm run dev
 - 改代码、文档、模板：[CONTRIBUTING.md](CONTRIBUTING.md)
 - 开发约定：[AGENTS.md](AGENTS.md) · [DEVELOPER.md](DEVELOPER.md)
 
-Star 是结果，不是请求。更有用的是一条真实意见。
-
 ---
 
 ## 技术栈
@@ -110,5 +106,3 @@ React 19 + Vite + TypeScript + MUI + d3-geo。内嵌 Node API 只服务本机开
 - **收费**：本仓库不含支付。以后若有社区模板手续费，由班级自愿支付；不做学校统付、不做印刷生意。见 [docs/开源与收费边界.md](docs/开源与收费边界.md)。
 - **隐私**：示例已脱敏。开启「智能识别名单」才会把文本发给已配置的大模型。
 - **内容**：禁止真实姓名 + 具体去向同框；禁止宣称升学率、就业率、录取率。
-
-维护宣发日历（不是使用者必读）：[docs/宣发/国内互联网宣发总流程.md](docs/宣发/国内互联网宣发总流程.md)。

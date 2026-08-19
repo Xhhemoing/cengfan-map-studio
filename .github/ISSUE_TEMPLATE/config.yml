@@ -2,10 +2,7 @@ blank_issues_enabled: true
 contact_links:
   - name: 我是班主任 / 班委（使用问题）
     url: https://github.com/Xhhemoing/cengfan-map-studio/blob/main/USER_GUIDE.md
-    about: 先看用户指南；导入和出图请走用户群，不要在这里问 npm 命令。
+    about: 先看用户指南；不要在 Issue 里粘贴真实学生名单。
   - name: 想先看怎么贡献
     url: https://github.com/Xhhemoing/cengfan-map-studio/blob/main/CONTRIBUTING.md
     about: 文档、模板、代码与提意见的分流。
-  - name: 宣发与征求意见说明
-    url: https://github.com/Xhhemoing/cengfan-map-studio/blob/main/docs/宣发/反馈收集SOP.md
-    about: 我们如何回复意见、以及置顶征求意见帖该问什么。

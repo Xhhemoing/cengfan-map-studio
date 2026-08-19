@@ -19,10 +19,7 @@
     "data:sync:china-universities": "node scripts/sync-china-universities.mjs",
     "preview": "npm run start",
     "check": "npm run lint && npm run security:audit",
-    "data:sync:china-university-emblems": "node scripts/sync-china-university-emblems.mjs",
-    "promo:check": "node scripts/宣发流程-素材检查.mjs",
-    "promo:content": "node scripts/宣发流程-内容生成.mjs",
-    "promo:report": "node scripts/宣发流程-数据收集.mjs --report"
+    "data:sync:china-university-emblems": "node scripts/sync-china-university-emblems.mjs"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

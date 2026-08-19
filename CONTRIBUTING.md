@@ -4,22 +4,22 @@
 
 | 我是 | 请去 | 不要去 |
 |------|------|--------|
-| 班主任 / 班委 / 想出图 | [用户指南](USER_GUIDE.md)、用户群、[反馈问卷流程](docs/宣发/反馈收集SOP.md) | 直接开 PR |
-| 想提产品意见的开发者 | [Issue 模板](https://github.com/Xhhemoing/cengfan-map-studio/issues/new/choose)、[征求意见 SOP](docs/宣发/反馈收集SOP.md) | 用户群里问安装 |
+| 班主任 / 班委 / 想出图 | [用户指南](USER_GUIDE.md)、[Issue 模板](https://github.com/Xhhemoing/cengfan-map-studio/issues/new/choose) | 直接开 PR |
+| 想提产品意见的开发者 | [Issue 模板](https://github.com/Xhhemoing/cengfan-map-studio/issues/new/choose) | 把真实名单贴进 Issue |
 | 想改代码 / 文档 / 模板 | 下面「开发流程」 | 不经 Issue 直接做大功能 |
 
-国内克隆见 [Gitee 镜像清单](docs/宣发/Gitee镜像清单.md)。开发约定见 [AGENTS.md](AGENTS.md)。模块说明见 [DEVELOPER.md](DEVELOPER.md)。
+开发约定见 [AGENTS.md](AGENTS.md)。模块说明见 [DEVELOPER.md](DEVELOPER.md)。
 
 ---
 
 ## 什么样的贡献都算
 
 - 使用后留下一句真实劝退点（导入 / 布局 / 导出）
-- 文档、案例模板、脱敏示例、宣发配图步骤
+- 文档、案例模板、脱敏示例
 - Bug 修复、测试、性能、UI
 - 新功能：**先开 Issue 讨论**，避免做完无法合并
 
-标了 `good first issue` 的任务按设计应能在一个晚上做完。候选列表：[docs/宣发/good-first-issues.md](docs/宣发/good-first-issues.md)。
+标了 `good first issue` 的任务按设计应能在一个晚上做完。
 
 ---
 
@@ -64,7 +64,8 @@ npm run lint
 ## 行为
 
 - 不贬低学校、学生或去向。
-- 不在仓库里提交真实名单。
+- 不在仓库里提交真实名单、密钥、服务器地址或本机路径。
+- 不把宣发投放、合同话术、群运营手册放进本仓库。
 - 代码与文档默认中文用户可读；标识符保持现有英文风格。
 
 维护者会对「不做」的建议写明原因。这不是冷漠，是为了让你下次还愿意提。
