@@ -3,6 +3,15 @@ import type { WorkflowStageId } from "./workflow-stages";
 export const WORKSPACE_SESSION_STORAGE_KEY = "cengfan-map-studio:workspace-session";
 export const LEGACY_EDITOR_STORAGE_KEY = "cengfan-legacy-editor";
 
+/**
+ * 阶段等会话状态按项目隔离：项目模式使用 `…:project:<id>`，
+ * 无项目 id 的独立编辑器沿用全局 key。新项目没有会话记录，
+ * 因此自然落在默认的 `data` 阶段。
+ */
+export function workspaceSessionStorageKey(projectId?: string | null): string {
+  return projectId ? `${WORKSPACE_SESSION_STORAGE_KEY}:project:${projectId}` : WORKSPACE_SESSION_STORAGE_KEY;
+}
+
 export interface WorkspaceSession {
   stage: WorkflowStageId;
   selectedProvince?: string;

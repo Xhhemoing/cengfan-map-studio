@@ -58,7 +58,10 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
     <label htmlFor={`map-${key}`}>{label}
       <DeferredInput id={`map-${key}`} type="number" min={min} max={max} step={step} value={value} onCommit={(draft) => {
         const next = Number(draft);
-        if (Number.isFinite(next) && next >= min && next <= max) onPatch({ [key]: next });
+        if (!Number.isFinite(next) || draft.trim() === "") return;
+        // 与 RangeNumberControl 一致：越界输入钳制到 min/max 后提交，而不是静默忽略。
+        const clamped = Math.min(max, Math.max(min, next));
+        if (clamped !== value) onPatch({ [key]: clamped });
       }} />
     </label>
   );
@@ -366,7 +369,9 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
             value={map.edgeWidth ?? 1}
             onCommit={(draft) => {
               const next = Number(draft);
-              if (Number.isFinite(next) && next >= 0 && next <= 20) onPatch({ edgeWidth: next });
+              if (!Number.isFinite(next) || draft.trim() === "") return;
+              const clamped = Math.min(20, Math.max(0, next));
+              if (clamped !== (map.edgeWidth ?? 1)) onPatch({ edgeWidth: clamped });
             }}
           />
         </label>
@@ -393,12 +398,16 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
       <label htmlFor="map-render-source">地图显示
         <select id="map-render-source" value={renderSource.kind} onChange={(event) => {
           if (event.target.value === "vector") onPatch({ renderSource: { kind: "vector" } });
-          else if (renderSource.kind !== "image") onPatch({ renderSource: { kind: "vector" } });
         }}>
           <option value="vector">原始矢量地图</option>
-          <option value="image">上传图片地图</option>
+          <option value="image" disabled={!isImageSource(renderSource)}>
+            {isImageSource(renderSource) ? "上传图片地图" : "上传图片地图（请先上传图片）"}
+          </option>
         </select>
       </label>
+      {!isImageSource(renderSource) && (
+        <p className="property-panel__hint">尚未上传图片地图：请先在下方「上传 / 替换地图图片」中选择图片，上传后会自动切换为图片地图。</p>
+      )}
       <FileDropzone
         id="map-image-upload"
         label="上传 / 替换地图图片"
@@ -442,15 +451,16 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
             </select>
           </label>
           <label htmlFor="map-image-opacity">图片透明度
-            <DeferredInput
+            <input
               id="map-image-opacity"
               type="range"
               min="0"
               max="1"
               step="0.05"
               value={renderSource.opacity}
-              onCommit={(opacity) => patchImage({ opacity: Number(opacity) })}
+              onChange={(event) => patchImage({ opacity: Number(event.target.value) })}
             />
+            <output htmlFor="map-image-opacity">{Math.round(renderSource.opacity * 100)}%</output>
           </label>
           </>}
           {showPlacement && renderSource.alignment && (

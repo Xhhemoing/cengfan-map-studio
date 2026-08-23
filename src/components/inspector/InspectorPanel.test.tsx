@@ -43,12 +43,17 @@ describe("InspectorPanel", () => {
     const source = container.querySelector("#map-render-source") as HTMLSelectElement;
     expect(source.value).toBe("vector");
     expect(container.querySelector(".province-style-list")).toBeNull();
+    // 未上传图片时「上传图片地图」不可选，不再出现“选中立即弹回”的静默行为。
+    const imageOption = source.querySelector('option[value="image"]') as HTMLOptionElement;
+    expect(imageOption.disabled).toBe(true);
+    expect(imageOption.textContent).toContain("请先上传图片");
+    onPatch.mockClear();
     const sourceSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
     flushSync(() => {
       sourceSetter?.call(source, "image");
       source.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    expect(onPatch).toHaveBeenCalledWith({ type: "map" }, { renderSource: { kind: "vector" } });
+    expect(onPatch).not.toHaveBeenCalled();
 
     flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "cards" }} onPatch={onPatch} onReset={vi.fn()} />));
     expect(container.textContent).toContain("卡片属性");

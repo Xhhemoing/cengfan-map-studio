@@ -23,6 +23,8 @@ export interface LayoutHealthObject {
   id: string;
   kind: "card" | "asset" | "text" | "guests" | "map" | "canvas";
   bounds: LayoutHealthBounds;
+  /** 面向用户的中文名；缺省时 detail 文案退回内部 id。 */
+  label?: string;
   visible?: boolean;
   zIndex?: number;
   positionKey?: string;
@@ -140,6 +142,10 @@ function connectorConflict(left: LayoutHealthConnector, right: LayoutHealthConne
   return left.segments.some((leftSegment) => right.segments.some((rightSegment) => segmentsIntersect(leftSegment, rightSegment)));
 }
 
+function displayName(object: LayoutHealthObject): string {
+  return object.label ?? object.id;
+}
+
 export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[] {
   const issues: LayoutHealthIssue[] = [];
   const visibleObjects = input.objects
@@ -152,14 +158,14 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         id: object.id,
         kind: "out-of-bounds",
         severity: "error",
-        detail: `${object.id} 超出画布边界`,
+        detail: `${displayName(object)} 超出画布边界`,
       });
     } else if (outsideSafeArea(bounds, input.canvas)) {
       issues.push({
         id: object.id,
         kind: "overflow",
         severity: "warning",
-        detail: `${object.id} 超出画布安全边距`,
+        detail: `${displayName(object)} 超出画布安全边距`,
       });
     }
     if (hasLowContrast(object)) {
@@ -167,7 +173,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         id: object.id,
         kind: "unreadable-text",
         severity: "warning",
-        detail: `${object.id} 的文字与背景对比度不足`,
+        detail: `${displayName(object)} 的文字与背景对比度不足`,
       });
     }
   }
@@ -182,11 +188,14 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
       if (leftZ === rightZ) continue;
       const back = leftZ < rightZ ? left.object : right.object;
       const front = leftZ < rightZ ? right.object : left.object;
+      // 地图是海报的基底层：标题、统计、卡片等元素按模板设计本就叠放在
+      // 地图之上，不构成遮挡问题；只有地图反过来盖住其他元素才需要提醒。
+      if (back.kind === "map") continue;
       issues.push({
         id: `${back.id}:${front.id}`,
         kind: "occlusion",
         severity: "warning",
-        detail: `${front.id} 遮挡了 ${back.id}`,
+        detail: `${displayName(front)} 遮挡了 ${displayName(back)}`,
       });
     }
   }

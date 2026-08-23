@@ -42,6 +42,7 @@ import {
 } from "./lib/project-data";
 import { createId } from "./lib/ids";
 import { editorProjectStore } from "./lib/editor-project-store";
+import { createEmptyProject, type StoredProject } from "./lib/project-store";
 
 import { AssistantConversationProvider } from "./components/AgentAssistant";
 import { ProjectMenu } from "./components/ProjectMenu";
@@ -71,10 +72,11 @@ import {
 } from "./lib/workflow-stages";
 import { deriveStageOverviewModel, type StageOverviewAction } from "./lib/stage-overview";
 import { STAGE_METADATA } from "./lib/stage-metadata";
-import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
+import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession, workspaceSessionStorageKey } from "./lib/workspace-session";
 import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { SkinSelector } from "./components/SkinSelector";
+import { StatusToast } from "./components/StatusToast";
 import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
 import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
 import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
@@ -198,9 +200,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
   const [previewCommands, setPreviewCommands] = useState<EditorCommand[]>([]);
   const [agentPreview, setAgentPreview] = useState<ProjectDocument | null>(null);
-  const [workspaceSession] = useState(() => typeof window === "undefined"
+  // 会话（阶段等）按项目 id 隔离存储：打开项目 A 不会落在项目 B 的阶段，
+  // 新项目没有会话记录，自然从默认的「数据与素材」阶段开始。
+  const [workspaceSession, setWorkspaceSession] = useState(() => typeof window === "undefined"
     ? loadWorkspaceSession(null)
-    : loadBrowserValue(() => loadWorkspaceSession(window.localStorage), loadWorkspaceSession(null)));
+    : loadBrowserValue(() => loadWorkspaceSession(window.localStorage, workspaceSessionStorageKey(projectId)), loadWorkspaceSession(null)));
   const [selection, setSelection] = useState<SceneSelection>(() => {
     if (workspaceSession.selectedProvince) return { type: "province", province: workspaceSession.selectedProvince };
     if (workspaceSession.selectedObject === "cards") return { type: "cards" };
@@ -219,15 +223,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
   const [projectMissing, setProjectMissing] = useState(false);
   const [projectLoading, setProjectLoading] = useState(() => Boolean(projectId));
-  // projectId 变更(如浏览器前进/后退直达另一项目)时,在渲染期同步重置加载/缺失状态,
-  // 让加载壳在 get() 完成前一直显示,避免旧项目数据被编辑后误存到新项目记录。
-  // 该 setState 位于渲染期(非 effect 内),是 React 文档认可的"根据先前渲染调整状态"模式。
-  const [prevProjectId, setPrevProjectId] = useState(projectId);
-  if (prevProjectId !== projectId) {
-    setPrevProjectId(projectId);
-    setProjectLoading(Boolean(projectId));
-    setProjectMissing(false);
-  }
   const [userFonts, setUserFonts] = useState<UserFont[]>(() =>
     initialWorkspace?.fonts ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserFonts(), [])),
   );
@@ -305,6 +300,25 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [legacyEditorEnabled] = useState(() => typeof window !== "undefined"
     && loadBrowserValue(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false));
   const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => legacyEditorEnabled ? "content" : workspaceSession.stage);
+  // projectId 变更(如浏览器前进/后退直达另一项目、项目菜单新建项目跳转)时,
+  // 在渲染期同步重置加载/缺失状态,让加载壳在 get() 完成前一直显示,
+  // 避免旧项目数据被编辑后误存到新项目记录;同时按新项目 id 重新载入会话,
+  // 使阶段回到该项目自己保存的位置(新项目没有会话记录,回到「数据与素材」)。
+  // 该 setState 位于渲染期(非 effect 内),是 React 文档认可的"根据先前渲染调整状态"模式。
+  const [prevProjectId, setPrevProjectId] = useState(projectId);
+  if (prevProjectId !== projectId) {
+    setPrevProjectId(projectId);
+    setProjectLoading(Boolean(projectId));
+    setProjectMissing(false);
+    const nextSession = typeof window === "undefined"
+      ? loadWorkspaceSession(null)
+      : loadBrowserValue(() => loadWorkspaceSession(window.localStorage, workspaceSessionStorageKey(projectId)), loadWorkspaceSession(null));
+    setWorkspaceSession(nextSession);
+    if (!legacyEditorEnabled) {
+      setActiveStage(nextSession.stage);
+      setActivePanel(WORKFLOW_STAGE_TO_LEGACY_PANEL[nextSession.stage] ?? "roster");
+    }
+  }
   const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "data" ? "content" : activeStage);
   const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
   const assistantEntryRef = useRef<HTMLButtonElement>(null);
@@ -332,8 +346,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
       ...(selectedProvince ? { selectedProvince } : {}),
       ...(selectedObject ? { selectedObject } : {}),
       savedAt: new Date().toISOString(),
-    });
-  }, [activeStage, selection, workspaceSession]);
+    }, workspaceSessionStorageKey(projectId));
+  }, [activeStage, projectId, selection, workspaceSession]);
   const dataHealth = useMemo(() => buildDataHealthSummary(project), [project]);
   const dataIssues = useMemo(() => listDataIssues(project), [project]);
   const exportWarnings = useMemo(() => listStudentWarnings(project), [project]);
@@ -989,27 +1003,36 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setActivePanel(location.stage === "frame" ? "layout" : location.stage === "map" ? "map" : "content");
   };
 
-  const contentLayoutIssues = useMemo(() => checkLayoutHealth({
-    canvas: { width: project.canvas.width, height: project.canvas.height, safeMargin: project.canvas.safeMargin },
-    cardsPositions: project.cards.positions,
-    objects: [
-      { id: "map", kind: "map", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
-      ...Object.keys(project.cards.positions ?? {}).map((id) => ({ id, kind: "card" as const, positionKey: id, zIndex: project.cards.zIndex, bounds: { x: 0, y: 0, width: project.cards.maxWidth, height: 180 } })),
-      ...(Object.keys(project.cards.positions ?? {}).length === 0 ? [{ id: "cards", kind: "card" as const, zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } }] : []),
-      ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
-      ...project.textElements.map((text) => ({
-        id: text.id,
-        kind: "text" as const,
-        zIndex: 40,
-        bounds: { x: text.textAlign === "right" ? text.x - text.maxWidth : text.textAlign === "center" ? text.x - text.maxWidth / 2 : text.x, y: text.y - text.fontSize, width: text.maxWidth, height: text.fontSize * 1.3 },
-        visible: text.visibility,
-        content: text.content,
-        textColor: text.color,
-        backgroundColor: project.canvas.backgroundColor,
-      })),
-      ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
-    ],
-  }), [project]);
+  const contentLayoutIssues = useMemo(() => {
+    const textElementLabel = (text: { id: string; content: string }) => {
+      const target = STYLE_LAYER_TARGETS.find((item) => item.type === "text" && item.id === text.id);
+      if (target) return target.label;
+      const content = text.content.trim();
+      return content ? `文本「${content.length > 8 ? `${content.slice(0, 8)}…` : content}」` : "文本";
+    };
+    return checkLayoutHealth({
+      canvas: { width: project.canvas.width, height: project.canvas.height, safeMargin: project.canvas.safeMargin },
+      cardsPositions: project.cards.positions,
+      objects: [
+        { id: "map", kind: "map", label: "地图", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
+        ...Object.keys(project.cards.positions ?? {}).map((id) => ({ id, kind: "card" as const, label: `数据卡片「${id}」`, positionKey: id, zIndex: project.cards.zIndex, bounds: { x: 0, y: 0, width: project.cards.maxWidth, height: 180 } })),
+        ...(Object.keys(project.cards.positions ?? {}).length === 0 ? [{ id: "cards", kind: "card" as const, label: "数据卡片", zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } }] : []),
+        ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, label: "特邀嘉宾", zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
+        ...project.textElements.map((text) => ({
+          id: text.id,
+          kind: "text" as const,
+          label: textElementLabel(text),
+          zIndex: 40,
+          bounds: { x: text.textAlign === "right" ? text.x - text.maxWidth : text.textAlign === "center" ? text.x - text.maxWidth / 2 : text.x, y: text.y - text.fontSize, width: text.maxWidth, height: text.fontSize * 1.3 },
+          visible: text.visibility,
+          content: text.content,
+          textColor: text.color,
+          backgroundColor: project.canvas.backgroundColor,
+        })),
+        ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, label: asset.label ? `素材「${asset.label}」` : "素材", zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
+      ],
+    });
+  }, [project]);
 
   const handleLegacySceneSelect = (next: SceneSelection) => {
     handleSceneSelect(next);
@@ -1179,7 +1202,27 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setStatusMessage(`已保存模板：${record.name}`);
   };
 
+  // 项目模式：先保存当前项目，再写入新记录并跳转；当前项目内容保持不变。
+  const saveCurrentThenOpenProjectRecord = async (record: StoredProject) => {
+    if (!projectLifecycleRef.current.loading && !projectLifecycleRef.current.missing) {
+      await saveWorkspaceNow();
+    }
+    await editorProjectStore.put(record);
+    window.location.hash = `#/project/${encodeURIComponent(record.id)}`;
+  };
+
   const createNewProject = () => {
+    if (projectId) {
+      if (!window.confirm("将新建一个空白项目并跳转过去；当前项目会先保存且保持不变。是否继续？")) return;
+      void (async () => {
+        try {
+          await saveCurrentThenOpenProjectRecord(createEmptyProject());
+        } catch (error) {
+          setStatusMessage(error instanceof Error ? `新建项目失败：${error.message}` : "新建项目失败");
+        }
+      })();
+      return;
+    }
     if (!window.confirm("新建项目会清空当前未保存修改，是否继续？")) return;
     const next = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     setProject(next);
@@ -1194,6 +1237,25 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const restoreLocalProject = () => {
     const next = loadInitialProject();
+    if (projectId) {
+      // 项目模式：本机草稿恢复为一条新的项目记录并跳转，不把草稿灌进当前已保存项目。
+      void (async () => {
+        try {
+          const now = new Date();
+          const record: StoredProject = {
+            id: createId("proj"),
+            name: `本机草稿 · ${new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(now)}`,
+            createdAt: now.toISOString(),
+            updatedAt: now.toISOString(),
+            pack: createProjectPackageEnvelope({ project: next, assets: userAssets, fonts: userFonts, customTemplates, renderSettings }),
+          };
+          await saveCurrentThenOpenProjectRecord(record);
+        } catch (error) {
+          setStatusMessage(error instanceof Error ? `恢复本机草稿失败：${error.message}` : "恢复本机草稿失败");
+        }
+      })();
+      return;
+    }
     setProject(next);
     setPreviewCommands([]);
     setSelection({ type: "canvas" });
@@ -1695,6 +1757,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           workspace: (
           <MapStyleWorkspace
             project={project}
+            posterRef={posterRef}
             selectedProvince={selection.type === "province" ? selection.province : null}
             userFonts={userFonts}
             canUndo={canUndo}
@@ -1743,6 +1806,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
           workspace: (
             <ReferenceCardStyleWorkspace
               cards={project.cards}
+              project={renderProject}
+              userFonts={userFonts}
+              posterRef={posterRef}
               onPatch={(patch) => patchScene({ type: "cards" }, patch)}
             />
           ),
@@ -1828,6 +1894,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           workspace: (
           <ContentLayoutWorkspace
             project={renderProject}
+            posterRef={posterRef}
             selection={selection}
             userAssets={userAssets}
             userFonts={userFonts}
@@ -1900,26 +1967,70 @@ function StudioApp({ projectId }: { projectId?: string }) {
     }
   };
 
+  // 导出工程确认框：分阶段新 UI 与旧版编辑器共用，保证「导出工程」入口在两种外壳下都有响应。
+  const projectExportDialogNode = posterExport.showProjectExportDialog ? (
+    <div className="dialog-backdrop" onMouseDown={() => posterExport.setShowProjectExportDialog(false)}>
+      <section
+        className="export-project-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="导出工程确认"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <h2>确认导出工程</h2>
+            <p>工程文件会保存当前画布、名单、模板和渲染设置。</p>
+          </div>
+          <button type="button" aria-label="关闭导出工程确认" onClick={() => posterExport.setShowProjectExportDialog(false)}>×</button>
+        </header>
+        <label className="export-resource-option boolean-control checkbox-row">
+          <input
+            type="checkbox"
+            aria-label="导出时包含资源包"
+            checked={posterExport.includeResourcesInProjectExport}
+            onChange={(event) => posterExport.setIncludeResourcesInProjectExport(event.target.checked)}
+          />
+          <span>
+            <strong>包含资源包</strong>
+            <small>一并打包地图背景、地图贴图、素材和字体；导入后会立刻同步到画布与素材库。</small>
+          </span>
+        </label>
+        {!posterExport.includeResourcesInProjectExport && (
+          <p className="export-resource-warning">未包含资源包时，其他设备可能缺少素材库条目和自定义字体。</p>
+        )}
+        <footer>
+          <button type="button" className="secondary-button" onClick={() => posterExport.setShowProjectExportDialog(false)}>取消</button>
+          <button type="button" className="primary-button" aria-label="确认导出工程" onClick={posterExport.exportProjectPackage}>确认导出</button>
+        </footer>
+      </section>
+    </div>
+  ) : null;
+
   if (activeStage !== "content" || !legacyEditorEnabled) {
     const slots = buildStageSlots(activeStage);
     return (
-      <StudioLayoutTemplate
-        theme={resolvedTheme}
-        skin={skin}
-        stage={activeStage}
-        assistantEntry={assistantEntryButton}
-        historyActions={historyActionsNode}
-        stageActions={slots.stageActions}
-        projectActions={projectActionsNode}
-        workflowNav={workflowNavNode}
-        leftRail={studioAssistantRail}
-        rightRail={slots.rightRail}
-        rightRailLabel={STAGE_METADATA[activeStage].rightRailLabel}
-        drawerOpen={assistantDrawerOpen}
-        onDrawerClose={() => setAssistantDrawerOpen(false)}
-      >
-        {slots.workspace}
-      </StudioLayoutTemplate>
+      <>
+        {projectExportDialogNode}
+        <StudioLayoutTemplate
+          theme={resolvedTheme}
+          skin={skin}
+          stage={activeStage}
+          assistantEntry={assistantEntryButton}
+          historyActions={historyActionsNode}
+          stageActions={slots.stageActions}
+          projectActions={projectActionsNode}
+          workflowNav={workflowNavNode}
+          leftRail={studioAssistantRail}
+          rightRail={slots.rightRail}
+          rightRailLabel={STAGE_METADATA[activeStage].rightRailLabel}
+          drawerOpen={assistantDrawerOpen}
+          onDrawerClose={() => setAssistantDrawerOpen(false)}
+        >
+          {slots.workspace}
+        </StudioLayoutTemplate>
+        <StatusToast message={statusMessage} syncStatus={syncState.status} />
+      </>
     );
   }
 
@@ -1988,44 +2099,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       </header>
 
 
-      {posterExport.showProjectExportDialog && (
-        <div className="dialog-backdrop" onMouseDown={() => posterExport.setShowProjectExportDialog(false)}>
-          <section
-            className="export-project-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="导出工程确认"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <div>
-                <h2>确认导出工程</h2>
-                <p>工程文件会保存当前画布、名单、模板和渲染设置。</p>
-              </div>
-              <button type="button" aria-label="关闭导出工程确认" onClick={() => posterExport.setShowProjectExportDialog(false)}>×</button>
-            </header>
-            <label className="export-resource-option boolean-control checkbox-row">
-              <input
-                type="checkbox"
-                aria-label="导出时包含资源包"
-                checked={posterExport.includeResourcesInProjectExport}
-                onChange={(event) => posterExport.setIncludeResourcesInProjectExport(event.target.checked)}
-              />
-              <span>
-                <strong>包含资源包</strong>
-                <small>一并打包地图背景、地图贴图、素材和字体；导入后会立刻同步到画布与素材库。</small>
-              </span>
-            </label>
-            {!posterExport.includeResourcesInProjectExport && (
-              <p className="export-resource-warning">未包含资源包时，其他设备可能缺少素材库条目和自定义字体。</p>
-            )}
-            <footer>
-              <button type="button" className="secondary-button" onClick={() => posterExport.setShowProjectExportDialog(false)}>取消</button>
-              <button type="button" className="primary-button" aria-label="确认导出工程" onClick={posterExport.exportProjectPackage}>确认导出</button>
-            </footer>
-          </section>
-        </div>
-      )}
+      {projectExportDialogNode}
 
       <section
         className="workspace"

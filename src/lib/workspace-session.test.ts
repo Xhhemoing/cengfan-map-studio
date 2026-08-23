@@ -2,16 +2,37 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WORKSPACE_SESSION,
   LEGACY_EDITOR_STORAGE_KEY,
+  WORKSPACE_SESSION_STORAGE_KEY,
   loadWorkspaceSession,
   parseWorkspaceSession,
   saveWorkspaceSession,
   serializeWorkspaceSession,
+  workspaceSessionStorageKey,
   type WorkspaceSession,
 } from "./workspace-session";
 
 describe("workspace session", () => {
   it("exports the explicit legacy compatibility storage key", () => {
     expect(LEGACY_EDITOR_STORAGE_KEY).toBe("cengfan-legacy-editor");
+  });
+
+  it("scopes the session storage key per project and keeps the global key without a project", () => {
+    expect(workspaceSessionStorageKey()).toBe(WORKSPACE_SESSION_STORAGE_KEY);
+    expect(workspaceSessionStorageKey(null)).toBe(WORKSPACE_SESSION_STORAGE_KEY);
+    expect(workspaceSessionStorageKey("proj-a")).toBe(`${WORKSPACE_SESSION_STORAGE_KEY}:project:proj-a`);
+    expect(workspaceSessionStorageKey("proj-a")).not.toBe(workspaceSessionStorageKey("proj-b"));
+  });
+
+  it("keeps per-project sessions isolated so a new project starts at the default stage", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    saveWorkspaceSession(storage, { stage: "export", savedAt: "now" }, workspaceSessionStorageKey("proj-a"));
+
+    expect(loadWorkspaceSession(storage, workspaceSessionStorageKey("proj-a")).stage).toBe("export");
+    expect(loadWorkspaceSession(storage, workspaceSessionStorageKey("proj-new")).stage).toBe("data");
   });
   it("round-trips a valid session without putting it in the project document", () => {
     const session: WorkspaceSession = {

@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, RefObject } from "react";
 import type { UserAsset } from "../../lib/assets";
 import type { UserFont } from "../../lib/fonts";
 import type { ProjectDocument } from "../../lib/project-document";
@@ -11,6 +11,8 @@ export type ContentAssetPanelProps = ComponentProps<typeof AssetPanel>;
 export interface ContentLayoutWorkspaceProps {
   project: ProjectDocument;
   selection: SceneSelection;
+  /** 共享导出 ref：挂上后「导出 SVG/PNG」在本阶段也能直接使用当前画布。 */
+  posterRef?: RefObject<SVGSVGElement | null>;
   userAssets?: UserAsset[];
   userFonts?: UserFont[];
   canUndo: boolean;
@@ -64,6 +66,7 @@ function selectionLabel(selection: SceneSelection): string {
  */
 export type ContentLayoutRailProps = Omit<
   ContentLayoutWorkspaceProps,
+  | "posterRef"
   | "canUndo" | "canRedo" | "undoLabel" | "redoLabel"
   | "onRefreshPositions" | "onBackToMap" | "onUndo" | "onRedo"
   | "onSelect" | "onSelectStudent" | "selectedStudentId"
@@ -116,6 +119,7 @@ export function ContentLayoutRail({
 export function ContentLayoutWorkspace({
   project,
   selection,
+  posterRef,
   userFonts = [],
   onSelect,
   onMoveText,
@@ -137,6 +141,7 @@ export function ContentLayoutWorkspace({
           <div className="content-layout-workspace__canvas">
             <PosterCanvas
               project={project}
+              posterRef={posterRef}
               selectedTextId={selection.type === "text" ? selection.id : null}
               selectedAssetId={selection.type === "asset" ? selection.id : null}
               selectedProvince={selection.type === "province" ? selection.province : null}

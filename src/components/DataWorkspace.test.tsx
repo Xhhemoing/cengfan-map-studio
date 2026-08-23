@@ -284,9 +284,10 @@ describe("DataWorkspace", () => {
     click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("替换全部"))!);
 
     expect(confirmReplace).toHaveBeenCalledWith({ currentCount: 1, nextCount: 2 });
-    expect(container.textContent).toContain("当前 1 条");
-    expect(container.textContent).toContain("新 2 条");
     expect(onReplaceStudents).not.toHaveBeenCalled();
+    // 取消替换后不残留“替换摘要”横幅
+    expect(container.textContent).not.toContain("替换摘要");
+    expect(container.textContent).not.toContain("当前 1 条");
   });
 
   it("does not call a project transaction when Excel parsing fails", async () => {

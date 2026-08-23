@@ -1,4 +1,5 @@
 import { Redo2, Undo2 } from "lucide-react";
+import type { RefObject } from "react";
 import type { DataViewId } from "../../lib/project-data";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { UserAsset } from "../../lib/assets";
@@ -20,6 +21,8 @@ const DATA_VIEWS: Array<{ id: DataViewId; label: string; ariaLabel: string }> = 
 export interface MapStyleWorkspaceProps {
   project: ProjectDocument;
   selectedProvince: string | null;
+  /** 共享导出 ref：挂上后「导出 SVG/PNG」在本阶段也能直接使用当前画布。 */
+  posterRef?: RefObject<SVGSVGElement | null>;
   userFonts?: UserFont[];
   canUndo: boolean;
   canRedo: boolean;
@@ -46,7 +49,7 @@ export interface MapStyleWorkspaceProps {
  */
 export type MapStyleRailProps = Omit<
   MapStyleWorkspaceProps,
-  "onSelect" | "onMoveProvinceTexture" | "onResizeMapImage" | "onCardPositionsResolved"
+  "posterRef" | "onSelect" | "onMoveProvinceTexture" | "onResizeMapImage" | "onCardPositionsResolved"
 >;
 
 export function MapStyleRail({
@@ -107,6 +110,7 @@ export function MapStyleRail({
 export function MapStyleWorkspace({
   project,
   selectedProvince,
+  posterRef,
   userFonts = [],
   onSelect,
   onMoveProvinceTexture,
@@ -127,6 +131,7 @@ export function MapStyleWorkspace({
           <div className="map-style-workspace__canvas">
             <PosterCanvas
               project={project}
+              posterRef={posterRef}
               selectedProvince={selectedProvince}
               userFonts={userFonts}
               onSelect={onSelect}

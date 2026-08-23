@@ -30,4 +30,25 @@ describe("ReferenceCardStyleWorkspace", () => {
 
     flushSync(() => root.unmount());
   });
+
+  it("renders a live poster preview with the real roster when a project is provided", () => {
+    const project = createProjectDocument({
+      students: [{ id: "1", name: "林舟", university: "北京大学", city: "北京市", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(
+      <ReferenceCardStyleWorkspace cards={project.cards} project={project} onPatch={() => undefined} />,
+    ));
+
+    const preview = container.querySelector('[aria-label="展示框实时预览"]');
+    expect(preview).not.toBeNull();
+    expect(preview?.querySelector("svg.poster")).not.toBeNull();
+    expect(preview?.textContent).toContain("1 条名单");
+
+    flushSync(() => root.unmount());
+  });
 });

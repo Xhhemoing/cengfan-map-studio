@@ -104,7 +104,6 @@ export function DataWorkspace({
   const [excelRecognition, setExcelRecognition] = useState<Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> | null>(null);
   const [message, setMessage] = useState("");
   const [isAiParsing, setIsAiParsing] = useState(false);
-  const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
   const [unparsedCount, setUnparsedCount] = useState(0);
 
   const filteredStudents = useMemo(() => {
@@ -305,11 +304,10 @@ export function DataWorkspace({
       return;
     }
     if (mode === "replace") {
-      const confirmation = { currentCount: students.length, nextCount: next.length };
-      setReplaceConfirmation(confirmation);
-      if (!confirmReplace(confirmation)) return;
+      // 取消替换时直接返回，不留下任何“替换摘要”残留状态。
+      if (!confirmReplace({ currentCount: students.length, nextCount: next.length })) return;
+      onReplaceStudents(next);
     } else onAppendStudents(next);
-    if (mode === "replace") onReplaceStudents(next);
     setReviewRows([]);
     setExcelRecognition(null);
     setUnparsedCount(0);
@@ -574,7 +572,6 @@ export function DataWorkspace({
         </div>
       )}
 
-      {replaceConfirmation && <p className="panel-note data-message">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</p>}
       {message && <p className="panel-note data-message">{message}</p>}
 
       <div className="student-actions">

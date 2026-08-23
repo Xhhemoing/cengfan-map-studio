@@ -1,6 +1,10 @@
+import type { RefObject } from "react";
 import { Check } from "lucide-react";
 import { applyCardTemplate, listCardTemplates } from "../../lib/card-templates";
+import type { ProjectDocument } from "../../lib/project-document";
+import type { UserFont } from "../../lib/fonts";
 import type { CardPresentation, CardSettings } from "../../lib/scene-document";
+import { PosterCanvas } from "../canvas/PosterCanvas";
 
 const REFERENCE_PRESENTATIONS: CardPresentation[] = [
   "color-pill",
@@ -9,9 +13,14 @@ const REFERENCE_PRESENTATIONS: CardPresentation[] = [
   "glass-stat",
 ];
 
-export function ReferenceCardStyleWorkspace({ cards, onPatch }: {
+export function ReferenceCardStyleWorkspace({ cards, onPatch, project, userFonts = [], posterRef }: {
   cards: CardSettings;
   onPatch: (patch: Partial<CardSettings>) => void;
+  /** 用真实名单与样式渲染实时预览；缺省时只展示模板卡（兼容独立使用）。 */
+  project?: ProjectDocument;
+  userFonts?: UserFont[];
+  /** 共享导出 ref：挂上后「导出 SVG/PNG」在本阶段也能直接使用当前画布。 */
+  posterRef?: RefObject<SVGSVGElement | null>;
 }) {
   const templates = listCardTemplates().filter((template) =>
     REFERENCE_PRESENTATIONS.includes(template.cards.presentation ?? "standard"),
@@ -22,9 +31,20 @@ export function ReferenceCardStyleWorkspace({ cards, onPatch }: {
       <header className="reference-card-style-workspace__header">
         <div>
           <h2>展示框样式</h2>
-          <p>选择可直接在画布和导出文件中稳定渲染的样式。</p>
+          <p>选择可直接在画布和导出文件中稳定渲染的样式，改动会立即反映在下方实时预览中。</p>
         </div>
       </header>
+      {project && (
+        <section className="reference-card-style-workspace__preview" aria-label="展示框实时预览">
+          <div className="reference-card-style-workspace__preview-heading">
+            <strong>实时预览</strong>
+            <span>{project.students.length} 条名单 · {project.canvas.width} × {project.canvas.height}</span>
+          </div>
+          <div className="reference-card-style-workspace__canvas">
+            <PosterCanvas project={project} posterRef={posterRef} userFonts={userFonts} />
+          </div>
+        </section>
+      )}
       <div className="reference-card-style-workspace__grid">
         {templates.map((template) => {
           const selected = cards.templateId === template.id || cards.presentation === template.cards.presentation;

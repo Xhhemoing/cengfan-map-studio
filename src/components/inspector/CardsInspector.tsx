@@ -42,7 +42,9 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     <label htmlFor={`cards-${id}`}>{label}
       <DeferredInput id={`cards-${id}`} type="number" min={min} max={max} value={value} onCommit={(draft) => {
         const next = Number(draft);
-        if (Number.isFinite(next) && next >= min && next <= max) onPatch({ [key]: next });
+        if (!Number.isFinite(next) || draft.trim() === "") return;
+        const clamped = Math.min(max, Math.max(min, next));
+        if (clamped !== value) onPatch({ [key]: clamped });
       }} />
     </label>
     );
@@ -157,7 +159,10 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     {mode !== "global" && layerControl()}
     <label htmlFor="cards-columns">列数<select id="cards-columns" value={cards.columns} onChange={(event) => onPatch({ columns: event.target.value === "auto" ? "auto" : Number(event.target.value) })}><option value="auto">自动</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
     <label htmlFor="cards-background">背景色<DeferredInput id="cards-background" type="color" value={cards.background} onCommit={(background) => onPatch({ background })} /></label>
-    <label htmlFor="cards-opacity">背景透明度<DeferredInput id="cards-opacity" type="range" min="0" max="1" step="0.05" value={cards.opacity} onCommit={(opacity) => onPatch({ opacity: Number(opacity) })} /></label>
+    <label htmlFor="cards-opacity">背景透明度
+      <input id="cards-opacity" type="range" min="0" max="1" step="0.05" value={cards.opacity} onChange={(event) => onPatch({ opacity: Number(event.target.value) })} />
+      <output htmlFor="cards-opacity">{Math.round(cards.opacity * 100)}%</output>
+    </label>
     <label htmlFor="cards-text-color">文字色<DeferredInput id="cards-text-color" type="color" value={cards.textColor} onCommit={(textColor) => onPatch({ textColor })} /></label>
     <FontEditor
       id="cards-font"

@@ -997,7 +997,7 @@ describe("App student editing", () => {
     click(drawer.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="studio-advanced-panel"]')!);
     click(drawer.querySelector<HTMLButtonElement>('button[aria-label="打开元素查看"]')!);
     const issue = Array.from(drawer.querySelectorAll<HTMLButtonElement>('section[aria-label="排版问题提示"] button'))
-      .find((button) => button.textContent?.includes("text-title"));
+      .find((button) => button.textContent?.includes("主标题"));
     expect(issue).not.toBeUndefined();
     click(issue!);
 

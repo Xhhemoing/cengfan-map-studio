@@ -37,6 +37,9 @@ export function DeferredInput({ value, onCommit, onBlur, onFocus, onKeyDown, ...
   const commitDraft = () => {
     editingRef.current = false;
     if (draft !== externalValue) onCommit(draft);
+    // 无论提交是否被上游接受（越界钳制、非法值忽略），草稿都回到外部值：
+    // 提交生效时同步 effect 会立刻覆盖为新值，未生效时则回弹而不是残留无效输入。
+    setDraft(externalValue);
   };
 
   return (

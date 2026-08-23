@@ -64,7 +64,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     setExportError(undefined);
     try {
       const svg = posterRef.current;
-      if (!svg) throw new Error("海报预览尚未准备好");
+      if (!svg) throw new Error("当前阶段没有渲染海报画布，请切换到「最终导出」阶段再导出 SVG");
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
       downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
       setExportState("success");
@@ -135,7 +135,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     setExportError(undefined);
     try {
       const svg = posterRef.current;
-      if (!svg) throw new Error("海报预览尚未准备好");
+      if (!svg) throw new Error("当前阶段没有渲染海报画布，请切换到「最终导出」阶段再导出 PNG");
       await ensureUserFontsLoaded(userFonts);
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
       const dataUrl = await svgToPngDataUrl(source, {

@@ -38,6 +38,37 @@ describe("layout health", () => {
     ]));
   });
 
+  it("treats elements stacked above the base map as designed layering, not occlusion", () => {
+    const issues = checkLayoutHealth({
+      canvas: { width: 1440, height: 1024, safeMargin: 0 },
+      objects: [
+        { id: "map", kind: "map", label: "地图", zIndex: 0, bounds: { x: 100, y: 100, width: 800, height: 690 } },
+        { id: "cards", kind: "card", label: "数据卡片", zIndex: 10, bounds: { x: 120, y: 500, width: 300, height: 180 } },
+        { id: "text-title", kind: "text", label: "主标题", zIndex: 40, bounds: { x: 120, y: 120, width: 400, height: 40 } },
+      ],
+    });
+
+    expect(issues.filter((issue) => issue.kind === "occlusion")).toEqual([]);
+  });
+
+  it("still reports the map covering other elements and uses friendly labels in details", () => {
+    const issues = checkLayoutHealth({
+      canvas: { width: 1440, height: 1024, safeMargin: 0 },
+      objects: [
+        { id: "map", kind: "map", label: "地图", zIndex: 90, bounds: { x: 100, y: 100, width: 800, height: 690 } },
+        { id: "text-title", kind: "text", label: "主标题", zIndex: 40, bounds: { x: 120, y: 120, width: 400, height: 40 } },
+      ],
+    });
+
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "text-title:map",
+        kind: "occlusion",
+        detail: "地图 遮挡了 主标题",
+      }),
+    ]));
+  });
+
   it("uses cards.positions as the stable manual position selector", () => {
     const issues = checkLayoutHealth({
       canvas: { width: 300, height: 240, safeMargin: 12 },
