@@ -39,11 +39,21 @@ export function createSampleProject(now = new Date()): StoredProject {
   };
 }
 
-export function createEmptyProject(now = new Date()): StoredProject {
+/** 为 base 找一个与既有名称不重复的名字：未命名项目、未命名项目 2、未命名项目 3… */
+export function uniqueProjectName(base: string, existingNames: Iterable<string>): string {
+  const names = new Set(existingNames);
+  if (!names.has(base)) return base;
+  for (let index = 2; ; index += 1) {
+    const candidate = `${base} ${index}`;
+    if (!names.has(candidate)) return candidate;
+  }
+}
+
+export function createEmptyProject(now = new Date(), existingNames: Iterable<string> = []): StoredProject {
   const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
   return {
     id: createId("proj"),
-    name: "未命名项目",
+    name: uniqueProjectName("未命名项目", existingNames),
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     pack: projectToPack(project, now),

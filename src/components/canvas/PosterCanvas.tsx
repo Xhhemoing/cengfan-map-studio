@@ -871,7 +871,9 @@ export function PosterCanvas({
     [pins, project.dataView, selectedStudentId],
   );
   const mapTheme = useMemo(() => ({ ink: project.map.edgeColor, heatColors: HEAT_COLORS }), [project.map.edgeColor]);
-  const selectMap = useCallback(() => onSelect?.({ type: "map" }), [onSelect]);
+  // 纯预览（无 onSelect，如展示框样式实时预览）不传选择回调：
+  // MapLayer 以 onSelectMap 判定是否画红色虚线选择框，预览应与导出画面一致。
+  const selectMap = useMemo(() => onSelect ? () => onSelect({ type: "map" }) : undefined, [onSelect]);
   const selectProvince = useCallback((province: string) => onSelect?.({ type: "province", province }), [onSelect]);
   const selectAsset = useCallback((id: string) => onSelect?.({ type: "asset", id }), [onSelect]);
   const mapPathForAsset = useCallback((feature: MapFeature) => mapPath(feature as never), [mapPath]);

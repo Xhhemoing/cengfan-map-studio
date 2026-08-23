@@ -1,4 +1,5 @@
 import { DEFAULT_FONT_ID, listFonts, resolveFontFamily, type UserFont } from "../lib/fonts";
+import { clampNumberDraft } from "../lib/number-input";
 import { DeferredInput } from "./DeferredInput";
 
 export function FontEditor({
@@ -45,8 +46,8 @@ export function FontEditor({
           max={max}
           value={fontSize}
           onCommit={(draft) => {
-            const next = Number(draft);
-            if (Number.isFinite(next) && next >= min && next <= max) onSizeChange(next);
+            const next = clampNumberDraft(draft, min, max);
+            if (next !== null && next !== fontSize) onSizeChange(next);
           }}
         />
       </label>

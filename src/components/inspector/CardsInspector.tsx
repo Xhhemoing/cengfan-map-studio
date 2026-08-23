@@ -4,6 +4,7 @@ import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { DEFAULT_FONT_ID, type UserFont } from "../../lib/fonts";
 import { applyCardTemplate, getCardTemplateById, getLegacyPresetTemplateId, listCardTemplates } from "../../lib/card-templates";
+import { clampNumberDraft } from "../../lib/number-input";
 import { DeferredInput } from "../DeferredInput";
 import { FontEditor } from "../FontEditor";
 import { ActionGroup, IconButton, InspectorHeader } from "../StudioUi";
@@ -41,10 +42,8 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     return (
     <label htmlFor={`cards-${id}`}>{label}
       <DeferredInput id={`cards-${id}`} type="number" min={min} max={max} value={value} onCommit={(draft) => {
-        const next = Number(draft);
-        if (!Number.isFinite(next) || draft.trim() === "") return;
-        const clamped = Math.min(max, Math.max(min, next));
-        if (clamped !== value) onPatch({ [key]: clamped });
+        const clamped = clampNumberDraft(draft, min, max);
+        if (clamped !== null && clamped !== value) onPatch({ [key]: clamped });
       }} />
     </label>
     );

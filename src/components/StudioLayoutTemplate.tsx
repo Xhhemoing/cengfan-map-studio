@@ -19,6 +19,8 @@ export type StudioLayoutTemplateProps = {
   theme: string;
   skin: string;
   stage: WorkflowStageId;
+  /** 顶栏当前项目名（可点击重命名）。 */
+  projectTitle?: ReactNode;
   /** 顶栏 AI/高级功能入口按钮（移动端唤起抽屉）。 */
   assistantEntry: ReactNode;
   /** 全局高频动作（撤销/重做，所有阶段可见）。 */
@@ -53,6 +55,7 @@ export function StudioLayoutTemplate({
   theme,
   skin,
   stage,
+  projectTitle,
   assistantEntry,
   historyActions,
   stageActions,
@@ -68,17 +71,20 @@ export function StudioLayoutTemplate({
   return (
     <div className="app-shell" data-editor-theme={theme} data-editor-skin={skin}>
       <StudioTopbar
+        projectTitle={projectTitle}
         assistantEntry={assistantEntry}
         historyActions={historyActions}
         stageActions={stageActions}
         projectActions={projectActions}
         workflowNav={workflowNav}
       />
-      <StudioEditorShell stage={stage} leftRail={leftRail} rightRail={rightRail} rightRailLabel={rightRailLabel}>
+      {/* 左栏内容在侧栏与抽屉之间「移动」而非复制：同一时刻只挂载一份，
+          避免 studio-ai-tab 等 DOM id 重复；页签/草稿状态由上层持有，移动后不丢失。 */}
+      <StudioEditorShell stage={stage} leftRail={drawerOpen ? undefined : leftRail} rightRail={rightRail} rightRailLabel={rightRailLabel}>
         {children}
       </StudioEditorShell>
       <StudioAssistantDrawer open={drawerOpen} onClose={onDrawerClose} label="AI 助手与高级功能">
-        {leftRail}
+        {drawerOpen ? leftRail : null}
       </StudioAssistantDrawer>
     </div>
   );

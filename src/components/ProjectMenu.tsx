@@ -3,6 +3,7 @@
  * export options, incremental collaboration, and project file I/O.
  * Pure presentation — all state and callbacks flow in through props.
  */
+import { useEffect, useRef, useState } from "react";
 import { Copy, Download, FolderOpen, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
 import type { CollaborationRole, RoomAccessAction, RoomMember } from "../lib/collaboration-client";
 import type { LocalOverwriteStatus } from "../lib/incremental-workspace-sync";
@@ -81,9 +82,42 @@ export function ProjectMenu({
   onExportProject,
   onImportProject,
 }: ProjectMenuProps) {
+  const rootRef = useRef<HTMLDetailsElement | null>(null);
+  const [open, setOpen] = useState(false);
+
+  // 点击菜单外或按 Esc 关闭；外部点击只用于关闭，不得穿透误触下层元素（如学生行）。
+  useEffect(() => {
+    if (!open) return;
+    const closeFromOutside = (event: MouseEvent) => {
+      const root = rootRef.current;
+      if (!root || root.contains(event.target as Node)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+    };
+    document.addEventListener("click", closeFromOutside, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("click", closeFromOutside, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
   return (
-    <details className="project-menu">
-      <summary className="secondary-button" aria-label="打开项目菜单">
+    <details ref={rootRef} className="project-menu" open={open}>
+      <summary
+        className="secondary-button"
+        aria-label="打开项目菜单"
+        aria-expanded={open}
+        onClick={(event) => {
+          event.preventDefault();
+          setOpen((current) => !current);
+        }}
+      >
         <FolderOpen size={16} /> <span>项目</span>
       </summary>
       <div className="project-menu__popover">

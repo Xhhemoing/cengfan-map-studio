@@ -49,7 +49,7 @@ import { AssistantConversationProvider } from "./components/AgentAssistant";
 import { ProjectMenu } from "./components/ProjectMenu";
 import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayoutTemplate";
-import { StudioAssistantRail } from "./components/StudioAssistantRail";
+import { StudioAssistantRail, type AssistantRailViewState } from "./components/StudioAssistantRail";
 
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
@@ -232,6 +232,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
   }, []);
   const [projectMissing, setProjectMissing] = useState(false);
   const [projectLoading, setProjectLoading] = useState(() => Boolean(projectId));
+  // 当前项目名（项目模式）。展示在顶栏并支持就地重命名；保存链路仍读取 projectNameRef。
+  const [projectName, setProjectName] = useState<string | null>(null);
   const [userFonts, setUserFonts] = useState<UserFont[]>(() =>
     initialWorkspace?.fonts ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserFonts(), [])),
   );
@@ -319,6 +321,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setPrevProjectId(projectId);
     setProjectLoading(Boolean(projectId));
     setProjectMissing(false);
+    setProjectName(null);
     const nextSession = typeof window === "undefined"
       ? loadWorkspaceSession(null)
       : loadBrowserValue(() => loadWorkspaceSession(window.localStorage, workspaceSessionStorageKey(projectId)), loadWorkspaceSession(null));
@@ -330,6 +333,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
   }
   const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "data" ? "content" : activeStage);
   const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
+  // 左栏页签状态提升到 App：左栏与顶栏抽屉共用同一份状态，移动挂载点不丢页签。
+  const [assistantRailView, setAssistantRailView] = useState<AssistantRailViewState>({ tab: "ai", advancedView: "operations" });
   const assistantEntryRef = useRef<HTMLButtonElement>(null);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
@@ -535,6 +540,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       }
       const restored = restoreProjectPackage(record.pack);
       projectNameRef.current = record.name;
+      setProjectName(record.name);
       projectCreatedAtRef.current = record.createdAt;
       workspaceHydratedRef.current = true;
       skipNextWorkspacePendingRef.current = true;
@@ -1225,7 +1231,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
       if (!window.confirm("将新建一个空白项目并跳转过去；当前项目会先保存且保持不变。是否继续？")) return;
       void (async () => {
         try {
-          await saveCurrentThenOpenProjectRecord(createEmptyProject());
+          const existingNames = (await editorProjectStore.list()).map((item) => item.name);
+          await saveCurrentThenOpenProjectRecord(createEmptyProject(new Date(), existingNames));
         } catch (error) {
           setStatusMessage(error instanceof Error ? `新建项目失败：${error.message}` : "新建项目失败");
         }
@@ -1573,8 +1580,41 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onCommit={commitProjectTransaction}
       stageOverview={stageOverview}
       onStageOverviewAction={handleStageOverviewAction}
+      view={assistantRailView}
+      onViewChange={setAssistantRailView}
     />
   );
+
+  const renameCurrentProject = () => {
+    const currentId = projectIdRef.current;
+    if (!currentId) return;
+    const input = window.prompt("请输入新项目名称", projectName ?? "未命名项目");
+    if (input === null || !input.trim()) return;
+    const name = input.trim();
+    projectNameRef.current = name;
+    setProjectName(name);
+    void (async () => {
+      try {
+        const record = await editorProjectStore.get(currentId);
+        if (record) await editorProjectStore.put({ ...record, name, updatedAt: new Date().toISOString() });
+        setStatusMessage(`项目已重命名：${name}`);
+      } catch (error) {
+        setStatusMessage(error instanceof Error ? `重命名项目失败：${error.message}` : "重命名项目失败");
+      }
+    })();
+  };
+
+  const projectTitleNode = projectId ? (
+    <button
+      type="button"
+      className="topbar-project-name"
+      title="点击重命名项目"
+      aria-label={`重命名项目「${projectName ?? "未命名项目"}」`}
+      onClick={renameCurrentProject}
+    >
+      {projectName ?? "未命名项目"}
+    </button>
+  ) : undefined;
 
   const assistantEntryButton = (
     <button
@@ -2025,6 +2065,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           theme={resolvedTheme}
           skin={skin}
           stage={activeStage}
+          projectTitle={projectTitleNode}
           assistantEntry={assistantEntryButton}
           historyActions={historyActionsNode}
           stageActions={slots.stageActions}

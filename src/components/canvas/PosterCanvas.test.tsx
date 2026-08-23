@@ -973,6 +973,18 @@ describe("PosterCanvas", () => {
     container.remove();
   });
 
+  it("pure preview (no onSelect) omits the map selection overlay like export output", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} />));
+
+    expect(container.querySelector("[data-map-selection-overlay]")).toBeNull();
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("renders an editor-only grid overlay that is omitted in export mode", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const container = document.createElement("div");

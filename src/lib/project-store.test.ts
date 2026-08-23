@@ -5,6 +5,7 @@ import {
   createSampleProject,
   createEmptyProject,
   duplicateStoredProject,
+  uniqueProjectName,
 } from "./project-store";
 import { createProjectDocument } from "./project-document";
 import { createProjectPackage } from "./project-package";
@@ -33,6 +34,18 @@ describe("project store", () => {
 
   it("empty project has no students", () => {
     expect(createEmptyProject().pack.project.students).toEqual([]);
+  });
+
+  it("dedupes consecutive empty project names", () => {
+    expect(uniqueProjectName("未命名项目", [])).toBe("未命名项目");
+    expect(uniqueProjectName("未命名项目", ["未命名项目"])).toBe("未命名项目 2");
+    expect(uniqueProjectName("未命名项目", ["未命名项目", "未命名项目 2"])).toBe("未命名项目 3");
+    expect(uniqueProjectName("未命名项目", ["别的项目"])).toBe("未命名项目");
+
+    const first = createEmptyProject();
+    const second = createEmptyProject(new Date(), [first.name]);
+    expect(first.name).toBe("未命名项目");
+    expect(second.name).toBe("未命名项目 2");
   });
 
   it("duplicates a project with a fresh id", () => {

@@ -2,6 +2,7 @@ import { ImageUp, RotateCcw, Trash2 } from "lucide-react";
 import { CANVAS_SIZE_PRESETS, type CanvasSizePresetId } from "../../lib/grid";
 import type { CanvasSettings } from "../../lib/scene-document";
 import { FileDropzone } from "../FileDropzone";
+import { clampNumberDraft } from "../../lib/number-input";
 import { DeferredInput } from "../DeferredInput";
 import { CompactButton, IconButton, InspectorHeader } from "../StudioUi";
 
@@ -19,8 +20,8 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
   const number = (key: "width" | "height" | "safeMargin", value: number, min: number, max: number, label: string) => (
     <label htmlFor={`canvas-${key}`}>{label}
       <DeferredInput id={`canvas-${key}`} type="number" min={min} max={max} value={value} onCommit={(draft) => {
-        const next = Number(draft);
-        if (Number.isFinite(next) && next >= min && next <= max) onPatch({ [key]: next });
+        const next = clampNumberDraft(draft, min, max);
+        if (next !== null && next !== value) onPatch({ [key]: next });
       }} />
     </label>
   );

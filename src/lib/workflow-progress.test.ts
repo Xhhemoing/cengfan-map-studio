@@ -19,14 +19,26 @@ function projectWith(students: Student[]) {
 }
 
 describe("computeWorkflowProgress", () => {
-  it("empty roster: roster, presentation and export steps are empty while layout/local stay ready", () => {
+  it("empty roster: all steps are empty — layout/local must not pre-check ✓", () => {
     const progress = computeWorkflowProgress(projectWith([]));
 
     expect(progress.roster.status).toBe("empty");
     expect(progress.presentation.status).toBe("empty");
     expect(progress.exportStep.status).toBe("empty");
-    expect(progress.layout.status).toBe("ready");
-    expect(progress.local.status).toBe("ready");
+    expect(progress.layout.status).toBe("empty");
+    expect(progress.local.status).toBe("empty");
+  });
+
+  it("layout/local wait for the first two steps before showing ready", () => {
+    const warningProgress = computeWorkflowProgress(
+      projectWith([student({ city: "不存在的城市", province: undefined })]),
+    );
+    expect(warningProgress.layout.status).toBe("empty");
+    expect(warningProgress.local.status).toBe("empty");
+
+    const readyProgress = computeWorkflowProgress(projectWith([student()]));
+    expect(readyProgress.layout.status).toBe("ready");
+    expect(readyProgress.local.status).toBe("ready");
   });
 
   it("fully matched roster is ready with zero warnings", () => {

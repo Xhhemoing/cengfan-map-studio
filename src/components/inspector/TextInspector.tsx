@@ -1,6 +1,7 @@
 import { Eye, EyeOff, Trash2 } from "lucide-react";
 import type { CanvasText } from "../../lib/scene-document";
 import { DEFAULT_FONT_ID, type UserFont } from "../../lib/fonts";
+import { clampNumberDraft } from "../../lib/number-input";
 import { DeferredInput, DeferredTextarea } from "../DeferredInput";
 import { FontEditor } from "../FontEditor";
 import { IconButton, InspectorHeader } from "../StudioUi";
@@ -13,8 +14,8 @@ export function TextInspector({ text, userFonts = [], onPatch, onDelete }: {
 }) {
   const number = (key: "x" | "y" | "fontSize" | "fontWeight" | "maxWidth", value: number, min: number, max: number, label: string, id: string) => (
     <label htmlFor={id}>{label}<DeferredInput id={id} type="number" min={min} max={max} value={value} onCommit={(draft) => {
-      const next = Number(draft);
-      if (Number.isFinite(next) && next >= min && next <= max) onPatch({ [key]: next });
+      const next = clampNumberDraft(draft, min, max);
+      if (next !== null && next !== value) onPatch({ [key]: next });
     }} /></label>
   );
   const deletable = text.role === "custom" || text.role === "note";

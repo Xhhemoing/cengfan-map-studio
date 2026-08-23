@@ -108,24 +108,22 @@ export function removeUserFont(fonts: UserFont[], fontId: string): UserFont[] {
 }
 
 /**
- * Switch data presentation and keep cards / map fill settings coherent.
- * - city/university/province → matching card grouping, heat fill only for heat view
+ * Switch data presentation and keep card grouping coherent.
+ * - city/university/province → matching card grouping
  * - pins → cards still grouped by province but canvas hides cards for pins
- * - heat → province grouping + heat fill mode
+ *
+ * fillMode 保持原样：热力渐变由渲染层的 `fillMode === "heat" || dataView === "heat"`
+ * 决定，切换视图不改写 fillMode，保证「省份↔城市」等探索性往返完全可逆，
+ * 不会一次点击就永久丢失默认渐变。
  */
 export function applyDataViewChange(
   project: ProjectDocument,
   dataView: DataViewId,
 ): ProjectDocument {
   const grouping = groupingForDataView(dataView);
-  const fillMode = dataView === "heat" ? "heat" : "manual";
   return {
     ...project,
     dataView,
-    map: {
-      ...project.map,
-      fillMode,
-    },
     cards: {
       ...project.cards,
       grouping,

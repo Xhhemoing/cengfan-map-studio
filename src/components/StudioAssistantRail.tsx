@@ -10,6 +10,14 @@ import type { SceneSelection } from "../lib/scene-document";
 
 export type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error" | "closed";
 
+/** 左栏页签视图状态。可由上层受控持有，使左栏与顶栏抽屉共用同一份状态。 */
+export interface AssistantRailViewState {
+  tab: "ai" | "stage" | "advanced";
+  advancedView: "operations" | "elements";
+}
+
+const DEFAULT_ASSISTANT_RAIL_VIEW: AssistantRailViewState = { tab: "ai", advancedView: "operations" };
+
 export interface StudioAssistantRailProps {
   project: ProjectDocument;
   assets: UserAsset[];
@@ -31,6 +39,9 @@ export interface StudioAssistantRailProps {
   /** 本阶段总览模型（T2 窄只读 DTO）。 */
   stageOverview: StageOverviewModel;
   onStageOverviewAction: (action: StageOverviewAction) => void;
+  /** 受控页签状态；不传则组件内部自持（如单元测试）。 */
+  view?: AssistantRailViewState;
+  onViewChange?: (view: AssistantRailViewState) => void;
 }
 
 const SYNC_LABELS: Record<LocalOverwriteStatus, string> = {
@@ -87,9 +98,18 @@ export function StudioAssistantRail({
   onCommit,
   stageOverview,
   onStageOverviewAction,
+  view,
+  onViewChange,
 }: StudioAssistantRailProps) {
-  const [activeTab, setActiveTab] = useState<"ai" | "stage" | "advanced">("ai");
-  const [advancedView, setAdvancedView] = useState<"operations" | "elements">("operations");
+  const [internalView, setInternalView] = useState<AssistantRailViewState>(DEFAULT_ASSISTANT_RAIL_VIEW);
+  const { tab: activeTab, advancedView } = view ?? internalView;
+  const updateView = (patch: Partial<AssistantRailViewState>) => {
+    const next = { ...(view ?? internalView), ...patch };
+    if (onViewChange) onViewChange(next);
+    else setInternalView(next);
+  };
+  const setActiveTab = (tab: AssistantRailViewState["tab"]) => updateView({ tab });
+  const setAdvancedView = (nextAdvancedView: AssistantRailViewState["advancedView"]) => updateView({ advancedView: nextAdvancedView });
   const outline = useMemo(() => [
     { selection: { type: "canvas" } as const, label: "画布" },
     { selection: { type: "map" } as const, label: "地图展示框" },
@@ -134,10 +154,7 @@ export function StudioAssistantRail({
           id="studio-advanced-tab"
           aria-selected={activeTab === "advanced"}
           aria-controls="studio-advanced-panel"
-          onClick={() => {
-            setActiveTab("advanced");
-            setAdvancedView("operations");
-          }}
+          onClick={() => updateView({ tab: "advanced", advancedView: "operations" })}
         >
           高级功能
         </button>
@@ -168,8 +185,7 @@ export function StudioAssistantRail({
               : COLLABORATION_LABELS[collaboration.status]}
             onAction={(action) => {
               if (action.kind === "elements") {
-                setActiveTab("advanced");
-                setAdvancedView("elements");
+                updateView({ tab: "advanced", advancedView: "elements" });
                 return;
               }
               onStageOverviewAction(action);

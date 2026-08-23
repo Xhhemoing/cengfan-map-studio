@@ -6,6 +6,7 @@ import type { MapImageAlignment, MapSettings, MapRenderSource } from "../../lib/
 import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
 import { getProvinceNames } from "../../lib/map-data";
 import { heatPreviewSteps, normalizeHeatScale } from "../../lib/heat-scale";
+import { clampNumberDraft } from "../../lib/number-input";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { FileDropzone } from "../FileDropzone";
 import { DeferredInput } from "../DeferredInput";
@@ -57,11 +58,8 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
   const number = (key: "x" | "y" | "width" | "height" | "scale" | "edgeWidth" | "mapBoundaryMargin", value: number, min: number, max: number, step: number, label: string) => (
     <label htmlFor={`map-${key}`}>{label}
       <DeferredInput id={`map-${key}`} type="number" min={min} max={max} step={step} value={value} onCommit={(draft) => {
-        const next = Number(draft);
-        if (!Number.isFinite(next) || draft.trim() === "") return;
-        // 与 RangeNumberControl 一致：越界输入钳制到 min/max 后提交，而不是静默忽略。
-        const clamped = Math.min(max, Math.max(min, next));
-        if (clamped !== value) onPatch({ [key]: clamped });
+        const clamped = clampNumberDraft(draft, min, max);
+        if (clamped !== null && clamped !== value) onPatch({ [key]: clamped });
       }} />
     </label>
   );
@@ -368,10 +366,8 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
             step={0.5}
             value={map.edgeWidth ?? 1}
             onCommit={(draft) => {
-              const next = Number(draft);
-              if (!Number.isFinite(next) || draft.trim() === "") return;
-              const clamped = Math.min(20, Math.max(0, next));
-              if (clamped !== (map.edgeWidth ?? 1)) onPatch({ edgeWidth: clamped });
+              const clamped = clampNumberDraft(draft, 0, 20);
+              if (clamped !== null && clamped !== (map.edgeWidth ?? 1)) onPatch({ edgeWidth: clamped });
             }}
           />
         </label>

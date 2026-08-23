@@ -90,11 +90,19 @@ export function computeWorkflowProgress(project: ProjectDocument): WorkflowProgr
       ? "warning"
       : "ready";
 
+  // 展示框 / 内容排版没有自己的告警来源，但不能在名单为空或前两步未完成时
+  // 预先显示 ✓——那会让空项目一进来就"完成"了第 3、4 步。
+  const downstreamStatus: WorkflowStepStatus = !hasStudents
+    ? "empty"
+    : rosterStatus === "ready" && presentationStatus === "ready"
+      ? "ready"
+      : "empty";
+
   return {
     roster: { id: "roster", status: rosterStatus, counts },
     presentation: { id: "presentation", status: presentationStatus, counts },
-    layout: { id: "layout", status: "ready", counts },
-    local: { id: "local", status: "ready", counts },
+    layout: { id: "layout", status: downstreamStatus, counts },
+    local: { id: "local", status: downstreamStatus, counts },
     exportStep: { id: "export", status: exportStatus, counts },
   };
 }

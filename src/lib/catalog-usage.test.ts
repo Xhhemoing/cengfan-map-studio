@@ -95,7 +95,7 @@ describe("catalog usage helpers", () => {
     expect(removeUserFont([font], font.id)).toEqual([]);
   });
 
-  it("applies data view change with coherent card grouping and fill mode", () => {
+  it("applies data view change with coherent card grouping and untouched fill mode", () => {
     const project = createProjectDocument({
       students: sampleStudents,
       templateId: "original",
@@ -110,15 +110,32 @@ describe("catalog usage helpers", () => {
     expect(city.cards.positions).toEqual({ 北京市: { x: 10, y: 20 } });
     expect(city.map.fillMode).toBe("manual");
 
+    // 热力渐变由渲染层的 dataView === "heat" 驱动，切换视图不改写 fillMode。
     const heat = applyDataViewChange(project, "heat");
     expect(heat.dataView).toBe("heat");
     expect(heat.cards.grouping).toBe("province");
-    expect(heat.map.fillMode).toBe("heat");
+    expect(heat.map.fillMode).toBe("manual");
 
     const pins = applyDataViewChange(project, "pins");
     expect(pins.dataView).toBe("pins");
     expect(pins.cards.grouping).toBe("province");
     expect(pins.map.fillMode).toBe("manual");
+  });
+
+  it("keeps the default heat gradient across province↔city roundtrips", () => {
+    const project = createProjectDocument({
+      students: sampleStudents,
+      templateId: "original",
+      dataView: "province",
+    });
+    expect(project.map.fillMode).toBe("heat");
+
+    const city = applyDataViewChange(project, "city");
+    expect(city.map.fillMode).toBe("heat");
+
+    const backToProvince = applyDataViewChange(city, "province");
+    expect(backToProvince.map.fillMode).toBe("heat");
+    expect(backToProvince.cards.grouping).toBe("province");
   });
 
   it("exposes style layer targets for the style panel", () => {

@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { MapPinned } from "lucide-react";
 
 export type StudioTopbarProps = {
+  /** 当前项目名（项目模式；可点击重命名）。 */
+  projectTitle?: ReactNode;
   /** Assistant / advanced-function entry (opens the assistant drawer). */
   assistantEntry?: ReactNode;
   /** 全局高频动作：撤销/重做（所有阶段可见）。 */
@@ -18,6 +20,7 @@ export type StudioTopbarProps = {
  * action slots. Exactly one instance per stage.
  */
 export function StudioTopbar({
+  projectTitle,
   assistantEntry,
   historyActions,
   stageActions,
@@ -31,6 +34,7 @@ export function StudioTopbar({
         <span className="brand-label brand-label__full">蹭饭地图工作室</span>
         <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
         <em>Beta</em>
+        {projectTitle && <span className="topbar-project" aria-label="当前项目">{projectTitle}</span>}
       </div>
       {workflowNav && <div className="topbar-workflow">{workflowNav}</div>}
       <div className="topbar-actions">

@@ -111,7 +111,9 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
 
   const createProject = async () => {
     try {
-      const project = createEmptyProject();
+      // 以存储中的最新名单去重，连续新建时依次得到「未命名项目 2 / 3…」。
+      const existingNames = (await store.list()).map((item) => item.name);
+      const project = createEmptyProject(new Date(), existingNames);
       await store.put(project);
       openProject(project.id);
     } catch (reason) {

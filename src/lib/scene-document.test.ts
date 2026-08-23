@@ -83,6 +83,23 @@ describe("scene document", () => {
     );
   });
 
+  it("keeps default text elements inside the canvas safe margin (no out-of-box warnings)", () => {
+    const scene = createDefaultScene("original");
+    const margin = scene.canvas.safeMargin;
+
+    for (const text of scene.textElements) {
+      // 与 App.tsx 排版健康检查一致的文本包围盒公式。
+      const x = text.textAlign === "right" ? text.x - text.maxWidth : text.textAlign === "center" ? text.x - text.maxWidth / 2 : text.x;
+      const y = text.y - text.fontSize;
+      const bounds = { x, y, width: text.maxWidth, height: text.fontSize * 1.3 };
+
+      expect(bounds.x, `${text.id} 左边越过安全边距`).toBeGreaterThanOrEqual(margin);
+      expect(bounds.y, `${text.id} 顶边越过安全边距`).toBeGreaterThanOrEqual(margin);
+      expect(bounds.x + bounds.width, `${text.id} 右边越过安全边距`).toBeLessThanOrEqual(scene.canvas.width - margin);
+      expect(bounds.y + bounds.height, `${text.id} 底边越过安全边距`).toBeLessThanOrEqual(scene.canvas.height - margin);
+    }
+  });
+
   it("accepts province edge styles as connector textures", () => {
     const scene = createDefaultScene("original");
     const updated = updateSceneTarget(scene, { type: "cards" }, { connectorDash: "rail" });

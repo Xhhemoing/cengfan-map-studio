@@ -158,6 +158,9 @@ type AssistantConversationState = {
   setActiveId: Dispatch<SetStateAction<string | null>>;
   position: { x: number; y: number } | null;
   setPosition: Dispatch<SetStateAction<{ x: number; y: number } | null>>;
+  /** 输入框草稿。放在共享状态里，左栏与顶栏抽屉挂载点之间移动时草稿不丢失。 */
+  message: string;
+  setMessage: Dispatch<SetStateAction<string>>;
   hydrated: boolean;
   hydrate: (project: ProjectDocument, assets: UserAsset[]) => void;
 };
@@ -170,6 +173,7 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
   const [conversations, setConversations] = useState<AssistantConversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const [message, setMessage] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
   const hydrate = (project: ProjectDocument, assets: UserAsset[]) => {
@@ -184,7 +188,7 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
     }
     setHydrated(true);
   };
-  return <AssistantConversationContext.Provider value={{ open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, position, setPosition, hydrated, hydrate }}>{children}</AssistantConversationContext.Provider>;
+  return <AssistantConversationContext.Provider value={{ open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, position, setPosition, message, setMessage, hydrated, hydrate }}>{children}</AssistantConversationContext.Provider>;
 }
 
 export function AgentAssistant({
@@ -204,8 +208,7 @@ export function AgentAssistant({
 }) {
   const state = useContext(AssistantConversationContext);
   if (!state) throw new Error("AgentAssistant must be rendered inside AssistantConversationProvider");
-  const { open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, position, setPosition, hydrated, hydrate } = state;
-  const [message, setMessage] = useState("");
+  const { open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, position, setPosition, message, setMessage, hydrated, hydrate } = state;
   const mountedRef = useRef(false);
   const hasMountedRef = useRef(false);
   const projectDigestRef = useRef<string | null>(null);

@@ -4,7 +4,7 @@
  * without behaviour changes; workspace mutations flow back through the
  * `applyImportedPackage` and `reportStatus` callbacks.
  */
-import { useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { downloadDataUrl, downloadText, serializePosterSvg, svgToPngDataUrl } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
 import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
@@ -53,18 +53,41 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const [exportState, setExportState] = useState<DeliveryExportState>("idle");
   const [exportError, setExportError] = useState<string>();
   const lastExportRef = useRef<"png" | "svg" | "project">("png");
+  const errorFromMissingCanvasRef = useRef(false);
   const [pngScale, setPngScale] = useState(1);
   const [transparentExport, setTransparentExport] = useState(false);
   const [showProjectExportDialog, setShowProjectExportDialog] = useState(false);
   const [includeResourcesInProjectExport, setIncludeResourcesInProjectExport] = useState(true);
+
+  // 「无画布」类失败是阶段性问题：切到最终导出后海报画布挂载即失效，
+  // 不应作为失败横幅残留到下一次导出。画布可用时自动清除该错误。
+  // 故意不传依赖数组：posterRef.current 变化不触发渲染，只能靠宿主组件
+  // 每次渲染后复查；内部条件（error 状态 + 挂起标记 + 画布已挂载）保证最多清除一次。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (exportState !== "error" || !errorFromMissingCanvasRef.current) return;
+    if (!posterRef.current) return;
+    errorFromMissingCanvasRef.current = false;
+    setExportState("idle");
+    setExportError(undefined);
+  });
+
+  const requirePosterSvg = (format: string): SVGSVGElement => {
+    const svg = posterRef.current;
+    if (!svg) {
+      errorFromMissingCanvasRef.current = true;
+      throw new Error(`当前阶段没有渲染海报画布，请切换到「最终导出」阶段再导出 ${format}`);
+    }
+    errorFromMissingCanvasRef.current = false;
+    return svg;
+  };
 
   const exportSvg = () => {
     lastExportRef.current = "svg";
     setExportState("exporting");
     setExportError(undefined);
     try {
-      const svg = posterRef.current;
-      if (!svg) throw new Error("当前阶段没有渲染海报画布，请切换到「最终导出」阶段再导出 SVG");
+      const svg = requirePosterSvg("SVG");
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
       downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
       setExportState("success");
@@ -134,8 +157,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     setExportState("exporting");
     setExportError(undefined);
     try {
-      const svg = posterRef.current;
-      if (!svg) throw new Error("当前阶段没有渲染海报画布，请切换到「最终导出」阶段再导出 PNG");
+      const svg = requirePosterSvg("PNG");
       await ensureUserFontsLoaded(userFonts);
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
       const dataUrl = await svgToPngDataUrl(source, {
