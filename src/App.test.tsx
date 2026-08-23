@@ -1669,8 +1669,9 @@ describe("Top workflow and left assistant rail", () => {
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开AI助手与高级功能"]')!);
     expect(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).toHaveLength(3);
     expect(Array.from(document.querySelectorAll('.MuiDrawer-root [role="tab"]')).map((tab) => tab.textContent)).toEqual(["AI 助手", "本阶段", "高级功能"]);
-    // 左侧常驻 rail 与打开的抽屉共用同一会话上下文,各渲染一个 docked 实例。
-    expect(document.querySelectorAll('[data-agent-presentation="docked"]')).toHaveLength(2);
+    // 左栏内容在侧栏与抽屉之间「移动」而非复制：抽屉打开时只挂载一份
+    // docked 实例（见 StudioLayoutTemplate），避免 studio-ai-tab 等 DOM id 重复。
+    expect(document.querySelectorAll('[data-agent-presentation="docked"]')).toHaveLength(1);
   });
 
   it("opens advanced project settings from the rail without adding an AI-bottom advanced entry", () => {
