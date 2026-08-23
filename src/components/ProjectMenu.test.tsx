@@ -1,0 +1,109 @@
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProjectMenu, type ProjectMenuProps } from "./ProjectMenu";
+
+const roots: Array<{ root: ReturnType<typeof createRoot>; container: HTMLDivElement }> = [];
+
+afterEach(() => {
+  roots.splice(0).forEach(({ root, container }) => {
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+});
+
+function renderMenu(overrides: Partial<ProjectMenuProps> = {}) {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push({ root, container });
+  const props: ProjectMenuProps = {
+    roomId: null,
+    roomVersion: 1,
+    roomInput: "",
+    inviteTokenInput: "",
+    roomRole: null,
+    members: [],
+    ownClientId: "client-1",
+    roomReadonly: false,
+    roomClosed: false,
+    invitationToken: null,
+    hasStoredRoomAccess: false,
+    collaborationStatus: "idle",
+    collaborationMessage: "",
+    collaborationOpen: false,
+    pngScale: 2,
+    transparentExport: false,
+    syncStatus: "idle",
+    onSetCollaborationOpen: vi.fn(),
+    onRoomInputChange: vi.fn(),
+    onInviteTokenInputChange: vi.fn(),
+    onCreateInvitation: vi.fn(),
+    onSetRoomAccess: vi.fn(),
+    onLeaveRoom: vi.fn(),
+    onStartRoom: vi.fn(),
+    onJoinRoom: vi.fn(),
+    onNewProject: vi.fn(),
+    onRestoreLocal: vi.fn(),
+    onSaveLocal: vi.fn(),
+    onPngScaleChange: vi.fn(),
+    onTransparentChange: vi.fn(),
+    onExportPng: vi.fn(),
+    onExportSvg: vi.fn(),
+    onExportProject: vi.fn(),
+    onImportProject: vi.fn(),
+    ...overrides,
+  };
+  flushSync(() => root.render(<ProjectMenu {...props} />));
+  return { container, props };
+}
+
+function click(element: Element | null): void {
+  if (!element) throw new Error("element missing");
+  flushSync(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+describe("ProjectMenu", () => {
+  it("exports PNG and SVG from the poster export group with the shared scale options", () => {
+    const onExportPng = vi.fn();
+    const onExportSvg = vi.fn();
+    const { container } = renderMenu({ onExportPng, onExportSvg });
+
+    const scale = container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]');
+    expect(scale).not.toBeNull();
+    expect(scale?.value).toBe("2");
+
+    click(container.querySelector('button[aria-label="导出 PNG"]'));
+    click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("导出 SVG")) ?? null);
+    expect(onExportPng).toHaveBeenCalledTimes(1);
+    expect(onExportSvg).toHaveBeenCalledTimes(1);
+  });
+
+  it("changes the PNG scale and transparency through the supplied callbacks", () => {
+    const onPngScaleChange = vi.fn();
+    const onTransparentChange = vi.fn();
+    const { container } = renderMenu({ onPngScaleChange, onTransparentChange });
+
+    const scale = container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+    flushSync(() => {
+      setter?.call(scale, "3");
+      scale.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(onPngScaleChange).toHaveBeenCalledWith(3);
+
+    click(container.querySelector('.project-menu__check input[type="checkbox"]'));
+    expect(onTransparentChange).toHaveBeenCalledWith(true);
+  });
+
+  it("keeps project management and project-file actions wired", () => {
+    const onNewProject = vi.fn();
+    const onExportProject = vi.fn();
+    const { container } = renderMenu({ onNewProject, onExportProject });
+
+    click(container.querySelector('button[aria-label="新建项目"]'));
+    click([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("导出工程")) ?? null);
+    expect(onNewProject).toHaveBeenCalledTimes(1);
+    expect(onExportProject).toHaveBeenCalledTimes(1);
+  });
+});

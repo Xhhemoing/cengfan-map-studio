@@ -1452,6 +1452,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onSaveLocal={() => void overwriteBrowserStorage()}
       onPngScaleChange={posterExport.setPngScale}
       onTransparentChange={posterExport.setTransparentExport}
+      onExportPng={() => void posterExport.exportPng()}
       onExportSvg={posterExport.exportSvg}
       onExportProject={posterExport.openProjectExportDialog}
       onImportProject={posterExport.importProjectPackage}
