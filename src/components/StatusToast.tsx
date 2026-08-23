@@ -19,9 +19,15 @@ export function StatusToast({ message, nonce = 0, syncStatus }: {
   syncStatus?: LocalOverwriteStatus;
 }) {
   const [visible, setVisible] = useState(true);
+  // 渲染期间随 message/nonce 变化重置可见性（React 推荐模式），避免 effect 内同步 setState。
+  const renderKey = `${nonce}:${message}`;
+  const [lastKey, setLastKey] = useState(renderKey);
+  if (lastKey !== renderKey) {
+    setLastKey(renderKey);
+    setVisible(true);
+  }
   useEffect(() => {
     if (!message) return;
-    setVisible(true);
     const timer = window.setTimeout(() => setVisible(false), AUTO_HIDE_MS);
     return () => window.clearTimeout(timer);
   }, [message, nonce]);
