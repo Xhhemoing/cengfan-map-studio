@@ -43,6 +43,26 @@ describe("project data health", () => {
     ]);
   });
 
+  it("skips the manual-province notice when the province matches the city resolution", () => {
+    const project = createProjectDocument({
+      students: [
+        // 与「杭州市」解析出的省份一致：自动填充的冗余值，不是覆盖。
+        { id: "auto", name: "自动", university: "浙江大学", city: "杭州市", province: "浙江省", visibility: true },
+        // 简称也应视为一致。
+        { id: "alias", name: "简称", university: "浙江大学", city: "杭州", province: "浙江", visibility: true },
+        // 与城市解析不一致：仍然是需要提示的省份覆盖。
+        { id: "override", name: "覆盖", university: "大学", city: "杭州市", province: "江苏省", visibility: true },
+        // 城市无法解析时保留省份覆盖提示。
+        { id: "unknown-city", name: "未知城", university: "大学", city: "不存在的城市", province: "浙江省", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    const manualProvince = listDataIssues(project).filter((issue) => issue.kind === "manual-province");
+    expect(manualProvince.map((issue) => issue.studentId)).toEqual(["override", "unknown-city"]);
+  });
+
   it("counts and lists duplicate records as locatable warnings", () => {
     const project = createProjectDocument({
       students: [

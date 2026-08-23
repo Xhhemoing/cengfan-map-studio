@@ -71,7 +71,10 @@
 .delivery-workspace__issue-list button small { color: #6b7d83; }
 .delivery-workspace__controls { display: grid; gap: 10px; }
 .delivery-workspace__controls label { display: flex; justify-content: space-between; gap: 12px; }
-.delivery-workspace__actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
+/* 默认 240px 右栏放不下三键并排：列宽不足时自动换行，保证「工程包」等按钮
+   完整横排可读，而不是文字竖排、被裁切。 */
+.delivery-workspace__actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 7px; }
+.delivery-workspace__actions button { justify-content: center; white-space: nowrap; }
 .delivery-workspace__error { display: grid; gap: 7px; color: #922f26; background: #fff7f5; border-color: #edb4ac; }
 .delivery-workspace__preview { min-width: 0; padding: 16px; background: var(--editor-surface-muted); border: 1px solid var(--editor-line); border-radius: 8px; }
 .delivery-workspace__preview-heading { display: flex; justify-content: space-between; margin-bottom: 12px; color: var(--editor-ink-muted, #536970); }

@@ -336,6 +336,7 @@ button { font: inherit; }
 .data-upload-workspace--expanded .import-box .import-toggle { min-height: 32px; margin: 0; border-style: solid; }
 .data-upload-workspace--expanded .import-box > :not(.import-toggle) { margin-top: 8px; }
 .data-upload-workspace--expanded .import-recognition,
+.data-upload-workspace--expanded .import-unparsed,
 .data-upload-workspace--expanded .import-review { grid-column: 1 / -1; order: 4; }
 .data-upload-workspace--expanded .student-table { min-width: 720px; }
 .data-upload-workspace--expanded .data-list { max-height: none; }
@@ -394,7 +395,7 @@ button { font: inherit; }
 .workspace--data .data-table-wrap { grid-column: 1 / -1; order: 2; margin-top: 0; }
 .workspace--data .draft-form { grid-column: span 5; order: 3; }
 .workspace--data .import-box { grid-column: span 7; order: 3; }
-.workspace--data .import-review, .workspace--data .data-message { grid-column: 1 / -1; order: 4; }
+.workspace--data .import-review, .workspace--data .import-unparsed, .workspace--data .data-message { grid-column: 1 / -1; order: 4; }
 .workspace--data .data-list { max-height: calc(100vh - 350px); }
 .data-expression { display: grid; gap: 7px; padding: 10px; background: #eef6f5; border: 1px solid #b6d4ce; border-radius: 6px; }
 .data-expression .panel-heading { margin: 0; }
@@ -404,6 +405,14 @@ button { font: inherit; }
 .data-workspace .draft-form,
 .data-workspace .import-box,
 .data-workspace .import-review { display: grid; gap: 8px; padding: 10px; background: #fff; border: 1px solid #dfe5e8; border-radius: 6px; }
+/* 缺必填字段/无法识别的导入行明细：让用户看见被丢掉的行与原因。 */
+.data-workspace .import-unparsed { display: grid; gap: 6px; padding: 10px; background: #fdf3ef; border: 1px solid #e9c9bd; border-radius: 6px; }
+.data-workspace .import-unparsed .panel-heading { margin: 0; }
+.data-workspace .import-unparsed__list { display: grid; gap: 4px; max-height: 140px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.data-workspace .import-unparsed__list li { display: grid; gap: 1px; padding: 5px 7px; background: #fff; border: 1px solid #edd6cc; border-radius: 4px; font-size: 11px; color: #6a4d3c; }
+.data-workspace .import-unparsed__list li span { color: #98503e; font-weight: 700; }
+.data-workspace .import-unparsed__list li strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4d6072; font-weight: 600; }
+.data-workspace .import-unparsed__list li small { color: #98503e; }
 .data-workspace .import-toggle { margin-bottom: 0; }
 .data-workspace label { display: grid; gap: 4px; color: #5b6c7d; font-size: 11px; }
 .data-workspace input,

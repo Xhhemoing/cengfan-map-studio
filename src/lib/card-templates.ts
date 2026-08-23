@@ -130,6 +130,9 @@ export function applyCardTemplate(templateId: string, _currentCards: CardSetting
   if (!template) return {};
   return {
     ...template.cards,
+    // 非参考模板必须显式写回 standard，否则上一次参考样式的 presentation
+    // 会残留在合并结果里，导致标准/票券等模板切不回去。
+    presentation: template.cards.presentation ?? "standard",
     templateId: template.id,
     displayFrame: undefined,
   };

@@ -1,6 +1,7 @@
 import type { ProjectDocument } from "./project-document";
 import type { Student } from "./project-data";
-import { resolveStudentLocation } from "./student-data";
+import { resolveCityLocation, resolveStudentLocation } from "./student-data";
+import { resolveProvinceName } from "./search-catalog";
 import { duplicateStudentIds } from "./data-duplicate";
 
 export interface DataHealthSummary {
@@ -27,6 +28,16 @@ export interface DataIssue {
   kind: DataIssueKind;
   detail: string;
   severity: "warning" | "info";
+}
+
+/**
+ * 省份字段只有在与城市解析结果不一致时才算真正的「省份覆盖」。
+ * 新增学生时院校目录会自动带出与城市一致的省份，这类冗余值不应刷屏待检查。
+ */
+function isProvinceOverride(student: Student): boolean {
+  const cityLocation = resolveCityLocation(student.city);
+  if (cityLocation.status !== "resolved") return true;
+  return resolveProvinceName(student.province ?? "") !== cityLocation.province;
 }
 
 function missingFields(student: Student): string[] {
@@ -98,7 +109,7 @@ export function listDataIssues(project: ProjectDocument): DataIssue[] {
         severity: "warning",
       });
     }
-    if (student.province?.trim()) {
+    if (student.province?.trim() && isProvinceOverride(student)) {
       manualProvince.push({
         studentId: student.id,
         studentName: student.name || "未命名学生",

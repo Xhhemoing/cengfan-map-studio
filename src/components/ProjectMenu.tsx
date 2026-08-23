@@ -4,7 +4,7 @@
  * Pure presentation — all state and callbacks flow in through props.
  */
 import { useEffect, useRef, useState } from "react";
-import { Copy, Download, FolderOpen, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
+import { Copy, Download, FolderOpen, ImageDown, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
 import type { CollaborationRole, RoomAccessAction, RoomMember } from "../lib/collaboration-client";
 import type { LocalOverwriteStatus } from "../lib/incremental-workspace-sync";
 import { PROJECT_PACKAGE_FILE_ACCEPT } from "../lib/project-package";
@@ -28,6 +28,7 @@ export interface ProjectMenuProps {
   collaborationOpen: boolean;
   pngScale: number;
   transparentExport: boolean;
+  exportingPng: boolean;
   syncStatus: LocalOverwriteStatus;
   onSetCollaborationOpen: (open: boolean) => void;
   onRoomInputChange: (value: string) => void;
@@ -42,6 +43,7 @@ export interface ProjectMenuProps {
   onSaveLocal: () => void;
   onPngScaleChange: (scale: number) => void;
   onTransparentChange: (checked: boolean) => void;
+  onExportPng: () => void;
   onExportSvg: () => void;
   onExportProject: () => void;
   onImportProject: (file: File | null) => void;
@@ -64,6 +66,7 @@ export function ProjectMenu({
   collaborationOpen,
   pngScale,
   transparentExport,
+  exportingPng,
   syncStatus,
   onSetCollaborationOpen,
   onRoomInputChange,
@@ -78,6 +81,7 @@ export function ProjectMenu({
   onSaveLocal,
   onPngScaleChange,
   onTransparentChange,
+  onExportPng,
   onExportSvg,
   onExportProject,
   onImportProject,
@@ -141,6 +145,8 @@ export function ProjectMenu({
             </select>
           </label>
           <label className="project-menu__check boolean-control checkbox-row"><input type="checkbox" checked={transparentExport} onChange={(event) => onTransparentChange(event.target.checked)} />透明背景</label>
+          {/* PNG 倍率/透明背景的配套动作：设置和导出必须成对出现。 */}
+          <button type="button" disabled={exportingPng} onClick={closeThen(onExportPng)}><ImageDown size={16} /> {exportingPng ? "导出中..." : "导出 PNG"}</button>
           <button type="button" onClick={closeThen(onExportSvg)}><Download size={16} /> 导出 SVG</button>
         </section>
         <section>

@@ -1,4 +1,5 @@
-import { parseStudentText, type TextImportResult } from "./import-data";
+import { parseStudentText, type TextImportResult, type UnparsedLine } from "./import-data";
+import { resolveUniversity } from "./search-catalog";
 
 export type StudentColumn = "name" | "university" | "city" | "locationScope";
 
@@ -56,7 +57,7 @@ const HEADER_ALIASES: Record<StudentColumn, readonly string[]> = {
     "enrolled university",
   ],
   city: ["城市", "所在城市", "目的地城市", "city", "destination city", "location"],
-  locationScope: ["去向类型", "去向", "地区类型", "destination type", "location scope", "scope"],
+  locationScope: ["去向类型", "去向", "类型", "地区类型", "destination type", "location scope", "scope"],
 };
 
 function normalizeHeader(value: string): string {
@@ -91,6 +92,42 @@ function emptyMetadata(): Pick<ExcelImportResult, "columnMappings" | "unmappedHe
   };
 }
 
+function looksLikeUniversityName(value: string): boolean {
+  if (/大学|学院|university|college|institute/i.test(value)) return true;
+  return resolveUniversity(value).status === "resolved";
+}
+
+/**
+ * 「去向」/「类型」这类模糊表头默认映射到去向类型，但很多名单在该列填的是
+ * 录取院校。当院校列缺失且该列内容以大学名为主时，按内容改判为录取院校，
+ * 并尝试把去向类型让位给其余未映射的别名列（如「类型」）。
+ */
+function refineIndexesByContent(
+  rows: string[][],
+  header: { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>> },
+): Partial<Record<StudentColumn, number>> {
+  const indexes = { ...header.indexes };
+  if (indexes.university !== undefined || indexes.locationScope === undefined) return indexes;
+
+  const column = indexes.locationScope;
+  const samples = rows
+    .slice(header.rowIndex + 1)
+    .map((row) => row[column]?.trim() ?? "")
+    .filter(Boolean);
+  const universityLike = samples.filter(looksLikeUniversityName).length;
+  if (samples.length === 0 || universityLike * 2 < samples.length) return indexes;
+
+  indexes.university = column;
+  delete indexes.locationScope;
+  const taken = new Set(Object.values(indexes));
+  const scopeAliases = HEADER_ALIASES.locationScope.map(normalizeHeader);
+  const fallback = header.headers.findIndex(
+    (cell, index) => !taken.has(index) && scopeAliases.includes(normalizeHeader(cell)),
+  );
+  if (fallback >= 0) indexes.locationScope = fallback;
+  return indexes;
+}
+
 function findHeaderRow(rows: string[][]): { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>> } | null {
   const candidates = rows
     .map((row, rowIndex) => ({
@@ -107,7 +144,9 @@ function findHeaderRow(rows: string[][]): { rowIndex: number; headers: string[];
     if (score < 2 || (best && score <= best.score)) continue;
     best = { ...candidate, indexes, score };
   }
-  return best ? { rowIndex: best.rowIndex, headers: best.headers, indexes: best.indexes } : null;
+  if (!best) return null;
+  const refined = refineIndexesByContent(rows, best);
+  return { rowIndex: best.rowIndex, headers: best.headers, indexes: refined };
 }
 
 function createMetadata(
@@ -155,34 +194,55 @@ export function parseExcelArrayBuffer(input: ArrayBuffer | string[][]): ExcelImp
   return { ...parseStudentText(""), ...emptyMetadata() };
 }
 
+const REQUIRED_FIELD_LABELS: Record<Extract<StudentColumn, "name" | "university" | "city">, string> = {
+  name: "学生姓名",
+  university: "录取院校",
+  city: "城市",
+};
+
 export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
   const header = findHeaderRow(rows);
   if (!header) return { ...parseStudentText(matrixToText(rows)), ...emptyMetadata() };
 
   const metadata = createMetadata(rows, header);
   if (metadata.missingRequiredFields.length > 0) {
-    return { ...parseStudentText(matrixToText(rows)), ...metadata };
+    // 只把表头之后的内容交给文本回退解析：表头行与其上方的说明行不是学生数据，
+    // 不能变成「姓名｜去向」这类假学生。
+    return { ...parseStudentText(matrixToText(rows.slice(header.rowIndex + 1))), ...metadata };
   }
 
-  const candidates = rows.slice(header.rowIndex + 1).flatMap((row, rowIndex) => {
+  const candidates: ExcelImportResult["candidates"] = [];
+  const unparsed: UnparsedLine[] = [];
+  rows.slice(header.rowIndex + 1).forEach((row, rowIndex) => {
+    const rawLine = row.map((cell) => String(cell ?? "").trim()).filter(Boolean).join("\t");
+    // 完全空行（模板自带的示例空行）不是数据也不算错误。
+    if (!rawLine) return;
+    const sourceLine = header.rowIndex + rowIndex + 2;
     const name = row[header.indexes.name!]?.trim() ?? "";
     const university = row[header.indexes.university!]?.trim() ?? "";
     const city = row[header.indexes.city!]?.trim() ?? "";
-    if (!name || !university || !city) return [];
-    const locationScope = parseLocationScope(row[header.indexes.locationScope!]);
-    return [{
+    if (!name || !university || !city) {
+      // 缺必填字段的行必须回显给用户，不允许静默丢弃。
+      const missing = (Object.keys(REQUIRED_FIELD_LABELS) as Array<keyof typeof REQUIRED_FIELD_LABELS>)
+        .filter((field) => !row[header.indexes[field]!]?.trim())
+        .map((field) => REQUIRED_FIELD_LABELS[field]);
+      unparsed.push({ sourceLine, rawLine, reason: `缺少必填字段：${missing.join("、")}` });
+      return;
+    }
+    const locationScope = parseLocationScope(header.indexes.locationScope === undefined ? undefined : row[header.indexes.locationScope]);
+    candidates.push({
       name,
       university,
       city,
       ...(locationScope ? { locationScope } : {}),
-      sourceLine: header.rowIndex + rowIndex + 2,
-      rawLine: row.map((cell) => cell.trim()).filter(Boolean).join("\t"),
-    }];
+      sourceLine,
+      rawLine,
+    });
   });
 
   return {
     candidates,
-    unparsed: [],
+    unparsed,
     ...metadata,
   };
 }

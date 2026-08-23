@@ -8,7 +8,7 @@ import {
   type ImportReviewRow,
   type StudentDraft,
 } from "../lib/data-workspace";
-import { parseStudentText } from "../lib/import-data";
+import { parseStudentText, type UnparsedLine } from "../lib/import-data";
 import {
   createImportTemplateSheets,
   parseExcelWorkbookRows,
@@ -104,7 +104,7 @@ export function DataWorkspace({
   const [excelRecognition, setExcelRecognition] = useState<Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> | null>(null);
   const [message, setMessage] = useState("");
   const [isAiParsing, setIsAiParsing] = useState(false);
-  const [unparsedCount, setUnparsedCount] = useState(0);
+  const [unparsedLines, setUnparsedLines] = useState<UnparsedLine[]>([]);
 
   const filteredStudents = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
@@ -153,14 +153,16 @@ export function DataWorkspace({
       sourceLine: number;
       rawLine: string;
     }>,
-    unparsedCount: number,
+    unparsed: UnparsedLine[],
     sourceLabel: string,
     recognition?: Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields">,
   ) => {
     setExcelRecognition(recognition?.headerRowIndex !== undefined ? recognition : null);
-    setUnparsedCount(unparsedCount);
+    setUnparsedLines(unparsed);
     if (candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入数据`);
+      setMessage(unparsed.length > 0
+        ? `没有从${sourceLabel}识别到可导入数据，${unparsed.length} 行未识别（见下方明细）`
+        : `没有从${sourceLabel}识别到可导入数据`);
       setReviewRows([]);
       return;
     }
@@ -171,7 +173,7 @@ export function DataWorkspace({
       })),
     );
     setMessage(
-      `从${sourceLabel}识别到 ${candidates.length} 条候选${unparsedCount ? `，另有 ${unparsedCount} 行未识别` : ""}`,
+      `从${sourceLabel}识别到 ${candidates.length} 条候选${unparsed.length ? `，另有 ${unparsed.length} 行未识别` : ""}`,
     );
   };
 
@@ -231,7 +233,7 @@ export function DataWorkspace({
 
   const prepareImport = () => {
     const parsed = parseStudentText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "文本");
+    setCandidates(parsed.candidates, parsed.unparsed, "文本");
   };
 
   const downloadImportTemplate = async () => {
@@ -250,7 +252,7 @@ export function DataWorkspace({
 
   const prepareOcrImport = () => {
     const parsed = parseOcrLikeText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "OCR 文本");
+    setCandidates(parsed.candidates, parsed.unparsed, "OCR 文本");
   };
 
   const prepareAiImport = async () => {
@@ -261,7 +263,7 @@ export function DataWorkspace({
     setIsAiParsing(true);
     try {
       const parsed = await requestAiParse({ text: importText, source: "paste" });
-      setCandidates(parsed.candidates, parsed.unparsed.length, `智能识别（${parsed.provider}）`);
+      setCandidates(parsed.candidates, parsed.unparsed, `智能识别（${parsed.provider}）`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "智能识别失败");
     } finally {
@@ -290,7 +292,7 @@ export function DataWorkspace({
         (Array.isArray(row) ? row : []).map((cell) => String(cell ?? "").trim()),
       );
       const parsed = parseExcelWorkbookRows(matrix);
-      setCandidates(parsed.candidates, parsed.unparsed.length, `Excel（${file.name}）`, parsed);
+      setCandidates(parsed.candidates, parsed.unparsed, `Excel（${file.name}）`, parsed);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Excel 解析失败");
     }
@@ -310,7 +312,7 @@ export function DataWorkspace({
     } else onAppendStudents(next);
     setReviewRows([]);
     setExcelRecognition(null);
-    setUnparsedCount(0);
+    setUnparsedLines([]);
     setImportText("");
     setMessage(`已${mode === "replace" ? "替换" : "追加"} ${next.length} 条学生数据`);
   };
@@ -533,9 +535,24 @@ export function DataWorkspace({
         </section>
       )}
 
+      {unparsedLines.length > 0 && (
+        <section className="import-unparsed" aria-label="未识别的导入行">
+          <PanelHeader title="未识别行" meta={`${unparsedLines.length} 行未导入`} />
+          <ul className="import-unparsed__list">
+            {unparsedLines.map((line) => (
+              <li key={`${line.sourceLine}-${line.rawLine}`}>
+                <span>第 {line.sourceLine} 行</span>
+                <strong>{line.rawLine}</strong>
+                <small>{line.reason}</small>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {reviewRows.length > 0 && (
         <div className="import-review">
-          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedCount} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}`} />
+          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedLines.length} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}`} />
           <div className="review-list">
             {reviewRows.map((row, index) => (
               <label key={`${row.sourceLine}-${index}`} className="review-row">

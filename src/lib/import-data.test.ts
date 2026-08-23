@@ -90,6 +90,22 @@ describe("import data", () => {
     ]);
   });
 
+  it("skips header rows that are not on the first line", () => {
+    const result = parseStudentText([
+      "2026 届毕业生名单",
+      "姓名,去向,所在城市,类型",
+      "林舟,北京大学,北京,中国去向",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京" }),
+    ]);
+    expect(result.candidates.some((candidate) => candidate.name === "姓名")).toBe(false);
+    expect(result.unparsed).toEqual([
+      expect.objectContaining({ rawLine: "2026 届毕业生名单" }),
+    ]);
+  });
+
   it("preserves an explicit international destination scope in the fourth column", () => {
     const result = parseStudentText("姓名,院校,城市,去向类型\n周晴,哈佛大学,美国·波士顿,海外");
 

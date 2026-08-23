@@ -106,6 +106,33 @@ describe("AgentAssistant", () => {
     root.unmount();
   });
 
+  it("does not claim local rules completed changes when nothing was executed", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "当前未识别出可自动执行的修改；请配置 deepseek-v4-flash 或换一种更明确的描述。", meta: { route: "local" } })));
+    const { container, root } = renderAssistant(project);
+    openAssistant(container);
+    setMessage(container, "写一首诗");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("未识别出可自动执行的修改"));
+    expect(container.textContent).not.toContain("已使用本地规则完成可识别的修改");
+    root.unmount();
+  });
+
+  it("keeps the local-route note when local rules actually executed changes", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "local-map", name: "update_map", arguments: { patch: { scale: 1.15 } } }], assistantMessage: { role: "assistant", content: null }, meta: { route: "local" } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "已按本地规则完成可识别的修改；更复杂的需求需要配置 AI 模型。", meta: { route: "local" } })));
+    const { container, root } = renderAssistant(project);
+    openAssistant(container);
+    setMessage(container, "地图放大一点");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("已按本地规则完成可识别的修改"));
+    expect(container.textContent).toContain("已使用本地规则完成可识别的修改");
+    root.unmount();
+  });
+
   it("renders a summary and selected write proposals, then applies only selected steps", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     vi.stubGlobal("fetch", vi.fn()

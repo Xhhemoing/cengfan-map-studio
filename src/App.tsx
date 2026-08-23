@@ -1503,6 +1503,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       collaborationOpen={collaboration.collaborationOpen}
       pngScale={posterExport.pngScale}
       transparentExport={posterExport.transparentExport}
+      exportingPng={posterExport.exportingPng}
       syncStatus={syncState.status}
       onSetCollaborationOpen={collaboration.setCollaborationOpen}
       onRoomInputChange={collaboration.setRoomInput}
@@ -1517,6 +1518,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onSaveLocal={() => void overwriteBrowserStorage()}
       onPngScaleChange={posterExport.setPngScale}
       onTransparentChange={posterExport.setTransparentExport}
+      onExportPng={() => void posterExport.exportPng()}
       onExportSvg={posterExport.exportSvg}
       onExportProject={posterExport.openProjectExportDialog}
       onImportProject={posterExport.importProjectPackage}

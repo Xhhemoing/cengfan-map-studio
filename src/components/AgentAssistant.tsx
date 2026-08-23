@@ -530,7 +530,9 @@ export function AgentAssistant({
         )}
         {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
         {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
-        {conversation.route === "local" && <p className="panel-note" role="status">已使用本地规则完成可识别的修改。</p>}
+        {/* 本地规则没有命中任何修改时只显示 summary 里的「未识别出可自动执行的修改」，
+            不能同时宣称「已完成修改」造成同屏矛盾。 */}
+        {conversation.route === "local" && conversation.steps.some((step) => !READ_ONLY.has(step.name) && step.result.ok) && <p className="panel-note" role="status">已使用本地规则完成可识别的修改。</p>}
         {conversation.route === "fallback" && <p className="panel-note" role="status">已切换备选模型：{conversation.provider || "备选模型"}。</p>}
         {conversation.summary && <p className="panel-note agent-summary">{conversation.summary}</p>}
         {conversation.status === "applied" && <p className="panel-note agent-summary" role="status">已应用</p>}

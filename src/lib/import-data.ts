@@ -31,13 +31,21 @@ function looksLikeHeader(parts: string[]): boolean {
   const headerTokens = new Set([
     "姓名",
     "学生",
+    "学生姓名",
     "学生名称",
     "院校",
     "录取院校",
+    "录取学校",
+    "就读院校",
+    "就读学校",
     "大学",
     "学校",
     "城市",
     "所在城市",
+    "省份",
+    "去向",
+    "去向类型",
+    "类型",
     "name",
     "university",
     "school",
@@ -119,7 +127,8 @@ export function parseDelimitedTable(text: string): ImportCandidate[] {
 
   lines.forEach((line, index) => {
     const parts = splitParts(line, delimiter);
-    if (index === 0 && looksLikeHeader(parts)) return;
+    // 表头行可能出现在任意位置（首行常是说明文字），一律跳过而不是当学生。
+    if (looksLikeHeader(parts)) return;
     const candidate = toCandidate(parts, index + 1, line);
     if (candidate) candidates.push(candidate);
   });
@@ -140,7 +149,9 @@ export function parseStudentText(text: string): TextImportResult {
     }
     const delimiter = detectDelimiter(line);
     const parts = splitParts(line, delimiter);
-    if (index === 0 && looksLikeHeader(parts) && parts.length >= 3) {
+    // 表头行不一定在首行（Excel 常见首行为说明文字），命中表头特征即跳过，
+    // 避免「姓名｜去向｜所在城市」被当成学生导入。
+    if (looksLikeHeader(parts)) {
       return;
     }
 

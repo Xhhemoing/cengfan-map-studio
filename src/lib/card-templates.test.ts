@@ -77,6 +77,17 @@ describe("card-templates", () => {
 
   });
 
+  it("switching back to a plain template clears a residual reference presentation", () => {
+    const withReference: CardSettings = { ...baseCards, ...applyCardTemplate("color-pill", baseCards) } as CardSettings;
+    expect(withReference.presentation).toBe("color-pill");
+
+    for (const templateId of ["standard", "ticket", "photo", "borderless", "compact"]) {
+      const patch = applyCardTemplate(templateId, withReference);
+      expect(patch.presentation).toBe("standard");
+      expect(patch.templateId).toBe(templateId);
+    }
+  });
+
   it("applying a plain template clears a previously applied custom display frame", () => {
     const withCustomFrame: CardSettings = {
       ...baseCards,
