@@ -73,6 +73,7 @@ export function DataWorkspace({
   confirmReplace = ({ currentCount, nextCount }) => window.confirm(`确认替换全部名单？当前 ${currentCount} 条 -> 新 ${nextCount} 条`),
   hideDataExpression = false,
   hideTemplateDownload = false,
+  hideWorkbenchHeader = false,
   compactRosterControls = false,
 }: {
   students: Student[];
@@ -91,6 +92,8 @@ export function DataWorkspace({
   confirmReplace?: (input: { currentCount: number; nextCount: number }) => boolean;
   hideDataExpression?: boolean;
   hideTemplateDownload?: boolean;
+  /** 名单阶段外壳已有「名单」标题时隐藏内部的「学生数据中心」头。 */
+  hideWorkbenchHeader?: boolean;
   compactRosterControls?: boolean;
 }) {
   const [draft, setDraft] = useState<StudentDraft>(createEmptyStudentDraft());
@@ -353,7 +356,7 @@ export function DataWorkspace({
 
   return (
     <div className={`data-workspace${compactRosterControls ? " data-workspace--roster" : ""}`}>
-      <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />
+      {!hideWorkbenchHeader && <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />}
 
       {!hideDataExpression && <section className="data-expression" aria-labelledby="data-expression-title">
         <PanelHeader id="data-expression-title" title="地图呈现方式" meta="同一份名单，实时切换" />

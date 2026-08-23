@@ -117,10 +117,11 @@ export function DataUploadWorkspace({
       </header>
       <div className="data-upload-workspace__body">
         <section className="data-upload-workspace__data" aria-label="导入和数据表">
+          {/* 表达方式属于地图阶段；模板下载跟随 props（默认显示）。 */}
           <DataWorkspace
             {...dataWorkspaceProps}
             hideDataExpression
-            hideTemplateDownload
+            hideWorkbenchHeader
             compactRosterControls
             selectedStudentId={dataWorkspaceProps.selectedStudentId}
             onSelectStudent={handleSelectStudent}

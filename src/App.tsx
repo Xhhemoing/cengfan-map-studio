@@ -1680,7 +1680,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               project={project}
               summary={dataHealth}
               issues={dataIssues}
-              dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
+              dataWorkspaceProps={dataWorkspaceProps}
               onSelectStudent={setSelectedStudentId}
             />
           ),

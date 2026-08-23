@@ -70,13 +70,15 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
 }
 
 describe("DataUploadWorkspace", () => {
-  it("is the roster workbench and excludes templates and map expression controls", () => {
+  it("is the roster workbench and excludes map expression controls", () => {
     const { container } = renderWorkspace();
 
     expect(container.querySelector('main[aria-label="名单工作台"]')).not.toBeNull();
     expect(container.querySelector('.data-upload-workspace--expanded')).not.toBeNull();
     expect(container.querySelector('.data-workspace--roster')).not.toBeNull();
     expect(container.querySelector('.data-table-wrap')).not.toBeNull();
+    // 外壳已有「名单」标题，不再叠一层旧的「学生数据中心」头。
+    expect(container.textContent).not.toContain("学生数据中心");
     const addStudent = container.querySelector<HTMLButtonElement>('button[aria-label="展开新增学生"]');
     const importRoster = container.querySelector<HTMLButtonElement>('button[aria-label="展开导入名单"]');
     expect(addStudent?.getAttribute("aria-expanded")).toBe("false");
@@ -85,11 +87,21 @@ describe("DataUploadWorkspace", () => {
     flushSync(() => importRoster?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(container.querySelector('button[aria-label="收起新增学生"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(container.querySelector('button[aria-label="收起导入名单"]')?.getAttribute("aria-expanded")).toBe("true");
-    expect(container.textContent).not.toContain("模板");
     expect(container.textContent).not.toContain("地图呈现");
-    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).toBeNull();
+    // 导入模板下载回到名单阶段（新用户第一步需要模板）。
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).not.toBeNull();
     expect(container.querySelector(".student-table")).not.toBeNull();
     expect(container.querySelector('[aria-label="数据质量"]')).not.toBeNull();
+  });
+
+  it("hides the template download only when the shell asks for it", () => {
+    const { container } = renderWorkspace({
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), hideTemplateDownload: true },
+    });
+
+    const importRoster = container.querySelector<HTMLButtonElement>('button[aria-label="展开导入名单"]');
+    flushSync(() => importRoster?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).toBeNull();
   });
 
   it("forwards row selection without rendering a return-editor action", () => {
