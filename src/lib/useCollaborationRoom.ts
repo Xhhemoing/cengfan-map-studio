@@ -143,8 +143,9 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       versionRef.current = room.version;
     } else {
       versionRef.current = room.version;
-      setRoomVersion(room.version);
     }
+    // 版本号状态与 versionRef 同步，加入方浮层才能跟着房主的编辑前进。
+    setRoomVersion(room.version);
     setCollaborationStatus("connected");
     setCollaborationMessage(room.rebasedFromVersion === undefined ? "增量同步已完成" : "已自动合并互不冲突的并发修改");
   };
@@ -176,8 +177,8 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
           baselineRef.current = rebased.baseline;
         } else {
           versionRef.current = interval.version;
-          setRoomVersion(interval.version);
         }
+        setRoomVersion(interval.version);
         setCollaborationStatus("connected");
         setCollaborationMessage("已补齐断线期间的修改");
       } catch (error) {
@@ -188,6 +189,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
               suppressSendRef.current = true;
               baselineRef.current = optionsRef.current.applyPackage(room.snapshot, room.version);
               versionRef.current = room.version;
+              setRoomVersion(room.version);
               setCollaborationStatus("connected");
               setCollaborationMessage("已重新加载完整快照");
             }
@@ -309,6 +311,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       suppressSendRef.current = true;
       baselineRef.current = optionsRef.current.applyPackage(room.snapshot, room.version);
       versionRef.current = room.version;
+      setRoomVersion(room.version);
       if (room.closed) {
         setCollaborationStatus("closed");
         setCollaborationMessage("房间已关闭，无法继续同步或编辑");

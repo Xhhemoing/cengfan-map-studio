@@ -1446,6 +1446,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
     onDeleteUserAsset: deleteUserAsset,
     onExportResourcePack: exportResourcePack,
     onImportResourcePack: importResourcePack,
+    // 内容与排版阶段的素材面板直接使用这份 props；缺少该回调时
+    // AssetPanel 会提示「已导入画布」但没有元素真正上画布。
+    onCreateDecoration: handleCreateDecoration,
   };
 
   const handleWorkflowStepChange = (id: WorkflowPanelId) => {

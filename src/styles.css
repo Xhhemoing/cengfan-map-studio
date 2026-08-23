@@ -15,6 +15,8 @@
   --editor-line: #d3dce2;
   --editor-accent: #245d57;
   --editor-accent-soft: #e7f1ef;
+  /* 选中态/强调标题文字色：浅色下用深墨绿，暗色主题覆盖为可读的亮色。 */
+  --editor-accent-ink: #1c4d43;
   --editor-danger: #c95c49;
   --editor-focus: #d6b56d;
   /* Studio semantic tokens: consumed by the MUI theme (StudioMuiProvider) as
@@ -279,7 +281,7 @@ button { font: inherit; }
 .studio-editor-shell__drawer .data-upload-workspace__rail-tabs [role="tab"]:hover { color: var(--editor-ink); background: var(--editor-surface-muted); }
 .studio-editor-shell__right .data-upload-workspace__rail-tabs [role="tab"][aria-selected="true"],
 .studio-editor-shell__drawer .data-upload-workspace__rail-tabs [role="tab"][aria-selected="true"] {
-  color: #1c4d43;
+  color: var(--editor-accent-ink);
   background: var(--editor-accent-soft);
   border-color: transparent;
 }
@@ -356,7 +358,10 @@ button { font: inherit; }
 .data-upload-workspace__province-chip strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .data-upload-workspace__province-chip small { color: var(--editor-ink-muted); font-size: 10px; }
 .data-upload-workspace__province-chip[data-overridden] { border-color: var(--editor-accent); }
-.data-upload-workspace__mapping-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; }
+/* 地图映射问题行渲染在约 240px 的右栏里；用复合选择器压过后面定义的
+ * .data-quality-row 两列模板，改为单列堆叠，保证学生名/原因/定位按钮都可见。 */
+.data-quality-row.data-upload-workspace__mapping-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.data-quality-row.data-upload-workspace__mapping-row > .compact-button { justify-self: start; }
 .data-upload-workspace__mapping-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; min-width: 0; }
 .data-upload-workspace__mapping-controls .search-combobox { min-width: 0; }
 .data-upload-workspace__mapping-controls .search-combobox input { width: 100%; min-width: 0; min-height: 30px; padding: 4px 6px; color: #24384d; background: #fff; border: 1px solid #d5dee4; border-radius: 4px; font: inherit; }
@@ -413,6 +418,31 @@ button { font: inherit; }
 .data-workspace .import-unparsed__list li span { color: #98503e; font-weight: 700; }
 .data-workspace .import-unparsed__list li strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4d6072; font-weight: 600; }
 .data-workspace .import-unparsed__list li small { color: #98503e; }
+/* Excel 表头识别结果：原始表头 → 识别字段 | 样本，三列分隔可读。 */
+.data-workspace .import-recognition { display: grid; gap: 6px; padding: 10px; background: var(--editor-surface-raised); border: 1px solid var(--editor-line); border-radius: 6px; }
+.data-workspace .import-recognition .panel-heading { margin: 0; }
+.data-workspace .import-recognition__grid { display: grid; gap: 4px; max-height: 200px; overflow: auto; }
+.data-workspace .import-recognition__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 8px;
+  background: var(--editor-surface-muted);
+  border: 1px solid var(--editor-line);
+  border-radius: 4px;
+  font-size: 11px;
+}
+.data-workspace .import-recognition__row span { overflow: hidden; color: var(--editor-ink-muted); text-overflow: ellipsis; white-space: nowrap; }
+.data-workspace .import-recognition__row strong { overflow: hidden; color: var(--editor-ink); text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.data-workspace .import-recognition__row strong::before { content: "→ "; color: var(--editor-ink-muted); font-weight: 400; }
+.data-workspace .import-recognition__row small { overflow: hidden; color: var(--editor-ink-muted); text-overflow: ellipsis; white-space: nowrap; }
+.data-workspace .import-recognition__row small::before { content: "样本："; }
+.data-workspace .import-recognition__note { margin: 0; color: var(--editor-ink-muted); font-size: 11px; }
+.data-workspace .import-recognition__warning { margin: 0; color: var(--editor-danger); font-size: 11px; font-weight: 600; }
+@media (max-width: 760px) {
+  .data-workspace .import-recognition__row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
 .data-workspace .import-toggle { margin-bottom: 0; }
 .data-workspace label { display: grid; gap: 4px; color: #5b6c7d; font-size: 11px; }
 .data-workspace input,
@@ -1341,6 +1371,7 @@ button { font: inherit; }
   --editor-line: #3a4b57;
   --editor-accent: #8ed7c8;
   --editor-accent-soft: #234741;
+  --editor-accent-ink: var(--editor-accent);
   --editor-danger: #e58b75;
   --editor-focus: #e5c878;
   background: var(--editor-bg);
@@ -2343,6 +2374,7 @@ button.data-overview__metric:hover {
   --editor-line: #e4e4de;
   --editor-accent: #24665a;
   --editor-accent-soft: #e8f1eb;
+  --editor-accent-ink: #1c4d43;
   --editor-danger: #b25440;
   --editor-focus: #24665a;
   --editor-warning: #96611f;
@@ -2360,6 +2392,7 @@ button.data-overview__metric:hover {
   --editor-line: #3b3c37;
   --editor-accent: #8fc4b4;
   --editor-accent-soft: #284238;
+  --editor-accent-ink: var(--editor-accent);
   --editor-danger: #e38e79;
   --editor-focus: #a8d5c7;
   --editor-warning: #dfb663;
@@ -2480,7 +2513,7 @@ button.data-overview__metric:hover {
 .app-shell[data-editor-skin="atelier"] .workflow-stage-stepper button:hover { color: var(--editor-ink); background: var(--editor-surface-muted); }
 .app-shell[data-editor-skin="atelier"] .workflow-stepper button.is-active,
 .app-shell[data-editor-skin="atelier"] .workflow-stage-stepper button.is-active {
-  color: #1c4d43;
+  color: var(--editor-accent-ink);
   background: var(--editor-accent-soft);
   border-color: #bdd1c4;
 }
@@ -2989,7 +3022,7 @@ button.data-overview__metric:hover {
 .app-shell[data-editor-skin="atelier"] .property-panel__advanced-title {
   margin: 2px 0 6px;
   padding: var(--atelier-space-2) var(--atelier-space-3);
-  color: #1c4d43;
+  color: var(--editor-accent-ink);
   background: var(--editor-accent-soft);
   border-color: #c6d8ce;
   border-radius: var(--atelier-radius-control);
@@ -3025,7 +3058,7 @@ button.data-overview__metric:hover {
 }
 .app-shell[data-editor-skin="atelier"] .studio-assistant-rail__tabs [role="tab"] { min-height: 30px; border-radius: var(--atelier-radius-control); }
 .app-shell[data-editor-skin="atelier"] .studio-assistant-rail__tabs [role="tab"][aria-selected="true"] {
-  color: #1c4d43;
+  color: var(--editor-accent-ink);
   background: var(--editor-accent-soft);
   border-color: transparent;
   box-shadow: none;
@@ -3038,7 +3071,7 @@ button.data-overview__metric:hover {
 }
 .app-shell[data-editor-skin="atelier"] .data-upload-workspace__rail-tabs [role="tab"] { min-height: 30px; border-radius: var(--atelier-radius-control); }
 .app-shell[data-editor-skin="atelier"] .data-upload-workspace__rail-tabs [role="tab"][aria-selected="true"] {
-  color: #1c4d43;
+  color: var(--editor-accent-ink);
   background: var(--editor-accent-soft);
   border-color: transparent;
   box-shadow: none;
@@ -3091,7 +3124,7 @@ button.data-overview__metric:hover {
   border-radius: var(--atelier-radius-control);
 }
 .app-shell[data-editor-skin="atelier"] .display-frame-mode-switch button.is-active {
-  color: #1c4d43;
+  color: var(--editor-accent-ink);
   background: var(--editor-accent-soft);
   border-color: #bdd1c4;
   box-shadow: inset 3px 0 var(--editor-accent);
