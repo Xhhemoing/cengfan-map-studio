@@ -12,7 +12,7 @@ export interface StageShellMetadata {
 }
 
 export const STAGE_METADATA = {
-  data: { rightRailLabel: "数据质量与素材" },
+  data: { rightRailLabel: "数据质量" },
   map: { rightRailLabel: "地图对象属性" },
   frame: { rightRailLabel: "展示框公共样式" },
   content: { rightRailLabel: "内容对象属性" },

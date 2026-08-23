@@ -64,11 +64,11 @@ describe("StudioEditorShell", () => {
     const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
 
     const dockedGuide = container.querySelector(".studio-editor-shell__right .studio-stage-guide");
-    expect(dockedGuide?.textContent).toContain("确定地图表达与外观");
-    expect(dockedGuide?.getAttribute("aria-label")).toBe("地图样式说明");
+    expect(dockedGuide?.textContent).toContain("选择呈现方式并调整地图外观");
+    expect(dockedGuide?.getAttribute("aria-label")).toBe("地图说明");
 
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开地图属性"]')!);
-    expect(document.querySelector(".studio-editor-shell__drawer .studio-stage-guide")?.textContent).toContain("确定地图表达与外观");
+    expect(document.querySelector(".studio-editor-shell__drawer .studio-stage-guide")?.textContent).toContain("选择呈现方式并调整地图外观");
   });
 
   it("expands the center region when no right rail is supplied", () => {
