@@ -55,12 +55,11 @@ import "./components/workflow-workspaces.css";
 import { GlobalSettingsScreen, type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
 import { DataUploadRail, DataUploadWorkspace } from "./components/workspaces/DataUploadWorkspace";
 import { MapStyleRail, MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
-import { ReferenceCardStyleWorkspace } from "./components/workspaces/ReferenceCardStyleWorkspace";
+import { ReferenceCardStyleRail, ReferenceCardStyleWorkspace } from "./components/workspaces/ReferenceCardStyleWorkspace";
 import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
 import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
 
 import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
-import { CardsInspector } from "./components/inspector/CardsInspector";
 import { ZoomControls } from "./components/ZoomControls";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
 import {
@@ -1662,6 +1661,21 @@ function StudioApp({ projectId }: { projectId?: string }) {
     );
   }
 
+  // 版式与内容阶段的画布共用同一套卡片/嘉宾拖拽事务。
+  const moveCardTo = (id: string, x: number, y: number) => {
+    const point = maybeSnap(x, y);
+    commitProject(applyTransaction(project, {
+      id: createId(`tx-card-position-${id}`),
+      label: "调整数据框位置",
+      source: "manual",
+      apply: (current) => ({ ...current, cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } } }),
+    }));
+  };
+  const moveGuestsTo = (x: number, y: number) => {
+    const point = maybeSnap(x, y);
+    commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, point)));
+  };
+
   const buildStageSlots = (stage: WorkflowStageId): StageSlots => {
     switch (stage) {
       case "data":
@@ -1744,19 +1758,34 @@ function StudioApp({ projectId }: { projectId?: string }) {
             </>
           ),
           rightRail: (
-            <CardsInspector
+            <ReferenceCardStyleRail
               cards={project.cards}
               userFonts={userFonts}
+              templates={(["original", "cartoon", "grain", "q", "scenery"] as const).map((templateId) => ({
+                id: templateId,
+                name: createSystemTemplate(templateId).name,
+              }))}
+              currentTemplateId={template}
+              customTemplates={customTemplates.map(({ id, name, scope }) => ({ id, name, scope }))}
+              onApplyTemplate={applySystemTemplate}
+              onApplyCustomTemplate={(record) => {
+                const full = customTemplates.find((item) => item.id === record.id);
+                if (full) applyCustomTemplateRecord(full);
+              }}
+              onSaveTemplate={saveCurrentTemplate}
               onPatch={(patch) => patchScene({ type: "cards" }, patch)}
-              onReset={() => resetSceneTarget({ type: "cards" })}
-              mode="global"
-              collapsible
+              onResetCards={() => resetSceneTarget({ type: "cards" })}
             />
           ),
           workspace: (
             <ReferenceCardStyleWorkspace
-              cards={project.cards}
-              onPatch={(patch) => patchScene({ type: "cards" }, patch)}
+              project={renderProject}
+              selection={selection}
+              userFonts={userFonts}
+              onSelect={handleSceneSelect}
+              onMoveCard={moveCardTo}
+              onMoveGuests={moveGuestsTo}
+              onCardPositionsResolved={captureCardPositions}
             />
           ),
         };
@@ -1894,19 +1923,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
               patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
             }}
             onCardPositionsResolved={captureCardPositions}
-            onMoveCard={(id, x, y) => {
-              const point = maybeSnap(x, y);
-              commitProject(applyTransaction(project, {
-                id: createId(`tx-card-position-${id}`),
-                label: "调整数据框位置",
-                source: "manual",
-                apply: (current) => ({ ...current, cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } } }),
-              }));
-            }}
-            onMoveGuests={(x, y) => {
-              const point = maybeSnap(x, y);
-              commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, point)));
-            }}
+            onMoveCard={moveCardTo}
+            onMoveGuests={moveGuestsTo}
           />
           ),
         };

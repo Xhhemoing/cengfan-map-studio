@@ -14,7 +14,7 @@ export interface StageShellMetadata {
 export const STAGE_METADATA = {
   data: { rightRailLabel: "数据质量" },
   map: { rightRailLabel: "地图对象属性" },
-  frame: { rightRailLabel: "展示框公共样式" },
+  frame: { rightRailLabel: "版式与展示框样式" },
   content: { rightRailLabel: "内容对象属性" },
   export: { rightRailLabel: "导出与检查" },
 } satisfies Record<WorkflowStageId, StageShellMetadata>;

@@ -1114,11 +1114,15 @@ describe("App student editing", () => {
     click(container.querySelector<HTMLButtonElement>('[aria-label="版式"]')!);
 
     expect(container.querySelector('main[aria-label="版式"]')).not.toBeNull();
+    // 中栏是实时画布；4 个展示框样式格移到右栏，与整体模板同侧。
+    expect(container.querySelector('main[aria-label="版式"] svg.poster')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="版式"] .reference-card-style-option')).toBeNull();
     expect(container.querySelectorAll(".reference-card-style-option")).toHaveLength(4);
+    expect(container.querySelector('aside[aria-label="版式与展示框样式"] .template-picker')).not.toBeNull();
     expect(container.querySelector(".workspace")).toBeNull();
     expect(container.querySelector('main[aria-label="版式"] .display-frame-workspace__header')).toBeNull();
     expect(container.querySelector('.topbar button[aria-label="刷新展示框位置"]')).not.toBeNull();
-    expect(container.querySelector('aside[aria-label="展示框公共样式"]')).not.toBeNull();
+    expect(container.querySelector('aside[aria-label="版式与展示框样式"]')).not.toBeNull();
 
     const topbar = container.querySelector(".topbar-actions")!;
     expect(topbar.querySelector('[aria-label="历史"]')).not.toBeNull();
@@ -1813,7 +1817,7 @@ describe("Stage slot contract (T0)", () => {
   const STAGE_SLOTS = [
     ["名单", "数据质量"],
     ["地图", "地图对象属性"],
-    ["版式", "展示框公共样式"],
+    ["版式", "版式与展示框样式"],
     ["内容", "内容对象属性"],
     ["交付", "导出与检查"],
   ] as const;
