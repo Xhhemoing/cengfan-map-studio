@@ -13,6 +13,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -220,7 +221,15 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(() =>
     initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
   );
-  const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
+  // statusFeed 携带递增 nonce：相同文案连续两次上报时 StatusToast 也会重新显示。
+  const [statusFeed, setStatusFeed] = useState(() => ({
+    text: initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地",
+    nonce: 0,
+  }));
+  const statusMessage = statusFeed.text;
+  const setStatusMessage = useCallback((text: string) => {
+    setStatusFeed((prev) => ({ text, nonce: prev.nonce + 1 }));
+  }, []);
   const [projectMissing, setProjectMissing] = useState(false);
   const [projectLoading, setProjectLoading] = useState(() => Boolean(projectId));
   const [userFonts, setUserFonts] = useState<UserFont[]>(() =>
@@ -2029,7 +2038,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         >
           {slots.workspace}
         </StudioLayoutTemplate>
-        <StatusToast message={statusMessage} syncStatus={syncState.status} />
+        <StatusToast message={statusMessage} nonce={statusFeed.nonce} syncStatus={syncState.status} />
       </>
     );
   }
