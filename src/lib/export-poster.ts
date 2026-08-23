@@ -1,7 +1,7 @@
 export function serializePosterSvg(svg: SVGSVGElement, options: { transparentBackground?: boolean; blockFontDisplay?: boolean } = {}): string {
   const clone = svg.cloneNode(true) as SVGSVGElement;
   clone.querySelectorAll(
-    "[data-selection-overlay], [data-map-selection-overlay], [data-asset-selection], [data-editor-grid]",
+    "[data-selection-overlay], [data-map-selection-overlay], [data-asset-selection], [data-editor-grid], [data-editor-placeholder]",
   ).forEach((node) => node.remove());
   if (options.transparentBackground) {
     clone.querySelectorAll("[data-canvas-background], [data-background-image]").forEach((node) => node.remove());

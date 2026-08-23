@@ -1307,8 +1307,9 @@ export function PosterCanvas({
               ))}
               {visibleGuests.length === 0 && !guestCustomText ? (
                 // 编辑器里的引导占位；导出成品（PNG/SVG）不应包含这句提示。
+                // data-editor-placeholder 供 serializePosterSvg 在导出时剔除。
                 !exportMode && (
-                  <text x={guests.padding} y={guests.padding + 36 + guests.fontSize} fill={guests.textColor} fontSize={guests.fontSize} opacity={0.65}>
+                  <text data-editor-placeholder x={guests.padding} y={guests.padding + 36 + guests.fontSize} fill={guests.textColor} fontSize={guests.fontSize} opacity={0.65}>
                     在右侧添加老师 / 嘉宾
                   </text>
                 )
