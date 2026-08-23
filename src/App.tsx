@@ -1534,7 +1534,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   );
 
   const historyActionsNode = (
-    <ToolbarGroup label="历史与缩放" className="topbar-action-group--history">
+    <ToolbarGroup label="历史" className="topbar-action-group--history">
       <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
       <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
     </ToolbarGroup>
@@ -1814,7 +1814,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           stageActions: (
             <>
               <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={refreshDisplayFramePositions} />
-              <ToolbarButton label="返回地图样式" icon={<MapPinned size={18} />} onClick={() => {
+              <ToolbarButton label="返回地图" icon={<MapPinned size={18} />} onClick={() => {
                 setActiveStage("map");
                 setActivePanel("map");
               }} />

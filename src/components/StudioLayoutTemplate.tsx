@@ -6,7 +6,7 @@ import type { WorkflowStageId } from "../lib/workflow-stages";
 
 /** 阶段渲染分派返回的槽位（T1）。rightRailLabel 由 STAGE_METADATA 提供，不在此重复。 */
 export interface StageSlots {
-  /** 阶段专属顶栏动作（如内容阶段的历史/刷新/返回地图样式）。 */
+  /** 阶段专属顶栏动作（如内容阶段的历史/刷新/返回地图）。 */
   stageActions?: ReactNode;
   /** 右栏：本阶段具体编辑工具。 */
   rightRail: ReactNode;
@@ -23,7 +23,7 @@ export type StudioLayoutTemplateProps = {
   assistantEntry: ReactNode;
   /** 全局高频动作（撤销/重做，所有阶段可见）。 */
   historyActions?: ReactNode;
-  /** 阶段专属顶栏动作（如内容阶段的历史/刷新/返回地图样式）。 */
+  /** 阶段专属顶栏动作（如内容阶段的历史/刷新/返回地图）。 */
   stageActions?: ReactNode;
   /** 顶栏右侧工程动作（返回工作台/导出/项目菜单/主题皮肤）。 */
   projectActions: ReactNode;

@@ -187,7 +187,7 @@ describe("App student editing", () => {
 
     click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="交付"]')!);
 
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(container.querySelector('select[aria-label="PNG 导出倍率"]')).not.toBeNull();
   });
 
@@ -201,7 +201,7 @@ describe("App student editing", () => {
     changeSelect(scale, "3");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="导出 SVG"]')!);
 
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("下载不可用");
     expect(scale.value).toBe("3");
     expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();
@@ -233,7 +233,7 @@ describe("App student editing", () => {
     await vi.waitFor(() => {
       expect(container.querySelector('[role="alert"]')?.textContent).toContain("PNG 下载不可用");
     });
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(scale.value).toBe("3");
     expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();
   });
@@ -248,7 +248,7 @@ describe("App student editing", () => {
     changeSelect(scale, "3");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="导出工程包"]')!);
 
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("工程包下载不可用");
     expect(scale.value).toBe("3");
     expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();
@@ -1001,7 +1001,7 @@ describe("App student editing", () => {
     expect(issue).not.toBeUndefined();
     click(issue!);
 
-    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="内容"]')).not.toBeNull();
     expect(container.querySelector('[data-text-id="text-title"]')?.classList.contains("is-selected")).toBe(true);
   });
 
@@ -1031,7 +1031,7 @@ describe("App student editing", () => {
     leaveFocusedWorkspace(container);
 
     expect(container.querySelector('main[aria-label="名单工作台"]')).toBeNull();
-    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="内容"]')).not.toBeNull();
   });
 
   it("leaves the upload stage through top-level workflow navigation", () => {
@@ -1113,19 +1113,19 @@ describe("App student editing", () => {
     const container = renderApp();
     click(container.querySelector<HTMLButtonElement>('[aria-label="版式"]')!);
 
-    expect(container.querySelector('main[aria-label="展示框样式"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="版式"]')).not.toBeNull();
     expect(container.querySelectorAll(".reference-card-style-option")).toHaveLength(4);
     expect(container.querySelector(".workspace")).toBeNull();
-    expect(container.querySelector('main[aria-label="展示框样式"] .display-frame-workspace__header')).toBeNull();
+    expect(container.querySelector('main[aria-label="版式"] .display-frame-workspace__header')).toBeNull();
     expect(container.querySelector('.topbar button[aria-label="刷新展示框位置"]')).not.toBeNull();
     expect(container.querySelector('aside[aria-label="展示框公共样式"]')).not.toBeNull();
 
     const topbar = container.querySelector(".topbar-actions")!;
-    expect(topbar.querySelector('[aria-label="历史与缩放"]')).not.toBeNull();
+    expect(topbar.querySelector('[aria-label="历史"]')).not.toBeNull();
     expect(topbar.querySelector('[aria-label="界面主题"]')).not.toBeNull();
 
     click(workflowStage(container, "内容"));
-    expect(container.querySelector('main[aria-label="展示框样式"]')).toBeNull();
+    expect(container.querySelector('main[aria-label="版式"]')).toBeNull();
     expect(container.querySelector(".workspace")).not.toBeNull();
   });
 
@@ -1141,7 +1141,7 @@ describe("App student editing", () => {
     expect(container.querySelector('main[aria-label="名单工作台"] .workflow-stage-stepper')).toBeNull();
 
     click(workflowStage(container, "地图"));
-    expect(container.querySelector('main[aria-label="地图样式"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="地图"]')).not.toBeNull();
     expect(container.querySelector('main[aria-label="名单工作台"]')).toBeNull();
   });
 
@@ -1149,7 +1149,7 @@ describe("App student editing", () => {
     const container = renderApp();
     click(container.querySelector<HTMLButtonElement>('[aria-label="地图"]')!);
 
-    expect(container.querySelector('main[aria-label="地图样式"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="地图"]')).not.toBeNull();
     expect(container.querySelectorAll('[role="group"][aria-label="地图表达"] button')).toHaveLength(5);
     expect(container.querySelector(".workflow-panel--map")).toBeNull();
     expect(container.querySelector("main[aria-label=\"全局设置\"]")).toBeNull();
@@ -1161,7 +1161,7 @@ describe("App student editing", () => {
     click(container.querySelector<SVGPathElement>("[data-province-hit]")!);
 
     expect(container.querySelector('.workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("地图");
-    expect(container.querySelector('main[aria-label="地图样式"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="地图"]')).not.toBeNull();
     expect(container.querySelector(".province-inspector")?.textContent).toContain("北京市");
     expect(container.querySelector('.topbar .workflow-stepper button[aria-label="素材"]')).toBeNull();
   });
@@ -1579,7 +1579,7 @@ describe("App workflow guidance", () => {
     const container = renderApp();
     click(workflowStage(container, "地图"));
 
-    expect(container.querySelector('main[aria-label="地图样式"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="地图"]')).not.toBeNull();
     expect(workflowStage(container, "地图").getAttribute("aria-current")).toBe("step");
   });
 
@@ -1900,7 +1900,7 @@ describe("Topbar action layering (T4)", () => {
     const container = renderPublicApp();
     for (const stage of ["名单", "地图", "版式", "内容", "交付"]) {
       click(workflowStage(container, stage));
-      expect(container.querySelector('.topbar-actions [role="group"][aria-label="历史与缩放"]')).not.toBeNull();
+      expect(container.querySelector('.topbar-actions [role="group"][aria-label="历史"]')).not.toBeNull();
     }
   });
 

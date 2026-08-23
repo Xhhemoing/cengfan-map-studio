@@ -60,7 +60,7 @@ describe("DeliveryWorkspace", () => {
     const onLocate = vi.fn();
     const container = renderWorkspace({ onLocate });
 
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="返回编辑器"]')).toBeNull();
     expect(container.textContent).toContain("数据完整性");
     expect(container.textContent).toContain("排版问题");

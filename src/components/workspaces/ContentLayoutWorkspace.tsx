@@ -111,7 +111,7 @@ export function ContentLayoutRail({
 /**
  * Center content of the content stage: the poster canvas preview. The
  * 当前对象 inspector and 素材库 context live in the unified right rail
- * (`ContentLayoutRail`); undo/redo, 刷新展示框位置 and 返回地图样式 actions
+ * (`ContentLayoutRail`); undo/redo, 刷新展示框位置 and 返回地图 actions
  * live in the topbar's stage-actions slot.
  */
 export function ContentLayoutWorkspace({
@@ -131,7 +131,7 @@ export function ContentLayoutWorkspace({
   selectedStudentId = null,
 }: ContentLayoutWorkspaceProps) {
   return (
-    <main className="content-layout-workspace workflow-panel--content" aria-label="内容与排版">
+    <main className="content-layout-workspace workflow-panel--content" aria-label="内容">
       <div className="content-layout-workspace__body">
         <section className="content-layout-workspace__preview" aria-label="内容排版画布">
           <div className="content-layout-workspace__preview-heading"><strong>实时画布</strong><span>{project.canvas.width} × {project.canvas.height}</span></div>

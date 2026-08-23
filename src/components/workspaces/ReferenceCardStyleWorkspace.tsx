@@ -18,11 +18,11 @@ export function ReferenceCardStyleWorkspace({ cards, onPatch }: {
   );
 
   return (
-    <main className="reference-card-style-workspace" aria-label="展示框样式">
+    <main className="reference-card-style-workspace" aria-label="版式">
       <header className="reference-card-style-workspace__header">
         <div>
-          <h2>展示框样式</h2>
-          <p>选择可直接在画布和导出文件中稳定渲染的样式。</p>
+          <h2>版式</h2>
+          <p>展示框与海报结构，选择可稳定渲染的样式。</p>
         </div>
       </header>
       <div className="reference-card-style-workspace__grid">

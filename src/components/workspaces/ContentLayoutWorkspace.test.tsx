@@ -34,12 +34,12 @@ function renderWorkspace(onRefreshPositions = vi.fn(), onBackToMap = vi.fn()) {
       <StudioTopbar
         stageActions={
           <>
-            <ToolbarGroup label="历史与缩放">
+            <ToolbarGroup label="历史">
               <ToolbarButton label="撤销内容修改" icon={null} disabled={false} onClick={vi.fn()} />
               <ToolbarButton label="重做内容修改" icon={null} disabled={false} onClick={vi.fn()} />
             </ToolbarGroup>
             <ToolbarButton label="刷新展示框位置" icon={null} onClick={onRefreshPositions} />
-            <ToolbarButton label="返回地图样式" icon={null} onClick={onBackToMap} />
+            <ToolbarButton label="返回地图" icon={null} onClick={onBackToMap} />
           </>
         }
         projectActions={<></>}
@@ -80,7 +80,7 @@ describe("ContentLayoutWorkspace", () => {
   it("renders the center canvas preview and the right rail with the object inspector and asset context", () => {
     const { container } = renderWorkspace();
 
-    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="内容"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="内容大纲"]')).toBeNull();
     expect(container.querySelector('[aria-label="内容排版画布"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="内容对象属性"]')).not.toBeNull();
@@ -101,7 +101,7 @@ describe("ContentLayoutWorkspace", () => {
 
     const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="刷新展示框位置"]');
     expect(refresh?.closest(".topbar")).not.toBeNull();
-    const backToMap = container.querySelector<HTMLButtonElement>('button[aria-label="返回地图样式"]');
+    const backToMap = container.querySelector<HTMLButtonElement>('button[aria-label="返回地图"]');
     expect(backToMap?.closest(".topbar")).not.toBeNull();
     expect(container.querySelector(".content-layout-workspace__header")).toBeNull();
 

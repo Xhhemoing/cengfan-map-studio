@@ -134,7 +134,7 @@ export function DeliveryWorkspace({
   posterRef,
 }: DeliveryWorkspaceProps) {
   return (
-    <main className="delivery-workspace" aria-label="最终导出">
+    <main className="delivery-workspace" aria-label="交付">
       <div className="delivery-workspace__body">
         <section className="delivery-workspace__preview" aria-label="最终预览">
           <div className="delivery-workspace__preview-heading"><strong>最终预览</strong><span>{project.canvas.width} × {project.canvas.height} px</span></div>

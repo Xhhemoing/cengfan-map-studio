@@ -1271,7 +1271,8 @@ button { font: inherit; }
 .topbar .zoom-label { color: var(--editor-ink-muted); }
 .topbar .topbar-action-group { border-color: var(--editor-line); }
 .topbar-actions .topbar-action-group[aria-label="项目设置"] { display: none; }
-.topbar-actions .topbar-action-group[aria-label="历史与缩放"] { padding-left: 4px; }
+.topbar-actions .topbar-action-group[aria-label="历史与缩放"],
+.topbar-actions .topbar-action-group[aria-label="历史"] { padding-left: 4px; }
 .topbar-actions .topbar-action-group[aria-label="界面主题"] { padding-left: 4px; }
 .topbar-actions .topbar-action-group[aria-label="导出与工程"] { padding-left: 4px; }
 .topbar-actions .zoom-label { padding: 0 3px; }
@@ -1515,7 +1516,8 @@ button { font: inherit; }
   .workflow-stepper button { padding: 0 4px; }
   .workflow-stepper__label { display: none; }
   .workflow-stepper__status { display: none; }
-  .topbar-actions .topbar-action-group[aria-label="历史与缩放"] { display: none; }
+  .topbar-actions .topbar-action-group[aria-label="历史与缩放"],
+  .topbar-actions .topbar-action-group[aria-label="历史"] { display: none; }
   .topbar-actions .primary-button { font-size: 0; width: 32px; padding: 0; justify-content: center; }
   .topbar-actions .primary-button svg { margin: 0; }
   .workspace { display: block; min-height: calc(100vh - 56px); height: auto; }
