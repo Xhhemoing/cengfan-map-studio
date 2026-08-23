@@ -1315,7 +1315,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setSelection({ type: "asset", id: element.id });
   };
 
-  const mapStyleAssetPanelProps: ContentAssetPanelProps = {
+  // 素材库的主入口在内容阶段（名单阶段不再挂素材面板），装饰创建能力也随之归入。
+  const contentAssetPanelProps: ContentAssetPanelProps = {
     instances: project.assetElements
       .filter((element) => element.kind !== "province-texture")
       .map((element) => ({ id: element.id, assetId: element.assetId, label: element.label, kind: element.kind })),
@@ -1327,6 +1328,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     posterBackground: project.canvas.backgroundColor,
     userAssets,
     assetUsageById,
+    onCreateDecoration: handleCreateDecoration,
     onApplyBackground: (asset) => {
       commitProject(applyTransaction(project, {
         id: createId("tx-bg"),
@@ -1386,9 +1388,15 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setActiveWorkflowStep(workflowId);
   };
 
+  // 默认（非 legacy）路径不再打开整页全局设置，而是跳到拥有该配置的阶段，
+  // 避免把用户带离五阶段流程；legacy 编辑器仍使用 GlobalSettingsScreen。
   const openStudioSettings = () => {
-    setActiveWorkflowStep("layout");
-    setGlobalSettingsSection("canvas");
+    if (legacyEditorEnabled) {
+      setActiveWorkflowStep("layout");
+      setGlobalSettingsSection("canvas");
+      return;
+    }
+    handleWorkflowStageChange("frame");
   };
   const openTopbarProjectMenu = () => {
     const menu = document.querySelector<HTMLDetailsElement>(".topbar .project-menu");
@@ -1399,10 +1407,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
     collaboration.setCollaborationOpen(true);
   };
   const openDataDiagnostics = () => {
-    setGlobalSettingsSection("cards");
+    if (legacyEditorEnabled) {
+      setGlobalSettingsSection("cards");
+      return;
+    }
+    handleWorkflowStageChange("data");
   };
   const openRenderSettings = () => {
-    setGlobalSettingsSection("advanced");
+    if (legacyEditorEnabled) {
+      setGlobalSettingsSection("advanced");
+      return;
+    }
+    handleWorkflowStageChange("content");
   };
   const projectExportActions = (
     <ToolbarGroup label="导出与工程">
@@ -1655,8 +1671,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
               summary={dataHealth}
               issues={dataIssues}
               dataWorkspaceProps={dataWorkspaceProps}
-              assetPanelProps={mapStyleAssetPanelProps}
-              onCreateDecoration={handleCreateDecoration}
               onSelectStudent={setSelectedStudentId}
             />
           ),
@@ -1666,8 +1680,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
               summary={dataHealth}
               issues={dataIssues}
               dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
-              assetPanelProps={mapStyleAssetPanelProps}
-              onCreateDecoration={handleCreateDecoration}
               onSelectStudent={setSelectedStudentId}
             />
           ),
@@ -1814,7 +1826,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               selection={selection}
               userAssets={userAssets}
               userFonts={userFonts}
-              assetPanelProps={mapStyleAssetPanelProps}
+              assetPanelProps={contentAssetPanelProps}
               onPatch={patchScene}
               onReset={resetSceneTarget}
               onApplyFont={applyFont}
@@ -1835,7 +1847,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             canRedo={canRedo}
             undoLabel={undoLabel}
             redoLabel={redoLabel}
-            assetPanelProps={mapStyleAssetPanelProps}
+            assetPanelProps={contentAssetPanelProps}
             onSelect={handleSceneSelect}
             onPatch={patchScene}
             onReset={resetSceneTarget}
