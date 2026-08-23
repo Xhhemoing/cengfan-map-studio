@@ -82,6 +82,25 @@ describe("ProjectWorkbench", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("高三3班"));
   });
 
+  it("closes the card menu when clicking outside or pressing Escape", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+
+    // 外点关闭
+    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
+    await vi.waitFor(() => expect(container.querySelector(".workbench-menu")).not.toBeNull());
+    document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(container.querySelector(".workbench-menu")).toBeNull());
+
+    // Esc 关闭
+    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
+    await vi.waitFor(() => expect(container.querySelector(".workbench-menu")).not.toBeNull());
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await vi.waitFor(() => expect(container.querySelector(".workbench-menu")).toBeNull());
+  });
+
   it("deletes a project after confirmation", async () => {
     const store = createMemoryProjectStore();
     const sample = createSampleProject();

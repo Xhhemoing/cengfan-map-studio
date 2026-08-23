@@ -620,7 +620,7 @@ describe("App student editing", () => {
   it("immediately overwrites the compatibility draft and complete local mirror", () => {
     const container = renderApp();
     window.localStorage.setItem("cengfan-map-studio:draft", "stale-local-data");
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存项目到本机"]')!);
 
     const saved = window.localStorage.getItem("cengfan-map-studio:draft");
     expect(saved).toContain("林舟");

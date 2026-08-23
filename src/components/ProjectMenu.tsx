@@ -127,11 +127,11 @@ export function ProjectMenu({
         <FolderOpen size={16} /> <span>项目</span>
       </summary>
       <div className="project-menu__popover">
+        {/* 「保存到本机」只保留工程文件区一处入口，避免两个字面相同、行为不同的按钮。 */}
         <section>
           <strong>项目管理</strong>
           <button type="button" aria-label="新建项目" onClick={closeThen(onNewProject)}><Plus size={16} /> 新建项目</button>
           <button type="button" aria-label="恢复本机最近项目" onClick={closeThen(onRestoreLocal)}><FolderOpen size={16} /> 恢复最近项目</button>
-          <button type="button" aria-label="保存项目到本机" onClick={closeThen(onSaveLocal)}><Save size={16} /> 保存到本机</button>
         </section>
         <section>
           <strong>导出海报</strong>
@@ -218,10 +218,10 @@ export function ProjectMenu({
           <strong>工程文件</strong>
           <button
             type="button"
-            aria-label="强制保存到浏览器本地"
+            aria-label="保存项目到本机"
             title="立即将当前工程、素材、字体、模板和渲染设置覆盖到浏览器本地存储"
             disabled={syncStatus === "saving"}
-            onClick={onSaveLocal}
+            onClick={closeThen(onSaveLocal)}
           >
             <Save size={16} /> {syncStatus === "saving" ? "保存中" : "保存到本机"}
           </button>

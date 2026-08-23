@@ -64,6 +64,8 @@
 .delivery-workspace__check header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .delivery-workspace__check header div { display: flex; gap: 8px; align-items: baseline; }
 .delivery-workspace__check small { color: #6b7d83; }
+.delivery-workspace__check-info { color: var(--editor-ink-muted, #6b7d83); }
+.delivery-workspace__issue-list button[data-severity="info"] { color: var(--editor-ink-muted, #6b7d83); }
 .delivery-workspace__issue-list { display: grid; gap: 5px; margin-top: 10px; }
 .delivery-workspace__issue-list button { display: flex; justify-content: space-between; gap: 10px; padding: 7px 8px; color: #3c525c; text-align: left; background: #fbfcfc; border: 1px solid #e0e7e8; border-radius: 4px; }
 .delivery-workspace__issue-list button small { color: #6b7d83; }

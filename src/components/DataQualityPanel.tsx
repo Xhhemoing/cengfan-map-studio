@@ -14,13 +14,16 @@ const issueLabels: Record<DataIssueKind, string> = {
 export function DataQualityPanel({
   issues,
   onSelectStudent,
+  showHeader = true,
 }: {
   issues: DataIssue[];
   onSelectStudent: (id: string) => void;
+  /** 宿主已有「数据质量」标题时置 false，避免同一面板出现两个标题与两个计数口径。 */
+  showHeader?: boolean;
 }) {
   return (
     <section className="data-quality-panel" aria-label="数据质量">
-      <PanelHeader title="数据质量" meta={`${issues.length} 项状态`} />
+      {showHeader && <PanelHeader title="数据质量" meta={`${issues.length} 项状态`} />}
       {issues.length === 0 ? (
         <div className="data-quality-empty">
           <CheckCircle2 size={20} aria-hidden />

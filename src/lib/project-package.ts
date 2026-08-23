@@ -213,7 +213,10 @@ export function restoreProjectPackage(value: unknown): ProjectPackage {
 export const PROJECT_PACKAGE_FILE_ACCEPT = "application/json,.json,.cengfan";
 
 export function projectPackageDisplayName(filename: string): string {
-  return filename.replace(/\.(json|cengfan)$/i, "") || "导入的项目";
+  // 导出文件名口径为「项目名-YYYY-MM-DD.json」：剥掉扩展名与日期后缀，
+  // 导入时还原项目名而不是把日期一并当成名字。
+  const withoutExtension = filename.replace(/\.(json|cengfan)$/i, "");
+  return withoutExtension.replace(/-\d{4}-\d{2}-\d{2}$/, "") || withoutExtension || "导入的项目";
 }
 
 export function downloadProjectPackage(pack: ProjectPackage, filename = `cengfan-project-${pack.exportedAt.slice(0, 10)}.json`): void {

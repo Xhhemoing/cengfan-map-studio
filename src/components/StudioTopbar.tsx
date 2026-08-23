@@ -28,14 +28,15 @@ export function StudioTopbar({
   workflowNav,
 }: StudioTopbarProps) {
   return (
-    <header className="topbar studio-topbar" aria-label="编辑器顶栏">
+    <header className="topbar studio-topbar" aria-label="编辑器顶栏" data-has-project={projectTitle ? "true" : undefined}>
       <div className="brand">
         <MapPinned size={24} />
         <span className="brand-label brand-label__full">蹭饭地图工作室</span>
         <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
         <em>Beta</em>
-        {projectTitle && <span className="topbar-project" aria-label="当前项目">{projectTitle}</span>}
       </div>
+      {/* 项目名占独立列（不塞进品牌列），保证可读且改名入口可发现。 */}
+      {projectTitle && <div className="topbar-project" aria-label="当前项目">{projectTitle}</div>}
       {workflowNav && <div className="topbar-workflow">{workflowNav}</div>}
       <div className="topbar-actions">
         {assistantEntry}

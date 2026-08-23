@@ -73,6 +73,24 @@ describe("DeliveryWorkspace", () => {
     expect(onLocate).toHaveBeenCalled();
   });
 
+  it("marks info-only data issues (e.g. 海外去向) as hints instead of warnings", () => {
+    const container = renderWorkspace({
+      dataIssues: [{ studentId: "s2", studentName: "周晴", kind: "international", detail: "海外去向：美国·波士顿", severity: "info" }],
+      layoutIssues: [],
+      resourceIssues: [],
+      fontIssues: [],
+    });
+
+    const dataSection = container.querySelector('section[aria-label="数据完整性"]');
+    expect(dataSection).not.toBeNull();
+    expect(dataSection?.textContent).toContain("1 项提示");
+    expect(dataSection?.querySelector('[aria-label="仅有提示信息"]')).not.toBeNull();
+    expect(dataSection?.querySelector('[aria-label="有待处理问题"]')).toBeNull();
+    expect(dataSection?.querySelector('button[data-severity="info"]')).not.toBeNull();
+    // 其余无问题的区块仍是「检查通过」。
+    expect(container.querySelector('section[aria-label="排版问题"] [aria-label="检查通过"]')).not.toBeNull();
+  });
+
   it("shows an export preview and keeps pixel/export settings visible", () => {
     const container = renderWorkspace();
 

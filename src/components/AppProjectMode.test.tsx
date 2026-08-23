@@ -124,7 +124,7 @@ describe("App in project mode", () => {
     changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "林舟舟");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
     closeGlobalSettings(container);
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存项目到本机"]')!);
 
     await vi.waitFor(async () => {
       const record = await editorProjectStore.get(sample.id);
@@ -239,7 +239,7 @@ describe("App in project mode", () => {
     const container = mountApp(sample.id);
     await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
 
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存项目到本机"]')!);
     await vi.waitFor(async () => {
       const record = await editorProjectStore.get(sample.id);
       expect(record?.pack.customTemplates[0]?.name).toBe("毕业海报");
@@ -253,7 +253,7 @@ describe("App in project mode", () => {
     const container = mountApp(sample.id);
     await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
 
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存项目到本机"]')!);
 
     await vi.waitFor(() => expect(container.textContent).toContain("项目记录写入失败"));
     expect(container.textContent).toContain("请导出工程包备份");

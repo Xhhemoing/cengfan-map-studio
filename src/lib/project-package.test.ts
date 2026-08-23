@@ -255,6 +255,13 @@ describe("project package", () => {
     expect(projectPackageDisplayName(".json")).toBe("导入的项目");
   });
 
+  it("strips the export date suffix so imports restore the original project name", () => {
+    expect(projectPackageDisplayName("三年二班蹭饭图-2026-08-23.json")).toBe("三年二班蹭饭图");
+    expect(projectPackageDisplayName("毕业2024-06-30-2026-08-23.cengfan")).toBe("毕业2024-06-30");
+    // 名字本身形如日期时不误剥：无前导连字符不匹配日期后缀。
+    expect(projectPackageDisplayName("2026-01-01.json")).toBe("2026-01-01");
+  });
+
   it("keeps the published sample package importable", () => {
     const raw = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../docs/示例数据/示例项目.cengfan"), "utf8");
     const pack = parseProjectPackage(raw);

@@ -76,7 +76,7 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
 }
 
 describe("DataUploadWorkspace", () => {
-  it("is the upload data workbench and excludes templates and map expression controls", () => {
+  it("is the upload data workbench with the XLSX template download but no poster templates or map expression controls", () => {
     const { container } = renderWorkspace();
 
     expect(container.querySelector('main[aria-label="数据与素材工作台"]')).not.toBeNull();
@@ -91,11 +91,28 @@ describe("DataUploadWorkspace", () => {
     flushSync(() => importRoster?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(container.querySelector('button[aria-label="收起新增学生"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(container.querySelector('button[aria-label="收起导入名单"]')?.getAttribute("aria-expanded")).toBe("true");
-    expect(container.textContent).not.toContain("模板");
+    // 海报「整体模板」选择器与地图呈现设置不属于数据阶段。
+    expect(container.querySelector(".template-picker")).toBeNull();
+    expect(container.textContent).not.toContain("整体模板");
     expect(container.textContent).not.toContain("地图呈现");
-    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).toBeNull();
+    // I-3-04：主导入路径必须提供学生数据 XLSX 模板下载入口。
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).not.toBeNull();
     expect(container.querySelector(".student-table")).not.toBeNull();
     expect(container.querySelector('[aria-label="数据质量"]')).not.toBeNull();
+  });
+
+  it("renders exactly one 数据质量 heading and count in the quality rail", () => {
+    const { container } = renderWorkspace();
+
+    const qualityPanel = container.querySelector("#data-rail-quality");
+    expect(qualityPanel).not.toBeNull();
+    const qualityHeadings = Array.from(qualityPanel!.querySelectorAll(".panel-heading__title span"))
+      .filter((node) => node.textContent === "数据质量");
+    expect(qualityHeadings).toHaveLength(1);
+    // DataQualityPanel 自带标题被隐藏，只剩外层「N 项待检查」一个计数口径。
+    expect(qualityPanel!.querySelector(".data-quality-panel .panel-heading")).toBeNull();
+    expect(qualityPanel!.textContent).toContain("0 项待检查");
+    expect(qualityPanel!.textContent).not.toContain("项状态");
   });
 
   it("forwards row selection without rendering a return-editor action", () => {

@@ -1,4 +1,4 @@
-import { CheckCircle2, Download, ImageDown, PackageOpen, RotateCcw, TriangleAlert } from "lucide-react";
+import { CheckCircle2, Download, ImageDown, Info, PackageOpen, RotateCcw, TriangleAlert } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 import type { DataIssue } from "../../lib/data-health";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
@@ -46,6 +46,11 @@ function issueKey(item: DeliveryIssue, index: number): string {
   return `resource-${item.issue.target}-${item.issue.kind}-${index}`;
 }
 
+/** 数据问题沿用自身 severity；排版/资源问题都是需要处理的告警。 */
+function issueSeverity(item: DeliveryIssue): "warning" | "info" {
+  return item.kind === "data" ? item.issue.severity : "warning";
+}
+
 function CheckSection({
   title,
   issues,
@@ -57,15 +62,30 @@ function CheckSection({
   onLocate: (issue: DeliveryIssue) => void;
   children?: ReactNode;
 }) {
+  // info（如海外去向、隐藏记录）只是提示：不点警告三角，避免与左栏
+  // 「检查通过」（只统计 warning）互相矛盾。
+  const warningCount = issues.filter((item) => issueSeverity(item) === "warning").length;
+  const infoCount = issues.length - warningCount;
+  const meta = warningCount > 0 && infoCount > 0
+    ? `${warningCount} 项警告 · ${infoCount} 项提示`
+    : warningCount > 0
+      ? `${warningCount} 项警告`
+      : infoCount > 0
+        ? `${infoCount} 项提示`
+        : "0 项";
   return (
     <section className="delivery-workspace__check" aria-label={title}>
       <header>
-        <div><strong>{title}</strong><small>{issues.length} 项</small></div>
-        {issues.length === 0 ? <CheckCircle2 size={17} aria-label="检查通过" /> : <TriangleAlert size={17} aria-label="有待处理问题" />}
+        <div><strong>{title}</strong><small>{meta}</small></div>
+        {warningCount > 0
+          ? <TriangleAlert size={17} aria-label="有待处理问题" />
+          : infoCount > 0
+            ? <Info size={17} aria-label="仅有提示信息" className="delivery-workspace__check-info" />
+            : <CheckCircle2 size={17} aria-label="检查通过" />}
       </header>
       {issues.length > 0 && <div className="delivery-workspace__issue-list">
         {issues.map((item, index) => (
-          <button key={issueKey(item, index)} type="button" onClick={() => onLocate(item)}>
+          <button key={issueKey(item, index)} type="button" data-severity={issueSeverity(item)} onClick={() => onLocate(item)}>
             <span>{item.issue.detail}</span><small>定位</small>
           </button>
         ))}

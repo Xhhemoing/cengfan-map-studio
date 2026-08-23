@@ -125,7 +125,6 @@ export function DataUploadWorkspace({
           <DataWorkspace
             {...dataWorkspaceProps}
             hideDataExpression
-            hideTemplateDownload
             compactRosterControls
             selectedStudentId={dataWorkspaceProps.selectedStudentId}
             onSelectStudent={handleSelectStudent}
@@ -227,7 +226,7 @@ export function DataUploadRail({
             <ShieldCheck size={18} aria-hidden />
             <span>问题只提示，不会自动删除记录。</span>
           </div>
-          <DataQualityPanel issues={issues} onSelectStudent={handleSelectStudent} />
+          <DataQualityPanel issues={issues} onSelectStudent={handleSelectStudent} showHeader={false} />
 
           <section className="data-upload-workspace__mapping" aria-label="地图映射">
             <PanelHeader title="地图映射 · 省份管理" meta={`${distributionEntries.length} 个省`} />

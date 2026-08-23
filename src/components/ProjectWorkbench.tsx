@@ -194,7 +194,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
 
       {localEntry && <ContinueEditingCard entry={localEntry} onResume={() => void continueEditing()} />}
 
-      <ProjectGrid projects={sorted} loading={loading} hasError={Boolean(error)} openMenuId={openMenuId} formatUpdatedAt={formatUpdatedAt} onOpen={openProject} onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)} onRename={(project) => void renameProject(project)} onDuplicate={(project) => void duplicateProject(project)} onExport={exportProject} onDelete={(project) => void deleteProject(project)} />
+      <ProjectGrid projects={sorted} loading={loading} hasError={Boolean(error)} openMenuId={openMenuId} formatUpdatedAt={formatUpdatedAt} onOpen={openProject} onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)} onCloseMenu={() => setOpenMenuId(null)} onRename={(project) => void renameProject(project)} onDuplicate={(project) => void duplicateProject(project)} onExport={exportProject} onDelete={(project) => void deleteProject(project)} />
     </main>
   );
 }

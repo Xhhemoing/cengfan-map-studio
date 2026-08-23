@@ -5,6 +5,7 @@ import {
   MapPinned,
   PanelRight,
   PanelRightClose,
+  Pencil,
   Plus,
   Redo2,
   Save,
@@ -664,6 +665,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const posterExport = usePosterExport({
     posterRef,
     project,
+    projectName,
     userAssets,
     userFonts,
     customTemplates,
@@ -1612,7 +1614,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
       aria-label={`重命名项目「${projectName ?? "未命名项目"}」`}
       onClick={renameCurrentProject}
     >
-      {projectName ?? "未命名项目"}
+      <span className="topbar-project-name__text">{projectName ?? "未命名项目"}</span>
+      <Pencil size={12} aria-hidden />
     </button>
   ) : undefined;
 
@@ -1776,7 +1779,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               project={project}
               summary={dataHealth}
               issues={dataIssues}
-              dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
+              dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true }}
               assetPanelProps={mapStyleAssetPanelProps}
               onCreateDecoration={handleCreateDecoration}
               onSelectStudent={setSelectedStudentId}
@@ -1932,6 +1935,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
               assetPanelProps={mapStyleAssetPanelProps}
               onPatch={patchScene}
               onReset={resetSceneTarget}
+              onAddText={addText}
+              onAddNote={addNote}
+              onDeleteText={removeText}
               onApplyFont={applyFont}
               onUploadFont={(font) => {
                 setUserFonts((current) => [...current, font]);

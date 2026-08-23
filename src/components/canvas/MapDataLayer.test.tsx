@@ -103,6 +103,47 @@ describe("MapDataLayer", () => {
     container.remove();
   });
 
+  it("rotates palette colors by data-province ordinal so 北京/上海/广东 never share a color", () => {
+    const hotFeatures: MapFeature[] = [
+      ["beijing", "北京市", "北京"],
+      ["shanghai", "上海市", "上海"],
+      ["guangdong", "广东省", "广东"],
+    ].map(([id, name, shortName], index) => ({
+      type: "Feature",
+      properties: { adcode: index + 1, name: name!, center: [100 + index, 30] },
+      geometry: { type: "Polygon", coordinates: [] },
+      id: id!,
+      name: name!,
+      shortName: shortName!,
+      center: [100 + index, 30],
+    }));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <svg>
+        <MapDataLayer
+          settings={settings({ fillMode: "manual", dataPalette: "playful" })}
+          features={hotFeatures}
+          counts={new Map([["北京市", 1], ["上海市", 1], ["广东省", 1]])}
+          dataView="province"
+          path={() => "M0 0 H100 V100 H0 Z"}
+          bounds={() => [[0, 0], [100, 100]]}
+          center={() => [40, 55]}
+        />
+      </svg>,
+    ));
+
+    const fills = ["beijing", "shanghai", "guangdong"].map((id) =>
+      container.querySelector(`[data-province-id="${id}"]`)?.getAttribute("fill"));
+    expect(new Set(fills).size).toBe(3);
+    for (const fill of fills) {
+      expect(["#e95646", "#f3c847", "#efb8c6", "#3d8fc2", "#263b78"]).toContain(fill);
+    }
+
+    root.unmount();
+    container.remove();
+  });
+
   it("applies a deterministic poster palette to active provinces and keeps manual overrides", () => {
     const { container, root } = renderMap({
       fillMode: "manual",

@@ -41,13 +41,14 @@ function provinceFill(
   count: number,
   dataView: DataViewId,
   settings: MapSettings,
+  paletteOrder: ReadonlyMap<string, number>,
   heatColors?: readonly string[],
 ): string {
   const style = settings.provinceStyles?.[feature.name] ?? {};
   if (style.appearance?.kind === "manual-color") return style.appearance.color;
   if (style.fill) return style.fill;
   if (count === 0) return settings.emptyProvinceFill === "transparent" ? "transparent" : settings.landColor;
-  if (settings.dataPalette && settings.dataPalette !== "single") return posterPaletteColor(feature, settings.dataPalette);
+  if (settings.dataPalette && settings.dataPalette !== "single") return posterPaletteColor(feature, settings.dataPalette, paletteOrder);
   return (settings.fillMode === "heat" || dataView === "heat")
     ? heatColor(count, settings, heatColors)
     : settings.activeColor;
@@ -59,11 +60,33 @@ const POSTER_PALETTES = {
   muted: ["#d8c6bd", "#c6d2c2", "#bac9d6", "#d8cda8", "#cdbdce"],
 } as const;
 
-function posterPaletteColor(feature: MapFeature, palette: keyof typeof POSTER_PALETTES): string {
+/**
+ * 有数据的省份按序号轮转取色（北京/上海/广东等热门省不再因名字哈希撞色）；
+ * 名字哈希只作为不在序号表中的兜底。
+ */
+function posterPaletteColor(
+  feature: MapFeature,
+  palette: keyof typeof POSTER_PALETTES,
+  paletteOrder: ReadonlyMap<string, number>,
+): string {
   const colors = POSTER_PALETTES[palette];
+  const ordinal = paletteOrder.get(feature.name);
+  if (ordinal !== undefined) return colors[ordinal % colors.length]!;
   let hash = 0;
   for (const character of feature.name) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
   return colors[hash % colors.length]!;
+}
+
+/** 数据省份 → 调色板序号：按 features 声明顺序为 count>0 的省份编号。 */
+function buildPaletteOrder(
+  features: readonly MapFeature[],
+  counts: ReadonlyMap<string, number>,
+): Map<string, number> {
+  const order = new Map<string, number>();
+  for (const feature of features) {
+    if ((counts.get(feature.name) ?? 0) > 0) order.set(feature.name, order.size);
+  }
+  return order;
 }
 
 function heatColor(count: number, settings: MapSettings, heatColors?: readonly string[]): string {
@@ -123,6 +146,7 @@ function provinceFillReference(
   count: number,
   maximum: number,
   dataView: DataViewId,
+  paletteOrder: ReadonlyMap<string, number>,
   heatColors?: readonly string[],
 ): string {
   const style = settings.provinceStyles?.[feature.name] ?? {};
@@ -133,13 +157,13 @@ function provinceFillReference(
     return settings.landColor;
   }
   if (!style.appearance && !style.fill && count > 0 && settings.dataPalette && settings.dataPalette !== "single") {
-    return posterPaletteColor(feature, settings.dataPalette);
+    return posterPaletteColor(feature, settings.dataPalette, paletteOrder);
   }
   if (!style.appearance && !style.fill && count > 0 && (settings.fillMode === "heat" || dataView === "heat")) {
     if (settings.heatScale) return heatColorForCount(count, settings.heatScale);
     return normalizedHeatColor(count, maximum, settings, heatColors);
   }
-  return provinceFill(feature, count, dataView, settings, heatColors);
+  return provinceFill(feature, count, dataView, settings, paletteOrder, heatColors);
 }
 
 function resolveBounds(
@@ -366,6 +390,7 @@ export function MapDataLayer({
     offsetY: number;
   } | null>(null);
   const maximum = Math.max(0, ...features.map((feature) => counts.get(feature.name) ?? 0));
+  const paletteOrder = buildPaletteOrder(features, counts);
   const edge = resolveEdgeStyle({
     style: settings.edgeStyle,
     color: settings.edgeColor,
@@ -484,7 +509,7 @@ export function MapDataLayer({
             key={feature.id}
             data-province-id={feature.id}
             d={path(feature) ?? ""}
-            fill={provinceFillReference(feature, settings, count, maximum, dataView, heatColors)}
+            fill={provinceFillReference(feature, settings, count, maximum, dataView, paletteOrder, heatColors)}
             stroke="none"
             strokeWidth={0}
           />

@@ -1282,10 +1282,17 @@ button { font: inherit; }
 .topbar-actions .primary-button { min-height: 30px; padding: 0 9px; }
 .topbar-actions .project-menu .secondary-button { min-height: 30px; padding: 0 9px; color: var(--editor-ink); background: var(--editor-surface-muted); border-color: var(--editor-line); }
 
-/* 顶栏当前项目名：可点击重命名。 */
-.topbar-project { display: inline-flex; min-width: 0; margin-left: 8px; }
-.topbar-project-name { display: inline-block; max-width: 180px; overflow: hidden; padding: 3px 8px; color: var(--editor-ink); background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+/* 顶栏当前项目名：独立于品牌列的网格单元，可点击重命名。 */
+.topbar-project { display: inline-flex; min-width: 0; align-items: center; margin-left: 8px; }
+.studio-topbar .brand { white-space: nowrap; }
+@media (min-width: 901px) {
+  .studio-topbar[data-has-project="true"] { grid-template-columns: auto auto minmax(0, 1fr) auto; }
+}
+.topbar-project-name { display: inline-flex; min-width: 0; max-width: 280px; align-items: center; gap: 5px; overflow: hidden; padding: 4px 9px; color: var(--editor-ink); background: transparent; border: 1px solid var(--editor-line); border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.topbar-project-name__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-project-name > svg { flex: none; color: var(--editor-ink-muted); }
 .topbar-project-name:hover { background: var(--editor-surface-muted); border-color: var(--editor-line); }
+.topbar-project-name:hover > svg { color: var(--editor-ink); }
 @media (max-width: 900px) { .topbar-project { display: none; } }
 
 .workflow-stepper,
@@ -2572,6 +2579,13 @@ button.data-overview__metric:hover {
   gap: 0;
   padding: 0;
 }
+/* 有项目名时增加独立项目列，避免项目名挤进 208px 品牌列被省略成「未…」。 */
+@media (min-width: 901px) {
+  .app-shell[data-editor-skin="atelier"] .studio-topbar[data-has-project="true"] {
+    grid-template-columns: 208px auto minmax(0, 1fr) auto;
+  }
+  .app-shell[data-editor-skin="atelier"] .topbar-project { margin-left: 12px; }
+}
 .app-shell[data-editor-skin="atelier"] .brand {
   height: 52px;
   padding: 0 15px;
@@ -3186,6 +3200,7 @@ button.data-overview__metric:hover {
 }
 .content-layout-workspace__body { display: grid; height: 100%; grid-template-columns: minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .content-layout-workspace__context { display: grid; min-width: 0; align-content: start; gap: 14px; }
+.content-layout-workspace__add { display: grid; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--editor-line); }
 .content-layout-workspace__section-heading, .content-layout-workspace__preview-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .content-layout-workspace__section-heading strong, .content-layout-workspace__preview-heading strong { color: var(--editor-ink); font-size: 13px; }
 .content-layout-workspace__section-heading small, .content-layout-workspace__preview-heading span { color: var(--editor-ink-muted); font-size: 10px; }

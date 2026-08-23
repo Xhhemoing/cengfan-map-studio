@@ -2,7 +2,7 @@ import { MapPinned } from "lucide-react";
 import type { StoredProject } from "../../lib/project-store";
 import { ProjectCard } from "./ProjectCard";
 
-export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete }: {
+export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onCloseMenu, onRename, onDuplicate, onExport, onDelete }: {
   projects: StoredProject[];
   loading: boolean;
   hasError: boolean;
@@ -10,6 +10,7 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
   formatUpdatedAt: (value: string) => string;
   onOpen: (id: string) => void;
   onToggleMenu: (id: string) => void;
+  onCloseMenu: () => void;
   onRename: (project: StoredProject) => void;
   onDuplicate: (project: StoredProject) => void;
   onExport: (project: StoredProject) => void;
@@ -36,6 +37,7 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
         menuOpen={openMenuId === project.id}
         onOpen={() => onOpen(project.id)}
         onToggleMenu={() => onToggleMenu(project.id)}
+        onCloseMenu={onCloseMenu}
         onRename={() => onRename(project)}
         onDuplicate={() => onDuplicate(project)}
         onExport={() => onExport(project)}

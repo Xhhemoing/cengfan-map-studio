@@ -17,6 +17,8 @@ import type { DeliveryExportState } from "../components/workspaces/DeliveryWorks
 export interface UsePosterExportOptions {
   posterRef: RefObject<SVGSVGElement | null>;
   project: ProjectDocument;
+  /** 当前项目名：PNG/SVG/工程包文件名与工作台导出同口径（项目名[-日期]）。 */
+  projectName?: string | null;
   userAssets: UserAsset[];
   userFonts: UserFont[];
   customTemplates: CustomTemplateRecord[];
@@ -48,7 +50,8 @@ export interface UsePosterExportResult {
 }
 
 export function usePosterExport(options: UsePosterExportOptions): UsePosterExportResult {
-  const { posterRef, project, userAssets, userFonts, customTemplates, renderSettings, applyImportedPackage, reportStatus } = options;
+  const { posterRef, project, projectName, userAssets, userFonts, customTemplates, renderSettings, applyImportedPackage, reportStatus } = options;
+  const exportBaseName = projectName?.trim() || "我的毕业去向图";
   const [exportingPng, setExportingPng] = useState(false);
   const [exportState, setExportState] = useState<DeliveryExportState>("idle");
   const [exportError, setExportError] = useState<string>();
@@ -89,7 +92,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     try {
       const svg = requirePosterSvg("SVG");
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
-      downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
+      downloadText(source, `${exportBaseName}.svg`, "image/svg+xml;charset=utf-8");
       setExportState("success");
       reportStatus("SVG 已导出");
     } catch (error) {
@@ -112,13 +115,15 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     try {
       const exportedAssets = includeResourcesInProjectExport ? userAssets : [];
       const exportedFonts = includeResourcesInProjectExport ? userFonts : [];
-      downloadProjectPackage(createProjectPackage({
+      const pack = createProjectPackage({
         project,
         assets: exportedAssets,
         fonts: exportedFonts,
         customTemplates,
         renderSettings,
-      }));
+      });
+      // 与工作台导出同口径：项目名-日期.json；导入端会剥掉日期后缀还原项目名。
+      downloadProjectPackage(pack, `${exportBaseName}-${pack.exportedAt.slice(0, 10)}.json`);
       setShowProjectExportDialog(false);
       setExportState("success");
       reportStatus(includeResourcesInProjectExport
@@ -165,7 +170,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
         height: project.canvas.height * pngScale,
         transparentBackground: transparentExport,
       });
-      downloadDataUrl(dataUrl, "我的毕业去向图.png");
+      downloadDataUrl(dataUrl, `${exportBaseName}.png`);
       setExportState("success");
       reportStatus("PNG 已导出");
     } catch (error) {

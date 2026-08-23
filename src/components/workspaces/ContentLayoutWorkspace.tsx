@@ -1,4 +1,5 @@
 import type { ComponentProps, RefObject } from "react";
+import { StickyNote, Type } from "lucide-react";
 import type { UserAsset } from "../../lib/assets";
 import type { UserFont } from "../../lib/fonts";
 import type { ProjectDocument } from "../../lib/project-document";
@@ -6,6 +7,7 @@ import type { SceneSelection } from "../../lib/scene-document";
 import { AssetPanel } from "../AssetPanel";
 import { PosterCanvas } from "../canvas/PosterCanvas";
 import { InspectorPanel } from "../inspector/InspectorPanel";
+import { ActionGroup, CompactButton } from "../StudioUi";
 
 export type ContentAssetPanelProps = ComponentProps<typeof AssetPanel>;
 export interface ContentLayoutWorkspaceProps {
@@ -40,6 +42,11 @@ export interface ContentLayoutWorkspaceProps {
   onDeleteUserFont?: (fontId: string) => void;
   onSelectStudent?: (id: string) => void;
   selectedStudentId?: string | null;
+  /** 内容阶段的「添加」入口：文本框 / 特别备注。 */
+  onAddText?: () => void;
+  onAddNote?: () => void;
+  /** 选中文本后可从检查器删除（含新添加的文本框/备注）。 */
+  onDeleteText?: (id: string) => void;
 }
 
 const EMPTY_ASSET_PANEL_PROPS: ContentAssetPanelProps = {
@@ -86,9 +93,21 @@ export function ContentLayoutRail({
   onApplyFont,
   onUploadFont,
   onDeleteUserFont,
+  onAddText,
+  onAddNote,
+  onDeleteText,
 }: ContentLayoutRailProps) {
   return (
     <aside className="content-layout-workspace__context" aria-label="内容对象属性">
+      {(onAddText || onAddNote) && (
+        <section className="content-layout-workspace__add" aria-label="添加画布元素">
+          <div className="content-layout-workspace__section-heading"><strong>添加</strong><small>文本与备注</small></div>
+          <ActionGroup label="添加画布元素">
+            {onAddText && <CompactButton icon={<Type size={14} aria-hidden />} onClick={onAddText}>添加文本框</CompactButton>}
+            {onAddNote && <CompactButton icon={<StickyNote size={14} aria-hidden />} onClick={onAddNote}>添加特别备注</CompactButton>}
+          </ActionGroup>
+        </section>
+      )}
       <section aria-label="当前对象属性">
         <div className="content-layout-workspace__section-heading"><strong>当前对象</strong><small>{selectionLabel(selection)}</small></div>
         <InspectorPanel
@@ -97,6 +116,7 @@ export function ContentLayoutRail({
           userFonts={userFonts}
           onPatch={onPatch}
           onReset={onReset}
+          onDeleteText={onDeleteText}
           onApplyFont={onApplyFont}
           onUploadFont={onUploadFont}
           onDeleteUserFont={onDeleteUserFont}
