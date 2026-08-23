@@ -1848,9 +1848,10 @@ describe("Stage slot contract (T0)", () => {
   it("routes rail settings entries to the owning stage instead of a fullscreen screen in public mode", () => {
     const container = renderPublicApp();
 
-    // 画布/版式类全局配置归「版式」阶段，不再切出五阶段流程。
+    // 画布/版式类全局配置归「版式」阶段，入口直接写明「前往版式」。
     openRailAdvancedTab(container);
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
+    expect(container.querySelector('button[aria-label="打开全局设置"]')).toBeNull();
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="前往版式"]')!);
     expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).toBeNull();
     expect(container.querySelector(".studio-editor-shell")).not.toBeNull();
     expect(container.querySelector('.workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("版式");
@@ -1861,11 +1862,11 @@ describe("Stage slot contract (T0)", () => {
     expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).toBeNull();
     expect(container.querySelector('.workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("名单");
 
-    // 高级内容设置留在「内容」阶段。
+    // public 没有渲染设置页：渲染间隔只读展示，不再假装有控件可跳。
     openRailAdvancedTab(container);
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开渲染设置"]')!);
-    expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).toBeNull();
-    expect(container.querySelector('.workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("内容");
+    expect(container.querySelector('button[aria-label="打开渲染设置"]')).toBeNull();
+    expect(container.querySelector('section[aria-label="渲染性能"]')?.textContent).toMatch(/\d+ ms/);
+    expect(container.querySelector('.workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label")).toBe("名单");
   });
 });
 

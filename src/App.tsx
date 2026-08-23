@@ -1510,6 +1510,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onOpenCollaboration={openCollaborationSettings}
       onOpenDataDiagnostics={openDataDiagnostics}
       onOpenRenderSettings={openRenderSettings}
+      advancedMode={legacyEditorEnabled ? "legacy-settings" : "stage-nav"}
       selection={selection}
       layoutIssues={contentLayoutIssues}
       onSelectElement={handleSceneSelect}

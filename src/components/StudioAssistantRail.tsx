@@ -22,6 +22,12 @@ export interface StudioAssistantRailProps {
   onOpenCollaboration: () => void;
   onOpenDataDiagnostics: () => void;
   onOpenRenderSettings: () => void;
+  /**
+   * 高级入口的呈现模式。public（默认 stage-nav）：入口文案写明会跳到哪个
+   * 阶段（版式/名单），渲染间隔只读展示；legacy-settings：保留整页
+   * 全局设置/渲染设置入口（onOpenSettings/onOpenRenderSettings 打开整页）。
+   */
+  advancedMode?: "stage-nav" | "legacy-settings";
   selection: SceneSelection;
   layoutIssues: LayoutHealthIssue[];
   onSelectElement: (selection: SceneSelection) => void;
@@ -79,6 +85,7 @@ export function StudioAssistantRail({
   onOpenCollaboration,
   onOpenDataDiagnostics,
   onOpenRenderSettings,
+  advancedMode = "stage-nav",
   selection,
   layoutIssues,
   onSelectElement,
@@ -237,20 +244,33 @@ export function StudioAssistantRail({
             <section className="studio-advanced__group" aria-label="数据诊断">
               <h3>数据诊断</h3>
               <button type="button" className="studio-advanced__action" aria-label="打开数据诊断" onClick={onOpenDataDiagnostics}>
-                <span>打开数据诊断</span><small>{dataIssueCount > 0 ? `${dataIssueCount} 项告警` : "暂无告警"}</small>
+                <span>打开数据诊断</span>
+                <small>{advancedMode === "legacy-settings"
+                  ? (dataIssueCount > 0 ? `${dataIssueCount} 项告警` : "暂无告警")
+                  : `${dataIssueCount > 0 ? `${dataIssueCount} 项告警` : "暂无告警"} · 前往名单阶段处理`}</small>
               </button>
             </section>
             <section className="studio-advanced__group" aria-label="渲染性能">
               <h3>渲染性能</h3>
-              <button type="button" className="studio-advanced__action" aria-label="打开渲染设置" onClick={onOpenRenderSettings}>
-                <span>打开渲染设置</span><small>{renderIntervalMs} ms 间隔</small>
-              </button>
+              {advancedMode === "legacy-settings" ? (
+                <button type="button" className="studio-advanced__action" aria-label="打开渲染设置" onClick={onOpenRenderSettings}>
+                  <span>打开渲染设置</span><small>{renderIntervalMs} ms 间隔</small>
+                </button>
+              ) : (
+                <div className="studio-advanced__meta-line"><span>渲染间隔</span><strong>{renderIntervalMs} ms</strong></div>
+              )}
             </section>
             <section className="studio-advanced__group" aria-label="开发者配置">
               <h3>开发者配置</h3>
-              <button type="button" className="studio-advanced__action" aria-label="打开全局设置" onClick={onOpenSettings}>
-                <span>项目配置与设置</span><small>全局设置</small>
-              </button>
+              {advancedMode === "legacy-settings" ? (
+                <button type="button" className="studio-advanced__action" aria-label="打开全局设置" onClick={onOpenSettings}>
+                  <span>项目配置与设置</span><small>全局设置</small>
+                </button>
+              ) : (
+                <button type="button" className="studio-advanced__action" aria-label="前往版式" onClick={onOpenSettings}>
+                  <span>前往版式</span><small>画布与展示框结构在版式阶段设置</small>
+                </button>
+              )}
               <button type="button" className="studio-advanced__action" aria-label="打开项目菜单" onClick={onOpenProject}>
                 <span>项目菜单</span><small>导入导出</small>
               </button>
