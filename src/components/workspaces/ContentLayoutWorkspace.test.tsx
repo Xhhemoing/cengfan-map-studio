@@ -111,6 +111,29 @@ describe("ContentLayoutWorkspace", () => {
     expect(onBackToMap).toHaveBeenCalledTimes(1);
   });
 
+  it("collapses the asset library by default while an object is selected", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push({ root, container });
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    flushSync(() => root.render(
+      <ContentLayoutRail
+        project={project}
+        selection={{ type: "map" }}
+        userAssets={[]}
+        userFonts={[]}
+        onPatch={vi.fn()}
+        onReset={vi.fn()}
+        assetPanelProps={{ onApplyBackground: vi.fn() }}
+      />,
+    ));
+
+    const details = container.querySelector<HTMLDetailsElement>('details[aria-label="素材库"]');
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
+  });
+
   it("keeps layout management out of the canvas workspace", () => {
     const { container } = renderWorkspace();
 

@@ -5,6 +5,7 @@ import type { LayoutHealthIssue } from "../../lib/layout-health";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
 import type { UserFont } from "../../lib/fonts";
+import { resolveStudentLocation } from "../../lib/student-data";
 import { PosterCanvas } from "../canvas/PosterCanvas";
 
 export type DeliveryIssue =
@@ -100,9 +101,23 @@ export function DeliveryRail({
   onExportProjectPackage,
   onRetry,
 }: DeliveryRailProps) {
+  const allClear = dataIssues.length === 0 && layoutIssues.length === 0
+    && resourceIssues.length === 0 && fontIssues.length === 0;
+  const visibleStudents = project.students.filter((student) => student.visibility !== false);
+  const provinceCount = new Set(
+    visibleStudents
+      .map((student) => student.province?.trim() || resolveStudentLocation(student).province)
+      .filter(Boolean),
+  ).size;
+
   return (
     <aside className="delivery-workspace__checks" aria-label="交付检查">
       <h2 className="delivery-workspace__checks-title">交付检查</h2>
+      {allClear && (
+        <p className="delivery-workspace__all-clear" role="status">
+          检查全部通过：{visibleStudents.length} 人 · 覆盖 {provinceCount} 个省市，可直接导出。
+        </p>
+      )}
       <CheckSection title="数据完整性" issues={dataIssues.map((issue) => ({ kind: "data", issue }))} onLocate={onLocate} />
       <CheckSection title="排版问题" issues={layoutIssues.map((issue) => ({ kind: "layout", issue }))} onLocate={onLocate} />
       <CheckSection title="资源缺失" issues={resourceIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />

@@ -60,6 +60,7 @@
 .delivery-workspace__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; max-width: 1500px; margin: 0 auto; }
 .delivery-workspace__checks { display: grid; align-content: start; gap: 10px; }
 .delivery-workspace__checks-title { margin: 0 0 2px; font-size: 16px; }
+.delivery-workspace__all-clear { margin: 0; padding: 10px 12px; color: #1d5b41; font-size: 12px; background: #eef7f0; border: 1px solid #bcdcc6; border-radius: 7px; }
 .delivery-workspace__check, .delivery-workspace__controls, .delivery-workspace__error { padding: 14px; background: var(--editor-surface); border: 1px solid var(--editor-line); border-radius: 7px; }
 .delivery-workspace__check header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .delivery-workspace__check header div { display: flex; gap: 8px; align-items: baseline; }

@@ -100,7 +100,8 @@ export function ContentLayoutRail({
           onDeleteUserFont={onDeleteUserFont}
         />
       </section>
-      <details open className="content-layout-workspace__assets" aria-label="素材库">
+      {/* 无选中对象（画布态）时展开素材库；编辑具体对象时默认收起，把空间让给检查器。 */}
+      <details open={selection.type === "canvas"} className="content-layout-workspace__assets" aria-label="素材库">
         <summary>素材库 · 装饰与实例</summary>
         <AssetPanel {...assetPanelProps} userAssets={userAssets} />
       </details>

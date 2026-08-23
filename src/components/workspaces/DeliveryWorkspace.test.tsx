@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DeliveryRail, DeliveryWorkspace, type DeliveryWorkspaceProps } from "./DeliveryWorkspace";
 import { createProjectDocument } from "../../lib/project-document";
+import { sampleStudents } from "../../lib/project-data";
 import type { DataIssue } from "../../lib/data-health";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
@@ -71,6 +72,24 @@ describe("DeliveryWorkspace", () => {
     const locateButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).filter((button) => button.textContent?.includes("地图"));
     flushSync(() => locateButtons[0]?.click());
     expect(onLocate).toHaveBeenCalled();
+    // 仍有待处理问题时不显示正向摘要。
+    expect(container.querySelector(".delivery-workspace__all-clear")).toBeNull();
+  });
+
+  it("summarizes the roster coverage when every check passes", () => {
+    const container = renderWorkspace({
+      project: createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" }),
+      dataIssues: [],
+      layoutIssues: [],
+      resourceIssues: [],
+      fontIssues: [],
+    });
+
+    const summary = container.querySelector('[role="status"].delivery-workspace__all-clear');
+    expect(summary).not.toBeNull();
+    expect(summary?.textContent).toContain("检查全部通过");
+    expect(summary?.textContent).toMatch(/\d+ 人/);
+    expect(summary?.textContent).toMatch(/\d+ 个省市/);
   });
 
   it("shows an export preview and keeps pixel/export settings visible", () => {

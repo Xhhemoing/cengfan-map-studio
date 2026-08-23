@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { StudioAssistantRail, type StudioAssistantRailProps } from "./StudioAssistantRail";
 import { AssistantConversationProvider } from "./AgentAssistant";
 import { createProjectDocument } from "../lib/project-document";
+import { sampleStudents } from "../lib/project-data";
 
 function click(element: Element | null): void {
   if (!element) throw new Error(`element missing; text=${document.body.textContent?.slice(0, 120)}`);
@@ -57,7 +58,8 @@ describe("StudioAssistantRail", () => {
     const onOpenSettings = vi.fn();
     const { container } = renderRail({ onOpenSettings });
 
-    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("AI 助手");
+    // 空名单默认落在「本阶段」（导入名单是第一件事），不是 AI。
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("本阶段");
     expect(container.textContent).not.toContain("工程状态");
     expect(Array.from(container.querySelectorAll("button")).filter((button) => button.textContent?.includes("高级功能"))).toHaveLength(1);
 
@@ -72,7 +74,11 @@ describe("StudioAssistantRail", () => {
   });
 
   it("keeps the docked assistant as the only AI surface with no duplicate advanced entry", () => {
-    const { container } = renderRail();
+    const { container } = renderRail({
+      project: createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" }),
+    });
+    // 名单非空 → 默认 AI 助手 tab。
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("AI 助手");
     expect(container.querySelectorAll('[data-agent-presentation="docked"]')).toHaveLength(1);
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(Array.from(container.querySelectorAll("button")).filter((button) => button.textContent?.includes("高级功能"))).toHaveLength(1);

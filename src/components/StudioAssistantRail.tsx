@@ -95,7 +95,10 @@ export function StudioAssistantRail({
   stageOverview,
   onStageOverviewAction,
 }: StudioAssistantRailProps) {
-  const [activeTab, setActiveTab] = useState<"ai" | "stage" | "advanced">("ai");
+  // 空名单时先看「本阶段」清单（导入名单是第一件事）；有数据后默认 AI 助手。
+  const [activeTab, setActiveTab] = useState<"ai" | "stage" | "advanced">(
+    () => (project.students.length === 0 ? "stage" : "ai"),
+  );
   const [advancedView, setAdvancedView] = useState<"operations" | "elements">("operations");
   const outline = useMemo(() => [
     { selection: { type: "canvas" } as const, label: "画布" },
