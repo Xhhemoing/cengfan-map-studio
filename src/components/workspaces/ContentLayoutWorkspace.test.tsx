@@ -86,9 +86,9 @@ describe("ContentLayoutWorkspace", () => {
     expect(container.querySelector('[aria-label="内容对象属性"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="当前对象属性"]')).not.toBeNull();
     expect(container.querySelector('.content-layout-workspace__context .property-panel')).not.toBeNull();
-    expect(container.querySelector('[aria-label="内容素材上下文"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="素材库"]')).not.toBeNull();
     expect(container.querySelector('.content-layout-workspace__context')?.textContent).toContain("当前对象");
-    expect(container.querySelector('.content-layout-workspace__context')?.textContent).toContain("素材与实例");
+    expect(container.querySelector('.content-layout-workspace__context')?.textContent).toContain("素材库");
     expect(container.querySelector('button[aria-label="仅排未手调"]')).toBeNull();
     expect(container.querySelector('button[aria-label="全部重新排版"]')).toBeNull();
     expect(container.querySelector('button[aria-label="返回编辑器"]')).toBeNull();
