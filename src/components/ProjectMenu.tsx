@@ -107,6 +107,12 @@ export function ProjectMenu({
     };
   }, [open]);
 
+  // 菜单动作项点击后收起菜单（对话框/工作台等后续界面不再被外部点击拦截）。
+  const closeThen = (action: () => void) => () => {
+    setOpen(false);
+    action();
+  };
+
   return (
     <details ref={rootRef} className="project-menu" open={open}>
       <summary
@@ -123,9 +129,9 @@ export function ProjectMenu({
       <div className="project-menu__popover">
         <section>
           <strong>项目管理</strong>
-          <button type="button" aria-label="新建项目" onClick={onNewProject}><Plus size={16} /> 新建项目</button>
-          <button type="button" aria-label="恢复本机最近项目" onClick={onRestoreLocal}><FolderOpen size={16} /> 恢复最近项目</button>
-          <button type="button" aria-label="保存项目到本机" onClick={onSaveLocal}><Save size={16} /> 保存到本机</button>
+          <button type="button" aria-label="新建项目" onClick={closeThen(onNewProject)}><Plus size={16} /> 新建项目</button>
+          <button type="button" aria-label="恢复本机最近项目" onClick={closeThen(onRestoreLocal)}><FolderOpen size={16} /> 恢复最近项目</button>
+          <button type="button" aria-label="保存项目到本机" onClick={closeThen(onSaveLocal)}><Save size={16} /> 保存到本机</button>
         </section>
         <section>
           <strong>导出海报</strong>
@@ -135,7 +141,7 @@ export function ProjectMenu({
             </select>
           </label>
           <label className="project-menu__check boolean-control checkbox-row"><input type="checkbox" checked={transparentExport} onChange={(event) => onTransparentChange(event.target.checked)} />透明背景</label>
-          <button type="button" onClick={onExportSvg}><Download size={16} /> 导出 SVG</button>
+          <button type="button" onClick={closeThen(onExportSvg)}><Download size={16} /> 导出 SVG</button>
         </section>
         <section>
           <strong>在线协作</strong>
@@ -219,9 +225,12 @@ export function ProjectMenu({
           >
             <Save size={16} /> {syncStatus === "saving" ? "保存中" : "保存到本机"}
           </button>
-          <button type="button" onClick={onExportProject}><PackageOpen size={16} /> 导出工程</button>
+          <button type="button" onClick={closeThen(onExportProject)}><PackageOpen size={16} /> 导出工程</button>
           <label className="project-menu__file"><PackageOpen size={16} /> 导入工程
-            <input type="file" accept={PROJECT_PACKAGE_FILE_ACCEPT} aria-label="导入完整工程包" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
+            <input type="file" accept={PROJECT_PACKAGE_FILE_ACCEPT} aria-label="导入完整工程包" onChange={(event) => {
+              setOpen(false);
+              onImportProject(event.target.files?.[0] ?? null);
+            }} />
           </label>
         </section>
       </div>
