@@ -55,7 +55,13 @@
   - opus-fast-B → `bc-398927a7-b6e9-5f44-8e86-ad251dd54bc9`
   - gpt-sol-A → `bc-06159e11-c8f6-5bba-ba71-c2b50e05f3e3`
   - gpt-sol-B → `bc-33c43960-3655-5ee6-959b-ebbc50f075f4`
-- [ ] Cycle 2 Round 2 — 几何真源合一与连接线预览（派发中）
+- [ ] Cycle 2 Round 2 — 几何真源合一与连接线预览（进行中，6 子代理并发）
+  - fable-A → `bc-af7afc4a-12d6-559f-b5ac-022b0ffe8ef6`
+  - fable-B → `bc-a1b331fd-bfc6-5c19-8ede-d7a2a3bc66fd`
+  - opus-fast-A → `bc-733c666d-cd91-582b-b177-a6f3ee17f863`
+  - opus-fast-B → `bc-1385e303-e7c3-53d1-930d-69fd30b0ff01`
+  - gpt-sol-A → `bc-514033cc-1496-5354-a5d2-b165f21b071c`
+  - gpt-sol-B → `bc-cdfd55cc-82ab-59d5-9531-9d88b287a8a2`
 - [ ] Cycle 2 Round 3
 - [ ] Cycle 3 Round 1
 - [ ] Cycle 3 Round 2
@@ -74,3 +80,4 @@
 - Cycle 1 Round 1：`.agent_workspace/cycle1-round1-conclusion.md`
 - Cycle 1 Round 2：`.agent_workspace/cycle1-round2-conclusion.md`
 - Cycle 1 Round 3：`.agent_workspace/cycle1-round3-conclusion.md`
+- Cycle 2 Round 1：`.agent_workspace/cycle2-round1-conclusion.md`
