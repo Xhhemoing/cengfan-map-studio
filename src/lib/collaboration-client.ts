@@ -264,18 +264,32 @@ export interface SubscribeRoomOptions {
   onMembers?: (members: RoomMember[]) => void;
   onClosed?: (room: RoomClosedInfo) => void;
   onKicked?: (info: RoomKickedInfo) => void;
-  /** 断流后的重连退避序列(毫秒);用尽后不再重连。 */
+  /** 断流后的重连退避序列(毫秒);用尽后转入 idleReconnectDelayMs 的长间隔,不会永久放弃。 */
   reconnectDelays?: readonly number[];
+  /** 退避序列用尽后的重试间隔(毫秒)。 */
+  idleReconnectDelayMs?: number;
+  /** 超过这个时长没收到任何事件(含服务端 ping)就判定连接已死并换 ticket 重建;<=0 关闭看门狗。 */
+  heartbeatTimeoutMs?: number;
+  /** 注入定时器(返回取消函数),便于测试驱动看门狗。 */
+  schedule?: (handler: () => void, delayMs: number) => () => void;
   wait?: (delayMs: number) => Promise<void>;
 }
 
 const RECONNECT_DELAYS = [500, 1_000, 2_000, 4_000, 8_000] as const;
+/** 退避用尽后的长间隔:断网几分钟甚至更久,恢复后仍能自己接上。 */
+const IDLE_RECONNECT_DELAY_MS = 20_000;
+/** 服务端心跳 20s 一次,留两倍窗口容忍网络抖动与页面节流。 */
+const HEARTBEAT_TIMEOUT_MS = 40_000;
 
 /**
  * events ticket 是一次性的:浏览器 EventSource 自带的重连会带着已消费的 ticket 反复拿 403,
  * 这条流就永久失效了。所以非终局断流一律由本函数接管——关掉旧流、退避重取 ticket、
  * 重建 EventSource,并用当前版本续传。kicked/closed 是服务端主动 end 的终局事件,不重连。
- * 回滚:把 stream.onerror 换回 `onError` 并去掉 scheduleReconnect 与 connect 的 catch 重试。
+ *
+ * 半开连接(休眠唤醒、切网、NAT 静默丢包)不会触发 onerror,所以还挂了一个看门狗:
+ * 服务端每 20s 发一次 `ping`,超过 heartbeatTimeoutMs 收不到任何事件就当断流处理,
+ * 走同一条换 ticket 重建的路径。退避序列用尽后不放弃,改用长间隔继续重连。
+ * 回滚:把 stream.onerror 换回 `onError`,并去掉 scheduleReconnect、看门狗与 connect 的 catch 重试。
  */
 export function subscribeRoom<T>(
   roomId: string,
@@ -288,17 +302,30 @@ export function subscribeRoom<T>(
   /** 调用方取消或收到终局事件后置位:此后既不重连,也不再挂新流。 */
   let stopped = false;
   let attempt = 0;
+  let cancelWatchdog: (() => void) | null = null;
   const createTicket = options.createTicket ?? ((id, token) => createRoomEventsTicket(id, token));
   const delays = options.reconnectDelays ?? RECONNECT_DELAYS;
+  const idleDelay = options.idleReconnectDelayMs ?? IDLE_RECONNECT_DELAY_MS;
+  const heartbeatTimeout = options.heartbeatTimeoutMs ?? HEARTBEAT_TIMEOUT_MS;
   const wait = options.wait ?? ((delayMs: number) => new Promise<void>((resolve) => window.setTimeout(resolve, delayMs)));
+  const schedule = options.schedule ?? ((handler: () => void, delayMs: number) => {
+    const timer = window.setTimeout(handler, delayMs);
+    return () => window.clearTimeout(timer);
+  });
   const knownVersion = (): number | undefined => (
     typeof options.version === "function" ? options.version() : options.version
   );
 
+  const clearWatchdog = () => {
+    cancelWatchdog?.();
+    cancelWatchdog = null;
+  };
+
   const scheduleReconnect = () => {
-    if (stopped || attempt >= delays.length) return;
-    const delay = delays[attempt]!;
-    attempt += 1;
+    if (stopped) return;
+    // 退避序列用尽后不再永久放弃:转成长间隔继续试,断网几分钟后恢复也能自己接回来。
+    const delay = attempt < delays.length ? delays[attempt]! : idleDelay;
+    attempt = Math.min(attempt + 1, delays.length);
     void wait(delay).then(() => {
       if (stopped) return;
       return connect();
@@ -313,10 +340,35 @@ export function subscribeRoom<T>(
     source = stream;
     // 每条流只允许触发一次失败处理,旧流关闭后补发的 onerror 不应再拉起第二次重连。
     let streamFailed = false;
+    /** 返回 false 表示这条流已经处理过失败,调用方不应再重复上报或重连。 */
+    const failStream = (): boolean => {
+      if (streamFailed) return false;
+      streamFailed = true;
+      clearWatchdog();
+      if (source === stream) source = null;
+      stream.close();
+      return true;
+    };
+    const armWatchdog = () => {
+      clearWatchdog();
+      if (stopped || streamFailed || heartbeatTimeout <= 0) return;
+      cancelWatchdog = schedule(() => {
+        cancelWatchdog = null;
+        // 一个心跳窗口都没动静:onerror 不会来(半开连接),只能主动判死并换新 ticket 重建。
+        if (!failStream()) return;
+        onError();
+        scheduleReconnect();
+      }, heartbeatTimeout);
+    };
+    /** 任意事件(含 ping)都证明这条流还活着:退避归零、看门狗重新计时。 */
+    const markAlive = () => {
+      if (streamFailed) return;
+      attempt = 0;
+      armWatchdog();
+    };
     const receive = <E>(type: string, notify: (payload: E) => void) => {
       stream.addEventListener(type, (event) => {
-        // 收到数据说明这条流是通的,退避次数归零,下次断线重新从最短间隔开始。
-        attempt = 0;
+        markAlive();
         try {
           notify(JSON.parse((event as MessageEvent<string>).data) as E);
         } catch {
@@ -325,13 +377,17 @@ export function subscribeRoom<T>(
       });
     };
     receive<CollaborationRoom<T>>("snapshot", onSnapshot);
-    if (options.onMembers) receive<RoomMember[]>("members", (members) => options.onMembers?.(members));
+    // 即便调用方不关心成员变化,也要挂上监听:每条事件都是这条流还活着的证据。
+    receive<RoomMember[]>("members", (members) => options.onMembers?.(members));
+    // 心跳只用于活性判断,没有载荷要解析,所以不走 receive(避免空 data 触发 onError)。
+    stream.addEventListener("ping", () => markAlive());
     // closed/kicked 都是终局事件:服务端已经断流,浏览器会拿着一次性 ticket 反复重连,
     // 所以无论调用方是否关心回调,都要主动关掉 EventSource。
     const endStream = <E>(type: string, notify?: (payload: E) => void) => {
       stream.addEventListener(type, (event) => {
         stopped = true;
         streamFailed = true;
+        clearWatchdog();
         try {
           notify?.(JSON.parse((event as MessageEvent<string>).data) as E);
         } catch {
@@ -343,13 +399,11 @@ export function subscribeRoom<T>(
     endStream<RoomClosedInfo>("closed", options.onClosed);
     endStream<RoomKickedInfo>("kicked", options.onKicked);
     stream.onerror = () => {
-      if (streamFailed) return;
-      streamFailed = true;
+      if (!failStream()) return;
       onError();
-      if (source === stream) source = null;
-      stream.close();
       scheduleReconnect();
     };
+    armWatchdog();
   };
 
   const connect = async (): Promise<void> => {
@@ -366,6 +420,7 @@ export function subscribeRoom<T>(
   void connect();
   return () => {
     stopped = true;
+    clearWatchdog();
     source?.close();
     source = null;
   };

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   submitRoomSnapshot: vi.fn(),
   subscribeRoom: vi.fn(),
   leaveRoom: vi.fn(),
+  fetchRoomOperations: vi.fn(),
 }));
 
 vi.mock("./collaboration-client", async (importOriginal) => {
@@ -28,6 +29,8 @@ function member(clientId: string, role: RoomMember["role"] = "editor"): RoomMemb
 
 let latest: UseCollaborationRoomResult | null = null;
 let emitMembers: ((members: RoomMember[]) => void) | null = null;
+/** subscribeRoom 的 onError:客户端判定断流(onerror 或心跳看门狗超时)时会调用它。 */
+let notifyStreamError: (() => void) | null = null;
 let subscribeOptions: { version?: number | (() => number) } | null = null;
 /** 每条订阅一个条目,记录是否已经退订,用来断言同一时刻只有一条流。 */
 let subscriptions: Array<{ live: boolean }> = [];
@@ -75,6 +78,7 @@ async function mountRoom(): Promise<void> {
 beforeEach(() => {
   latest = null;
   emitMembers = null;
+  notifyStreamError = null;
   subscribeOptions = null;
   subscriptions = [];
   window.localStorage.clear();
@@ -88,10 +92,11 @@ beforeEach(() => {
     _roomId: string,
     _accessToken: string,
     _onSnapshot: unknown,
-    _onError: unknown,
+    onError: () => void,
     options: { onMembers?: (members: RoomMember[]) => void; version?: number | (() => number) } = {},
   ) => {
     emitMembers = options.onMembers ?? null;
+    notifyStreamError = onError;
     subscribeOptions = options;
     const entry = { live: true };
     subscriptions.push(entry);
@@ -183,5 +188,20 @@ describe("useCollaborationRoom subscription", () => {
     // 传的是取值函数而非订阅时的版本快照,重连才能带上补齐后的最新版本。
     expect(typeof subscribeOptions!.version).toBe("function");
     expect((subscribeOptions!.version as () => number)()).toBe(1);
+  });
+
+  it("describes the disconnect honestly instead of promising a browser reconnect", async () => {
+    await mountRoom();
+    mocks.fetchRoomOperations.mockRejectedValue(new Error("network down"));
+
+    await act(async () => {
+      notifyStreamError!();
+    });
+
+    expect(latest!.collaborationStatus).toBe("error");
+    // 重连由 subscribeRoom 自己接管(换 ticket + 退避 + 长间隔),浏览器自带重连只会撞 403。
+    expect(latest!.collaborationMessage).not.toContain("浏览器");
+    expect(latest!.collaborationMessage).toContain("正在自动重连");
+    expect(latest!.collaborationMessage).toContain("重新加入");
   });
 });

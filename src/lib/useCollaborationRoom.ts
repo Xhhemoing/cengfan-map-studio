@@ -45,6 +45,13 @@ export type RoomCollaborationStatus = "idle" | "connecting" | "connected" | "syn
  */
 export type CollaborationBackfillReason = "disconnect" | "conflict";
 
+/**
+ * 重连由 `subscribeRoom` 自己接管(换新 ticket、退避、心跳看门狗),浏览器自带的 EventSource
+ * 重连反而会拿着一次性 ticket 撞 403,所以文案不能说「浏览器会自动重连」。
+ * 退避用尽后客户端转长间隔继续重试,因此这里说的是「正在自动重连」,并给出手动恢复路径。
+ */
+const RECONNECTING_MESSAGE = "连接中断，正在自动重连；若长时间未恢复，可离开房间后重新加入";
+
 export interface CollaborationBackfillOutcome {
   /** 本地版本是否已推进到远端最新版本。 */
   ok: boolean;
@@ -300,11 +307,11 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
           }
         } catch {
           setCollaborationStatus("error");
-          setCollaborationMessage("连接中断，浏览器会自动尝试重连");
+          setCollaborationMessage(RECONNECTING_MESSAGE);
         }
       } else {
         setCollaborationStatus("error");
-        setCollaborationMessage("连接中断，浏览器会自动尝试重连");
+        setCollaborationMessage(RECONNECTING_MESSAGE);
       }
       return failedBackfill();
     } finally {

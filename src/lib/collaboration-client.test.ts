@@ -38,6 +38,27 @@ class FakeEventSource {
   }
 }
 
+/**
+ * 可控的看门狗定时器:记录每次排期并由测试手动触发,不用等真实的 40s 心跳窗口。
+ * 排期函数返回取消句柄,`pending()` 里应始终最多只有一条(重新计时会先取消旧的)。
+ */
+function fakeWatchdog() {
+  const timers: Array<{ delayMs: number; handler: () => void; cancelled: boolean }> = [];
+  const schedule = (handler: () => void, delayMs: number) => {
+    const timer = { delayMs, handler, cancelled: false };
+    timers.push(timer);
+    return () => { timer.cancelled = true; };
+  };
+  const pending = () => timers.filter((timer) => !timer.cancelled);
+  const fire = () => {
+    const timer = pending().at(-1);
+    if (!timer) throw new Error("没有待触发的看门狗定时器");
+    timer.cancelled = true;
+    timer.handler();
+  };
+  return { schedule, pending, fire, timers };
+}
+
 /** 用假 EventSource 跑一段订阅逻辑,结束后恢复全局实现。 */
 async function withFakeEventSource(run: (instances: FakeEventSource[]) => Promise<void>): Promise<void> {
   const original = globalThis.EventSource;
@@ -274,7 +295,7 @@ describe("collaboration client", () => {
     });
   });
 
-  it("stops reconnecting once the backoff budget runs out", async () => {
+  it("keeps retrying at a long interval once the backoff budget runs out", async () => {
     await withFakeEventSource(async (instances) => {
       const onError = vi.fn();
       const createTicket = vi.fn(() => Promise.resolve("ticket"));
@@ -283,6 +304,8 @@ describe("collaboration client", () => {
       subscribeRoom("ABC123", "owner-token", () => {}, onError, {
         createTicket,
         reconnectDelays: [10, 20],
+        idleReconnectDelayMs: 15_000,
+        heartbeatTimeoutMs: 0,
         wait,
       });
 
@@ -292,11 +315,80 @@ describe("collaboration client", () => {
       instances[1]!.fail();
       await vi.waitFor(() => expect(instances.length).toBe(3));
       instances[2]!.fail();
+      // 退避序列到这里就用尽了,但断网超过十几秒不该等于永久放弃:改用长间隔继续试。
+      await vi.waitFor(() => expect(instances.length).toBe(4));
+      instances[3]!.fail();
+      await vi.waitFor(() => expect(instances.length).toBe(5));
 
+      expect(wait.mock.calls.map(([delay]) => delay)).toEqual([10, 20, 15_000, 15_000]);
+      expect(onError).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  it("rebuilds the stream with a fresh ticket when no event arrives within the heartbeat window", async () => {
+    await withFakeEventSource(async (instances) => {
+      const watchdog = fakeWatchdog();
+      const onError = vi.fn();
+      const createTicket = vi.fn(() => Promise.resolve(`ticket-${createTicket.mock.calls.length}`));
+      const wait = vi.fn((_delayMs: number) => Promise.resolve());
+
+      subscribeRoom("ABC123", "owner-token", () => {}, onError, {
+        createTicket,
+        reconnectDelays: [10, 20],
+        heartbeatTimeoutMs: 40_000,
+        schedule: watchdog.schedule,
+        wait,
+      });
+
+      await vi.waitFor(() => expect(instances.length).toBe(1));
+      expect(watchdog.pending().map((timer) => timer.delayMs)).toEqual([40_000]);
+
+      // 半开连接不会触发 onerror,只能靠一整个心跳窗口的静默判死。
+      watchdog.fire();
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(instances[0]!.closed).toBe(true);
+      await vi.waitFor(() => expect(instances.length).toBe(2));
+      expect(instances[1]!.url).toContain("ticket=ticket-2");
+      expect(wait.mock.calls.map(([delay]) => delay)).toEqual([10]);
+      // 重建后的流重新挂上看门狗,静默失活不会只被救一次。
+      expect(watchdog.pending()).toHaveLength(1);
+
+      // 判死后旧流补发的 onerror 不应再拉起第二次重连。
+      instances[0]!.fail();
       await Promise.resolve();
-      expect(wait.mock.calls.map(([delay]) => delay)).toEqual([10, 20]);
-      expect(instances.length).toBe(3);
-      expect(onError).toHaveBeenCalledTimes(3);
+      expect(instances.length).toBe(2);
+      expect(onError).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("re-arms the watchdog on every ping heartbeat", async () => {
+    await withFakeEventSource(async (instances) => {
+      const watchdog = fakeWatchdog();
+      const onError = vi.fn();
+      const createTicket = vi.fn(() => Promise.resolve("ticket"));
+
+      const unsubscribe = subscribeRoom("ABC123", "owner-token", () => {}, onError, {
+        createTicket,
+        heartbeatTimeoutMs: 40_000,
+        schedule: watchdog.schedule,
+        wait: () => Promise.resolve(),
+      });
+
+      await vi.waitFor(() => expect(instances.length).toBe(1));
+      const armed = watchdog.pending()[0]!;
+
+      instances[0]!.emit("ping", {});
+
+      // ping 是真实事件而不是 SSE 注释行,所以能重置看门狗:旧计时取消,新计时排上。
+      expect(armed.cancelled).toBe(true);
+      expect(watchdog.pending()).toHaveLength(1);
+      expect(watchdog.pending()[0]).not.toBe(armed);
+      expect(onError).not.toHaveBeenCalled();
+      expect(instances.length).toBe(1);
+      expect(instances[0]!.closed).toBe(false);
+
+      unsubscribe();
+      expect(watchdog.pending()).toHaveLength(0);
     });
   });
 
@@ -306,6 +398,7 @@ describe("collaboration client", () => {
       subscribeRoom("ABC123", "owner-token", () => {}, () => {}, {
         createTicket: () => Promise.resolve("ticket"),
         reconnectDelays: [10, 20],
+        heartbeatTimeoutMs: 0,
         wait,
       });
 
@@ -320,8 +413,9 @@ describe("collaboration client", () => {
     });
   });
 
-  it("never reconnects after a terminal kicked or closed event", async () => {
+  it("never reconnects or keeps a watchdog after a terminal kicked or closed event", async () => {
     await withFakeEventSource(async (instances) => {
+      const watchdog = fakeWatchdog();
       const onError = vi.fn();
       const createTicket = vi.fn(() => Promise.resolve("ticket"));
       const wait = vi.fn((_delayMs: number) => Promise.resolve());
@@ -330,12 +424,16 @@ describe("collaboration client", () => {
         createTicket,
         onKicked: () => {},
         reconnectDelays: [10],
+        heartbeatTimeoutMs: 40_000,
+        schedule: watchdog.schedule,
         wait,
       });
 
       await vi.waitFor(() => expect(instances.length).toBe(1));
       const stream = instances[0]!;
       stream.emit("kicked", { id: "ABC123", version: 4, clientId: "editor" });
+      // 终局事件之后房间对本端已经结束:看门狗必须撤掉,否则会在 40s 后凭空重连一条流。
+      expect(watchdog.pending()).toHaveLength(0);
       // 服务端 end 之后浏览器会立刻报错,这一次不能再重建流。
       stream.fail();
 
@@ -357,6 +455,7 @@ describe("collaboration client", () => {
       subscribeRoom("ABC123", "owner-token", () => {}, onError, {
         createTicket,
         reconnectDelays: [10, 20],
+        heartbeatTimeoutMs: 0,
         wait,
       });
 

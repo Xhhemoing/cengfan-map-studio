@@ -922,7 +922,10 @@ export function createAiServer(options: AiServerOptions = {}) {
         }
         heartbeat = setInterval(() => {
           roomStore.get(eventsMatch[1]!);
-          response.write(": heartbeat\n\n");
+          // 注释行心跳(": heartbeat")不会在 EventSource 上派发任何事件,客户端因此分不清
+          // 「连接安静」与「TCP 半开已死」。发成真实事件,客户端看门狗才有活性信号可数。
+          // 回滚:换回 response.write(": heartbeat\n\n")(同时要关掉客户端看门狗)。
+          response.write("event: ping\ndata: {}\n\n");
         }, 20_000);
         request.on("close", () => {
           if (heartbeat) clearInterval(heartbeat);
