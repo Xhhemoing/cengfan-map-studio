@@ -13,6 +13,13 @@ export interface DisplayFrameStyle {
   background: string;
   opacity: number;
   padding: number;
+  /**
+   * @deprecated Nothing renders this. `deriveFixedDisplayFrameFromCardSettings` copies
+   * `cards.gap` into it and `resolveDisplayFrameSurface` carries it through, but the spacing
+   * between cards comes from `cards.gap` in the layout solver and flow-block spacing comes from
+   * `DisplayFrameFlowBlock.spacing`. Read `cards.gap`; the field stays for document
+   * compatibility so older projects keep normalizing.
+   */
   margin: number;
   align: TextAlign;
   borderColor?: string;
@@ -65,6 +72,12 @@ export interface DisplayFrameFlowBlock {
 export interface DisplayFrameDefinition {
   mode: DisplayFrameMode;
   style: DisplayFrameStyle;
+  /**
+   * @deprecated No renderer reads this. It is derived from `["title", ...cards.visibleFields]`
+   * and only seeds the fixed items / flow blocks at derivation time; afterwards those lists own
+   * the order and the card rows follow `cards.visibleFields`. Read `cards.visibleFields`; the
+   * field stays for document compatibility so older projects keep normalizing.
+   */
   fieldOrder: DisplayFrameField[];
   fixed: { items: DisplayFrameFixedItem[] };
   flow: { blocks: DisplayFrameFlowBlock[] };

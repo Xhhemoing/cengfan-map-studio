@@ -14,16 +14,16 @@
 
 严禁静默降级。子代理输出首行必须声明实际使用的模型 slug。
 
-## 文件所有权（Cycle 2 Round 1）
+## 文件所有权（Cycle 2 Round 2）
 
 | 角色 | 可写路径 | 禁止 |
 | --- | --- | --- |
-| fable-A | `.agent_workspace/cycle2-round1-fable-a.md` | 生产代码 |
-| fable-B | `.agent_workspace/cycle2-round1-fable-b.md` | 生产代码 |
-| opus-fast-A | `PosterCanvas.tsx`（preparedCards 拆分、抽出 DestinationCardsLayer）、新建 `DestinationCardsLayer.tsx*`、相关测试 | `DestinationCard.tsx`、`display-frame-style.ts` |
-| opus-fast-B | `DestinationCard.tsx*`、`display-frame-style.ts*`、`display-frame.ts`（仅 JSDoc）、头部几何纯函数新建 `src/lib/destination-card-metrics.ts*` | `PosterCanvas.tsx`、`GuestsLayer.tsx` |
+| fable-A | `.agent_workspace/cycle2-round2-fable-a.md` | 生产代码 |
+| fable-B | `.agent_workspace/cycle2-round2-fable-b.md` | 生产代码 |
+| opus-fast-A | `prepared-card-content.ts*`（类型下沉）、`DestinationCardsLayer.tsx*`、`DestinationCard.tsx` **仅** 移出被 lib 依赖的类型、相关测试 | `display-frame.ts` |
+| opus-fast-B | `destination-card-metrics.ts*`、`DestinationCard.tsx` 行高/photo 偏移、`display-frame-style.ts*` | `PosterCanvas.tsx`、`DestinationCardsLayer.tsx` |
 | gpt-sol-A | `scripts/perf-canvas-bench.ts`、`canvas-render-metrics.ts*` | UI 大重构 |
-| gpt-sol-B | 新建 `*.cycle2.test.ts(x)` | 生产实现 |
+| gpt-sol-B | 新建 `*.cycle2r2.test.ts(x)` | 生产实现 |
 
 ## 循环状态
 
@@ -48,14 +48,14 @@
   - opus-fast-B → `bc-fadea826-74a2-5368-9667-5431fcf9b1c7`
   - gpt-sol-A → `bc-b425589d-0230-58c2-94b8-fd136cbe474b`
   - gpt-sol-B → `bc-d2683e3c-52ea-50e8-b527-85e5fd822ff8`
-- [ ] Cycle 2 Round 1 — 文本排版与卡片层拆分（进行中，6 子代理并发）
+- [x] Cycle 2 Round 1 — 文本排版与卡片层拆分（完成，见 `cycle2-round1-conclusion.md`）
   - fable-A → `bc-34ecb457-b92f-5d9f-9221-2ff2423e45b2`
   - fable-B → `bc-ebb983fe-da5f-5b77-9935-f50c2d6ac9d9`
   - opus-fast-A → `bc-ea47ec65-a3c7-503d-85c2-744d057a26ce`
   - opus-fast-B → `bc-398927a7-b6e9-5f44-8e86-ad251dd54bc9`
   - gpt-sol-A → `bc-06159e11-c8f6-5bba-ba71-c2b50e05f3e3`
   - gpt-sol-B → `bc-33c43960-3655-5ee6-959b-ebbc50f075f4`
-- [ ] Cycle 2 Round 2
+- [ ] Cycle 2 Round 2 — 几何真源合一与连接线预览（派发中）
 - [ ] Cycle 2 Round 3
 - [ ] Cycle 3 Round 1
 - [ ] Cycle 3 Round 2

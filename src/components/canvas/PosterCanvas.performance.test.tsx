@@ -149,6 +149,39 @@ describe("PosterCanvas interaction rendering", () => {
     container.remove();
   });
 
+  it("keeps destination cards out of a map pan and zoom", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "student-1", name: "林舟", university: "北京大学", city: "北京市", visibility: true },
+        { id: "student-2", name: "沈青", university: "浙江大学", city: "杭州市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+    const onMoveCard = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} />));
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} />));
+
+    const anchorBefore = container.querySelector("[data-destination-anchor]")!.getAttribute("cx");
+    const settledCards = renderCounts.card;
+
+    // Panning and zooming moves every anchor, so connectors and placements must repaint —
+    // but the wrapped text and card sizes a card body draws from cannot change.
+    const moved = {
+      ...project,
+      map: { ...project.map, x: project.map.x + 140, y: project.map.y + 90, scale: project.map.scale * 0.8 },
+    };
+    flushSync(() => root.render(<PosterCanvas project={moved} onMoveCard={onMoveCard} />));
+
+    expect(container.querySelector("[data-destination-anchor]")!.getAttribute("cx")).not.toBe(anchorBefore);
+    expect(renderCounts.card).toBe(settledCards);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("keeps the map and guest layers out of a selection-only re-render", () => {
     const project = createProjectDocument({
       students: [{ id: "student-1", name: "林舟", university: "北京大学", city: "北京市", visibility: true }],

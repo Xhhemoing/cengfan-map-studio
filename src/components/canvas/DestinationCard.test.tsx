@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { DestinationCard, type DestinationCardStyle, type PreparedCardRow } from "./DestinationCard";
+import { DestinationCard, type CardProvinceTexture, type DestinationCardStyle, type PreparedCardRow } from "./DestinationCard";
 import type { DisplayFrameFlowBlock, DisplayFrameItemStyle } from "../../lib/display-frame";
 import type { LayoutGroup } from "../../lib/layout";
 
@@ -103,7 +103,12 @@ function flowBlocks(styles: Partial<Record<"title" | "name" | "city", DisplayFra
   };
 }
 
-function renderCard(style: DestinationCardStyle) {
+interface RenderOptions {
+  headerExtra?: number;
+  provinceTexture?: CardProvinceTexture | null;
+}
+
+function renderCard(style: DestinationCardStyle, options: RenderOptions = {}) {
   const container = document.createElement("div");
   const root = createRoot(container);
   const render = () => flushSync(() => root.render(
@@ -114,10 +119,10 @@ function renderCard(style: DestinationCardStyle) {
         province="北京市"
         rows={rows}
         titleLines={titleLines}
-        headerExtra={0}
+        headerExtra={options.headerExtra ?? 0}
         width={220}
         height={110}
-        provinceTexture={null}
+        provinceTexture={options.provinceTexture ?? null}
       />
     </svg>,
   ));
@@ -354,6 +359,60 @@ describe("DestinationCard", () => {
     const tiny = renderCard(createStyle({ fontSize: 8 }));
     expect(tiny.container.querySelector("[data-city-section='北京市']")?.getAttribute("font-size")).toBe("9");
     tiny.dispose();
+  });
+
+  it("rounds the ticket surface and draws its stub and punch hole", () => {
+    const { container, dispose } = renderCard(createStyle({ preset: "ticket" }));
+
+    expect(container.querySelector("[data-display-frame-surface]")?.getAttribute("rx")).toBe("12");
+
+    const accent = container.querySelector("[data-card-accent]")!;
+    expect(accent.getAttribute("width")).toBe("8");
+    expect(accent.getAttribute("height")).toBe("110");
+    expect(accent.getAttribute("rx")).toBe("4");
+
+    const punch = container.querySelector("circle:not([data-card-avatar])")!;
+    expect(punch.getAttribute("cx")).toBe("202");
+    expect(punch.getAttribute("cy")).toBe("18");
+    expect(punch.getAttribute("r")).toBe("7");
+
+    dispose();
+  });
+
+  it("reserves header room for the photo avatar and the province thumbnail", () => {
+    const photo = renderCard(createStyle({ preset: "photo" }));
+    const avatar = photo.container.querySelector("[data-card-avatar]")!;
+    expect(avatar.getAttribute("cx")).toBe("25");
+    expect(avatar.getAttribute("cy")).toBe("21");
+    expect(avatar.getAttribute("r")).toBe("13");
+    // The avatar sits where the title would start, so the title clears it.
+    expect(photo.container.querySelector("[data-card-title-line]")?.getAttribute("x")).toBe("44");
+    photo.dispose();
+
+    const textured = renderCard(createStyle({ preset: "photo" }), {
+      provinceTexture: { kind: "texture", assetId: "asset-1", src: "data:image/png;base64,AA", fit: "contain", opacity: 0.8 },
+    });
+    const texture = textured.container.querySelector("[data-card-province-texture='北京市']")!;
+    expect(texture.getAttribute("x")).toBe("44");
+    expect(texture.getAttribute("y")).toBe("3");
+    expect(texture.getAttribute("width")).toBe("30");
+    expect(textured.container.querySelector("[data-card-title-line]")?.getAttribute("x")).toBe("80");
+    textured.dispose();
+  });
+
+  it("pushes the divider and the body rows down by the extra title lines", () => {
+    const { container, dispose } = renderCard(createStyle(), { headerExtra: 16 });
+
+    const divider = container.querySelector("line")!;
+    expect(divider.getAttribute("y1")).toBe("46");
+    expect(divider.getAttribute("y2")).toBe("46");
+    expect(divider.getAttribute("x1")).toBe("12");
+    expect(divider.getAttribute("x2")).toBe("208");
+
+    const rowLines = Array.from(container.querySelectorAll("[data-card-row-line]"));
+    expect(rowLines.map((line) => line.getAttribute("y"))).toEqual(["58", "78"]);
+
+    dispose();
   });
 
   it("skips re-rendering while its props keep the same identity", () => {

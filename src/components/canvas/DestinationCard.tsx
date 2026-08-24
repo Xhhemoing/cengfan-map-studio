@@ -20,6 +20,22 @@ import {
   type ResolvedDisplayFramePaint,
   type ResolvedDisplayFrameSurface,
 } from "../../lib/display-frame-style";
+import {
+  DESTINATION_CARD_COUNT_BASELINE,
+  DESTINATION_CARD_PHOTO_INITIAL_FONT_WEIGHT,
+  destinationCardAvatar,
+  destinationCardBodyBaseline,
+  destinationCardBodyTop,
+  destinationCardDividerY,
+  destinationCardFlowRowHeight,
+  destinationCardHeaderOffset,
+  destinationCardSurfaceChrome,
+  destinationCardTextureBox,
+  destinationCardTicketOrnaments,
+  destinationCardTitleBaseline,
+  destinationCardTitleTop,
+  destinationCardTitleX,
+} from "../../lib/destination-card-metrics";
 import { resolveFontFamily, type UserFont } from "../../lib/fonts";
 import type { LayoutGroup, SchoolRowPart } from "../../lib/layout";
 import type { CardFontField, ProvinceAppearance, TextStyleOverride } from "../../lib/scene-document";
@@ -162,7 +178,7 @@ export const DestinationCard = memo(function DestinationCard({
     rowHeight,
     userFonts,
   } = style;
-  const photoOffset = preset === "photo" ? 32 : 0;
+  const headerOffset = destinationCardHeaderOffset(preset);
   // The card falls back to its own paint when the frame leaves a slot empty, then the shared
   // resolver fills in every remaining optional token exactly like the display-frame renderer.
   const surface = resolveDisplayFrameSurface({
@@ -171,6 +187,10 @@ export const DestinationCard = memo(function DestinationCard({
     opacity: frameStyle.opacity ?? style.opacity,
     borderColor: frameStyle.borderColor ?? style.edgeColor,
   });
+  const chrome = destinationCardSurfaceChrome(preset, surface);
+  const dividerY = destinationCardDividerY(headerExtra);
+  const ticketOrnaments = preset === "ticket" ? destinationCardTicketOrnaments(width, height) : null;
+  const avatar = preset === "photo" ? destinationCardAvatar(horizontalPadding) : null;
 
   // Fixed items own their box, so alignment anchors inside it; flow blocks have no box and
   // anchor inside the card's padding box instead.
@@ -187,7 +207,11 @@ export const DestinationCard = memo(function DestinationCard({
   const titlePaint = frameMode === "fixed" && frameTitleItem
     ? resolveDisplayFrameItemPaint(frameTitleItem, surface, titleFallback)
     : resolveDisplayFrameFieldPaint({ field: "title", style: flowTitleBlock?.style, fallback: titleFallback }, surface);
-  const titleX = anchorXFor(frameTitleItem, titlePaint) + photoOffset + (provinceTexture ? 36 : 0);
+  const titleX = destinationCardTitleX({
+    anchorX: anchorXFor(frameTitleItem, titlePaint),
+    headerOffset,
+    hasTexture: provinceTexture !== null,
+  });
   // Fixed rows share the body item's box but not its typography: the city heading keeps its own
   // colour and size, so only alignment and opacity of that item join the cascade.
   const fixedRowStyle: DisplayFrameItemStyle | undefined = frameMode === "fixed" && frameBodyItem?.style
@@ -196,6 +220,18 @@ export const DestinationCard = memo(function DestinationCard({
       ...(frameBodyItem.style.opacity !== undefined ? { opacity: frameBodyItem.style.opacity } : {}),
     }
     : undefined;
+
+  const titleTop = destinationCardTitleTop({
+    mode: frameMode,
+    ...(frameTitleItem ? { fixedItemY: frameTitleItem.y } : {}),
+    ...(flowTitleBlock ? { flowSpacing: flowTitleBlock.spacing } : {}),
+  });
+  const bodyTop = destinationCardBodyTop({
+    mode: frameMode,
+    ...(frameBodyItem ? { fixedItemY: frameBodyItem.y } : {}),
+    flowContentStart,
+    flowTitleFontSize,
+  });
 
   let lineIndex = 0;
   const bodyLines = rows.flatMap((row) => row.lines.map((line, index) => {
@@ -206,9 +242,9 @@ export const DestinationCard = memo(function DestinationCard({
       ? resolveDisplayFrameBlockPaint(block, surface, fallback)
       : resolveDisplayFrameFieldPaint({ field: rowField, style: fixedRowStyle, fallback }, surface);
     const rowLineHeight = frameMode === "flow"
-      ? Math.max(16, paint.fontSize + 6) * (block?.lineHeight ?? 1.2)
+      ? destinationCardFlowRowHeight(paint.fontSize, block?.lineHeight ?? 1.2)
       : rowHeight;
-    const y = (frameMode === "fixed" ? frameBodyItem?.y ?? 42 : flowContentStart + flowTitleFontSize + 8) + headerExtra + lineIndex * rowLineHeight;
+    const y = destinationCardBodyBaseline({ top: bodyTop, headerExtra, lineIndex, rowHeight: rowLineHeight });
     lineIndex += 1;
     return (
       <text
@@ -241,35 +277,37 @@ export const DestinationCard = memo(function DestinationCard({
         data-display-frame-surface
         width={width}
         height={height}
-        rx={preset === "ticket" ? 12 : preset === "borderless" ? 0 : surface.borderRadius}
+        rx={chrome.borderRadius}
         fill={surface.background}
         fillOpacity={surface.opacity}
-        stroke={preset === "borderless" ? "none" : surface.borderColor}
-        strokeWidth={preset === "borderless" ? undefined : surface.borderWidth}
+        stroke={chrome.stroke}
+        strokeWidth={chrome.strokeWidth}
         data-display-frame-mode={frameMode}
       />
       {provinceTexture && (
         <image
           data-card-province-texture={province}
           href={provinceTexture.src}
-          x={horizontalPadding + photoOffset}
-          y={3}
-          width={30}
-          height={30}
+          {...destinationCardTextureBox(horizontalPadding, headerOffset)}
           opacity={provinceTexture.opacity ?? 1}
           preserveAspectRatio="xMidYMid meet"
           pointerEvents="none"
         />
       )}
-      {preset === "ticket" && <><rect data-card-accent width={8} height={height} rx={4} fill={style.activeColor} /><circle cx={width - 18} cy={18} r={7} fill={style.activeColor} opacity={0.2} /></>}
-      {preset === "photo" && <><circle data-card-avatar cx={horizontalPadding + 13} cy={21} r={13} fill={style.activeColor} opacity={0.2} /><text x={horizontalPadding + 13} y={25} textAnchor="middle" fill={style.activeColor} fontWeight={700} fontSize={11}>{group.title.slice(0, 1)}</text></>}
+      {ticketOrnaments && <><rect data-card-accent {...ticketOrnaments.accent} fill={style.activeColor} /><circle {...ticketOrnaments.punch} fill={style.activeColor} /></>}
+      {avatar && <><circle data-card-avatar cx={avatar.cx} cy={avatar.cy} r={avatar.r} fill={style.activeColor} opacity={avatar.opacity} /><text x={avatar.cx} y={avatar.initialBaseline} textAnchor="middle" fill={style.activeColor} fontWeight={DESTINATION_CARD_PHOTO_INITIAL_FONT_WEIGHT} fontSize={avatar.fontSize}>{group.title.slice(0, 1)}</text></>}
       {customFrameItems.map((item) => renderDisplayFrameItem(item, surface, userFonts))}
       {titleLines.map((line, index) => (
         <text
           key={`title-${index}`}
           data-card-title-line
           x={titleX}
-          y={(frameMode === "fixed" ? frameTitleItem?.y ?? 12 : 12 + (flowTitleBlock?.spacing ?? 0)) + (index + 1) * Math.max(16, flowTitleFontSize + 4) * (flowTitleBlock?.lineHeight ?? lineHeightMultiplier)}
+          y={destinationCardTitleBaseline({
+            top: titleTop,
+            index,
+            fontSize: flowTitleFontSize,
+            lineHeight: flowTitleBlock?.lineHeight ?? lineHeightMultiplier,
+          })}
           textAnchor={titlePaint.textAnchor}
           fontWeight={titlePaint.fontWeight}
           // The solved card height counts title lines at this size, so the layout size wins
@@ -280,8 +318,8 @@ export const DestinationCard = memo(function DestinationCard({
           opacity={titlePaint.opacity}
         >{line.map((fragment) => fragment.text).join("")}</text>
       ))}
-      {style.showCount && <text x={width - horizontalPadding} y={22} fill={style.activeColor} textAnchor="end" fontWeight={700} fontSize={style.fontSize} fontFamily={resolveFontFamily(style.fieldFonts?.title, userFonts)}>{group.count} 人</text>}
-      {preset !== "borderless" && <line x1={horizontalPadding} x2={width - horizontalPadding} y1={30 + headerExtra} y2={30 + headerExtra} stroke={style.edgeColor} />}
+      {style.showCount && <text x={width - horizontalPadding} y={DESTINATION_CARD_COUNT_BASELINE} fill={style.activeColor} textAnchor="end" fontWeight={700} fontSize={style.fontSize} fontFamily={resolveFontFamily(style.fieldFonts?.title, userFonts)}>{group.count} 人</text>}
+      {chrome.showDivider && <line x1={horizontalPadding} x2={width - horizontalPadding} y1={dividerY} y2={dividerY} stroke={style.edgeColor} />}
       {bodyLines}
     </>
   );

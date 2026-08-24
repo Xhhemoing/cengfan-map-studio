@@ -169,6 +169,62 @@ try {
         templateId: "original",
         dataView: "province",
       });
+      // Mirror the three text-wrap batches prepared per one-student province card:
+      // title, city heading, and university/name body. Fixture construction stays
+      // outside the samples so this isolates the prepared-content wrapping cost.
+      const preparedDisplayFrame = deriveFixedDisplayFrameFromCardSettings(project.cards);
+      const preparedBodyItem = preparedDisplayFrame.fixed.items.find((item) => item.id === "name")
+        ?? preparedDisplayFrame.fixed.items[0];
+      const preparedHorizontalPadding = preparedBodyItem?.x
+        ?? project.cards.horizontalPadding
+        ?? project.cards.padding;
+      const preparedFieldFontSize = (field: "title" | "name" | "university" | "city") =>
+        project.cards.fieldTypography?.[field]?.fontSize
+        ?? (field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize);
+      const preparedRowFontSize = Math.max(
+        ...project.cards.visibleFields.map(preparedFieldFontSize),
+        preparedFieldFontSize("city"),
+      );
+      const preparedTitleFontSize = preparedFieldFontSize("title");
+      const preparedCardWidth = Math.min(
+        project.cards.maxWidth,
+        Math.max(80, project.canvas.width - project.canvas.safeMargin * 2),
+      );
+      const preparedContentWidth = Math.max(
+        preparedRowFontSize,
+        preparedCardWidth - preparedHorizontalPadding * 2,
+      );
+      const preparedTitleWidth = Math.max(
+        preparedTitleFontSize,
+        preparedContentWidth - Math.max(42, preparedTitleFontSize * 3),
+      );
+      const preparedTextBatches = fixture.students.flatMap((student) => [
+        {
+          fragments: [{ text: student.province, field: "title" as const }],
+          maxWidth: preparedTitleWidth,
+          fontSize: preparedTitleFontSize,
+        },
+        {
+          fragments: [{ text: student.city, field: "city" as const }],
+          maxWidth: preparedContentWidth,
+          fontSize: preparedFieldFontSize("city"),
+        },
+        {
+          fragments: [
+            { text: student.university, field: "university" as const },
+            { text: " · " },
+            { text: student.name, field: "name" as const },
+          ],
+          maxWidth: preparedContentWidth,
+          fontSize: preparedRowFontSize,
+        },
+      ]);
+      const noWrapFields = new Set(project.cards.noWrapFields ?? []);
+      measure("wrapCardTextPreparedContent", count, () =>
+        preparedTextBatches.map((batch) =>
+          wrapCardText(batch.fragments, batch.maxWidth, batch.fontSize, {
+            preserveFields: noWrapFields,
+          })));
       const movedProject = fixture.movedCardKey
         ? {
             ...project,
@@ -232,6 +288,33 @@ try {
       }
       flushSync(() => selectionRoot.unmount());
       selectionContainer.remove();
+
+      const pannedProject = {
+        ...project,
+        map: {
+          ...project.map,
+          x: project.map.x + 16,
+        },
+      };
+      const panContainer = document.createElement("div");
+      document.body.append(panContainer);
+      const panRoot = createRoot(panContainer);
+      renderPoster(panRoot, project);
+      let panned = false;
+      measure("posterCanvasMapPanRerender", count, () => {
+        panned = !panned;
+        renderPoster(panRoot, panned ? pannedProject : project);
+      });
+      renderPoster(panRoot, pannedProject);
+      const mapTransform = panContainer.querySelector("[data-map-layer]")?.getAttribute("transform");
+      if (!mapTransform?.startsWith(`translate(${pannedProject.map.x} ${pannedProject.map.y})`)) {
+        throw new Error("PosterCanvas map-pan re-render did not apply the expected map.x");
+      }
+      if (panContainer.querySelectorAll("[data-destination-card]").length !== count) {
+        throw new Error("PosterCanvas map-pan re-render changed the destination-card count");
+      }
+      flushSync(() => panRoot.unmount());
+      panContainer.remove();
 
       const positionContainer = document.createElement("div");
       document.body.append(positionContainer);

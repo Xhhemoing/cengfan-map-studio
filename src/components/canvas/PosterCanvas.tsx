@@ -1,17 +1,11 @@
 import { geoMercator, geoPath } from "d3-geo";
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, type PointerEvent, type ReactNode, type RefObject } from "react";
-import { DestinationCard, type CardDisplayRow, type DestinationCardStyle, type PreparedCardRow } from "./DestinationCard";
-import { clampDestinationCardPosition, type CardArea, type CardLayoutMode, type CardPoint, type CardPolygon } from "../../lib/card-layout";
+import { Fragment, memo, useCallback, useEffect, useMemo, type PointerEvent, type ReactNode, type RefObject } from "react";
+import type { DestinationCardStyle } from "./DestinationCard";
+import type { CardArea, CardLayoutBounds, CardLayoutMode, CardPoint, CardPolygon } from "../../lib/card-layout";
 import { createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
 import { computeMapContentBounds, computeMapOccupiedAreas } from "../../lib/map-content-bounds";
-import {
-  buildCitySections,
-  buildLayoutGroups,
-  buildSchoolRows,
-  schoolRowParts,
-  type SchoolRowPart,
-} from "../../lib/layout";
+import { buildLayoutGroups } from "../../lib/layout";
 import { buildProvinceSummary, getVisibleStudents } from "../../lib/project-data";
 import { CANVAS_LAYER_Z } from "../../lib/scene-document";
 import type { AssetElement, CanvasText, CardFontField, SceneSelection } from "../../lib/scene-document";
@@ -19,23 +13,25 @@ import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame } from "
 import type { ProjectDocument } from "../../lib/project-document";
 import { resolveStudentLocation } from "../../lib/student-data";
 import { findProvinceFeature, getChinaMapFeatures, type MapFeature, type Position } from "../../lib/map-data";
-import { buildConnectorGeometry } from "../../lib/connector-geometry";
 import { resolveEdgeStyle } from "../../lib/edge-styles";
 import { resolveFontFamily, buildFontFaceCss, type UserFont } from "../../lib/fonts";
 import { clampGridSize, DEFAULT_GRID_SIZE } from "../../lib/grid";
-import { DEFAULT_CARD_EXPRESSION_TEMPLATES, formatCardExpression } from "../../lib/card-expression";
-import { DEFAULT_NAME_FORMAT, formatStudentName } from "../../lib/name-format";
-import { wrapCardText, type CardTextFragment } from "../../lib/card-text-layout";
+import { DEFAULT_CARD_EXPRESSION_TEMPLATES } from "../../lib/card-expression";
+import {
+  buildPreparedCardContents,
+  resolveCardAnchor,
+  type CardAnchor,
+  type PreparedCard,
+} from "../../lib/prepared-card-content";
 import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
 import { computeGuestPanelLayout, DEFAULT_GUEST_PANEL } from "../../lib/guest-panel-layout";
 import { DecorationLayer } from "./DecorationLayer";
+import { DestinationCardsLayer, type DestinationCardsAppearance, type PlacedDestinationCard } from "./DestinationCardsLayer";
 import { GuestsLayer } from "./GuestsLayer";
-import { ReferenceCardVisual, referenceCardColor, type ReferenceCardPresentation } from "./ReferenceCardVisual";
 import { MapLayer } from "./MapLayer";
 import { RegionalAssetLayer } from "./RegionalAssetLayer";
 import { TextLayer } from "./TextLayer";
 import { useCardLayoutWorker } from "./useCardLayoutWorker";
-import { clearCanvasPreview, createCanvasPreviewScheduler, scheduleCanvasPreview } from "./CanvasDragPreview";
 
 const features = getChinaMapFeatures();
 const openMapSplit = splitMapFeaturesForSouthChinaSea(features, false);
@@ -130,21 +126,6 @@ export interface PosterCanvasProps {
   onCardPositionsResolved?: (positions: Record<string, { x: number; y: number }>) => void;
 }
 
-function destinationHeight(lineCount: number, rowHeight: number, bottomPadding: number, headerExtra: number): number {
-  return 44 + headerExtra + lineCount * rowHeight + bottomPadding;
-}
-
-/** Extend a connector path so it runs from the card center to its boundary port. The
- *  portion inside the card is covered by the card fill, so the visible line ends flush
- *  at the card edge and its tip stays hidden ("到板块的中心隐藏"). */
-function connectorPathToCenter(pathData: string, port: { x: number; y: number }, card: { x: number; y: number; width: number; height: number }): string {
-  const centerX = card.x + card.width / 2;
-  const centerY = card.y + card.height / 2;
-  const format = (value: number) => Number(value.toFixed(3)).toString();
-  const rest = pathData.replace(/^M[-\d.]+ [-\d.]+/, "").trim();
-  return `M${format(centerX)} ${format(centerY)} L${format(port.x)} ${format(port.y)} ${rest}`;
-}
-
 function textLayoutObstacle(text: CanvasText): CardArea | null {
   if (!text.visibility || !text.content.trim()) return null;
   const x = text.textAlign === "right"
@@ -158,76 +139,6 @@ function textLayoutObstacle(text: CanvasText): CardArea | null {
     width: text.maxWidth,
     height: text.fontSize * 1.3,
   };
-}
-
-function studentFieldParts(
-  student: { name: string; university: string; city: string },
-  fields: ProjectDocument["cards"]["visibleFields"],
-): SchoolRowPart[] {
-  return fields
-    .map((field) => ({ field, value: student[field] }))
-    .filter((part): part is SchoolRowPart => Boolean(part.value));
-}
-
-function rowFragments(
-  row: CardDisplayRow,
-  expression: string,
-  context: Parameters<typeof formatCardExpression>[1],
-): CardTextFragment<CardFontField>[] {
-  if (expression !== DEFAULT_CARD_EXPRESSION_TEMPLATES.row) {
-    return [{ text: formatCardExpression(expression, context, row.parts.map((part) => part.value).join(" · ")) }];
-  }
-  return row.parts.flatMap((part, index) => [
-    ...(index > 0 ? [{ text: " · " }] : []),
-    { text: part.value, field: part.field },
-  ]);
-}
-
-function cardRowsForGroup(
-  group: ReturnType<typeof buildLayoutGroups>[number],
-  grouping: ProjectDocument["cards"]["grouping"],
-  fields: ProjectDocument["cards"]["visibleFields"],
-  citySubgroups: boolean,
-  formatName: (name: string) => string,
-): CardDisplayRow[] {
-  const students = group.students.map((student) => ({ ...student, name: formatName(student.name) }));
-  if (grouping === "university") {
-    return students.map((student) => ({
-      key: student.id,
-      parts: studentFieldParts(student, fields),
-      city: student.city,
-      university: student.university,
-      names: student.name,
-      remainingPeople: 0,
-    }));
-  }
-
-  if (grouping === "province" && citySubgroups) {
-    const showCityHeading = fields.includes("city");
-    return buildCitySections(students).flatMap((section) => [{
-        key: `city-${section.city}`,
-        parts: showCityHeading ? [{ field: "city" as const, value: section.city }] : [],
-        cityHeading: showCityHeading ? section.city : undefined,
-        city: section.city,
-        remainingPeople: 0,
-      }, ...section.rows.map((row) => ({
-        key: row.studentIds[0] ?? `${section.city}-${row.university}`,
-        parts: schoolRowParts(row, fields.filter((field) => field !== "city")),
-        city: section.city,
-        university: row.university,
-        names: row.names.join("、"),
-        remainingPeople: 0,
-      }))]);
-  }
-
-  return buildSchoolRows(students).map((row) => ({
-    key: row.studentIds[0] ?? row.university,
-    parts: schoolRowParts(row, fields, grouping === "city" ? undefined : group.students[0]?.city),
-    city: grouping === "city" ? group.title : group.students[0]?.city,
-    university: row.university,
-    names: row.names.join("、"),
-    remainingPeople: 0,
-  }));
 }
 
 /** Document slices painted for a given document object. A caller may edit a document in place
@@ -279,55 +190,6 @@ function PosterCanvasView({
 }: PosterCanvasProps) {
   paintedSlices.set(project, { ...project });
   const resolvedGridSize = clampGridSize(gridSize);
-  const cardDrag = useRef<{
-    id: string;
-    offsetX: number;
-    offsetY: number;
-    width: number;
-    height: number;
-    x: number;
-    y: number;
-    originalX: number;
-    originalY: number;
-    element: SVGGElement;
-    connectorGroup: SVGGElement;
-    anchorX: number;
-    anchorY: number;
-    side: "left" | "right" | "top" | "bottom";
-    connectorStyle: ProjectDocument["cards"]["connectorStyle"];
-    borderless: boolean;
-    connectorHidden: boolean;
-  } | null>(null);
-  const cardPreviewScheduler = useRef(createCanvasPreviewScheduler<{ id: string; x: number; y: number }>());
-
-  const updateCardPreview = useCallback((next: { id: string; x: number; y: number }) => {
-    const drag = cardDrag.current;
-    if (!drag || drag.id !== next.id) return;
-    const placement = { x: next.x, y: next.y, width: drag.width, height: drag.height, side: drag.side };
-    drag.element.setAttribute("transform", `translate(${next.x} ${next.y})`);
-    const connector = drag.connectorHidden ? null : buildConnectorGeometry({
-      card: placement,
-      anchor: { x: drag.anchorX, y: drag.anchorY },
-      style: drag.connectorStyle,
-      preferredSide: drag.side,
-    });
-    const pathData = connector
-      ? drag.borderless
-        ? connectorPathToCenter(connector.pathData, connector.port, placement)
-        : connector.pathData
-      : null;
-    if (pathData) {
-      drag.connectorGroup.querySelectorAll<SVGPathElement>("path").forEach((path) => path.setAttribute("d", pathData));
-    }
-  }, []);
-
-  const clearCardPreview = useCallback(() => clearCanvasPreview(cardPreviewScheduler.current), []);
-
-  const scheduleCardPreview = useCallback((next: { id: string; x: number; y: number }) => {
-    scheduleCanvasPreview(cardPreviewScheduler.current, next, renderIntervalMs, updateCardPreview);
-  }, [renderIntervalMs, updateCardPreview]);
-
-  useEffect(() => () => clearCardPreview(), [clearCardPreview]);
   const visibleStudents = useMemo(() => getVisibleStudents(project.students), [project.students]);
   const summary = useMemo(() => buildProvinceSummary(visibleStudents), [visibleStudents]);
   const counts = useMemo(() => new Map(summary.map((item) => [item.province, item.count])), [summary]);
@@ -530,83 +392,36 @@ function PosterCanvasView({
     project.map.edgeColor,
     userFonts,
   ]);
-  const preparedCards = useMemo(() => {
+  // Text wrapping and card sizing only read content and typography. Keeping the map
+  // transform out of this memo means panning or zooming the map re-runs the anchor memo
+  // below instead of re-wrapping every card.
+  const preparedCardContents = useMemo(() => {
     if (project.cards.visibleFields.length === 0 || project.dataView === "pins") return [];
-    const compactLayout = project.cards.compactLayout === true || project.cards.preset === "compact";
-    const cardFieldFontSize = (field: CardFontField) => project.cards.fieldTypography?.[field]?.fontSize ?? (field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize);
-    const rowFontSize = Math.max(...project.cards.visibleFields.map(cardFieldFontSize), cardFieldFontSize("city"));
-    const rowHeight = Math.max(compactLayout ? 18 : 20, rowFontSize + 6) * lineHeightMultiplier;
-    const titleFontSize = cardFieldFontSize("title");
-    const cardWidth = Math.min(project.cards.maxWidth, Math.max(80, project.canvas.width - project.canvas.safeMargin * 2));
-    const contentWidth = Math.max(rowFontSize, cardWidth - horizontalPadding * 2);
-    const bottomPadding = project.cards.bottomPadding ?? project.cards.padding;
-    const titleLineHeight = Math.max(16, titleFontSize + 4) * lineHeightMultiplier;
-    const formatName = (name: string) => formatStudentName(name, project.cards.nameFormat ?? DEFAULT_NAME_FORMAT);
-    const prepared = groups.map((group) => {
-      const isInternational = group.students.every((student) => student.locationScope === "international");
-      const province = isInternational || !group.students[0] ? "" : resolveStudentLocation(group.students[0]).province;
-      const feature = findProvinceFeature(features, province);
-      const administrativeCenter = feature ? projection(feature.center) : null;
-      const point = administrativeCenter && administrativeCenter.every(Number.isFinite)
-        ? administrativeCenter
-        : feature
-          ? mapPath.centroid(feature as never)
-          : [project.map.width / 2, project.map.height / 2];
-      const centerX = project.map.width / 2;
-      const centerY = project.map.height / 2;
-      const anchorX = Number.isFinite(point[0]) ? project.map.x + centerX + (point[0] - centerX) * project.map.scale : project.map.x + centerX;
-      const anchorY = Number.isFinite(point[1]) ? project.map.y + centerY + (point[1] - centerY) * project.map.scale : project.map.y + centerY;
-      const rows = cardRowsForGroup(group, grouping, project.cards.visibleFields, project.cards.citySubgroups !== false, formatName).map((row): PreparedCardRow => {
-        const context = {
-          group: group.title,
-          count: group.count,
-          province: grouping === "province" ? group.title : resolveStudentLocation(group.students[0]!).province,
-          city: row.city ?? group.students[0]?.city,
-          university: row.university,
-          names: row.names,
-        };
-        const fragments = row.cityHeading
-          ? [{ text: formatCardExpression(expressionTemplates.city, context, row.cityHeading), field: "city" as const }]
-          : rowFragments(row, expressionTemplates.row, context);
-        return { ...row, lines: wrapCardText(fragments, contentWidth, row.cityHeading ? cardFieldFontSize("city") : rowFontSize, {
-          preserveFields: noWrapFieldSet,
-        }) };
-      });
-      const lineCount = rows.reduce((total, row) => total + row.lines.length, 0);
-      const title = formatCardExpression(expressionTemplates.title, {
-        group: group.title,
-        count: group.count,
-        province: grouping === "province" ? group.title : resolveStudentLocation(group.students[0]!).province,
-        city: grouping === "city" ? group.title : undefined,
-        university: grouping === "university" ? group.students[0]?.university : undefined,
-      }, group.title);
-      const textureHeaderWidth = project.cards.showProvinceTexture === true ? 36 : 0;
-      const titleWidth = Math.max(titleFontSize, contentWidth - Math.max(42, titleFontSize * 3) - textureHeaderWidth);
-      const titleLines = wrapCardText([{ text: title, field: "title" as const }], titleWidth, titleFontSize);
-      const headerExtra = Math.max(0, titleLines.length - 1) * titleLineHeight;
-      return {
-        group,
-        province,
-        isInternational,
-        rows,
-        titleLines,
-        headerExtra,
-        anchorX,
-        anchorY,
-        width: cardWidth,
-        height: destinationHeight(lineCount, rowHeight, bottomPadding, headerExtra),
-      };
+    return buildPreparedCardContents({
+      groups,
+      grouping,
+      visibleFields: project.cards.visibleFields,
+      citySubgroups: project.cards.citySubgroups !== false,
+      expressionTemplates,
+      nameFormat: project.cards.nameFormat,
+      fontSize: project.cards.fontSize,
+      fieldTypography: project.cards.fieldTypography,
+      compactLayout: project.cards.compactLayout === true || project.cards.preset === "compact",
+      maxWidth: project.cards.maxWidth,
+      horizontalPadding,
+      bottomPadding: project.cards.bottomPadding ?? project.cards.padding,
+      showProvinceTexture: project.cards.showProvinceTexture === true,
+      noWrapFields: noWrapFieldSet,
+      lineHeightMultiplier,
+      canvasWidth: project.canvas.width,
+      safeMargin: project.canvas.safeMargin,
     });
-    return prepared;
   }, [
-    expressionTemplates.city,
-    expressionTemplates.row,
-    expressionTemplates.title,
+    expressionTemplates,
     groups,
     grouping,
     horizontalPadding,
     lineHeightMultiplier,
-    mapPath,
     noWrapFieldSet,
     project.cards.bottomPadding,
     project.cards.citySubgroups,
@@ -622,12 +437,67 @@ function PosterCanvasView({
     project.canvas.safeMargin,
     project.canvas.width,
     project.dataView,
+  ]);
+
+  const cardAnchors = useMemo<CardAnchor[]>(() => {
+    const map = {
+      x: project.map.x,
+      y: project.map.y,
+      width: project.map.width,
+      height: project.map.height,
+      scale: project.map.scale,
+    };
+    const byProvince = new Map<string, CardAnchor>();
+    return preparedCardContents.map((content) => {
+      const cached = byProvince.get(content.province);
+      if (cached) return cached;
+      const feature = findProvinceFeature(features, content.province);
+      const administrativeCenter = feature ? projection(feature.center) : null;
+      const point = administrativeCenter && administrativeCenter.every(Number.isFinite)
+        ? administrativeCenter
+        : feature
+          ? mapPath.centroid(feature as never)
+          : [map.width / 2, map.height / 2];
+      const anchor = resolveCardAnchor(point, map);
+      byProvince.set(content.province, anchor);
+      return anchor;
+    });
+  }, [
+    mapPath,
+    preparedCardContents,
     project.map.height,
     project.map.scale,
     project.map.width,
-    project.map.y,
     project.map.x,
+    project.map.y,
     projection,
+  ]);
+
+  const preparedCards = useMemo<PreparedCard[]>(
+    () => preparedCardContents.map((content, index) => ({ ...content, ...cardAnchors[index]! })),
+    [cardAnchors, preparedCardContents],
+  );
+
+  // Shared by auto-layout and by the clamp applied while a card is dragged, so both agree
+  // on the protected geometry.
+  const cardLayoutBounds = useMemo<CardLayoutBounds>(() => ({
+    width: project.canvas.width,
+    height: project.canvas.height,
+    map: mapContentBounds,
+    occupiedAreas: layoutOccupiedAreas,
+    occupiedPolygons: layoutOccupiedPolygons,
+    allowMapOverlap: project.cards.allowMapOverlap === true,
+    margin: project.canvas.safeMargin,
+    gap: Math.max(10, project.cards.gap),
+  }), [
+    layoutOccupiedAreas,
+    layoutOccupiedPolygons,
+    mapContentBounds,
+    project.canvas.height,
+    project.canvas.safeMargin,
+    project.canvas.width,
+    project.cards.allowMapOverlap,
+    project.cards.gap,
   ]);
 
   const layoutRequest = useMemo<CardLayoutWorkerRequest | null>(() => {
@@ -640,16 +510,6 @@ function PosterCanvasView({
       width,
       height,
     }));
-    const bounds = {
-      width: project.canvas.width,
-      height: project.canvas.height,
-      map: mapContentBounds,
-      occupiedAreas: layoutOccupiedAreas,
-      occupiedPolygons: layoutOccupiedPolygons,
-      allowMapOverlap: project.cards.allowMapOverlap === true,
-      margin: project.canvas.safeMargin,
-      gap: Math.max(10, project.cards.gap),
-    };
     const options = {
       mode: layoutMode,
       autoBalance: project.cards.autoBalance !== false,
@@ -657,29 +517,22 @@ function PosterCanvasView({
       connectorWidth: project.cards.connectorWidth,
     };
     return {
-      key: createCardLayoutCacheKey({ cards, bounds, options }),
+      key: createCardLayoutCacheKey({ cards, bounds: cardLayoutBounds, options }),
       cards,
-      bounds,
+      bounds: cardLayoutBounds,
       options,
     };
   }, [
-    layoutOccupiedAreas,
-    layoutOccupiedPolygons,
-    mapContentBounds,
+    cardLayoutBounds,
     preparedCards,
-    project.canvas.height,
-    project.canvas.safeMargin,
-    project.canvas.width,
-    project.cards.allowMapOverlap,
     project.cards.autoBalance,
     project.cards.connectorStyle,
     project.cards.connectorWidth,
-    project.cards.gap,
     project.cards.layoutMode,
   ]);
 
   const layoutState = useCardLayoutWorker(layoutRequest, exportMode);
-  const destinationCards = useMemo(() => {
+  const destinationCards = useMemo<PlacedDestinationCard[]>(() => {
     if (!layoutRequest || !layoutState.result) return [];
     const placements = new Map(layoutState.result.placements.map((placement) => [placement.id, placement]));
     return preparedCards.flatMap((card) => {
@@ -736,97 +589,43 @@ function PosterCanvasView({
     return point.matrixTransform(svg.getScreenCTM()?.inverse());
   }, [project.canvas.height, project.canvas.width]);
 
-  // Drag handlers are shared by every card and read their card from the DOM key, so the
-  // card list does not allocate four closures per card on each render.
-  const cardsByKey = useMemo(
-    () => new Map(destinationCards.map((card) => [card.group.key, card])),
-    [destinationCards],
-  );
+  const selectCards = useCallback(() => onSelect?.({ type: "cards" }), [onSelect]);
 
-  const handleCardPointerDown = useCallback((event: PointerEvent<SVGGElement>) => {
-    const card = cardsByKey.get(event.currentTarget.getAttribute("data-destination-card") ?? "");
-    if (!card) return;
-    const point = canvasPoint(event);
-    if (!point) return;
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const connectorGroup = event.currentTarget.parentElement;
-    if (!connectorGroup) return;
-    const placement = card.placement;
-    const borderless = project.cards.preset === "borderless";
-    cardDrag.current = {
-      id: card.group.key,
-      offsetX: point.x - placement.x,
-      offsetY: point.y - placement.y,
-      width: placement.width,
-      height: placement.height,
-      x: placement.x,
-      y: placement.y,
-      originalX: placement.x,
-      originalY: placement.y,
-      element: event.currentTarget,
-      connectorGroup: connectorGroup as unknown as SVGGElement,
-      anchorX: card.anchorX,
-      anchorY: card.anchorY,
-      side: placement.side,
-      connectorStyle: project.cards.connectorStyle,
-      borderless,
-      connectorHidden: !card.isInternational && borderless && (project.cards.opacity ?? 1) < 0.9,
-    };
-  }, [canvasPoint, cardsByKey, project.cards.connectorStyle, project.cards.opacity, project.cards.preset]);
-
-  const handleCardPointerMove = useCallback((event: PointerEvent<SVGGElement>) => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId) || !cardDrag.current) return;
-    const point = canvasPoint(event);
-    if (!point) return;
-    const drag = cardDrag.current;
-    const position = clampDestinationCardPosition({
-      x: point.x - drag.offsetX,
-      y: point.y - drag.offsetY,
-      width: drag.width,
-      height: drag.height,
-    }, {
-      width: project.canvas.width,
-      height: project.canvas.height,
-      map: mapContentBounds,
-      occupiedAreas: layoutOccupiedAreas,
-      occupiedPolygons: layoutOccupiedPolygons,
-      allowMapOverlap: project.cards.allowMapOverlap === true,
-      margin: project.canvas.safeMargin,
-      gap: Math.max(10, project.cards.gap),
-    });
-    drag.x = Math.round(position.x);
-    drag.y = Math.round(position.y);
-    scheduleCardPreview({ id: drag.id, x: drag.x, y: drag.y });
-  }, [
-    canvasPoint,
-    layoutOccupiedAreas,
-    layoutOccupiedPolygons,
-    mapContentBounds,
-    project.canvas.height,
-    project.canvas.safeMargin,
-    project.canvas.width,
-    project.cards.allowMapOverlap,
-    project.cards.gap,
-    scheduleCardPreview,
+  // Grouped so the cards layer keeps its memo across edits to unrelated card settings.
+  const cardsAppearance = useMemo<DestinationCardsAppearance>(() => ({
+    preset: project.cards.preset,
+    presentation: project.cards.presentation ?? "standard",
+    connectorStyle: project.cards.connectorStyle,
+    connectorDash: project.cards.connectorDash,
+    connectorWidth: project.cards.connectorWidth,
+    background: project.cards.background,
+    opacity: project.cards.opacity,
+    textColor: project.cards.textColor,
+    fontSize: project.cards.fontSize,
+    showProvinceTexture: project.cards.showProvinceTexture === true,
+    titleFont: resolveFontFamily(project.cards.fieldFonts?.title, userFonts),
+    activeColor: project.map.activeColor,
+    edgeColor: project.map.edgeColor,
+    provinceStyles: project.map.provinceStyles,
+    lineHeightMultiplier,
+  }), [
+    lineHeightMultiplier,
+    project.cards.background,
+    project.cards.connectorDash,
+    project.cards.connectorStyle,
+    project.cards.connectorWidth,
+    project.cards.fieldFonts,
+    project.cards.fontSize,
+    project.cards.opacity,
+    project.cards.presentation,
+    project.cards.preset,
+    project.cards.showProvinceTexture,
+    project.cards.textColor,
+    project.map.activeColor,
+    project.map.edgeColor,
+    project.map.provinceStyles,
+    userFonts,
   ]);
-
-  const handleCardPointerUp = useCallback((event: PointerEvent<SVGGElement>) => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    const drag = cardDrag.current;
-    if (drag) onMoveCard?.(drag.id, drag.x, drag.y);
-    clearCardPreview();
-    cardDrag.current = null;
-  }, [clearCardPreview, onMoveCard]);
-
-  const cardDragEnabled = !exportMode && Boolean(onMoveCard);
-
-  const handleCardPointerCancel = useCallback(() => {
-    const drag = cardDrag.current;
-    if (drag) updateCardPreview({ id: drag.id, x: drag.originalX, y: drag.originalY });
-    clearCardPreview();
-    cardDrag.current = null;
-  }, [clearCardPreview, updateCardPreview]);
 
   const mapLayerZ = project.map.zIndex ?? CANVAS_LAYER_Z.map;
   const cardsLayerZ = project.cards.zIndex ?? CANVAS_LAYER_Z.cards;
@@ -884,146 +683,18 @@ function PosterCanvasView({
       key: "cards",
       z: cardsLayerZ,
       node: (
-        <>
-          {destinationCards.length > 0 && (
-            <g
-              data-cards-layer
-              onClick={!exportMode ? () => onSelect?.({ type: "cards" }) : undefined}
-              role={!exportMode && onSelect ? "button" : undefined}
-            >
-              {connectorEdge.filters.length > 0 && (
-                <defs data-connector-edge-filters>
-                  {connectorEdge.filters.map((filter) => (
-                    filter.markupKey === "soft-glow" ? (
-                      <filter key={filter.id} id={filter.id} x="-40%" y="-40%" width="180%" height="180%">
-                        <feGaussianBlur stdDeviation={Math.max(1.2, project.cards.connectorWidth)} result="blur" />
-                        <feMerge>
-                          <feMergeNode in="blur" />
-                          <feMergeNode in="SourceGraphic" />
-                        </feMerge>
-                      </filter>
-                    ) : filter.markupKey === "ink" ? (
-                      <filter key={filter.id} id={filter.id} x="-20%" y="-20%" width="140%" height="140%">
-                        <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="1" result="noise" />
-                        <feDisplacementMap in="SourceGraphic" in2="noise" scale={Math.max(0.6, project.cards.connectorWidth * 0.35)} />
-                      </filter>
-                    ) : null
-                  ))}
-                </defs>
-              )}
-              {destinationCards.map(({ group, province, isInternational, rows, titleLines, headerExtra, anchorX, anchorY, placement }) => {
-                const displayPlacement = placement;
-                const provinceAppearance = project.map.provinceStyles?.[province]?.appearance;
-                const provinceTexture = project.cards.showProvinceTexture === true
-                  && provinceAppearance
-                  && provinceAppearance.kind !== "manual-color"
-                  ? provinceAppearance
-                  : null;
-                const connector = isInternational ? null : buildConnectorGeometry({
-                  card: displayPlacement,
-                  anchor: { x: anchorX, y: anchorY },
-                  style: project.cards.connectorStyle,
-                  preferredSide: displayPlacement.side,
-                });
-                // Borderless cards have no border stroke to visually terminate the connector,
-                // so the line runs to the card center where the card fill hides it. When the
-                // fill is too transparent to cover the line (it would cross the card text),
-                // the connector is omitted entirely.
-                const borderlessCards = project.cards.preset === "borderless";
-                const connectorHidden = connector !== null && borderlessCards && (project.cards.opacity ?? 1) < 0.9;
-                const displayConnector = connector !== null && !connectorHidden
-                  ? borderlessCards
-                    ? { ...connector, pathData: connectorPathToCenter(connector.pathData, connector.port, displayPlacement) }
-                    : connector
-                  : null;
-                const strokeNodes = [
-                  ...(displayConnector ? connectorEdge.underlays.map((spec, index) => (
-                    <path
-                      key={`${group.key}-u-${index}`}
-                      data-destination-connector-underlay={group.key}
-                      d={displayConnector.pathData}
-                      fill="none"
-                      stroke={spec.color}
-                      strokeWidth={spec.width}
-                      strokeDasharray={spec.dasharray}
-                      strokeLinecap={spec.linecap}
-                      strokeLinejoin={spec.linejoin}
-                      opacity={spec.opacity ?? 0.55}
-                      filter={spec.filter}
-                      pointerEvents="none"
-                    />
-                  )) : []),
-                  ...(displayConnector ? connectorEdge.strokes.map((spec, index) => (
-                    <path
-                      key={`${group.key}-s-${index}`}
-                      data-destination-connector={index === 0 ? group.key : undefined}
-                      data-connector-style={project.cards.connectorStyle}
-                      data-connector-dash={project.cards.connectorDash}
-                      d={displayConnector.pathData}
-                      fill="none"
-                      stroke={spec.color}
-                      strokeWidth={spec.width}
-                      strokeDasharray={spec.dasharray}
-                      strokeLinecap={spec.linecap}
-                      strokeLinejoin={spec.linejoin}
-                      opacity={spec.opacity ?? 0.85}
-                      filter={spec.filter}
-                    />
-                  )) : []),
-                ];
-                return (
-                  <g key={group.key}>
-                    {strokeNodes}
-                    {!isInternational && <circle data-destination-anchor={group.key} cx={anchorX} cy={anchorY} r={4} fill={project.map.activeColor} />}
-                    <g
-                      transform={`translate(${displayPlacement.x} ${displayPlacement.y})`}
-                      data-destination-card={group.key}
-                      data-card-preset={project.cards.preset}
-                      data-card-presentation={project.cards.presentation ?? "standard"}
-                      className="destination-card"
-                      onPointerDown={cardDragEnabled ? handleCardPointerDown : undefined}
-                      onPointerMove={cardDragEnabled ? handleCardPointerMove : undefined}
-                      onPointerUp={cardDragEnabled ? handleCardPointerUp : undefined}
-                      onPointerCancel={cardDragEnabled ? handleCardPointerCancel : undefined}
-                    >
-                      {(project.cards.presentation ?? "standard") !== "standard" ? (
-                        <ReferenceCardVisual
-                          presentation={project.cards.presentation as ReferenceCardPresentation}
-                          group={group}
-                          rows={rows}
-                          width={placement.width}
-                          height={placement.height}
-                          accent={project.map.provinceStyles?.[province]?.appearance?.kind === "manual-color"
-                            ? project.map.provinceStyles[province]!.appearance!.color
-                            : referenceCardColor(group.key, project.map.activeColor)}
-                          background={project.cards.background}
-                          opacity={project.cards.opacity}
-                          textColor={project.cards.textColor}
-                          fontSize={project.cards.fontSize}
-                          edgeColor={project.map.edgeColor}
-                          titleFont={resolveFontFamily(project.cards.fieldFonts?.title, userFonts)}
-                          lineHeightMultiplier={lineHeightMultiplier}
-                        />
-                      ) : (
-                        <DestinationCard
-                          style={cardStyle}
-                          group={group}
-                          province={province}
-                          rows={rows}
-                          titleLines={titleLines}
-                          headerExtra={headerExtra}
-                          width={placement.width}
-                          height={placement.height}
-                          provinceTexture={provinceTexture}
-                        />
-                      )}
-                    </g>
-                  </g>
-                );
-              })}
-            </g>
-          )}
-        </>
+        <DestinationCardsLayer
+          cards={destinationCards}
+          style={cardStyle}
+          appearance={cardsAppearance}
+          connectorEdge={connectorEdge}
+          dragBounds={cardLayoutBounds}
+          exportMode={exportMode}
+          renderIntervalMs={renderIntervalMs}
+          canvasPoint={canvasPoint}
+          onSelectCards={onSelect ? selectCards : undefined}
+          onMoveCard={onMoveCard}
+        />
       ),
     },
     {

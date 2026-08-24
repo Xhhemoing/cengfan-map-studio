@@ -25,6 +25,7 @@ export interface ResolvedDisplayFrameSurface {
   borderWidth: number;
   borderRadius: number;
   padding: number;
+  /** @deprecated Mirrors the deprecated `DisplayFrameStyle.margin`; card spacing is `cards.gap`. */
   margin: number;
   color: string;
   fontSize: number;
