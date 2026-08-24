@@ -5,6 +5,7 @@ import type { LayoutHealthIssue } from "../../lib/layout-health";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
 import type { UserFont } from "../../lib/fonts";
+import { PNG_EXPORT_SCALES, availablePngScales, describePngScaleLimit } from "../../lib/export-poster";
 import { PosterCanvas } from "../canvas/PosterCanvas";
 
 export type DeliveryIssue =
@@ -100,6 +101,11 @@ export function DeliveryRail({
   onExportProjectPackage,
   onRetry,
 }: DeliveryRailProps) {
+  const { width, height } = project.canvas;
+  // 超过引擎面积上限的倍率在这里就禁用：让用户在点导出前看到原因，
+  // 而不是等栅格化失败。禁用项仍然渲染，保证已选中的倍率不会显示成空白。
+  const usableScales = availablePngScales(width, height);
+  const blockedScales = PNG_EXPORT_SCALES.filter((scale) => !usableScales.includes(scale));
   return (
     <aside className="delivery-workspace__checks" aria-label="交付检查">
       <h2 className="delivery-workspace__checks-title">交付检查</h2>
@@ -109,8 +115,11 @@ export function DeliveryRail({
       <CheckSection title="字体问题" issues={fontIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
       {exportState === "error" && <div className="delivery-workspace__error" role="alert"><strong>导出失败</strong><span>{exportError ?? "请检查浏览器下载权限后重试"}</span><button type="button" aria-label="重试导出" onClick={onRetry}><RotateCcw size={15} aria-hidden /> 重试</button></div>}
       <section className="delivery-workspace__controls" aria-label="导出设置">
-        <label htmlFor="delivery-png-scale">PNG 倍率<select id="delivery-png-scale" aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option></select></label>
-        <span>最终像素尺寸：{project.canvas.width * pngScale} × {project.canvas.height * pngScale} px</span>
+        <label htmlFor="delivery-png-scale">PNG 倍率<select id="delivery-png-scale" aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}>{PNG_EXPORT_SCALES.map((scale) => (
+          <option key={scale} value={scale} disabled={!usableScales.includes(scale)}>{scale}×{usableScales.includes(scale) ? "" : "（超出上限）"}</option>
+        ))}</select></label>
+        <span>最终像素尺寸：{width * pngScale} × {height * pngScale} px</span>
+        {blockedScales.length > 0 && <small className="delivery-workspace__scale-limit" role="note">{describePngScaleLimit(width, height, blockedScales[0])}</small>}
         <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="透明背景" checked={transparentExport} onChange={(event) => onTransparentExportChange(event.target.checked)} />透明背景</label>
         <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="工程包包含资源" checked={includeResources} onChange={(event) => onIncludeResourcesChange(event.target.checked)} />工程包包含资源</label>
       </section>

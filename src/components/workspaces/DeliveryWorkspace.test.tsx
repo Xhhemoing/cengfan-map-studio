@@ -89,6 +89,29 @@ describe("DeliveryWorkspace", () => {
     expect(container.querySelector('[role="group"][aria-label="导出操作"]')).not.toBeNull();
   });
 
+  it("disables the scales that exceed the browser pixel budget and says why", () => {
+    const largeCanvas = { ...project, canvas: { ...project.canvas, width: 6000, height: 6000 } };
+    const container = renderWorkspace({ project: largeCanvas, pngScale: 3 });
+
+    const options = Array.from(container.querySelectorAll<HTMLOptionElement>('select[aria-label="PNG 导出倍率"] option'));
+    expect(options.map((option) => option.value)).toEqual(["1", "2", "3"]);
+    expect(options.map((option) => option.disabled)).toEqual([false, true, true]);
+    expect(options[2]?.textContent).toContain("超出上限");
+
+    const note = container.querySelector('[role="note"]');
+    expect(note?.textContent).toContain("6000 × 6000 画布按 2× 导出");
+    expect(note?.textContent).toContain("64.0 百万像素");
+    expect(note?.textContent).toContain("请改用 1× 导出");
+  });
+
+  it("keeps every scale enabled and hides the limit note on a normal canvas", () => {
+    const container = renderWorkspace();
+
+    const options = Array.from(container.querySelectorAll<HTMLOptionElement>('select[aria-label="PNG 导出倍率"] option'));
+    expect(options.every((option) => !option.disabled)).toBe(true);
+    expect(container.querySelector('[role="note"]')).toBeNull();
+  });
+
   it("shows retry on export error without removing the current configuration", () => {
     const onRetry = vi.fn();
     const container = renderWorkspace({ exportState: "error", exportError: "PNG 导出失败", onRetry });

@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { computeImageLoadTimeout, downloadBlob, serializePosterSvg, svgToPngBlob } from "./export-poster";
+import {
+  MAX_SAFE_EXPORT_PIXELS,
+  PNG_EXPORT_SCALES,
+  availablePngScales,
+  computeImageLoadTimeout,
+  describePngScaleLimit,
+  downloadBlob,
+  exportPixelCount,
+  serializePosterSvg,
+  svgToPngBlob,
+} from "./export-poster";
 
 /** 立即 onload 的图片桩。 */
 class MockImage {
@@ -217,6 +227,67 @@ describe("poster export", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps every scale for canvases that stay under the safe pixel budget", () => {
+    // 默认画布 1500 × 1000：3× 也只有 13.5MP。
+    expect(availablePngScales(1500, 1000)).toEqual([1, 2, 3]);
+  });
+
+  it("accepts a scale that lands exactly on the safe pixel budget", () => {
+    // 4000 × 4000 的 2× 正好 64MP，3× 是 144MP。
+    expect(exportPixelCount(4000, 4000, 2)).toBe(MAX_SAFE_EXPORT_PIXELS);
+    expect(availablePngScales(4000, 4000)).toEqual([1, 2]);
+  });
+
+  it("drops a scale that exceeds the budget by a single row of pixels", () => {
+    expect(exportPixelCount(4000, 4001, 2)).toBeGreaterThan(MAX_SAFE_EXPORT_PIXELS);
+    expect(availablePngScales(4000, 4001)).toEqual([1]);
+  });
+
+  it("disables 2×/3× on the largest editable canvas", () => {
+    expect(availablePngScales(6000, 6000)).toEqual([1]);
+  });
+
+  it("always keeps 1× available even when the canvas alone is over the budget", () => {
+    expect(exportPixelCount(9000, 9000)).toBeGreaterThan(MAX_SAFE_EXPORT_PIXELS);
+    expect(availablePngScales(9000, 9000)).toEqual([1]);
+    expect(availablePngScales(0, 0)).toEqual([...PNG_EXPORT_SCALES]);
+  });
+
+  it("sorts and de-duplicates caller supplied scales", () => {
+    expect(availablePngScales(2000, 2000, [4, 1, 2, 2, -1, Number.NaN])).toEqual([1, 2, 4]);
+    // 4000 × 4000 时 4× 是 256MP，只剩 1×/2×。
+    expect(availablePngScales(4000, 4000, [4, 2, 1])).toEqual([1, 2]);
+  });
+
+  it("explains the limit with the pixel budget and a scale that still works", () => {
+    const message = describePngScaleLimit(6000, 6000, 3);
+    expect(message).toContain("6000 × 6000");
+    expect(message).toContain("3×");
+    expect(message).toContain("324.0 百万像素");
+    expect(message).toContain("64.0 百万像素");
+    expect(message).toContain("请改用 1× 导出");
+  });
+
+  it("refuses to rasterize an over-budget bitmap instead of returning a blank png", async () => {
+    const constructed = vi.fn();
+    class TrackedImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor() { constructed(); }
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    }
+    vi.stubGlobal("Image", TrackedImage);
+    const { canvas } = mockCanvas();
+
+    await expect(svgToPngBlob("<svg/>", { width: 18_000, height: 18_000 }))
+      .rejects.toThrow("超过浏览器 64.0 百万像素的安全上限");
+
+    expect(constructed).not.toHaveBeenCalled();
+    expect(canvas.getContext).not.toHaveBeenCalled();
+    expect(canvas.toBlob).not.toHaveBeenCalled();
+    expect(canvas.toDataURL).not.toHaveBeenCalled();
   });
 
   it("downloads through an object url and revokes it afterwards", () => {

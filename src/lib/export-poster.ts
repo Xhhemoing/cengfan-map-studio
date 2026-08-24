@@ -5,6 +5,10 @@
  * 回滚方案：把 `svgToPngBlob` 改回 `canvas.toDataURL("image/png")` 返回 string，
  * 恢复 `downloadDataUrl(dataUrl, filename)` 直接下载，并把 `loadImage` 的超时
  * 改回固定 4000ms（即删除 `computeImageLoadTimeout`）。调用方仅 `usePosterExport.exportPng`。
+ *
+ * 面积防护回滚方案：把 `MAX_SAFE_EXPORT_PIXELS` 调到 `Number.POSITIVE_INFINITY`，
+ * `availablePngScales` 就会放行全部档位、`svgToPngBlob` 的前置校验也不再触发，
+ * 行为退回「先栅格化再看浏览器脸色」。
  */
 export function serializePosterSvg(svg: SVGSVGElement, options: { transparentBackground?: boolean; blockFontDisplay?: boolean } = {}): string {
   const clone = svg.cloneNode(true) as SVGSVGElement;
@@ -26,6 +30,57 @@ export function serializePosterSvg(svg: SVGSVGElement, options: { transparentBac
     clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
   }
   return new XMLSerializer().serializeToString(clone);
+}
+
+/**
+ * 单张 PNG 的安全像素面积上限。浏览器 canvas 后端各自有硬上限（Safari 约 16.7MP、
+ * 移动端 Chrome 约 67MP、桌面 Chrome 约 268MP），超限时 `toBlob` 直接回 null 或
+ * 产出全白图，只能事后报一句「PNG 编码失败」。取 64MP 这个保守值：画布最大
+ * 6000 × 6000（36MP）的 1× 仍可导出，而 ×3 的 324MP 会被提前拦下。
+ */
+export const MAX_SAFE_EXPORT_PIXELS = 64_000_000;
+
+/** 导出面板提供的倍率档位；第一档是保底档，任何画布下都不会被禁用。 */
+export const PNG_EXPORT_SCALES: readonly number[] = [1, 2, 3];
+
+/** 某个倍率下 PNG 的实际像素面积。负数尺寸按 0 处理，避免负负得正混过校验。 */
+export function exportPixelCount(width: number, height: number, scale = 1): number {
+  const safeScale = Math.max(0, scale);
+  return Math.max(0, width) * safeScale * (Math.max(0, height) * safeScale);
+}
+
+/**
+ * 该画布尺寸下真正能栅格化出来的倍率档位（升序）。
+ * 最小档永远保留：宁可让保底倍率去撞浏览器上限，也不能让用户完全导不出 PNG。
+ */
+export function availablePngScales(
+  width: number,
+  height: number,
+  scales: readonly number[] = PNG_EXPORT_SCALES,
+): number[] {
+  const candidates = [...new Set(scales)].filter((scale) => Number.isFinite(scale) && scale > 0).sort((a, b) => a - b);
+  if (candidates.length === 0) return [1];
+  const usable = candidates.filter((scale) => exportPixelCount(width, height, scale) <= MAX_SAFE_EXPORT_PIXELS);
+  return usable.length > 0 ? usable : candidates.slice(0, 1);
+}
+
+function formatMegapixels(pixels: number): string {
+  return `${(pixels / 1_000_000).toFixed(1)} 百万像素`;
+}
+
+/**
+ * 面向用户的超限说明：超了多少、为什么会失败、改成什么能成功。
+ * 传 `scale` 时按「画布尺寸 + 倍率」措辞，不传时按最终导出像素措辞。
+ */
+export function describePngScaleLimit(width: number, height: number, scale?: number): string {
+  const subject = scale === undefined
+    ? `导出尺寸 ${width} × ${height} px 需要`
+    : `${width} × ${height} 画布按 ${scale}× 导出需要`;
+  const fallback = availablePngScales(width, height).at(-1) ?? 1;
+  const advice = scale === undefined ? "请降低导出倍率" : `请改用 ${fallback}× 导出`;
+  return `${subject} ${formatMegapixels(exportPixelCount(width, height, scale ?? 1))}，`
+    + `超过浏览器 ${formatMegapixels(MAX_SAFE_EXPORT_PIXELS)}的安全上限，继续导出只会得到空白图或「PNG 编码失败」。`
+    + `${advice}，或先把画布尺寸调小后重试。`;
 }
 
 /** 小图的超时下限：与改造前的固定 4s 一致，保证小图不会更慢才失败。 */
@@ -112,6 +167,11 @@ export async function svgToPngBlob(
   svgMarkup: string,
   options: { width: number; height: number; transparentBackground?: boolean },
 ): Promise<Blob> {
+  // 面积校验必须先于图片加载与 canvas 分配：超限时这两步只会白烧内存，
+  // 最后还是拿到 null blob 或全白图。
+  if (exportPixelCount(options.width, options.height) > MAX_SAFE_EXPORT_PIXELS) {
+    throw new Error(describePngScaleLimit(options.width, options.height));
+  }
   // 源 SVG 仍用 data URL：体积小，且能绕开部分环境对 blob 图片的加载限制。
   const encoded = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
   const image = await loadImage(encoded, computeImageLoadTimeout(options.width, options.height));

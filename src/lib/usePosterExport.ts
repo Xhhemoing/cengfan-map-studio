@@ -5,7 +5,7 @@
  * `applyImportedPackage` and `reportStatus` callbacks.
  */
 import { useRef, useState, type RefObject } from "react";
-import { downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
+import { availablePngScales, describePngScaleLimit, downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
 import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
 import type { CustomTemplateRecord } from "./template-store";
@@ -136,12 +136,18 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
+      const { width, height } = project.canvas;
+      // 先判倍率是否可栅格化：超限时连字体加载和序列化都不做，直接给可行动的说明，
+      // 而不是等 canvas.toBlob 回 null 再报一句「PNG 编码失败」。
+      if (!availablePngScales(width, height).includes(pngScale)) {
+        throw new Error(describePngScaleLimit(width, height, pngScale));
+      }
       await ensureUserFontsLoaded(userFonts);
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
       // PNG 走 blob：大倍率导出不再产生整包 base64 字符串，下载后由 downloadBlob 负责 revoke。
       const blob = await svgToPngBlob(source, {
-        width: project.canvas.width * pngScale,
-        height: project.canvas.height * pngScale,
+        width: width * pngScale,
+        height: height * pngScale,
         transparentBackground: transparentExport,
       });
       downloadBlob(blob, "我的毕业去向图.png");
