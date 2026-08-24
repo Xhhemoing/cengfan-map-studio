@@ -157,6 +157,53 @@ describe("project document history", () => {
     expect(project.students[0]?.name).toBe("林舟");
   });
 
+  it("commits nothing when a transaction refuses by returning its input document", () => {
+    const base = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const seeded = applyTransaction(base, renameStudentTransaction("已落地"));
+
+    const refused = applyTransaction(seeded, {
+      id: "tx-refused",
+      label: "被拒绝的落地",
+      source: "ai",
+      apply: (input) => input,
+    });
+
+    expect(refused).toBe(seeded);
+    expect(refused.version).toBe(seeded.version);
+    expect(refused.history.past).toHaveLength(seeded.history.past.length);
+    expect(refused.history.past.at(-1)?.id).toBe("tx-已落地");
+  });
+
+  it("keeps a redo branch alive when a transaction refuses", () => {
+    const base = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const renamed = applyTransaction(base, renameStudentTransaction("林舟舟"));
+    const undone = undoTransaction(renamed);
+
+    const refused = applyTransaction(undone, {
+      id: "tx-refused",
+      label: "被拒绝的落地",
+      source: "ai",
+      apply: (input) => input,
+    });
+
+    expect(refused.history.future).toHaveLength(1);
+    expect(redoTransaction(refused).students[0]?.name).toBe("林舟舟");
+  });
+
+  it("still commits a transaction that returns an unchanged copy of its input", () => {
+    const base = createProjectDocument({ students, templateId: "original", dataView: "province" });
+
+    const next = applyTransaction(base, {
+      id: "tx-copy",
+      label: "无改动副本",
+      source: "manual",
+      apply: (input) => ({ ...input }),
+    });
+
+    expect(next.version).toBe(base.version + 1);
+    expect(next.history.past).toHaveLength(1);
+  });
+
   it("isolates prior documents and history from hostile transaction references", () => {
     const base = createRichProject();
     const first = applyTransaction(base, renameStudentTransaction("稳定状态"));

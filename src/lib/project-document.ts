@@ -211,6 +211,14 @@ export function createProjectDocument(input: {
   };
 }
 
+/**
+ * Builds the throwaway document a transaction mutates freely.
+ *
+ * Rejection contract: returning this exact object back from `apply` (identity, not a copy)
+ * tells `applyTransaction` the transaction declined to change anything, so nothing is
+ * committed — no version bump, no history entry. Any other return value, including an
+ * unchanged spread copy, is a normal commit.
+ */
 function cloneProjectForTransaction(project: ProjectDocument): ProjectDocument {
   return {
     ...cloneSnapshot(project),
@@ -241,7 +249,11 @@ function readonlyView<T extends object>(value: T): T {
 
 export function applyTransaction(project: ProjectDocument, transaction: ProjectTransaction): ProjectDocument {
   const before = snapshotView(project);
-  const applied = transaction.apply(cloneProjectForTransaction(project));
+  const cloned = cloneProjectForTransaction(project);
+  const applied = transaction.apply(cloned);
+  // Rejection contract (see cloneProjectForTransaction): the transaction handed its input
+  // straight back, so there is nothing to commit and the undo stack stays clean.
+  if (applied === cloned) return project;
   const previousEntry = project.history.past[project.history.past.length - 1];
   const committedAt = Date.now();
   const shouldCoalesce = Boolean(
