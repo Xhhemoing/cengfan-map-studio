@@ -22,7 +22,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
-| 6 | IN_PROGRESS | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn. Awaiting fable. |
+| 6 | CLOSED | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn; fable 6 ACCEPT + 4 NITS; no blocker. |
+| 7 | IN_PROGRESS | — | — | Honesty of trim/skip + R6-3 items. See round-6-briefing.md. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -100,6 +101,18 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R6-9 (`9d19bc9` / `900cf6a`): server durability journey green (1/1) against real `dataDir`. No product defects. Rollback = revert the merge.
 - CI hotfix (`b7ed418`): unmount `StudioAssistantRail` test roots. Rollback = revert `b7ed418`.
 - Full suite on merged tree: **181 files, 1656 passed / 2 skipped** (79.9s). Lint: 0 errors, 7 warnings (StorageNotice react-refresh added). Typecheck already 0 at merge.
+- Fable: `.agent_workspace/round-6-review.md`. Briefing: `.agent_workspace/round-6-briefing.md`. 6 ACCEPT + 4 ACCEPT-WITH-NITS, no blocker. CI green on `f0977d5`.
+
+## Round 6 closeout
+
+- Persist contract: history-first trim; aggregate 12 MiB; history-less records > 8 MiB still skip (R6-9 proved). Rollback persist band = revert `5bc3b29`.
+- HTTP: `/api/health.rooms`, `persistedAtLastFlush`. Rollback = revert `be82abb` + `9f93022` + `50d5755`.
+- Crash return no-reload. Rollback = revert `41d475a`.
+- Known misses until R7: trimmed copy overstates restart-death; `lastFlush` stale-good under persist failure; durable capacity ceiling 12 MiB.
+
+## Round 7 notes
+
+- Chain: R7-1 → R7-2 → R7-3. Independent: R7-4, R7-5, R7-6, R7-7, R7-9. Proof R7-8 after R7-2. R7-10 last.
 
 ## Round Briefings
 
