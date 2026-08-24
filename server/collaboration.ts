@@ -135,22 +135,6 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const invitations = new Map<string, Map<string, InvitationRecord>>();
   const legacyRoomIds = new Set<string>();
 
-  const purgeExpired = () => {
-    const threshold = now() - roomTtlMs;
-    for (const [id, activity] of lastActivity) {
-      if (activity > threshold) continue;
-      rooms.delete(id);
-      listeners.delete(id);
-      lifecycleListeners.delete(id);
-      transactions.delete(id);
-      operationHistory.delete(id);
-      lastActivity.delete(id);
-      accessRecords.delete(id);
-      invitations.delete(id);
-      legacyRoomIds.delete(id);
-    }
-  };
-
   const touch = (id: string) => {
     lastActivity.set(id, now());
   };
@@ -163,6 +147,50 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const event: LifecycleEvent = { kind, room: copyRoom(room), members: membersOf(room) };
     lifecycleListeners.get(key)?.forEach((listener) => listener(event));
   };
+
+  let purging = false;
+
+  const purgeExpired = () => {
+    // Listeners run store code while being told their room expired (the SSE
+    // handler tears its stream down synchronously). A nested purge must not
+    // re-notify or delete state that this pass is still walking.
+    if (purging) return;
+    const threshold = now() - roomTtlMs;
+    let expired: string[] | undefined;
+    for (const [id, activity] of lastActivity) {
+      if (activity > threshold) continue;
+      (expired ??= []).push(id);
+    }
+    if (!expired) return;
+    purging = true;
+    try {
+      for (const id of expired) {
+        const room = rooms.get(id);
+        // An owner-closed room already told its subscribers; everyone else
+        // learns here, while their listener set is still registered.
+        if (!room || room.closed) continue;
+        const closedRoom = { ...room, closed: true };
+        rooms.set(id, closedRoom);
+        notifyLifecycle(id, "closed", closedRoom);
+      }
+    } finally {
+      // Runs even if a listener throws, so a failed notification cannot leave
+      // half-purged rooms behind, and a re-entrant touch cannot resurrect one.
+      for (const id of expired) {
+        rooms.delete(id);
+        listeners.delete(id);
+        lifecycleListeners.delete(id);
+        transactions.delete(id);
+        operationHistory.delete(id);
+        lastActivity.delete(id);
+        accessRecords.delete(id);
+        invitations.delete(id);
+        legacyRoomIds.delete(id);
+      }
+      purging = false;
+    }
+  };
+
   const get = (id: string) => {
     purgeExpired();
     const room = rooms.get(id.toUpperCase());
@@ -182,7 +210,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     return participant;
   };
 
-  const authorize = (id: string, accessToken: string, capability: CollaborationCapability): RoomParticipant => {
+  const authorizeCapability = (id: string, accessToken: string, capability: CollaborationCapability, refreshActivity: boolean): RoomParticipant => {
     purgeExpired();
     const key = id.toUpperCase();
     if (!rooms.has(key)) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
@@ -191,9 +219,12 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       || (capability === "write" && participant.role !== "viewer")
       || (capability === "invite" && participant.role === "owner");
     if (!allowed) throw new CollaborationError("ROOM_FORBIDDEN", "当前协作角色没有该操作权限");
-    touch(key);
+    if (refreshActivity) touch(key);
     return publicParticipant(participant);
   };
+
+  const authorize = (id: string, accessToken: string, capability: CollaborationCapability): RoomParticipant =>
+    authorizeCapability(id, accessToken, capability, true);
 
   const create = <T>(snapshot: T | undefined, creator: string | RoomCreator): CollaborationRoom<T> | CreatedRoom<T> => {
     purgeExpired();
@@ -380,7 +411,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const key = id.toUpperCase();
     const listener = typeof accessTokenOrListener === "string" ? maybeListener : accessTokenOrListener;
     if (!listener) throw new CollaborationError("INVALID_TRANSACTION", "订阅回调无效");
-    if (typeof accessTokenOrListener === "string") authorize(key, accessTokenOrListener, "read");
+    // Attaching a stream is not room activity: an auto-reconnecting EventSource
+    // would otherwise keep an abandoned room alive forever.
+    if (typeof accessTokenOrListener === "string") authorizeCapability(key, accessTokenOrListener, "read", false);
     else if (!legacyRoomIds.has(key)) throw new CollaborationError("ROOM_FORBIDDEN", "房间访问凭证无效");
     if (!rooms.has(key)) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     const roomListeners = listeners.get(key) ?? new Set<Listener>();
@@ -476,7 +509,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   };
 
   const subscribeLifecycle = (id: string, accessToken: string, listener: LifecycleListener): (() => void) => {
-    authorize(id, accessToken, "read");
+    authorizeCapability(id, accessToken, "read", false);
     const key = id.toUpperCase();
     if (!rooms.has(key)) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     const roomListeners = lifecycleListeners.get(key) ?? new Set<LifecycleListener>();
