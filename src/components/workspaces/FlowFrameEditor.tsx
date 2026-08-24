@@ -1,4 +1,5 @@
 import type { DisplayFrameDefinition, DisplayFrameFlowBlock, DisplayFrameField } from "../../lib/display-frame";
+import { resolveDisplayFrameBlockPaint, resolveDisplayFrameSurface } from "../../lib/display-frame-style";
 
 const FIELD_LABELS: Record<DisplayFrameField, string> = { title: "标题", name: "姓名", university: "院校", city: "城市" };
 
@@ -7,14 +8,28 @@ export function FlowFrameEditor({ frame, onChange }: { frame: DisplayFrameDefini
     ...frame,
     flow: { blocks: frame.flow.blocks.map((block) => block.id === id ? { ...block, ...patch } : block) },
   });
+  const surface = resolveDisplayFrameSurface(frame.style);
 
   return (
     <section className="display-frame-editor" aria-label="固定排版连续文字编辑器">
       <div className="display-frame-editor__heading"><strong>连续文字布局</strong><small>字段按顺序连续排版，使用间距和行高控制节奏</small></div>
-      <div className="display-frame-flow-preview" aria-label="连续文字布局预览">
-        {frame.flow.blocks.slice().sort((a, b) => a.order - b.order).map((block) => (
-          <span key={block.id}>{FIELD_LABELS[block.field ?? "title"] ?? block.content ?? block.id}</span>
-        ))}
+      <div
+        className="display-frame-flow-preview"
+        aria-label="连续文字布局预览"
+        style={{ background: surface.background, borderRadius: surface.borderRadius, padding: surface.padding, opacity: surface.opacity, textAlign: surface.align }}
+      >
+        {frame.flow.blocks.slice().sort((a, b) => a.order - b.order).map((block) => {
+          const paint = resolveDisplayFrameBlockPaint(block, surface);
+          return (
+            <span
+              key={block.id}
+              data-display-frame-flow-block={block.id}
+              style={{ marginTop: block.spacing, color: paint.color, fontSize: paint.fontSize, fontWeight: paint.fontWeight, lineHeight: block.lineHeight, opacity: paint.opacity }}
+            >
+              {FIELD_LABELS[block.field ?? "title"] ?? block.content ?? block.id}
+            </span>
+          );
+        })}
       </div>
       <div className="display-frame-item-list">
         {frame.flow.blocks.slice().sort((a, b) => a.order - b.order).map((block) => (

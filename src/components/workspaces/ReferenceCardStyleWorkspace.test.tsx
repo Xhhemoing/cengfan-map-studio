@@ -30,4 +30,26 @@ describe("ReferenceCardStyleWorkspace", () => {
 
     flushSync(() => root.unmount());
   });
+
+  it("marks exactly one option as selected once its presentation is applied", () => {
+    const project = createProjectDocument({
+      students: [{ id: "1", name: "林舟", university: "北京大学", city: "北京市", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(
+      <ReferenceCardStyleWorkspace cards={{ ...project.cards, templateId: "city-label", presentation: "city-label" }} onPatch={vi.fn()} />,
+    ));
+
+    const selected = container.querySelectorAll('[data-reference-card-style-selected="true"]');
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.getAttribute("data-reference-card-style")).toBe("city-label");
+    expect(selected[0]?.className).toContain("is-selected");
+    expect(selected[0]?.getAttribute("aria-pressed")).toBe("true");
+
+    flushSync(() => root.unmount());
+  });
 });

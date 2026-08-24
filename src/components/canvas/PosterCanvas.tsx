@@ -1,5 +1,6 @@
 import { geoMercator, geoPath } from "d3-geo";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, type PointerEvent, type ReactNode, type RefObject } from "react";
+import { DestinationCard, type CardDisplayRow, type DestinationCardStyle, type PreparedCardRow } from "./DestinationCard";
 import { clampDestinationCardPosition, type CardArea, type CardLayoutMode, type CardPoint, type CardPolygon } from "../../lib/card-layout";
 import { createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
@@ -14,7 +15,7 @@ import {
 import { buildProvinceSummary, getVisibleStudents } from "../../lib/project-data";
 import { CANVAS_LAYER_Z } from "../../lib/scene-document";
 import type { AssetElement, CanvasText, CardFontField, SceneSelection } from "../../lib/scene-document";
-import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame, type DisplayFrameFixedItem } from "../../lib/display-frame";
+import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame } from "../../lib/display-frame";
 import type { ProjectDocument } from "../../lib/project-document";
 import { resolveStudentLocation } from "../../lib/student-data";
 import { findProvinceFeature, getChinaMapFeatures, type MapFeature, type Position } from "../../lib/map-data";
@@ -25,7 +26,7 @@ import { clampGridSize, DEFAULT_GRID_SIZE } from "../../lib/grid";
 import { DEFAULT_CARD_EXPRESSION_TEMPLATES, formatCardExpression } from "../../lib/card-expression";
 import { DEFAULT_NAME_FORMAT, formatStudentName } from "../../lib/name-format";
 import { universityEmblems } from "../../data/university-emblems";
-import { wrapCardText, type CardTextFragment, type CardTextLine } from "../../lib/card-text-layout";
+import { wrapCardText, type CardTextFragment } from "../../lib/card-text-layout";
 import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
 import { DecorationLayer } from "./DecorationLayer";
 import { MapLayer } from "./MapLayer";
@@ -161,47 +162,6 @@ function destinationHeight(lineCount: number, rowHeight: number, bottomPadding: 
   return 44 + headerExtra + lineCount * rowHeight + bottomPadding;
 }
 
-function frameTextAnchor(item: DisplayFrameFixedItem): "start" | "middle" | "end" {
-  if (item.style?.align === "center") return "middle";
-  if (item.style?.align === "right") return "end";
-  return "start";
-}
-
-function frameTextX(item: DisplayFrameFixedItem): number {
-  if (item.style?.align === "center") return item.x + item.width / 2;
-  if (item.style?.align === "right") return item.x + item.width;
-  return item.x;
-}
-
-function renderDisplayFrameItem(item: DisplayFrameFixedItem, frameStyle: { color: string; fontSize: number; align: "left" | "center" | "right" }, userFonts: UserFont[]): ReactNode {
-  const color = item.style?.color ?? frameStyle.color;
-  if (item.kind === "text") {
-    return (
-      <text
-        key={item.id}
-        data-display-frame-text={item.id}
-        x={frameTextX(item)}
-        y={item.y + Math.min(item.height, item.style?.fontSize ?? frameStyle.fontSize)}
-        fill={color}
-        fontSize={item.style?.fontSize ?? frameStyle.fontSize}
-        fontWeight={item.style?.fontWeight === "bold" ? 700 : item.style?.fontWeight === "medium" ? 500 : undefined}
-        fontFamily={resolveFontFamily(item.style?.fontId, userFonts)}
-        textAnchor={frameTextAnchor(item)}
-        pointerEvents="none"
-      >
-        {item.content || " "}
-      </text>
-    );
-  }
-  if (item.kind === "decoration" && item.decoration === "line") {
-    return <line key={item.id} data-display-frame-decoration={item.id} x1={item.x} y1={item.y} x2={item.x + item.width} y2={item.y} stroke={color} strokeWidth={item.style?.strokeWidth ?? 1} pointerEvents="none" />;
-  }
-  if (item.kind === "decoration") {
-    return <rect key={item.id} data-display-frame-decoration={item.id} x={item.x} y={item.y} width={item.width} height={item.height} fill={item.style?.fill ?? "transparent"} stroke={color} strokeWidth={item.style?.strokeWidth ?? 1} pointerEvents="none" />;
-  }
-  return null;
-}
-
 /** Extend a connector path so it runs from the card center to its boundary port. The
  *  portion inside the card is covered by the card fill, so the visible line ends flush
  *  at the card edge and its tip stays hidden ("到板块的中心隐藏"). */
@@ -235,20 +195,6 @@ function studentFieldParts(
   return fields
     .map((field) => ({ field, value: student[field] }))
     .filter((part): part is SchoolRowPart => Boolean(part.value));
-}
-
-interface CardDisplayRow {
-  key: string;
-  parts: SchoolRowPart[];
-  remainingPeople: number;
-  cityHeading?: string;
-  city?: string;
-  university?: string;
-  names?: string;
-}
-
-interface PreparedCardRow extends CardDisplayRow {
-  lines: CardTextLine<CardFontField>[];
 }
 
 const REFERENCE_CARD_COLORS = ["#e95646", "#f3c847", "#efb8c6", "#3d8fc2", "#263b78"] as const;
@@ -475,7 +421,7 @@ export function PosterCanvas({
   const cardPreviewScheduler = useRef(createCanvasPreviewScheduler<{ id: string; x: number; y: number }>());
   const guestPreviewScheduler = useRef(createCanvasPreviewScheduler<{ x: number; y: number }>());
 
-  const updateCardPreview = (next: { id: string; x: number; y: number }) => {
+  const updateCardPreview = useCallback((next: { id: string; x: number; y: number }) => {
     const drag = cardDrag.current;
     if (!drag || drag.id !== next.id) return;
     const placement = { x: next.x, y: next.y, width: drag.width, height: drag.height, side: drag.side };
@@ -494,29 +440,29 @@ export function PosterCanvas({
     if (pathData) {
       drag.connectorGroup.querySelectorAll<SVGPathElement>("path").forEach((path) => path.setAttribute("d", pathData));
     }
-  };
+  }, []);
 
-  const clearCardPreview = () => clearCanvasPreview(cardPreviewScheduler.current);
-  const clearGuestPreview = () => clearCanvasPreview(guestPreviewScheduler.current);
+  const clearCardPreview = useCallback(() => clearCanvasPreview(cardPreviewScheduler.current), []);
+  const clearGuestPreview = useCallback(() => clearCanvasPreview(guestPreviewScheduler.current), []);
 
-  const scheduleCardPreview = (next: { id: string; x: number; y: number }) => {
+  const scheduleCardPreview = useCallback((next: { id: string; x: number; y: number }) => {
     scheduleCanvasPreview(cardPreviewScheduler.current, next, renderIntervalMs, updateCardPreview);
-  };
+  }, [renderIntervalMs, updateCardPreview]);
 
-  const updateGuestPreview = (next: { x: number; y: number }) => {
+  const updateGuestPreview = useCallback((next: { x: number; y: number }) => {
     const drag = guestDrag.current;
     if (!drag) return;
     drag.element.setAttribute("transform", `translate(${next.x} ${next.y})`);
-  };
+  }, []);
 
-  const scheduleGuestPreview = (next: { x: number; y: number }) => {
+  const scheduleGuestPreview = useCallback((next: { x: number; y: number }) => {
     scheduleCanvasPreview(guestPreviewScheduler.current, next, renderIntervalMs, updateGuestPreview);
-  };
+  }, [renderIntervalMs, updateGuestPreview]);
 
   useEffect(() => () => {
     clearCardPreview();
     clearGuestPreview();
-  }, []);
+  }, [clearCardPreview, clearGuestPreview]);
   const visibleStudents = useMemo(() => getVisibleStudents(project.students), [project.students]);
   const summary = useMemo(() => buildProvinceSummary(visibleStudents), [visibleStudents]);
   const counts = useMemo(() => new Map(summary.map((item) => [item.province, item.count])), [summary]);
@@ -668,26 +614,90 @@ export function PosterCanvas({
     () => project.cards.displayFrame === undefined
       ? deriveFixedDisplayFrameFromCardSettings(project.cards)
       : normalizeDisplayFrame(project.cards.displayFrame),
-    [project.cards],
+    // Depend on the card fields the frame derives from rather than the whole
+    // project.cards object, which is replaced on unrelated edits (a dragged card
+    // position, a connector tweak) and would re-render every destination card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      project.cards.background,
+      project.cards.displayFrame,
+      project.cards.fieldFonts,
+      project.cards.fieldTypography,
+      project.cards.fontSize,
+      project.cards.gap,
+      project.cards.maxWidth,
+      project.cards.opacity,
+      project.cards.padding,
+      project.cards.textColor,
+      project.cards.visibleFields,
+    ],
   );
 
-  const frameTitleItem = displayFrame.fixed.items.find((item) => item.id === "title");
   const frameBodyItem = displayFrame.fixed.items.find((item) => item.id === "name") ?? displayFrame.fixed.items[0];
-  const flowBlocks = displayFrame.mode === "flow" ? displayFrame.flow.blocks.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)) : [];
-  const flowBlockFor = (field: CardFontField) => flowBlocks.find((block) => block.field === field);
-  const flowTitleBlock = flowBlockFor("title");
-  const flowNameBlock = flowBlockFor("name");
-  const flowTitleFontSize = flowTitleBlock?.style?.fontSize ?? project.cards.fieldTypography?.title?.fontSize ?? project.cards.fontSize;
-  const flowNameFontSize = flowNameBlock?.style?.fontSize ?? project.cards.fieldTypography?.name?.fontSize ?? project.cards.fontSize;
-  const flowContentStart = displayFrame.mode === "flow"
-    ? flowBlocks.reduce((cursor, block) => cursor + block.spacing + (block.style?.fontSize ?? (block.field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize)) * block.lineHeight, 12)
-    : 0;
-  const customFrameItems = displayFrame.mode === "fixed"
-    ? displayFrame.fixed.items.filter((item) => item.kind === "text" || item.kind === "decoration").slice().sort((left, right) => left.zIndex - right.zIndex || left.id.localeCompare(right.id))
-    : [];
   const horizontalPadding = displayFrame.mode === "fixed"
     ? frameBodyItem?.x ?? project.cards.horizontalPadding ?? project.cards.padding
     : displayFrame.style.padding;
+  const cardStyle = useMemo<DestinationCardStyle>(() => {
+    const flowBlocks = displayFrame.mode === "flow"
+      ? displayFrame.flow.blocks.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+      : [];
+    const flowBlockFor = (field: CardFontField) => flowBlocks.find((block) => block.field === field);
+    const flowTitleBlock = flowBlockFor("title");
+    const flowNameBlock = flowBlockFor("name");
+    const compactLayout = project.cards.compactLayout === true || project.cards.preset === "compact";
+    return {
+      preset: project.cards.preset,
+      background: project.cards.background,
+      opacity: project.cards.opacity,
+      textColor: project.cards.textColor,
+      fontSize: project.cards.fontSize,
+      showCount: project.cards.showCount !== false,
+      horizontalPadding,
+      lineHeightMultiplier,
+      rowHeight: Math.max(
+        compactLayout ? 18 : 20,
+        Math.max(...project.cards.visibleFields.map((field) => project.cards.fieldTypography?.[field]?.fontSize ?? project.cards.fontSize), project.cards.fieldTypography?.city?.fontSize ?? Math.max(9, project.cards.fontSize - 1)) + 6,
+      ) * lineHeightMultiplier,
+      edgeColor: project.map.edgeColor,
+      activeColor: project.map.activeColor,
+      fieldFonts: project.cards.fieldFonts,
+      fieldTypography: project.cards.fieldTypography,
+      frameMode: displayFrame.mode,
+      frameStyle: displayFrame.style,
+      frameTitleItem: displayFrame.fixed.items.find((item) => item.id === "title"),
+      frameBodyItem,
+      customFrameItems: displayFrame.mode === "fixed"
+        ? displayFrame.fixed.items.filter((item) => item.kind === "text" || item.kind === "decoration").slice().sort((left, right) => left.zIndex - right.zIndex || left.id.localeCompare(right.id))
+        : [],
+      flowTitleBlock,
+      flowNameBlock,
+      flowCityBlock: flowBlockFor("city"),
+      flowTitleFontSize: flowTitleBlock?.style?.fontSize ?? project.cards.fieldTypography?.title?.fontSize ?? project.cards.fontSize,
+      flowNameFontSize: flowNameBlock?.style?.fontSize ?? project.cards.fieldTypography?.name?.fontSize ?? project.cards.fontSize,
+      flowContentStart: displayFrame.mode === "flow"
+        ? flowBlocks.reduce((cursor, block) => cursor + block.spacing + (block.style?.fontSize ?? (block.field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize)) * block.lineHeight, 12)
+        : 0,
+      userFonts,
+    };
+  }, [
+    displayFrame,
+    frameBodyItem,
+    horizontalPadding,
+    lineHeightMultiplier,
+    project.cards.background,
+    project.cards.compactLayout,
+    project.cards.fieldFonts,
+    project.cards.fieldTypography,
+    project.cards.fontSize,
+    project.cards.opacity,
+    project.cards.preset,
+    project.cards.showCount,
+    project.cards.textColor,
+    project.cards.visibleFields,
+    project.map.activeColor,
+    project.map.edgeColor,
+    userFonts,
+  ]);
   const preparedCards = useMemo(() => {
     if (project.cards.visibleFields.length === 0 || project.dataView === "pins") return [];
     const compactLayout = project.cards.compactLayout === true || project.cards.preset === "compact";
@@ -877,7 +887,7 @@ export function PosterCanvas({
   const mapPathForAsset = useCallback((feature: MapFeature) => mapPath(feature as never), [mapPath]);
   const selectText = useCallback((id: string) => onSelect?.({ type: "text", id }), [onSelect]);
 
-  const canvasPoint = (event: PointerEvent<SVGGElement>) => {
+  const canvasPoint = useCallback((event: PointerEvent<SVGGElement>) => {
     const svg = event.currentTarget.ownerSVGElement;
     if (!svg) return null;
     if (typeof svg.createSVGPoint !== "function") {
@@ -893,7 +903,99 @@ export function PosterCanvas({
     point.x = event.clientX;
     point.y = event.clientY;
     return point.matrixTransform(svg.getScreenCTM()?.inverse());
-  };
+  }, [project.canvas.height, project.canvas.width]);
+
+  // Drag handlers are shared by every card and read their card from the DOM key, so the
+  // card list does not allocate four closures per card on each render.
+  const cardsByKey = useMemo(
+    () => new Map(destinationCards.map((card) => [card.group.key, card])),
+    [destinationCards],
+  );
+
+  const handleCardPointerDown = useCallback((event: PointerEvent<SVGGElement>) => {
+    const card = cardsByKey.get(event.currentTarget.getAttribute("data-destination-card") ?? "");
+    if (!card) return;
+    const point = canvasPoint(event);
+    if (!point) return;
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const connectorGroup = event.currentTarget.parentElement;
+    if (!connectorGroup) return;
+    const placement = card.placement;
+    const borderless = project.cards.preset === "borderless";
+    cardDrag.current = {
+      id: card.group.key,
+      offsetX: point.x - placement.x,
+      offsetY: point.y - placement.y,
+      width: placement.width,
+      height: placement.height,
+      x: placement.x,
+      y: placement.y,
+      originalX: placement.x,
+      originalY: placement.y,
+      element: event.currentTarget,
+      connectorGroup: connectorGroup as unknown as SVGGElement,
+      anchorX: card.anchorX,
+      anchorY: card.anchorY,
+      side: placement.side,
+      connectorStyle: project.cards.connectorStyle,
+      borderless,
+      connectorHidden: !card.isInternational && borderless && (project.cards.opacity ?? 1) < 0.9,
+    };
+  }, [canvasPoint, cardsByKey, project.cards.connectorStyle, project.cards.opacity, project.cards.preset]);
+
+  const handleCardPointerMove = useCallback((event: PointerEvent<SVGGElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId) || !cardDrag.current) return;
+    const point = canvasPoint(event);
+    if (!point) return;
+    const drag = cardDrag.current;
+    const position = clampDestinationCardPosition({
+      x: point.x - drag.offsetX,
+      y: point.y - drag.offsetY,
+      width: drag.width,
+      height: drag.height,
+    }, {
+      width: project.canvas.width,
+      height: project.canvas.height,
+      map: mapContentBounds,
+      occupiedAreas: layoutOccupiedAreas,
+      occupiedPolygons: layoutOccupiedPolygons,
+      allowMapOverlap: project.cards.allowMapOverlap === true,
+      margin: project.canvas.safeMargin,
+      gap: Math.max(10, project.cards.gap),
+    });
+    drag.x = Math.round(position.x);
+    drag.y = Math.round(position.y);
+    scheduleCardPreview({ id: drag.id, x: drag.x, y: drag.y });
+  }, [
+    canvasPoint,
+    layoutOccupiedAreas,
+    layoutOccupiedPolygons,
+    mapContentBounds,
+    project.canvas.height,
+    project.canvas.safeMargin,
+    project.canvas.width,
+    project.cards.allowMapOverlap,
+    project.cards.gap,
+    scheduleCardPreview,
+  ]);
+
+  const handleCardPointerUp = useCallback((event: PointerEvent<SVGGElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const drag = cardDrag.current;
+    if (drag) onMoveCard?.(drag.id, drag.x, drag.y);
+    clearCardPreview();
+    cardDrag.current = null;
+  }, [clearCardPreview, onMoveCard]);
+
+  const cardDragEnabled = !exportMode && Boolean(onMoveCard);
+
+  const handleCardPointerCancel = useCallback(() => {
+    const drag = cardDrag.current;
+    if (drag) updateCardPreview({ id: drag.id, x: drag.originalX, y: drag.originalY });
+    clearCardPreview();
+    cardDrag.current = null;
+  }, [clearCardPreview, updateCardPreview]);
 
   const mapLayerZ = project.map.zIndex ?? CANVAS_LAYER_Z.map;
   const cardsLayerZ = project.cards.zIndex ?? CANVAS_LAYER_Z.cards;
@@ -1048,70 +1150,10 @@ export function PosterCanvas({
                       data-card-preset={project.cards.preset}
                       data-card-presentation={project.cards.presentation ?? "standard"}
                       className="destination-card"
-                      onPointerDown={!exportMode && onMoveCard ? (event) => {
-                        const point = canvasPoint(event);
-                        if (!point) return;
-                        event.stopPropagation();
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                        const connectorGroup = event.currentTarget.parentElement;
-                        if (!connectorGroup) return;
-                        cardDrag.current = {
-                          id: group.key,
-                          offsetX: point.x - displayPlacement.x,
-                          offsetY: point.y - displayPlacement.y,
-                          width: displayPlacement.width,
-                          height: displayPlacement.height,
-                          x: displayPlacement.x,
-                          y: displayPlacement.y,
-                          originalX: displayPlacement.x,
-                          originalY: displayPlacement.y,
-                          element: event.currentTarget,
-                          connectorGroup: connectorGroup as unknown as SVGGElement,
-                          anchorX,
-                          anchorY,
-                          side: displayPlacement.side,
-                          connectorStyle: project.cards.connectorStyle,
-                          borderless: borderlessCards,
-                          connectorHidden,
-                        };
-                      } : undefined}
-                      onPointerMove={!exportMode && onMoveCard ? (event) => {
-                        if (!event.currentTarget.hasPointerCapture(event.pointerId) || !cardDrag.current) return;
-                        const point = canvasPoint(event);
-                        if (!point) return;
-                        const drag = cardDrag.current;
-                        const position = clampDestinationCardPosition({
-                          x: point.x - drag.offsetX,
-                          y: point.y - drag.offsetY,
-                          width: drag.width,
-                          height: drag.height,
-                        }, {
-                          width: project.canvas.width,
-                          height: project.canvas.height,
-                          map: mapContentBounds,
-                          occupiedAreas: layoutOccupiedAreas,
-                          occupiedPolygons: layoutOccupiedPolygons,
-                          allowMapOverlap: project.cards.allowMapOverlap === true,
-                          margin: project.canvas.safeMargin,
-                          gap: Math.max(10, project.cards.gap),
-                        });
-                        drag.x = Math.round(position.x);
-                        drag.y = Math.round(position.y);
-                        scheduleCardPreview({ id: drag.id, x: drag.x, y: drag.y });
-                      } : undefined}
-                      onPointerUp={!exportMode && onMoveCard ? (event) => {
-                        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-                        const drag = cardDrag.current;
-                        if (drag) onMoveCard(drag.id, drag.x, drag.y);
-                        clearCardPreview();
-                        cardDrag.current = null;
-                      } : undefined}
-                      onPointerCancel={!exportMode && onMoveCard ? () => {
-                        const drag = cardDrag.current;
-                        if (drag) updateCardPreview({ id: drag.id, x: drag.originalX, y: drag.originalY });
-                        clearCardPreview();
-                        cardDrag.current = null;
-                      } : undefined}
+                      onPointerDown={cardDragEnabled ? handleCardPointerDown : undefined}
+                      onPointerMove={cardDragEnabled ? handleCardPointerMove : undefined}
+                      onPointerUp={cardDragEnabled ? handleCardPointerUp : undefined}
+                      onPointerCancel={cardDragEnabled ? handleCardPointerCancel : undefined}
                     >
                       {(project.cards.presentation ?? "standard") !== "standard" ? renderReferenceCardVisual({
                         presentation: project.cards.presentation as Exclude<import("../../lib/scene-document").CardPresentation, "standard">,
@@ -1128,89 +1170,19 @@ export function PosterCanvas({
                         fontSize: project.cards.fontSize,
                         edgeColor: project.map.edgeColor,
                         titleFont: resolveFontFamily(project.cards.fieldFonts?.title, userFonts),
-                      }) : <>
-                      <rect
-                        data-display-frame-surface
-                        width={placement.width}
-                        height={placement.height}
-                        rx={project.cards.preset === "ticket" ? 12 : project.cards.preset === "borderless" ? 0 : displayFrame.style.borderRadius ?? 6}
-                        fill={displayFrame.style.background || project.cards.background}
-                        fillOpacity={displayFrame.style.opacity ?? project.cards.opacity}
-                        stroke={project.cards.preset === "borderless" ? "none" : displayFrame.style.borderColor ?? project.map.edgeColor}
-                        strokeWidth={project.cards.preset === "borderless" ? undefined : displayFrame.style.borderWidth ?? 1}
-                        data-display-frame-mode={displayFrame.mode}
-                      />
-                      {provinceTexture && (
-                        <image
-                          data-card-province-texture={province}
-                          href={provinceTexture.src}
-                          x={horizontalPadding + (project.cards.preset === "photo" ? 32 : 0)}
-                          y={3}
-                          width={30}
-                          height={30}
-                          opacity={provinceTexture.opacity ?? 1}
-                          preserveAspectRatio="xMidYMid meet"
-                          pointerEvents="none"
+                      }) : (
+                        <DestinationCard
+                          style={cardStyle}
+                          group={group}
+                          province={province}
+                          rows={rows}
+                          titleLines={titleLines}
+                          headerExtra={headerExtra}
+                          width={placement.width}
+                          height={placement.height}
+                          provinceTexture={provinceTexture}
                         />
                       )}
-                      {project.cards.preset === "ticket" && <><rect data-card-accent width={8} height={placement.height} rx={4} fill={project.map.activeColor} /><circle cx={placement.width - 18} cy={18} r={7} fill={project.map.activeColor} opacity={0.2} /></>}
-                      {project.cards.preset === "photo" && <><circle data-card-avatar cx={horizontalPadding + 13} cy={21} r={13} fill={project.map.activeColor} opacity={0.2} /><text x={horizontalPadding + 13} y={25} textAnchor="middle" fill={project.map.activeColor} fontWeight={700} fontSize={11}>{group.title.slice(0, 1)}</text></>}
-                      {customFrameItems.map((item) => renderDisplayFrameItem(item, displayFrame.style, userFonts))}
-                      {titleLines.map((line, index) => (
-                        <text
-                          key={`title-${index}`}
-                          data-card-title-line
-                          x={(displayFrame.mode === "fixed" ? frameTitleItem?.x ?? horizontalPadding : horizontalPadding) + (project.cards.preset === "photo" ? 32 : 0) + (provinceTexture ? 36 : 0)}
-                          y={(displayFrame.mode === "fixed" ? frameTitleItem?.y ?? 12 : 12 + (flowTitleBlock?.spacing ?? 0)) + (index + 1) * Math.max(16, flowTitleFontSize + 4) * (flowTitleBlock?.lineHeight ?? lineHeightMultiplier)}
-                          fontWeight={flowTitleBlock?.style?.fontWeight === "medium" ? 500 : 700}
-                          fontSize={flowTitleFontSize}
-                          fill={flowTitleBlock?.style?.color ?? project.cards.fieldTypography?.title?.color ?? project.cards.textColor}
-                          fontFamily={resolveFontFamily(flowTitleBlock?.style?.fontId ?? project.cards.fieldFonts?.title, userFonts)}
-                        >{line.map((fragment) => fragment.text).join("")}</text>
-                      ))}
-                      {project.cards.showCount !== false && <text x={placement.width - horizontalPadding} y={22} fill={project.map.activeColor} textAnchor="end" fontWeight={700} fontSize={project.cards.fontSize} fontFamily={resolveFontFamily(project.cards.fieldFonts?.title, userFonts)}>{group.count} 人</text>}
-                      {project.cards.preset !== "borderless" && <line x1={horizontalPadding} x2={placement.width - horizontalPadding} y1={30 + headerExtra} y2={30 + headerExtra} stroke={project.map.edgeColor} />}
-                      {(() => {
-                        const rowHeight = Math.max(
-                          project.cards.compactLayout === true || project.cards.preset === "compact" ? 18 : 20,
-                          Math.max(...project.cards.visibleFields.map((field) => project.cards.fieldTypography?.[field]?.fontSize ?? project.cards.fontSize), project.cards.fieldTypography?.city?.fontSize ?? Math.max(9, project.cards.fontSize - 1)) + 6,
-                        ) * lineHeightMultiplier;
-                        let lineIndex = 0;
-                        return rows.flatMap((row) => row.lines.map((line, index) => {
-                          const rowField = row.cityHeading ? "city" : "name";
-                          const block = displayFrame.mode === "flow" ? flowBlockFor(rowField) : undefined;
-                          const rowFontSize = block?.style?.fontSize ?? project.cards.fieldTypography?.[rowField]?.fontSize ?? (row.cityHeading ? Math.max(9, project.cards.fontSize - 1) : flowNameFontSize);
-                          const rowLineHeight = displayFrame.mode === "flow"
-                            ? Math.max(16, rowFontSize + 6) * (block?.lineHeight ?? 1.2)
-                            : rowHeight;
-                          const y = (displayFrame.mode === "fixed" ? frameBodyItem?.y ?? 42 : flowContentStart + flowTitleFontSize + 8) + headerExtra + lineIndex * rowLineHeight;
-                          lineIndex += 1;
-                          return (
-                            <text
-                              key={`${row.key}-${index}`}
-                                  data-city-section={index === 0 ? row.cityHeading : undefined}
-                              data-card-row-line={row.key}
-                              x={displayFrame.mode === "fixed" ? frameBodyItem?.x ?? horizontalPadding : horizontalPadding}
-                              y={y}
-                              fill={block?.style?.color ?? project.cards.fieldTypography?.[rowField]?.color ?? project.cards.textColor}
-                              fontSize={rowFontSize}
-                              fontWeight={row.cityHeading ? 700 : block?.style?.fontWeight === "bold" ? 700 : block?.style?.fontWeight === "medium" ? 500 : undefined}
-                            >
-                              {line.map((fragment, fragmentIndex) => (
-                                <tspan
-                                  key={fragmentIndex}
-                                  fontFamily={resolveFontFamily(fragment.field ? project.cards.fieldFonts?.[fragment.field] : undefined, userFonts)}
-                                  fontSize={fragment.field ? project.cards.fieldTypography?.[fragment.field]?.fontSize : undefined}
-                                  fill={fragment.field ? project.cards.fieldTypography?.[fragment.field]?.color : undefined}
-                                >{fragment.text}</tspan>
-                              ))}
-                            </text>
-                          );
-                        }));
-                      })()}
-
-                      </>}
-
                     </g>
                   </g>
                 );

@@ -28,6 +28,7 @@ export interface DisplayFrameItemStyle {
   align?: TextAlign;
   fill?: string;
   strokeWidth?: number;
+  opacity?: number;
 }
 
 export interface DisplayFrameFixedItem {
@@ -121,7 +122,8 @@ function normalizeItemStyle(value: unknown, fallback: DisplayFrameItemStyle | un
     : fallback?.align;
   const fill = optionalText(source.fill) ?? fallback?.fill;
   const strokeWidth = source.strokeWidth !== undefined ? clamp(source.strokeWidth, 0, 24, fallback?.strokeWidth ?? 1) : fallback?.strokeWidth;
-  if (!fontId && fontSize === undefined && !color && !fontWeight && !align && !fill && strokeWidth === undefined) return undefined;
+  const opacity = source.opacity !== undefined ? clamp(source.opacity, 0, 1, fallback?.opacity ?? 1) : fallback?.opacity;
+  if (!fontId && fontSize === undefined && !color && !fontWeight && !align && !fill && strokeWidth === undefined && opacity === undefined) return undefined;
   return {
     ...(fontId ? { fontId } : {}),
     ...(fontSize !== undefined ? { fontSize } : {}),
@@ -130,6 +132,7 @@ function normalizeItemStyle(value: unknown, fallback: DisplayFrameItemStyle | un
     ...(align ? { align } : {}),
     ...(fill ? { fill } : {}),
     ...(strokeWidth !== undefined ? { strokeWidth } : {}),
+    ...(opacity !== undefined ? { opacity } : {}),
   };
 }
 
