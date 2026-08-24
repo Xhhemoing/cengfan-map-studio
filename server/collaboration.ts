@@ -109,9 +109,10 @@ const MAX_OPERATION_HISTORY = 256;
 const DEFAULT_PERSIST_INTERVAL_MS = 30_000;
 // Oversized rooms stay live but are omitted from disk, so after a restart they
 // fall back to the same process-local lifetime rooms had before persistence.
-export const MAX_PERSISTED_ROOM_BYTES = 12 * 1024 * 1024;
+// This must not be lower than the HTTP room-transaction acceptance limit.
+export const MAX_PERSISTED_ROOM_BYTES = 8 * 1024 * 1024;
 // Bound aggregate event-loop occupancy as well as individual room records.
-export const MAX_PERSISTED_SNAPSHOT_BYTES = 12 * 1024 * 1024;
+export const MAX_PERSISTED_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 
 function defaultRoomId(): string {
   return randomBytes(9).toString("hex").slice(0, 12).toUpperCase();
