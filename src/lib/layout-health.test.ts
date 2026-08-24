@@ -97,6 +97,84 @@ describe("layout health", () => {
       .toEqual(["map:over-sea", "map:over-land"]);
   });
 
+  it("reports same-layer overlap between objects of the same kind as mutual overlap", () => {
+    // render-health 给所有卡片发同一个 cards.zIndex、所有文本发同一个 texts 层级，
+    // 同 z 直接跳过就意味着卡叠卡、文本叠文本永远查不出来。
+    const issues = checkLayoutHealth({
+      canvas: { width: 600, height: 400, safeMargin: 10 },
+      objects: [
+        { id: "card-a", kind: "card", zIndex: 10, bounds: { x: 100, y: 100, width: 120, height: 80 } },
+        { id: "card-b", kind: "card", zIndex: 10, bounds: { x: 180, y: 140, width: 120, height: 80 } },
+        { id: "card-c", kind: "card", zIndex: 10, bounds: { x: 400, y: 100, width: 120, height: 80 } },
+        { id: "text-a", kind: "text", zIndex: 40, bounds: { x: 100, y: 260, width: 160, height: 40 } },
+        { id: "text-b", kind: "text", zIndex: 40, bounds: { x: 200, y: 270, width: 160, height: 40 } },
+      ],
+    }).filter((issue) => issue.kind === "occlusion");
+
+    expect(issues).toEqual([
+      { id: "card-a:card-b", kind: "occlusion", severity: "warning", detail: "card-a 与 card-b 相互重叠" },
+      { id: "text-a:text-b", kind: "occlusion", severity: "warning", detail: "text-a 与 text-b 相互重叠" },
+    ]);
+  });
+
+  it("keeps the front/back wording only where z-index really orders the pair", () => {
+    const issues = checkLayoutHealth({
+      canvas: { width: 600, height: 400, safeMargin: 10 },
+      objects: [
+        { id: "under", kind: "card", zIndex: 10, bounds: { x: 100, y: 100, width: 120, height: 80 } },
+        { id: "over", kind: "card", zIndex: 11, bounds: { x: 160, y: 140, width: 120, height: 80 } },
+      ],
+    }).filter((issue) => issue.kind === "occlusion");
+
+    expect(issues).toEqual([
+      { id: "under:over", kind: "occlusion", severity: "warning", detail: "over 遮挡了 under" },
+    ]);
+  });
+
+  it("also reports same-layer overlap across kinds, where no front/back relation exists", () => {
+    // 把 cards.zIndex 调到与文本同层后，谁压谁由文档顺序决定、用户既改不动也看不出来，
+    // 所以按「相互重叠」报，而不是沉默。
+    const issues = checkLayoutHealth({
+      canvas: { width: 600, height: 400, safeMargin: 10 },
+      objects: [
+        { id: "card-a", kind: "card", zIndex: 40, bounds: { x: 100, y: 100, width: 120, height: 80 } },
+        { id: "note", kind: "text", zIndex: 40, bounds: { x: 160, y: 140, width: 120, height: 40 } },
+      ],
+    }).filter((issue) => issue.kind === "occlusion");
+
+    expect(issues).toEqual([
+      { id: "card-a:note", kind: "occlusion", severity: "warning", detail: "card-a 与 note 相互重叠" },
+    ]);
+  });
+
+  it("keeps the map exemptions in force for same-layer overlap", () => {
+    // 省份轮廓只占联合 AABB 的左半边，右半边是海面与留白。
+    const mapPolygons = [{
+      rings: [[{ x: 100, y: 60 }, { x: 260, y: 60 }, { x: 260, y: 340 }, { x: 100, y: 340 }]],
+      bounds: { x: 100, y: 60, width: 160, height: 280 },
+    }];
+    const input: LayoutHealthInput = {
+      canvas: { width: 600, height: 400, safeMargin: 10 },
+      mapPolygons,
+      objects: [
+        { id: "map", kind: "map", zIndex: 10, bounds: { x: 100, y: 60, width: 400, height: 280 } },
+        { id: "card-on-land", kind: "card", zIndex: 10, bounds: { x: 160, y: 80, width: 80, height: 40 } },
+        { id: "text-over-sea", kind: "text", zIndex: 10, bounds: { x: 300, y: 200, width: 120, height: 40 } },
+        { id: "text-on-land", kind: "text", zIndex: 10, bounds: { x: 140, y: 200, width: 100, height: 40 } },
+      ],
+    };
+
+    expect(checkLayoutHealth(input).filter((issue) => issue.kind === "occlusion"))
+      .toEqual([
+        { id: "map:card-on-land", kind: "occlusion", severity: "warning", detail: "map 与 card-on-land 相互重叠" },
+        { id: "map:text-on-land", kind: "occlusion", severity: "warning", detail: "map 与 text-on-land 相互重叠" },
+      ]);
+    // 允许卡片压图后，同层的 map:卡片 也一并豁免；文本不在豁免范围内。
+    expect(checkLayoutHealth({ ...input, allowMapOverlap: true })
+      .filter((issue) => issue.kind === "occlusion").map((issue) => issue.id))
+      .toEqual(["map:text-on-land"]);
+  });
+
   it("uses cards.positions as the stable manual position selector", () => {
     const issues = checkLayoutHealth({
       canvas: { width: 300, height: 240, safeMargin: 12 },

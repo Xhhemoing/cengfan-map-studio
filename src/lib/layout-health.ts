@@ -215,10 +215,10 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
   // map 的 bounds 是省份联合 AABB，里面大半是海面与留白：`mapPolygons` 在场时要求对方
   // 真的压到省份轮廓上；`allowMapOverlap` 打开时卡片压地图是用户选的排版，不再报。
   const mapPolygons = input.mapPolygons ?? [];
-  const mapOcclusion = (back: ResolvedObject, front: ResolvedObject): boolean => {
-    const map = back.object.kind === "map" ? back : front.object.kind === "map" ? front : null;
+  const mapOcclusion = (first: ResolvedObject, second: ResolvedObject): boolean => {
+    const map = first.object.kind === "map" ? first : second.object.kind === "map" ? second : null;
     if (!map) return true;
-    const other = map === back ? front : back;
+    const other = map === first ? second : first;
     if (input.allowMapOverlap === true && other.object.kind === "card") return false;
     if (mapPolygons.length === 0) return true;
     return mapPolygons.some((polygon) => boundsIntersectsPolygon(other.bounds, polygon));
@@ -231,7 +231,20 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
       if (!overlaps(left.bounds, right.bounds)) continue;
       const leftZ = left.object.zIndex ?? 0;
       const rightZ = right.object.zIndex ?? 0;
-      if (leftZ === rightZ) continue;
+      // 同 z 分不出谁压谁（SVG 里只由文档顺序决定，用户改不动也看不出来），但重叠照样是版面问题：
+      // render-health 给每类对象发同一个层级值，卡叠卡、文本叠文本全落在这里，跳过就等于永远查不出来。
+      // 不同 kind 同 z（例如把 cards.zIndex 调到与文本同层）也一并按「相互重叠」报——
+      // 判据是层级相同、前后关系不成立，与 kind 无关；map 的豁免规则仍照常生效。
+      if (leftZ === rightZ) {
+        if (!mapOcclusion(left, right)) continue;
+        issues.push({
+          id: `${left.object.id}:${right.object.id}`,
+          kind: "occlusion",
+          severity: "warning",
+          detail: `${left.object.id} 与 ${right.object.id} 相互重叠`,
+        });
+        continue;
+      }
       const backEntry = leftZ < rightZ ? left : right;
       const frontEntry = leftZ < rightZ ? right : left;
       if (!mapOcclusion(backEntry, frontEntry)) continue;
