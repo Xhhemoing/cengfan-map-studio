@@ -44,7 +44,8 @@
 | 21 | 已完成 | opus ×5 | 续聊瞬时失败、对话框焦点圈闭、Excel 多表、工作区 CAS 接线、删死封装 |
 | 22 | 已完成 | fable ×5 | 达标后继续：分区复查下一轮可落地缺口 |
 | 23 | 已完成 | opus ×5 | 续聊回滚影子、禁并发会话、被踢 UI、心跳不续命、嘉宾零位移 |
-| 24 | 进行中 | opus ×5 | SVG 延迟 revoke、工作台包体积、导出对话框、字体去重映射、同 z 重叠 |
+| 24 | 已完成 | opus ×5 | SVG 延迟 revoke、工作台包体积、导出对话框、字体去重映射、同 z 重叠 |
+| 25 | 进行中 | 混编 ×5 | 任务段 lastIndex、设置焦点、删不安全镜像工厂、空白选画布、复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -82,6 +83,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 24 轮 SVG revoke、工作台包体积、导出对话框、字体映射、同层重叠已合入；启动第 25 轮。
 - 2026-08-24：第 23 轮续聊回滚、禁并发、被踢 UI、心跳 sweep、嘉宾零位移已合入；启动第 24 轮。
 - 2026-08-24：第 22 轮五区复查齐；启动第 23 轮落地。
 - 2026-08-24：第 21 轮续聊重试、对话框焦点、Excel 多表、工作区 CAS 接线已合入；启动第 22 轮复查。
@@ -319,6 +321,24 @@
 | 导出工程对话框 | `src/App.tsx`（仅挂载导出对话框到公共路径）、可新增 `ExportProjectDialog.tsx`、`usePosterExport.ts` 若只需接线。复用 WorkbenchDialog。 |
 | 字体去重映射 | `src/lib/project-package.ts`、`src/lib/resource-pack.ts` 及测试。同字节去重保留 id 映射，repair 时 remap。 |
 | 同 z 重叠 | `src/lib/layout-health.ts` 及测试。同 z 同 kind 重叠报 occlusion。不改 render-health 除非必须。 |
+
+## 第 24 轮已合入
+
+- SVG `downloadText` 走延迟 revoke。
+- 工作台工程包导入执行 24MB 检查。
+- 默认编辑器路径挂上 `ExportProjectDialog`。
+- 字体去重保留 id 映射并回写引用。
+- 同层重叠报告 occlusion。
+
+## 第 25 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 任务段 lastIndex | `server/ai/agent-loop.ts`、`server/ai/local-preroute.ts` 及测试。同文案两轮取最后一次 user 消息为段边界。 |
+| 设置全屏焦点 | `src/components/GlobalSettingsScreen.tsx`、`src/App.tsx`（仅 settings 进出焦点）及测试。 |
+| 删 createLocalStorageMirror | `src/lib/browser-workspace-store.ts` 及测试。`loadBrowserWorkspaceMirror` 的 mirror 改为必传。 |
+| 空白选画布 | `src/components/canvas/PosterCanvas.tsx` 及测试。核实背景 rect 是否吞掉空白点击。 |
+| 剩余复查 | 只读。避开本轮落地文件。 |
 
 ## 第 2 轮已合入
 
