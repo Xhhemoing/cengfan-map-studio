@@ -69,7 +69,13 @@
   - opus-fast-B → `bc-752451d8-bb08-5f68-9cb2-5522a210a4ae`
   - gpt-sol-A → `bc-49618dfe-d37f-52b4-afbb-c62e96a1066f`
   - gpt-sol-B → `bc-c0dee1a4-ec7d-5615-88bc-249e1b45b565`
-- [ ] Cycle 3 Round 1 — 布局 key 仿射化与换色不重投影（派发中）
+- [ ] Cycle 3 Round 1 — 布局 key 仿射化与换色不重投影（进行中，6 子代理并发）
+  - fable-A → `bc-ad996d45-1dde-501d-a298-66d61583d559`
+  - fable-B → `bc-89b0e384-3e37-5598-bfab-65d63f3ac25a`
+  - opus-fast-A → `bc-070c866f-1f9f-5b29-a6b5-5a826e248032`
+  - opus-fast-B → `bc-0d3b0b7c-4b6e-5255-9751-0c589bd648fb`
+  - gpt-sol-A → `bc-b79716f9-795d-5ac6-bdd6-29e78093b0fb`
+  - gpt-sol-B → `bc-5bef0d4c-2fc9-5e92-bbbf-bb3593ef2db0`
 - [ ] Cycle 3 Round 2
 - [ ] Cycle 3 Round 3
 - [ ] 归档、结构化 PR
@@ -88,3 +94,4 @@
 - Cycle 1 Round 3：`.agent_workspace/cycle1-round3-conclusion.md`
 - Cycle 2 Round 1：`.agent_workspace/cycle2-round1-conclusion.md`
 - Cycle 2 Round 2：`.agent_workspace/cycle2-round2-conclusion.md`
+- Cycle 2 Round 3：`.agent_workspace/cycle2-round3-conclusion.md`
