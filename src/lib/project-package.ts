@@ -1,5 +1,13 @@
 import type { UserAsset } from "./assets";
-import { BUILT_IN_FONTS, type UserFont } from "./fonts";
+import {
+  BUILT_IN_FONTS,
+  estimateFontBytes,
+  findExistingFont,
+  formatFontBytes,
+  MAX_USER_FONT_BYTES,
+  type UserFont,
+} from "./fonts";
+import { estimateDataUrlBytes, formatByteSize } from "./image-downscale";
 import { restoreProjectDocument, serializeProjectDocument, type ProjectDocument } from "./project-document";
 import { createResourcePack, parseResourcePack } from "./resource-pack";
 import { DEFAULT_RENDER_SETTINGS, normalizeRenderSettings, type RenderSettings } from "./render-settings";
@@ -7,6 +15,14 @@ import { loadCustomTemplates, type CustomTemplateRecord } from "./template-store
 import type { ProvinceAppearance } from "./scene-document";
 
 export const PROJECT_PACKAGE_VERSION = 2 as const;
+
+/**
+ * Hard ceiling for one imported asset, measured on the decoded image bytes. Uploads are downscaled
+ * at the entry point, but a package can carry anything, and every asset rides inside the scene as a
+ * data URL (~4/3 of the decoded size) through a collaboration transaction the server caps at 8MiB.
+ * Re-encoding needs a canvas and would make parsing async, so import drops the image instead.
+ */
+export const MAX_PACKAGE_ASSET_BYTES = 5 * 1024 * 1024;
 
 export interface ProjectPackage {
   kind: "cengfan-project-package";
@@ -17,6 +33,8 @@ export interface ProjectPackage {
   fonts: UserFont[];
   customTemplates: CustomTemplateRecord[];
   renderSettings: RenderSettings;
+  /** Chinese notes about resources stripped while importing. Import-only, never exported. */
+  warnings?: string[];
 }
 
 type ProjectPackageInput = {
@@ -114,6 +132,93 @@ function repairProjectFontReferences(project: ProjectDocument, fonts: UserFont[]
   };
 }
 
+/**
+ * Package hydration is the last stop before fonts reach editor state and collaboration, so the
+ * upload ceiling is enforced here too instead of trusting whichever layer produced the package.
+ */
+function limitImportedFonts(fonts: UserFont[]): { fonts: UserFont[]; oversized: number } {
+  const kept: UserFont[] = [];
+  let oversized = 0;
+  for (const font of fonts) {
+    if (estimateFontBytes(font.src) > MAX_USER_FONT_BYTES) {
+      oversized += 1;
+      continue;
+    }
+    if (findExistingFont(kept, font.src)) continue;
+    kept.push(font);
+  }
+  return { fonts: kept, oversized };
+}
+
+function limitImportedAssets(assets: UserAsset[]): { assets: UserAsset[]; droppedIds: Set<string> } {
+  const kept: UserAsset[] = [];
+  const droppedIds = new Set<string>();
+  for (const asset of assets) {
+    if (estimateDataUrlBytes(asset.src) > MAX_PACKAGE_ASSET_BYTES) {
+      droppedIds.add(asset.id);
+      continue;
+    }
+    kept.push(asset);
+  }
+  return { assets: kept, droppedIds };
+}
+
+/**
+ * Every scene reference carries its own copy of the data URL, and the canvas background, guest
+ * avatars and legacy province textures carry one without any catalog entry at all, so filtering the
+ * catalog alone would leave the oversized payload inside the project document.
+ *
+ * `inlineDropped` counts only payloads the catalog warning does not already explain.
+ */
+function dropOversizedImagePayloads(
+  project: ProjectDocument,
+  droppedAssetIds: Set<string>,
+): { project: ProjectDocument; inlineDropped: number } {
+  let inlineDropped = 0;
+  const dropsInline = (src: string | undefined): boolean => {
+    if (!src || estimateDataUrlBytes(src) <= MAX_PACKAGE_ASSET_BYTES) return false;
+    inlineDropped += 1;
+    return true;
+  };
+  const dropsReference = (assetId: string, src: string): boolean =>
+    droppedAssetIds.has(assetId) || dropsInline(src);
+  const renderSource = project.map.renderSource;
+  const dropsRenderSource = renderSource?.kind === "image" && dropsReference(renderSource.assetId, renderSource.src);
+  const { backgroundImageSrc, ...canvas } = project.canvas;
+  const keepsBackground = Boolean(backgroundImageSrc) && !dropsInline(backgroundImageSrc);
+  return {
+    project: {
+      ...project,
+      canvas: { ...canvas, ...(keepsBackground ? { backgroundImageSrc } : {}) },
+      map: {
+        ...project.map,
+        ...(dropsRenderSource ? { renderSource: { kind: "vector" as const } } : {}),
+        provinceStyles: Object.fromEntries(Object.entries(project.map.provinceStyles ?? {}).map(([province, style]) => {
+          const { textureSrc, appearance, ...rest } = style;
+          const keepsTexture = Boolean(textureSrc) && !dropsInline(textureSrc);
+          const keepsAppearance = !appearance
+            || appearance.kind === "manual-color"
+            || !dropsReference(appearance.assetId, appearance.src);
+          return [province, {
+            ...rest,
+            ...(keepsTexture ? { textureSrc } : {}),
+            ...(appearance && keepsAppearance ? { appearance } : {}),
+          }];
+        })),
+      },
+      guests: {
+        ...project.guests,
+        people: project.guests.people.map((person) => {
+          const { avatarSrc, ...rest } = person;
+          return dropsInline(avatarSrc) ? rest : person;
+        }),
+      },
+      assetElements: project.assetElements.filter((element) => !dropsReference(element.assetId, element.src)),
+    },
+    inlineDropped,
+  };
+}
+
 function hydrateMissingAssetSources(value: unknown, assets: UserAsset[]): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const project = value as Record<string, unknown>;
@@ -165,7 +270,8 @@ export function createProjectPackage(input: ProjectPackageInput): ProjectPackage
 }
 
 export function serializeProjectPackage(pack: ProjectPackage): string {
-  return `${JSON.stringify(pack, null, 2)}\n`;
+  const { warnings: _importWarnings, ...exported } = pack;
+  return `${JSON.stringify(exported, null, 2)}\n`;
 }
 
 export function parseProjectPackage(raw: string): ProjectPackage {
@@ -190,22 +296,39 @@ export function restoreProjectPackage(value: unknown): ProjectPackage {
     assets: record.assets,
     fonts: record.fonts,
   }), { allowEmpty: true });
-  const project = repairProjectFontReferences(
+  const { fonts, oversized } = limitImportedFonts(resourcePack.pack.fonts);
+  const { assets, droppedIds } = limitImportedAssets(resourcePack.pack.assets);
+  const cleaned = dropOversizedImagePayloads(
     repairProjectAssetReferences(
-      restoreProjectDocument(JSON.stringify(hydrateMissingAssetSources(record.project, resourcePack.pack.assets))),
-      resourcePack.pack.assets,
+      restoreProjectDocument(JSON.stringify(hydrateMissingAssetSources(record.project, assets))),
+      assets,
     ),
-    resourcePack.pack.fonts,
+    droppedIds,
   );
+  const project = repairProjectFontReferences(cleaned.project, fonts);
+  const oversizedFonts = resourcePack.skippedFontCount + oversized;
+  const assetLimit = formatByteSize(MAX_PACKAGE_ASSET_BYTES);
+  const warnings = [
+    ...(oversizedFonts > 0
+      ? [`${oversizedFonts} 个字体超过 ${formatFontBytes(MAX_USER_FONT_BYTES)} 上限，未导入，相关文字已回落到默认字体`]
+      : []),
+    ...(droppedIds.size > 0
+      ? [`${droppedIds.size} 张素材超过 ${assetLimit} 上限，未导入，画面中的引用已移除`]
+      : []),
+    ...(cleaned.inlineDropped > 0
+      ? [`${cleaned.inlineDropped} 处画面内嵌图片超过 ${assetLimit} 上限，已移除`]
+      : []),
+  ];
   return {
     kind: "cengfan-project-package",
     version: PROJECT_PACKAGE_VERSION,
     exportedAt: validExportedAt(record.exportedAt),
     project,
-    assets: resourcePack.pack.assets,
-    fonts: resourcePack.pack.fonts,
+    assets,
+    fonts,
     customTemplates: normalizeCustomTemplates(record.customTemplates),
     renderSettings: normalizeRenderSettings(record.renderSettings),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 

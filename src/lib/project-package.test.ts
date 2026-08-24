@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createProjectDocument } from "./project-document";
 import { applyTransaction } from "./project-document";
+import { MAX_USER_FONT_BYTES } from "./fonts";
 import {
   createProjectPackage,
   createProjectPackageEnvelope,
+  MAX_PACKAGE_ASSET_BYTES,
   parseProjectPackage,
   projectPackageDisplayName,
   restoreProjectPackage,
@@ -32,6 +34,11 @@ const font = {
   format: "truetype" as const,
   source: "user" as const,
 };
+
+/** Build a base64 data URL whose decoded payload is at least `bytes` long. */
+function dataUrlOfBytes(mime: string, bytes: number, fill = "A"): string {
+  return `data:${mime};base64,${fill.repeat(Math.ceil(bytes / 3) * 4)}`;
+}
 
 describe("project package", () => {
   it("round-trips the complete project and local resources", () => {
@@ -247,6 +254,131 @@ describe("project package", () => {
     expect(parsed.assets[0]?.provinceIds).toEqual(["浙江省", "江苏省"]);
     expect(parsed.project.map.provinceStyles?.浙江省?.appearance).toMatchObject({ assetId: "texture-good", src: "data:image/png;base64,SAME" });
     expect(parsed.project.map.provinceStyles?.北京市?.appearance).toMatchObject({ assetId: "missing-src", src: "data:image/png;base64,BEIJING" });
+  });
+
+  it("drops fonts past the collaboration ceiling and relinks their references to the default font", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.cards.fieldFonts = { title: "font-huge", name: "font-1" };
+    project.textElements = project.textElements.map((text) => ({ ...text, fontId: "font-huge" }));
+    project.guests = { ...project.guests, titleFontId: "font-huge", peopleFontId: "font-1" };
+
+    const parsed = restoreProjectPackage({
+      kind: "cengfan-project-package",
+      version: 2,
+      exportedAt: "2026-07-27T00:00:00.000Z",
+      project,
+      assets: [],
+      fonts: [
+        font,
+        {
+          id: "font-huge",
+          label: "全字库宋体",
+          family: "font-huge",
+          src: dataUrlOfBytes("font/ttf", MAX_USER_FONT_BYTES + 3, "B"),
+          format: "truetype",
+          source: "user",
+        },
+      ],
+    });
+
+    expect(parsed.fonts).toEqual([font]);
+    expect(parsed.project.cards.fieldFonts).toEqual({ name: "font-1" });
+    expect(parsed.project.textElements.every((text) => text.fontId === undefined)).toBe(true);
+    expect(parsed.project.guests.titleFontId).toBeUndefined();
+    expect(parsed.project.guests.peopleFontId).toBe("font-1");
+    expect(parsed.warnings).toEqual([expect.stringContaining("字体超过 5MB 上限")]);
+  });
+
+  it("drops oversized assets together with the scene references that inline their bytes", () => {
+    const hugeSrc = dataUrlOfBytes("image/png", MAX_PACKAGE_ASSET_BYTES + 3, "C");
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.map = {
+      ...project.map,
+      renderSource: { kind: "image", assetId: "asset-huge", src: hugeSrc, fit: "cover", opacity: 1 },
+      provinceStyles: {
+        浙江省: { appearance: { kind: "texture", assetId: "asset-1", src: asset.src, fit: "contain" } },
+        北京市: { appearance: { kind: "texture", assetId: "asset-huge", src: hugeSrc, fit: "contain" } },
+      },
+    };
+    project.assetElements = [{
+      id: "element-huge",
+      assetId: "asset-huge",
+      label: "巨幅装饰",
+      src: hugeSrc,
+      kind: "decoration",
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      zIndex: 1,
+      visibility: true,
+    }];
+
+    const parsed = restoreProjectPackage({
+      kind: "cengfan-project-package",
+      version: 2,
+      exportedAt: "2026-07-27T00:00:00.000Z",
+      project,
+      assets: [asset, { id: "asset-huge", label: "巨幅装饰", kind: "decoration", src: hugeSrc, provinceIds: [], source: "user" }],
+      fonts: [],
+    });
+
+    expect(parsed.assets).toEqual([asset]);
+    expect(parsed.project.map.renderSource).toEqual({ kind: "vector" });
+    expect(parsed.project.map.provinceStyles?.浙江省?.appearance).toMatchObject({ assetId: "asset-1" });
+    expect(parsed.project.map.provinceStyles?.北京市?.appearance).toBeUndefined();
+    expect(parsed.project.assetElements).toEqual([]);
+    expect(parsed.warnings).toEqual([expect.stringContaining("素材超过 5.0 MB 上限")]);
+    expect(serializeProjectPackage(parsed)).not.toContain("warnings");
+  });
+
+  it("drops oversized inline images that no catalog entry covers", () => {
+    const hugeSrc = dataUrlOfBytes("image/jpeg", MAX_PACKAGE_ASSET_BYTES + 3, "D");
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.canvas = { ...project.canvas, backgroundImageSrc: hugeSrc };
+    project.guests = {
+      ...project.guests,
+      people: [
+        { id: "guest-1", name: "林老师", visibility: true, avatarSrc: hugeSrc },
+        { id: "guest-2", name: "苏禾", visibility: true, avatarSrc: "data:image/png;base64,AA==" },
+      ],
+    };
+
+    const parsed = restoreProjectPackage({
+      kind: "cengfan-project-package",
+      version: 2,
+      exportedAt: "2026-07-27T00:00:00.000Z",
+      project,
+      assets: [],
+      fonts: [],
+    });
+
+    expect(parsed.project.canvas.backgroundImageSrc).toBeUndefined();
+    expect(parsed.project.guests.people[0]?.avatarSrc).toBeUndefined();
+    expect(parsed.project.guests.people[1]?.avatarSrc).toBe("data:image/png;base64,AA==");
+    expect(parsed.warnings).toEqual([expect.stringContaining("2 处画面内嵌图片超过 5.0 MB 上限")]);
+  });
+
+  it("keeps compliant resources untouched across an export and re-import round trip", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.map = {
+      ...project.map,
+      provinceStyles: { 浙江省: { appearance: { kind: "texture", assetId: "asset-1", src: asset.src, fit: "contain" } } },
+    };
+    project.textElements = project.textElements.map((text) => ({ ...text, fontId: "font-1" }));
+
+    const serialized = serializeProjectPackage(createProjectPackage({ project, assets: [asset], fonts: [font], now: new Date("2026-07-27T00:00:00.000Z") }));
+    const parsed = parseProjectPackage(serialized);
+    const reimported = parseProjectPackage(serializeProjectPackage(parsed));
+
+    expect(serialized).not.toContain("warnings");
+    expect(parsed.warnings).toBeUndefined();
+    expect(reimported.assets).toEqual([asset]);
+    expect(reimported.fonts).toEqual([font]);
+    expect(reimported.project.map.provinceStyles?.浙江省?.appearance).toMatchObject({ assetId: "asset-1", src: asset.src });
+    expect(reimported.project.textElements.every((text) => text.fontId === "font-1")).toBe(true);
   });
 
   it("strips json and cengfan extensions from imported package names", () => {
