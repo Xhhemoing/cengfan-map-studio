@@ -21,7 +21,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
-| 5 | MERGED_PENDING_FULL_SUITE | R5-1–R5-9 | — | All nine code tasks landed. R5-10 is docs/PR after full suite + fable. |
+| 5 | CLOSED | R5-1–R5-9 | — | Full suite 172 files / 1568 pass / 2 skip; lint 0 err (6 warn); typecheck 0. Fable next. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -76,7 +76,15 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - Full suite: **171 files, 1534 passed / 2 skipped** (70.0s).
 - Lint: 0 errors, 7 warnings (5 pre-existing react-refresh; DataWorkspace exhaustive-deps; new `main.tsx` react-refresh from WorkbenchRoute). Two `no-control-regex` errors from R4-4/R4-7 silenced with documented disables.
 - Typecheck: `npm run typecheck` (`tsc -b --noEmit`) exit 0.
-- Fable: `.agent_workspace/round-4-review.md`. Briefing: `.agent_workspace/round-4-briefing.md`. No merge blocker. PR stays draft until R5-1 recalibrates persist cap.
+- Fable: `.agent_workspace/round-4-review.md`. Briefing: `.agent_workspace/round-4-briefing.md`. No merge blocker. Persist cap calibrated in R5-1 (8 MiB).
+
+## Round 5 closeout
+
+- Full suite: **172 files, 1568 passed / 2 skipped** (79.5s).
+- Lint: 0 errors, 6 warnings (`main.tsx` react-refresh gone after R5-3). Typecheck: `npm run typecheck` exit 0.
+- Persist band: 8 MiB per-room and aggregate (8 MiB occupancy ~57ms on R5-1 machine). Rollback = revert R5-1 commits.
+- Shared store: one `createIndexedDbProjectStore()` in `editor-project-store.ts`. Rollback = revert R5-3.
+- Fable: pending `.agent_workspace/round-5-review.md`.
 
 ## Round Briefings
 
