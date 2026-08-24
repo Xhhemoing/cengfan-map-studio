@@ -97,6 +97,13 @@ describe("data workspace responsive controls", () => {
     expect(styles).toMatch(/@media[^{}]*max-width:\s*620px[\s\S]*\.global-data-nav\s*\{[^}]*overflow-x:\s*auto;/);
   });
 
+  it("overrides hardcoded light heading/label colors in the dark theme (I-7-04)", () => {
+    // 折叠标题（字体排版、高级设置等）在暗色下必须换成主题强调色。
+    expect(styles).toMatch(/\.app-shell\[data-editor-theme="dark"\] :is\(\s*\.property-panel__advanced summary,\s*\.inspector-global-typography summary,[\s\S]*?\) \{ color: var\(--editor-accent\); \}/);
+    // 素材面板「查找/省份」等 label 在暗色下必须换成亮墨色。
+    expect(styles).toMatch(/\.app-shell\[data-editor-theme="dark"\] :is\(\s*\.asset-panel > label,\s*\.asset-province-picker label,\s*\.asset-section label\s*\) \{ color: var\(--editor-ink\); \}/);
+  });
+
   it("keeps collaboration reachable without legacy canvas toolbar", () => {
     expect(styles).toMatch(/\.topbar-actions \.collaboration-button \{[^}]*display: inline-flex;/);
     expect(styles).toMatch(/\.collaboration-popover \{[^}]*position: fixed;[^}]*max-width: calc\(100vw - 16px\);/);

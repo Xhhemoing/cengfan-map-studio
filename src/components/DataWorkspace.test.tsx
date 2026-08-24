@@ -430,6 +430,38 @@ describe("DataWorkspace", () => {
     ]);
   });
 
+  it("shows the validation error next to the draft form when adding fails (I-7-02)", () => {
+    const onAppendStudents = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    // 只填姓名（大学目录联动不触发），点新增：错误必须出现在表单内部。
+    changeInput(container.querySelector<HTMLInputElement>('input[placeholder="林舟"]')!, "只填姓名");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("新增学生"))!);
+
+    expect(onAppendStudents).not.toHaveBeenCalled();
+    const inlineError = container.querySelector('.draft-form .draft-form__error');
+    expect(inlineError).not.toBeNull();
+    expect(inlineError!.getAttribute("role")).toBe("alert");
+    expect(inlineError!.textContent).toContain("不能为空");
+
+    // 补全字段成功新增后，就近错误消失。
+    changeInput(getInput(container, "就读院校"), "浙江大学");
+    changeInput(getInput(container, "城市"), "杭州市");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("新增学生"))!);
+    expect(onAppendStudents).toHaveBeenCalled();
+    expect(container.querySelector(".draft-form__error")).toBeNull();
+  });
+
   it("auto-fills city and province from the university catalog when adding a student", () => {
     const onAppendStudents = vi.fn();
     const container = render(

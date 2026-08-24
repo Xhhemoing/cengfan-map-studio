@@ -108,8 +108,10 @@ function tokenMatches(secret: string, expectedHash: string): boolean {
   return actual.byteLength === expected.byteLength && timingSafeEqual(actual, expected);
 }
 
+// 显式挑字段而非浅拷贝：create() 会把含 accessToken 的 RoomAccess 存进
+// accessRecords，浅拷贝会把创建者令牌原样带进参与者列表并经 GET 房间泄露。
 function publicParticipant(participant: RoomParticipant): RoomParticipant {
-  return { ...participant };
+  return { id: participant.id, displayName: participant.displayName, role: participant.role };
 }
 
 export interface RoomStoreOptions {

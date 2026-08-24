@@ -973,6 +973,28 @@ describe("PosterCanvas", () => {
     container.remove();
   });
 
+  it("selects the canvas when the click lands on the full-canvas background", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onSelect={onSelect} />));
+
+    // 空白点击命中的是覆盖全画布的背景 rect，而非 svg 本身。
+    const background = container.querySelector("[data-canvas-background]")!;
+    flushSync(() => background.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onSelect).toHaveBeenCalledWith({ type: "canvas" });
+
+    // 点省份路径等非空白元素不应误选画布。
+    onSelect.mockClear();
+    const province = container.querySelector("[data-map-layer] path")!;
+    flushSync(() => province.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onSelect).not.toHaveBeenCalledWith({ type: "canvas" });
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("pure preview (no onSelect) omits the map selection overlay like export output", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const container = document.createElement("div");

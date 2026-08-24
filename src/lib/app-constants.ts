@@ -12,6 +12,8 @@ export const COLLABORATION_DISPLAY_NAME = "本机协作者";
 export const DRAFT_SAVED_AT_KEY = "cengfan-map-studio:draft-saved-at";
 export const RENDER_SETTINGS_KEY = "cengfan-map-studio:render-settings";
 export const COLLABORATION_SEND_DELAY_MS = 600;
+/** 项目模式下有未保存编辑（pending）时，防抖自动落盘到 IndexedDB 的等待时长。 */
+export const PROJECT_AUTOSAVE_DEBOUNCE_MS = 2000;
 
 export type ActivePanel = "roster" | "map" | "layout" | "content" | "assets" | "deliver";
 

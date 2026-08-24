@@ -6,6 +6,7 @@ import { editorProjectStore } from "../lib/editor-project-store";
 import { createSampleProject, type StoredProject } from "../lib/project-store";
 import { createCustomTemplateFromProject } from "../lib/template-store";
 import { LEGACY_EDITOR_STORAGE_KEY } from "../lib/workspace-session";
+import { projectDraftMirrorKey, readProjectDraftMirror, writeProjectDraftMirror } from "../lib/project-draft-mirror";
 
 // App.tsx lazy-loads the full-screen settings panel; preload its module so the
 // first test that opens it renders synchronously after a single act flush.
@@ -176,6 +177,81 @@ describe("App in project mode", () => {
       expect(record?.pack.project.students.some((student) => student.name === "林舟舟")).toBe(true);
     });
     expect(window.localStorage.getItem("cengfan-map-studio:draft")).not.toBeNull();
+  });
+
+  it("synchronously mirrors pending edits to localStorage on page hide (I-7-01)", async () => {
+    const container = mountApp(sample.id);
+    await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
+
+    await openPeopleDataAwaiting(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "刷新前的林舟");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+    closeGlobalSettings(container);
+    await vi.waitFor(() => expect(container.querySelector('[data-sync-status="pending"]')).not.toBeNull());
+
+    window.dispatchEvent(new Event("pagehide"));
+
+    // 镜像必须在 pagehide 处理器里同步写完（刷新不会等异步保存）。
+    const mirror = readProjectDraftMirror(window.localStorage, sample.id);
+    expect(mirror).not.toBeNull();
+    expect(mirror!.project.students.some((student) => student.name === "刷新前的林舟")).toBe(true);
+  });
+
+  it("restores an unexpired draft mirror that is newer than the stored record (I-7-01)", async () => {
+    const draftProject = {
+      ...sample.pack.project,
+      students: sample.pack.project.students.map((student, index) =>
+        index === 0 ? { ...student, name: "镜像里的新学生" } : student),
+    };
+    const newerThanRecord = new Date(Date.parse(sample.updatedAt) + 60_000).toISOString();
+    writeProjectDraftMirror(window.localStorage, sample.id, draftProject, newerThanRecord);
+
+    const container = mountApp(sample.id);
+
+    await vi.waitFor(() => expect(container.textContent).toContain("恢复了刷新前未保存的修改"));
+    expect(container.textContent).toContain("镜像里的新学生");
+    // 恢复的内容处于未保存状态，随后由防抖自动保存写回项目记录并清掉镜像。
+    await vi.waitFor(async () => {
+      const record = await editorProjectStore.get(sample.id);
+      expect(record?.pack.project.students.some((student) => student.name === "镜像里的新学生")).toBe(true);
+    }, { timeout: 5000 });
+    expect(window.localStorage.getItem(projectDraftMirrorKey(sample.id))).toBeNull();
+  });
+
+  it("ignores a draft mirror that is older than the stored record (I-7-01)", async () => {
+    const draftProject = {
+      ...sample.pack.project,
+      students: sample.pack.project.students.map((student, index) =>
+        index === 0 ? { ...student, name: "过时镜像学生" } : student),
+    };
+    const olderThanRecord = new Date(Date.parse(sample.updatedAt) - 60_000).toISOString();
+    writeProjectDraftMirror(window.localStorage, sample.id, draftProject, olderThanRecord);
+
+    const container = mountApp(sample.id);
+
+    await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
+    expect(container.textContent).not.toContain("过时镜像学生");
+    expect(container.textContent).not.toContain("恢复了刷新前未保存的修改");
+  });
+
+  it("debounce-autosaves pending edits to the project record without manual save (I-7-01)", async () => {
+    const container = mountApp(sample.id);
+    await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
+
+    await openPeopleDataAwaiting(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "自动保存林舟");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+    closeGlobalSettings(container);
+    await vi.waitFor(() => expect(container.querySelector('[data-sync-status="pending"]')).not.toBeNull());
+
+    // 不点保存、不触发 pagehide：防抖计时（2s）后应自动写入 IndexedDB 记录。
+    await vi.waitFor(async () => {
+      const record = await editorProjectStore.get(sample.id);
+      expect(record?.pack.project.students.some((student) => student.name === "自动保存林舟")).toBe(true);
+    }, { timeout: 5000, interval: 200 });
+    await vi.waitFor(() => expect(container.querySelector('[data-sync-status="saved"]')).not.toBeNull());
   });
 
   it("does not write when nothing is pending on page hide", async () => {

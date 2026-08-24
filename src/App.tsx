@@ -33,10 +33,12 @@ import {
   DRAFT_SAVED_AT_KEY,
   RENDER_SETTINGS_KEY,
   COLLABORATION_SEND_DELAY_MS,
+  PROJECT_AUTOSAVE_DEBOUNCE_MS,
   provinceNames,
   dataViews,
   type ActivePanel,
 } from "./lib/app-constants";
+import { clearProjectDraftMirror, readProjectDraftMirror, writeProjectDraftMirror } from "./lib/project-draft-mirror";
 import {
   buildProvinceSummary,
   type DataViewId,
@@ -274,6 +276,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
       } catch {
         // The complete mirror or IndexedDB copy can still preserve the workspace.
       }
+      // 项目模式：先同步写每项目草稿镜像，异步 put 被刷新打断时下次加载可恢复。
+      if (projectIdRef.current) {
+        writeProjectDraftMirror(localStorage, projectIdRef.current, pack.project, pack.exportedAt);
+      }
       const result = await saveBrowserWorkspaceSnapshot(pack, browserStores);
       if (result.durable === "failed" && result.mirror === "failed") {
         projectRecordSaveErrorRef.current = null; // put 分支不会执行,清空旧错误,避免 overwriteBrowserStorage 误报"本地已保存"
@@ -289,6 +295,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
             pack,
           });
           projectRecordSaveErrorRef.current = null;
+          // 项目记录已持久化，镜像完成使命；保留会让下次加载误判有未保存草稿。
+          clearProjectDraftMirror(localStorage, projectIdRef.current);
         } catch (error) {
           projectRecordSaveErrorRef.current = error instanceof Error ? error.message : String(error);
           throw new Error("项目记录写入失败", { cause: error });
@@ -542,18 +550,23 @@ function StudioApp({ projectId }: { projectId?: string }) {
         return;
       }
       const restored = restoreProjectPackage(record.pack);
+      // 刷新可能打断异步落盘：若本地草稿镜像比 IndexedDB 记录新且未过期，
+      // 优先恢复镜像里的项目文档（素材/字体等仍取自记录）。
+      const draftMirror = readProjectDraftMirror(window.localStorage, projectId, { newerThan: record.updatedAt });
       projectNameRef.current = record.name;
       setProjectName(record.name);
       projectCreatedAtRef.current = record.createdAt;
       workspaceHydratedRef.current = true;
-      skipNextWorkspacePendingRef.current = true;
-      setProject(restored.project);
+      // 恢复了草稿镜像时保留“未保存”状态，让防抖自动保存把它写回项目记录。
+      skipNextWorkspacePendingRef.current = !draftMirror;
+      if (draftMirror) hasLocalWorkspaceEditsRef.current = true;
+      setProject(draftMirror ? draftMirror.project : restored.project);
       setUserAssets(restored.assets);
       setUserFonts(restored.fonts);
       setCustomTemplates(restored.customTemplates);
       setRenderSettings(restored.renderSettings);
       setPreviewCommands([]);
-      setStatusMessage(`已打开项目「${record.name}」`);
+      setStatusMessage(draftMirror ? `已打开项目「${record.name}」，并恢复了刷新前未保存的修改` : `已打开项目「${record.name}」`);
     }).catch(() => {
       if (cancelled) return;
       setProjectMissing(true);
@@ -825,14 +838,27 @@ function StudioApp({ projectId }: { projectId?: string }) {
     window.location.hash = "#/";
   };
 
-  // 仅项目模式注册:visibilitychange/pagehide 时若存在未保存编辑,尽力保存到
-  // 本地草稿镜像(localStorage,同步落盘)+ IndexedDB 项目记录。
+  // 仅项目模式：有未保存编辑（pending）时防抖自动落盘到 IndexedDB，
+  // 不再依赖用户手动保存或离开页面事件。每次新编辑都会重置计时器。
+  useEffect(() => {
+    if (!projectId || projectLoading || projectMissing) return;
+    if (syncState.status !== "pending") return;
+    const timer = window.setTimeout(() => {
+      void saveWorkspaceNowRef.current();
+    }, PROJECT_AUTOSAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [projectId, projectLoading, projectMissing, syncState]);
+
+  // 仅项目模式注册:visibilitychange/pagehide 时若存在未保存编辑,先同步写
+  // 每项目草稿镜像(localStorage,刷新也来得及),再尽力异步保存 IndexedDB 项目记录。
   useEffect(() => {
     if (!projectId) return;
     const handlePageLeave = () => {
       if (!projectIdRef.current || projectLifecycleRef.current.loading || projectLifecycleRef.current.missing || backNavigatingRef.current) return;
       const state = workspaceSync.getState();
       if (state.status === "pending" || hasLocalWorkspaceEditsRef.current) {
+        // 异步 overwrite 已有保存在途时不会同步执行；镜像必须在这里同步落盘。
+        writeProjectDraftMirror(window.localStorage, projectIdRef.current, latestWorkspaceRef.current.project);
         void saveWorkspaceNowRef.current();
       }
     };

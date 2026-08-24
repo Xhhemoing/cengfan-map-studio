@@ -316,6 +316,35 @@ describe("unified application server", () => {
     await expect(allowed.json()).resolves.toMatchObject({ snapshot: { title: "private" }, role: "owner" });
   });
 
+  it("does not leak the creator's access token to other room members via GET room", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "token-scope" }, "owner");
+    const invitation = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ role: "editor" }),
+    }).then((response) => response.json()) as { token: string };
+    const joined = await fetch(`${origin}/api/rooms/${created.room.id}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken: invitation.token, clientId: "member-b", displayName: "成员B" }),
+    }).then((response) => response.json()) as { access: { accessToken: string } };
+
+    const viewed = await fetch(`${origin}/api/rooms/${created.room.id}`, {
+      headers: roomHeaders(joined.access.accessToken),
+    });
+    expect(viewed.status).toBe(200);
+    const body = await viewed.json() as { participants: Array<Record<string, unknown>> };
+    expect(body.participants.map((participant) => participant.id).sort()).toEqual(["member-b", "owner"]);
+    for (const participant of body.participants) {
+      expect(participant).not.toHaveProperty("accessToken");
+      expect(participant).not.toHaveProperty("participantId");
+    }
+    expect(JSON.stringify(body)).not.toContain(created.access.accessToken);
+  });
+
   it("rejects a replayed budget receipt while allowing only one concurrent continuation", async () => {
     const server = createAiServer({ budgetReceiptSecret: "receipt-replay-secret", agentConfig: { apiKey: undefined, baseUrl: "https://llm.example/v1", model: "test-model", timeoutMs: 1000, maxTokens: 4000 } });
     servers.push(server);

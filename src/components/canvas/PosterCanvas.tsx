@@ -1357,7 +1357,14 @@ export function PosterCanvas({
       role="img"
       aria-label="毕业去向蹭饭图编辑画布"
       onClick={(event) => {
-        if (!exportMode && event.target === event.currentTarget) onSelect?.({ type: "canvas" });
+        if (exportMode) return;
+        // 全画布背景 rect/背景图覆盖了 svg 本身，点空白时 target 永远不是
+        // currentTarget；把背景元素也视为“画布空白”，否则画布永远选不中。
+        const target = event.target as Element;
+        const isCanvasBlank = target === event.currentTarget
+          || target.hasAttribute?.("data-canvas-background")
+          || target.hasAttribute?.("data-background-image");
+        if (isCanvasBlank) onSelect?.({ type: "canvas" });
       }}
     >
       {userFonts.length > 0 && (

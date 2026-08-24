@@ -103,6 +103,8 @@ export function DataWorkspace({
   const [reviewRows, setReviewRows] = useState<ImportReviewRow[]>([]);
   const [excelRecognition, setExcelRecognition] = useState<Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> | null>(null);
   const [message, setMessage] = useState("");
+  // 新增学生校验失败的就近提示：.data-message 在页面底部，表单处必须自己可见。
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [unparsedLines, setUnparsedLines] = useState<UnparsedLine[]>([]);
 
@@ -190,7 +192,9 @@ export function DataWorkspace({
       },
     ]);
     if (result.students.length === 0) {
-      setMessage(result.issues[0]?.message || "请填写学生姓名、就读院校和城市");
+      const reason = result.issues[0]?.message || "请填写学生姓名、就读院校和城市";
+      setDraftError(reason);
+      setMessage(reason);
       return;
     }
     onAppendStudents(result.students.map((student) => ({
@@ -198,6 +202,7 @@ export function DataWorkspace({
       province: draft.locationScope === "international" ? undefined : draft.province?.trim() || undefined,
     })));
     setDraft(createEmptyStudentDraft());
+    setDraftError(null);
     setMessage("已新增 1 名学生");
   };
 
@@ -456,6 +461,7 @@ export function DataWorkspace({
               />
             </label>
           )}
+          {draftError && <p className="draft-form__error" role="alert">{draftError}</p>}
           <ActionButton onClick={addDraftStudent}>
             <Plus size={16} /> 新增学生
           </ActionButton>

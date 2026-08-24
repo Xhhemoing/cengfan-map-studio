@@ -203,6 +203,31 @@ describe("collaboration room store", () => {
     expect(() => store.createInvitation("ACCESS1", editor.access.accessToken, "viewer")).toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
   });
 
+  it("never exposes access tokens through the participant list", () => {
+    const secrets = ["owner-access", "editor-invite", "editor-access"];
+    const store = createRoomStore({ generateId: () => "LEAK01", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const invitation = store.createInvitation("LEAK01", owner.access.accessToken, "editor");
+    const editor = store.join("LEAK01", { inviteToken: invitation.token, clientId: "editor", displayName: "编辑同学" });
+
+    // B（编辑者）用自己的令牌读取参与者列表，不得看到任何人的 accessToken。
+    const participants = store.listParticipants("LEAK01", editor.access.accessToken);
+    expect(participants.map((participant) => participant.id).sort()).toEqual(["editor", "owner"]);
+    for (const participant of participants) {
+      expect(participant).toEqual({
+        id: participant.id,
+        displayName: participant.displayName,
+        role: participant.role,
+      });
+      expect("accessToken" in participant).toBe(false);
+      expect("participantId" in participant).toBe(false);
+    }
+
+    // authorize 返回的参与者投影同样不携带令牌。
+    const authorized = store.authorize("LEAK01", owner.access.accessToken, "read");
+    expect("accessToken" in authorized).toBe(false);
+  });
+
   it("consumes invitations once and rejects expired invitations", () => {
     let now = 1_000;
     const secrets = ["owner-access", "invite-once", "member-access", "invite-expired"];

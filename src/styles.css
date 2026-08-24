@@ -410,6 +410,8 @@ button { font: inherit; }
 .data-workspace .draft-form,
 .data-workspace .import-box,
 .data-workspace .import-review { display: grid; gap: 8px; padding: 10px; background: #fff; border: 1px solid #dfe5e8; border-radius: 6px; }
+/* 新增学生校验失败的就近提示：紧贴表单按钮，替代只出现在底部的 .data-message。 */
+.draft-form__error { margin: 0; padding: 7px 9px; color: #98503e; background: #fdf3ef; border: 1px solid #e9c9bd; border-radius: 4px; font-size: 11px; }
 /* 缺必填字段/无法识别的导入行明细：让用户看见被丢掉的行与原因。 */
 .data-workspace .import-unparsed { display: grid; gap: 6px; padding: 10px; background: #fdf3ef; border: 1px solid #e9c9bd; border-radius: 6px; }
 .data-workspace .import-unparsed .panel-heading { margin: 0; }
@@ -1469,6 +1471,23 @@ button { font: inherit; }
 .app-shell[data-editor-theme="dark"] .global-settings-nav button { color: var(--editor-ink-muted); }
 .app-shell[data-editor-theme="dark"] .global-settings-nav button.is-active,
 .app-shell[data-editor-theme="dark"] .global-settings-nav button:hover { color: var(--editor-accent); background: var(--editor-surface-raised); border-color: #4d746f; }
+/* I-7-04：浅色硬编码的折叠标题（#245d57/#40586b）与素材 label（#4d6072）在暗色
+ * 背景上对比度不足，统一改用主题变量（亮青强调 / 亮墨色），保证 ≥4.5:1。 */
+.app-shell[data-editor-theme="dark"] :is(
+  .property-panel__advanced summary,
+  .inspector-global-typography summary,
+  .asset-panel__advanced > summary,
+  .province-inspector__advanced > summary,
+  .workflow-save-template
+) { color: var(--editor-accent); }
+.app-shell[data-editor-theme="dark"] .property-panel__advanced-title { color: var(--editor-accent); background: var(--editor-accent-soft); border-color: #4d746f; }
+.app-shell[data-editor-theme="dark"] .property-panel__advanced-title small { color: var(--editor-ink-muted); }
+.app-shell[data-editor-theme="dark"] :is(
+  .asset-panel > label,
+  .asset-province-picker label,
+  .asset-section label
+) { color: var(--editor-ink); }
+.app-shell[data-editor-theme="dark"] .draft-form__error { color: var(--editor-danger); background: #3a2620; border-color: #6d4437; }
 
 /* Keep controls that are introduced by feature panels on the same semantic
  * surface as the shell. Poster SVG colors intentionally stay outside this
