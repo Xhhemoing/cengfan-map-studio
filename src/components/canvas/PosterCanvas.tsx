@@ -977,9 +977,17 @@ export function PosterCanvas({
               onPointerUp={!exportMode && onMoveGuests ? (event) => {
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
                 const drag = guestDrag.current;
-                if (drag) onMoveGuests(drag.x, drag.y);
-                guestDrag.current = null;
+                // 与数据卡同一套零位移守卫:单击选中不写 guests.x/y,避免空事务触发保存;
+                // 面板初始坐标可能是小数,提交值取整,因此位移判定也按取整后的像素比较。
+                const moved = drag !== null
+                  && (Math.round(drag.x) !== Math.round(drag.originalX) || Math.round(drag.y) !== Math.round(drag.originalY));
+                if (drag && moved) {
+                  onMoveGuests(drag.x, drag.y);
+                } else if (drag) {
+                  updateGuestPreview({ x: drag.originalX, y: drag.originalY });
+                }
                 clearGuestPreview();
+                guestDrag.current = null;
               } : undefined}
               onPointerCancel={!exportMode && onMoveGuests ? () => {
                 const drag = guestDrag.current;

@@ -908,6 +908,80 @@ describe("PosterCanvas", () => {
     container.remove();
   });
 
+  it("reports a dragged guest panel position", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const onMoveGuests = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveGuests={onMoveGuests} />));
+
+    const panel = container.querySelector<SVGGElement>("[data-guests-layer]")!;
+    Object.assign(panel, { setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() });
+    flushSync(() => panel.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 800, pointerId: 1 })));
+    flushSync(() => panel.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 200, clientY: 830, pointerId: 1 })));
+
+    expect(onMoveGuests).not.toHaveBeenCalled();
+    flushSync(() => panel.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 200, clientY: 830, pointerId: 1 })));
+    // 指针位移 (100, 30),面板起点 (48, 780),偏移量抵消后落在 (148, 810)。
+    expect(onMoveGuests).toHaveBeenCalledTimes(1);
+    expect(onMoveGuests).toHaveBeenCalledWith(148, 810);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("treats a zero-distance guest panel click as selection only, without writing a position", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const onMoveGuests = vi.fn();
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveGuests={onMoveGuests} onSelect={onSelect} />));
+
+    const panel = container.querySelector<SVGGElement>("[data-guests-layer]")!;
+    const before = panel.getAttribute("transform");
+    Object.assign(panel, { setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() });
+
+    flushSync(() => panel.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 800, pointerId: 1 })));
+    flushSync(() => panel.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 100, clientY: 800, pointerId: 1 })));
+    flushSync(() => panel.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(onMoveGuests).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledWith({ type: "guests" });
+    expect(panel.getAttribute("transform")).toBe(before);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("restores the guest panel preview when a drag returns to its starting position", () => {
+    vi.useFakeTimers();
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const onMoveGuests = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveGuests={onMoveGuests} renderIntervalMs={100} />));
+
+    const panel = container.querySelector<SVGGElement>("[data-guests-layer]")!;
+    const before = panel.getAttribute("transform");
+    Object.assign(panel, { setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() });
+
+    flushSync(() => panel.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 100, clientY: 800, pointerId: 1 })));
+    flushSync(() => panel.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 220, clientY: 850, pointerId: 1 })));
+    flushSync(() => vi.advanceTimersByTime(100));
+    expect(panel.getAttribute("transform")).not.toBe(before);
+
+    flushSync(() => panel.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 100, clientY: 800, pointerId: 1 })));
+    flushSync(() => panel.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 100, clientY: 800, pointerId: 1 })));
+
+    expect(onMoveGuests).not.toHaveBeenCalled();
+    expect(panel.getAttribute("transform")).toBe(before);
+
+    flushSync(() => root.unmount());
+    container.remove();
+    vi.useRealTimers();
+  });
+
   it("exposes every destination card to the keyboard with a Chinese label, Enter selection, and arrow-key stepping", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, allowMapOverlap: true, positions: { 北京市: { x: 600, y: 400 } } };
