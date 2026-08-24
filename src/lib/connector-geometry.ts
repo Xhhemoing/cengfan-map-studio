@@ -108,7 +108,11 @@ function cubicPoint(start: Point, first: Point, second: Point, end: Point, t: nu
 }
 
 function pointsToSegments(points: Point[]): ConnectorSegment[] {
-  return points.slice(1).map((point, index) => ({ start: points[index]!, end: point }));
+  const segments: ConnectorSegment[] = [];
+  for (let index = 1; index < points.length; index += 1) {
+    segments.push({ start: points[index - 1]!, end: points[index]! });
+  }
+  return segments;
 }
 
 export function buildConnectorGeometry({ card, anchor, style, preferredSide }: {
@@ -150,91 +154,139 @@ export function buildConnectorGeometry({ card, anchor, style, preferredSide }: {
   };
 }
 
-function orientation(first: Point, second: Point, third: Point): number {
-  return (second.x - first.x) * (third.y - first.y) - (second.y - first.y) * (third.x - first.x);
+/*
+ * The predicates below run inside the layout solver's O(n²·s²) connector
+ * scoring, so they are written on raw coordinates: no temporary points, rects
+ * or edge objects are allocated per test, and every pair is rejected by a
+ * scalar bounding-box compare before any orientation arithmetic runs.
+ */
+
+function orientationOf(
+  ax: number, ay: number,
+  bx: number, by: number,
+  cx: number, cy: number,
+): number {
+  return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
 }
 
-function pointOnSegment(point: Point, segment: ConnectorSegment): boolean {
-  return Math.abs(orientation(segment.start, segment.end, point)) <= EPSILON
-    && point.x >= Math.min(segment.start.x, segment.end.x) - EPSILON
-    && point.x <= Math.max(segment.start.x, segment.end.x) + EPSILON
-    && point.y >= Math.min(segment.start.y, segment.end.y) - EPSILON
-    && point.y <= Math.max(segment.start.y, segment.end.y) + EPSILON;
+function pointTouchesSegment(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+): boolean {
+  if (Math.abs(orientationOf(ax, ay, bx, by, px, py)) > EPSILON) return false;
+  return px >= Math.min(ax, bx) - EPSILON
+    && px <= Math.max(ax, bx) + EPSILON
+    && py >= Math.min(ay, by) - EPSILON
+    && py <= Math.max(ay, by) + EPSILON;
 }
 
-function segmentsIntersect(left: ConnectorSegment, right: ConnectorSegment): boolean {
-  const a = orientation(left.start, left.end, right.start);
-  const b = orientation(left.start, left.end, right.end);
-  const c = orientation(right.start, right.end, left.start);
-  const d = orientation(right.start, right.end, left.end);
+/** Shared by connector-vs-connector and connector-vs-rectangle tests. */
+export function segmentsCross(
+  ax: number, ay: number,
+  bx: number, by: number,
+  cx: number, cy: number,
+  dx: number, dy: number,
+): boolean {
+  const a = orientationOf(ax, ay, bx, by, cx, cy);
+  const b = orientationOf(ax, ay, bx, by, dx, dy);
+  const c = orientationOf(cx, cy, dx, dy, ax, ay);
+  const d = orientationOf(cx, cy, dx, dy, bx, by);
   if (((a > EPSILON && b < -EPSILON) || (a < -EPSILON && b > EPSILON))
     && ((c > EPSILON && d < -EPSILON) || (c < -EPSILON && d > EPSILON))) return true;
-  return pointOnSegment(right.start, left)
-    || pointOnSegment(right.end, left)
-    || pointOnSegment(left.start, right)
-    || pointOnSegment(left.end, right);
+  return pointTouchesSegment(cx, cy, ax, ay, bx, by)
+    || pointTouchesSegment(dx, dy, ax, ay, bx, by)
+    || pointTouchesSegment(ax, ay, cx, cy, dx, dy)
+    || pointTouchesSegment(bx, by, cx, cy, dx, dy);
 }
 
-function pointSegmentDistance(point: Point, segment: ConnectorSegment): number {
-  const dx = segment.end.x - segment.start.x;
-  const dy = segment.end.y - segment.start.y;
+function pointSegmentDistance(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
   const lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared <= EPSILON) return Math.sqrt(distanceSquared(point, segment.start));
-  const t = Math.max(0, Math.min(1, ((point.x - segment.start.x) * dx + (point.y - segment.start.y) * dy) / lengthSquared));
-  return Math.hypot(point.x - (segment.start.x + t * dx), point.y - (segment.start.y + t * dy));
+  if (lengthSquared <= EPSILON) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
-function segmentDistance(left: ConnectorSegment, right: ConnectorSegment): number {
-  if (segmentsIntersect(left, right)) return 0;
+function segmentDistance(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number,
+): number {
+  if (segmentsCross(ax, ay, bx, by, cx, cy, dx, dy)) return 0;
   return Math.min(
-    pointSegmentDistance(left.start, right),
-    pointSegmentDistance(left.end, right),
-    pointSegmentDistance(right.start, left),
-    pointSegmentDistance(right.end, left),
+    pointSegmentDistance(ax, ay, cx, cy, dx, dy),
+    pointSegmentDistance(bx, by, cx, cy, dx, dy),
+    pointSegmentDistance(cx, cy, ax, ay, bx, by),
+    pointSegmentDistance(dx, dy, ax, ay, bx, by),
   );
 }
 
 export function connectorGeometriesIntersect(left: ConnectorGeometry, right: ConnectorGeometry, clearance = 0): boolean {
-  const leftTail = left.segments[left.segments.length - 1];
-  const rightTail = right.segments[right.segments.length - 1];
+  const leftSegments = left.segments;
+  const rightSegments = right.segments;
+  if (leftSegments.length === 0 || rightSegments.length === 0) return false;
+  const leftTail = leftSegments[leftSegments.length - 1]!;
+  const rightTail = rightSegments[rightSegments.length - 1]!;
   // 两条连接线共享地理锚点（anchor 端重合）时，它们在锚点附近的会合区不算交叉；
   // 同锚点多卡片呈「花束」状散开，只有远离锚点的中段真正相交才算。
-  const sharedAnchor = Boolean(leftTail && rightTail)
-    && distanceSquared(leftTail!.end, rightTail!.end) <= (clearance + EPSILON) ** 2;
+  const sharedAnchor = distanceSquared(leftTail.end, rightTail.end) <= (clearance + EPSILON) ** 2;
   // 豁免半径需覆盖曲线采样的最长尾段（curve 用 16 段折线，锚点距离可达 ~24px）；
   // 同时豁免段必须是「整段都落在锚点半径内」的尾段——一段从远处穿入锚点区
   // （start 远离锚点）仍可能穿过另一条线的中段，不能豁免。
   const anchorRadius = Math.max(clearance * 4, 10, 24);
+  const anchorRadiusSquared = anchorRadius * anchorRadius;
   const nearAnchorEnd = (segment: ConnectorSegment, tail: ConnectorSegment) =>
-    distanceSquared(segment.end, tail.end) <= anchorRadius * anchorRadius
-    && distanceSquared(segment.start, tail.end) <= anchorRadius * anchorRadius;
-  return left.segments.some((first) => right.segments.some((second) => {
-    if (sharedAnchor && leftTail && rightTail
-      && nearAnchorEnd(first, leftTail) && nearAnchorEnd(second, rightTail)) return false;
-    return segmentDistance(first, second) <= clearance + EPSILON;
-  }));
+    distanceSquared(segment.end, tail.end) <= anchorRadiusSquared
+    && distanceSquared(segment.start, tail.end) <= anchorRadiusSquared;
+
+  const reach = clearance + EPSILON;
+  for (const first of leftSegments) {
+    const firstMinX = Math.min(first.start.x, first.end.x) - reach;
+    const firstMaxX = Math.max(first.start.x, first.end.x) + reach;
+    const firstMinY = Math.min(first.start.y, first.end.y) - reach;
+    const firstMaxY = Math.max(first.start.y, first.end.y) + reach;
+    const firstExempt = sharedAnchor && nearAnchorEnd(first, leftTail);
+    for (const second of rightSegments) {
+      // Broad phase: segments whose inflated boxes are disjoint are farther
+      // apart than `clearance`, so the exact distance test cannot succeed.
+      if (Math.max(second.start.x, second.end.x) < firstMinX
+        || Math.min(second.start.x, second.end.x) > firstMaxX
+        || Math.max(second.start.y, second.end.y) < firstMinY
+        || Math.min(second.start.y, second.end.y) > firstMaxY) continue;
+      if (firstExempt && nearAnchorEnd(second, rightTail)) continue;
+      if (segmentDistance(
+        first.start.x, first.start.y, first.end.x, first.end.y,
+        second.start.x, second.start.y, second.end.x, second.end.y,
+      ) <= reach) return true;
+    }
+  }
+  return false;
 }
 
 export function segmentIntersectsRect(segment: ConnectorSegment, rect: Rect, clearance = 0): boolean {
-  const expanded = {
-    x: rect.x - clearance,
-    y: rect.y - clearance,
-    width: rect.width + clearance * 2,
-    height: rect.height + clearance * 2,
-  };
-  const contains = (point: Point) => point.x >= expanded.x - EPSILON
-    && point.x <= expanded.x + expanded.width + EPSILON
-    && point.y >= expanded.y - EPSILON
-    && point.y <= expanded.y + expanded.height + EPSILON;
-  if (contains(segment.start) || contains(segment.end)) return true;
-  const topLeft = { x: expanded.x, y: expanded.y };
-  const topRight = { x: expanded.x + expanded.width, y: expanded.y };
-  const bottomRight = { x: expanded.x + expanded.width, y: expanded.y + expanded.height };
-  const bottomLeft = { x: expanded.x, y: expanded.y + expanded.height };
-  return [
-    { start: topLeft, end: topRight },
-    { start: topRight, end: bottomRight },
-    { start: bottomRight, end: bottomLeft },
-    { start: bottomLeft, end: topLeft },
-  ].some((edge) => segmentsIntersect(segment, edge));
+  const minX = rect.x - clearance;
+  const minY = rect.y - clearance;
+  const maxX = rect.x + rect.width + clearance;
+  const maxY = rect.y + rect.height + clearance;
+  const ax = segment.start.x;
+  const ay = segment.start.y;
+  const bx = segment.end.x;
+  const by = segment.end.y;
+  // Broad phase: a segment whose box misses the expanded rectangle can neither
+  // be contained by it nor cross one of its edges.
+  if (Math.max(ax, bx) < minX - EPSILON
+    || Math.min(ax, bx) > maxX + EPSILON
+    || Math.max(ay, by) < minY - EPSILON
+    || Math.min(ay, by) > maxY + EPSILON) return false;
+  if (ax >= minX - EPSILON && ax <= maxX + EPSILON && ay >= minY - EPSILON && ay <= maxY + EPSILON) return true;
+  if (bx >= minX - EPSILON && bx <= maxX + EPSILON && by >= minY - EPSILON && by <= maxY + EPSILON) return true;
+  return segmentsCross(ax, ay, bx, by, minX, minY, maxX, minY)
+    || segmentsCross(ax, ay, bx, by, maxX, minY, maxX, maxY)
+    || segmentsCross(ax, ay, bx, by, maxX, maxY, minX, maxY)
+    || segmentsCross(ax, ay, bx, by, minX, maxY, minX, minY);
 }
