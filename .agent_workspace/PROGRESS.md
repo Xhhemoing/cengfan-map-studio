@@ -9,8 +9,30 @@
 | 轮次 | 主题 | 状态 |
 |------|------|------|
 | Round 1 | 初始调研与基线探索 | completed |
-| Round 2 | 靶向深化与优先级收敛 | pending |
-| Round 3 | SOTA 打磨与可合入落地 | pending |
+| Round 2 | 靶向深化与优先级收敛 | completed |
+| Round 3 | SOTA 打磨与可合入落地 | in_progress |
+
+## Round 3 子代理
+
+| ID | 模型 | 主攻 | 文件所有权 |
+|----|------|------|------------|
+| R3-F1 | claude-fable-5-thinking-xhigh | E 协作昵称+角色标签 | identity lib / ProjectMenu，禁 App.tsx |
+| R3-F2 | claude-fable-5-thinking-xhigh | G CHANGELOG+致谢+存活合规 | 纯文档新增/案例模板/USER_GUIDE |
+| R3-O1 | claude-opus-5-thinking-high-fast | B 社区模板交换格式 | template-package + TemplateExchange，禁 App.tsx |
+| R3-O2 | claude-opus-5-thinking-high-fast | A 提意见入口 + D 恢复模板下载 | HelpFeedbackMenu + hideTemplateDownload |
+| R3-G1 | gpt-5.6-sol-xhigh-fast | F 导出文件名 | export-filename + usePosterExport |
+| R3-G2 | gpt-5.6-sol-xhigh-fast | H 工作台重载示例 | ProjectGrid 空态按钮 |
+
+## Round 2 子代理
+
+| ID | 模型 | 主攻 | 产出文件 |
+|----|------|------|----------|
+| R2-F1 | claude-fable-5-thinking-xhigh | 候选包 A–H 交叉审计与冲突分析 | `round2/fable-1-plan-audit.md` |
+| R2-F2 | claude-fable-5-thinking-xhigh | SOTA 验收规格与回滚方案 | `round2/fable-2-acceptance.md` |
+| R2-O1 | claude-opus-5-thinking-high-fast | A/B/E 文件级设计（反馈、模板格式、协作昵称） | `round2/opus-1-community-spec.md` |
+| R2-O2 | claude-opus-5-thinking-high-fast | D/F/H 文件级设计（导入、导出、空态） | `round2/opus-2-editor-spec.md` |
+| R2-G1 | gpt-5.6-sol-xhigh-fast | 失败测试/探针骨架与基线命令 | `round2/gpt-1-test-plan.md` |
+| R2-G2 | gpt-5.6-sol-xhigh-fast | 合规残留扫描 + 边界复检 | `round2/gpt-2-compliance.md` |
 
 ## Round 1 子代理
 
@@ -26,5 +48,5 @@
 ## 结论简报
 
 - Round 1：见 `ROUND1-BRIEF.md`（文档层完整、产品层无钩子；Round 3 候选 A–H）
-- Round 2：待汇总
+- Round 2：见 `ROUND2-BRIEF.md`（keep A/B/E/G，slim D/F/H，drop C；#8/#11 为冲突约束）
 - Round 3：待汇总
