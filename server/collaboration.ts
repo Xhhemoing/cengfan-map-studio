@@ -661,9 +661,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     })),
   });
 
-  const flush = (): Promise<void> => {
+  const flush = async (): Promise<void> => {
     purgeExpired();
-    if (!persist) return Promise.resolve();
+    if (!persist) return;
     const persistedMutationVersion = mutationVersion;
     const persistedSnapshot = snapshot();
     const operation = persistQueue.catch(() => undefined).then(async () => {
@@ -671,7 +671,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       persistedVersion = Math.max(persistedVersion, persistedMutationVersion);
     });
     persistQueue = operation;
-    return operation;
+    await operation;
   };
 
   const persistIntervalMs = options.persistIntervalMs ?? DEFAULT_PERSIST_INTERVAL_MS;
