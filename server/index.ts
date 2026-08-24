@@ -517,16 +517,32 @@ export function createAiServer(options: AiServerOptions = {}) {
     }
   }
   /**
-   * 房间是否在上一次成功落盘里被完整写下。落盘按固定间隔进行，因此这个判断最多滞后一个
-   * 持久化周期：还没落过盘的新房间一律报 true，被跳过或被裁掉历史的房间报 false。
+   * 房间在上一次成功落盘里的处置结果。落盘按固定间隔进行，因此这个判断最多滞后一个
+   * 持久化周期：还没落过盘的新房间一律报 persisted。
+   *
+   * 三态而非布尔，是因为两种降级的后果不同：skipped 的房间重启后不会被恢复；trimmed 的
+   * 房间连快照带版本都还在，只是历史被裁掉，落后的客户端必须重新取一份快照。
+   * `at` 是最近一次**成功**落盘的时刻；房间存储用 0 表示从未成功落过盘，那不是 1970 年，
+   * 所以这里报 null。存储替身没有 lastPersistOutcome() 时同样没有结论可报，按 persisted + null 处理。
    */
-  const persistedAtLastFlush = (roomId: string): boolean => {
-    const outcome = roomStore.lastPersistOutcome?.();
-    if (!outcome) return true;
+  const roomPersistence = (roomId: string): { outcome: "persisted" | "trimmed" | "skipped"; at: number | null } => {
+    const lastFlush = roomStore.lastPersistOutcome?.();
+    if (!lastFlush) return { outcome: "persisted", at: null };
     // 房间存储把 id 统一成大写，外部传进来的路径参数不一定是。
     const target = roomId.toUpperCase();
-    const degraded = (ids: readonly string[] | undefined) => (ids ?? []).some((id) => id.toUpperCase() === target);
-    return !degraded(outcome.skippedIds) && !degraded(outcome.trimmedIds);
+    const listed = (ids: readonly string[] | undefined) => (ids ?? []).some((id) => id.toUpperCase() === target);
+    const at = typeof lastFlush.at === "number" && lastFlush.at > 0 ? lastFlush.at : null;
+    if (listed(lastFlush.skippedIds)) return { outcome: "skipped", at };
+    if (listed(lastFlush.trimmedIds)) return { outcome: "trimmed", at };
+    return { outcome: "persisted", at };
+  };
+  /**
+   * 创建/加入/快照三个响应共用的落盘字段。`persistedAtLastFlush` 保留给只认布尔的旧客户端：
+   * 被跳过或被裁掉历史的房间同样报 false，两者的区别要看同级的 `persistence.outcome`。
+   */
+  const roomPersistenceFields = (roomId: string) => {
+    const persistence = roomPersistence(roomId);
+    return { persistedAtLastFlush: persistence.outcome === "persisted", persistence };
   };
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
@@ -765,7 +781,7 @@ export function createAiServer(options: AiServerOptions = {}) {
           ...room,
           role: participant.role,
           participants: roomStore.listParticipants(room.id, accessToken),
-          persistedAtLastFlush: persistedAtLastFlush(room.id),
+          ...roomPersistenceFields(room.id),
         };
       };
 
@@ -782,7 +798,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         }
         try {
           const created = roomStore.create(body.snapshot, { clientId: body.clientId, displayName: body.displayName.trim() });
-          send(201, { ...created, persistedAtLastFlush: persistedAtLastFlush(created.room.id) });
+          send(201, { ...created, ...roomPersistenceFields(created.room.id) });
         } catch (error) {
           if (error instanceof CollaborationError) {
             sendRoomError(error);
@@ -848,7 +864,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         }
         try {
           const joined = roomStore.join(joinMatch[1]!, { inviteToken: body.inviteToken, clientId: body.clientId, displayName: body.displayName });
-          send(200, { ...joined, persistedAtLastFlush: persistedAtLastFlush(joined.room.id) });
+          send(200, { ...joined, ...roomPersistenceFields(joined.room.id) });
         } catch (error) {
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;
