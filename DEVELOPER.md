@@ -72,15 +72,15 @@ public/                     # 静态资源（Logo、校徽）
 - 按省份绑定
 - 实时预览
 
-### 4. 协作（src/server/collaboration.ts）
+### 4. 协作（server/collaboration.ts）
 - 创建房间 + 邀请码
 - 实时同步（WebSocket）
 - 权限控制（编辑/查看）
 
-### 5. AI 助手（src/server/ai/）
+### 5. AI 助手（server/ai/）
 - OpenAI 兼容接口
-- 场景化指令白名单
-- 流式响应
+- 场景补丁白名单（`server/ai/patch-validator.ts` / `tool-registry.ts`）
+- 多轮 Agent（非 SSE 流式）
 
 ---
 
@@ -126,9 +126,9 @@ public/                     # 静态资源（Logo、校徽）
 3. 写测试验证边界数据
 
 ### 扩展 AI 指令
-1. 在 `src/server/ai/whitelist.ts` 添加白名单指令
-2. 实现对应的 handler
-3. 写集成测试
+1. 在 `server/ai/tool-registry.ts` 注册工具，可写属性写入 `server/ai/patch-validator.ts` 的 `SCENE_DOMAIN_PROPS`
+2. 在 `src/lib/agent-session.ts` 实现对应执行分支
+3. 写 `server/ai` 与 `src/lib/agent-session` 测试
 
 ---
 
