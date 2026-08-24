@@ -134,6 +134,23 @@ export function createRoomInvitation(
   }));
 }
 
+/**
+ * 心跳/回连注册：把 clientId 写回房间成员列表（不存在则按凭证角色追加，
+ * 已存在则刷新 lastSeenAt）。凭证回连不经过 /join 时靠它恢复「我」的成员项。
+ */
+export function refreshRoomMember(
+  roomId: string,
+  accessToken: string,
+  clientId: string,
+  request: Requester = fetch,
+): Promise<Pick<CollaborationRoom, "id" | "version" | "members">> {
+  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/members`, {
+    method: "POST",
+    headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ clientId }),
+  }));
+}
+
 export function leaveRoom(
   roomId: string,
   accessToken: string,

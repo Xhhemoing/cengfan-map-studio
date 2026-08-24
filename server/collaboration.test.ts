@@ -45,6 +45,29 @@ describe("collaboration room store", () => {
     expect(heartbeat.version).toBe(0);
   });
 
+  it("updates the existing member in place when the same clientId rejoins with a new invitation (I-12-03)", () => {
+    const secrets = ["owner-access", "viewer-invite", "viewer-access", "editor-invite", "editor-access", "owner-invite", "owner-rejoin-access"];
+    const store = createRoomStore({ generateId: () => "REJN01", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const viewerInvite = store.createInvitation("REJN01", owner.access.accessToken, "viewer");
+    store.join("REJN01", { inviteToken: viewerInvite.token, clientId: "guest", displayName: "同学" });
+
+    const editorInvite = store.createInvitation("REJN01", owner.access.accessToken, "editor");
+    const rejoined = store.join("REJN01", { inviteToken: editorInvite.token, clientId: "guest", displayName: "同学" });
+
+    // 同一 clientId 换邀请重进：成员不虚增，角色随新邀请更新。
+    expect(rejoined.room.members.map((member) => ({ clientId: member.clientId, role: member.role }))).toEqual([
+      { clientId: "owner", role: "owner" },
+      { clientId: "guest", role: "editor" },
+    ]);
+
+    // 创建者拿邀请重进也不会被降级或重复。
+    const ownerInvite = store.createInvitation("REJN01", owner.access.accessToken, "viewer");
+    const ownerRejoined = store.join("REJN01", { inviteToken: ownerInvite.token, clientId: "owner", displayName: "创建者" });
+    expect(ownerRejoined.room.members).toHaveLength(2);
+    expect(ownerRejoined.room.members.find((member) => member.clientId === "owner")!.role).toBe("owner");
+  });
+
   it("removes a member on leave and stays idempotent for unknown members", () => {
     const secrets = ["owner-access", "editor-invite", "editor-access"];
     const store = createRoomStore({ generateId: () => "MEM003", generateSecret: () => secrets.shift()! });

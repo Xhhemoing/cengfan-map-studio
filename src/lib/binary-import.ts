@@ -214,9 +214,21 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
 
   const metadata = createMetadata(rows, header);
   if (metadata.missingRequiredFields.length > 0) {
-    // 只把表头之后的内容交给文本回退解析：表头行与其上方的说明行不是学生数据，
-    // 不能变成「姓名｜去向」这类假学生。
-    return { ...parseStudentText(matrixToText(rows.slice(header.rowIndex + 1))), ...metadata };
+    // 表头已识别但缺必填列时绝不能按位置回退解析：那会丢掉已识别的列映射，
+    // 把「浙江大学」这类院校名错位成学生姓名并标成「有效」候选（I-12-01）。
+    // 改为把每个数据行降级成未识别行，并提示补齐缺失列后重新上传。
+    const missingLabels = metadata.missingRequiredFields.map((field) => REQUIRED_FIELD_LABELS[field]);
+    const unparsed: UnparsedLine[] = [];
+    rows.slice(header.rowIndex + 1).forEach((row, rowIndex) => {
+      const rawLine = row.map((cell) => String(cell ?? "").trim()).filter(Boolean).join("\t");
+      if (!rawLine) return;
+      unparsed.push({
+        sourceLine: header.rowIndex + rowIndex + 2,
+        rawLine,
+        reason: `表头缺少必填列：${missingLabels.join("、")}，请补充该列后重新上传`,
+      });
+    });
+    return { candidates: [], unparsed, ...metadata };
   }
 
   const candidates: ExcelImportResult["candidates"] = [];
@@ -259,10 +271,12 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
 }
 
 export function parseOcrLikeText(text: string): TextImportResult {
+  // 保留冒号（I-12-04）：「姓名：李想 学校：同济大学 城市：上海」要走标签解析；
+  // 之前抹掉冒号后整行只剩表头词，被 looksLikeHeader 当表头静默跳过。
+  // 无标签的冒号分隔行由 splitParts 的冒号分隔符兜底，不回归。
   const normalized = text
     .replace(/\u00a0/g, " ")
     .replace(/[|｜]/g, " ")
-    .replace(/[：:]/g, " ")
     .replace(/\s{2,}/g, " ");
   return parseStudentText(normalized);
 }

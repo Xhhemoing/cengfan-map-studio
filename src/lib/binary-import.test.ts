@@ -206,6 +206,48 @@ describe("binary import adapters", () => {
     expect(result.candidates.some((candidate) => candidate.name === "学生姓名" || candidate.name === "填写说明：请勿修改表头")).toBe(false);
   });
 
+  it("downgrades data rows to unparsed instead of positional fake students when the name column is missing (I-12-01)", () => {
+    const result = parseExcelWorkbookRows([
+      ["录取学校", "同学姓名", "所在城市"],
+      ["浙江大学", "张三", "杭州"],
+      ["北京大学", "李四", "北京"],
+    ]);
+
+    expect(result.missingRequiredFields).toEqual(["name"]);
+    // 绝不能丢掉已识别列映射按位置回退，把「浙江大学」错位成学生姓名标「有效」。
+    expect(result.candidates).toEqual([]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: "浙江大学\t张三\t杭州", reason: "表头缺少必填列：学生姓名，请补充该列后重新上传" },
+      { sourceLine: 3, rawLine: "北京大学\t李四\t北京", reason: "表头缺少必填列：学生姓名，请补充该列后重新上传" },
+    ]);
+  });
+
+  it("recognizes labeled OCR lines instead of silently skipping them as headers (I-12-04)", () => {
+    const result = parseOcrLikeText("姓名：李想 学校：同济大学 城市：上海");
+
+    expect(result.candidates).toEqual([
+      { name: "李想", university: "同济大学", city: "上海", sourceLine: 1, rawLine: "姓名：李想 学校：同济大学 城市：上海" },
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("still splits label-free colon separated OCR lines (I-12-04 regression guard)", () => {
+    const result = parseOcrLikeText("李想：同济大学：上海");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "李想", university: "同济大学", city: "上海" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("keeps skipping genuine header-only OCR lines while importing the data rows", () => {
+    const result = parseOcrLikeText("姓名：学校：城市：\n姓名：李想 学校：同济大学 城市：上海");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "李想", university: "同济大学", city: "上海" }),
+    ]);
+  });
+
   it("builds a canonical import template with a separate guide sheet", () => {
     const template = createImportTemplateSheets();
 

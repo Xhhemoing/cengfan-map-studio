@@ -6,6 +6,7 @@ import {
   fetchRoomOperations,
   isOwnRoomAcknowledgement,
   leaveRoom,
+  refreshRoomMember,
   retryInitializingRoom,
   setRoomAccess,
   submitRoomOperations,
@@ -73,6 +74,21 @@ describe("collaboration client", () => {
       operations: [{ type: "set", path: ["project", "map", "scale"], value: 1.2 }],
     });
     expect(String(submittedInit?.body)).not.toContain("snapshot");
+  });
+
+  it("registers the reconnecting client as a room member with the room token (I-12-03)", async () => {
+    let submittedInit: RequestInit | undefined;
+    const request = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      submittedInit = init;
+      return ok({ id: "ABC123", version: 3, members: [{ clientId: "c1", role: "owner", joinedAt: "t0", lastSeenAt: "t1" }] });
+    });
+
+    const result = await refreshRoomMember("abc123", "owner-token", "c1", request);
+
+    expect(request).toHaveBeenCalledWith("/api/rooms/ABC123/members", expect.objectContaining({ method: "POST" }));
+    expect((submittedInit?.headers as Record<string, string>)["X-Cengfan-Room-Token"]).toBe("owner-token");
+    expect(JSON.parse(String(submittedInit?.body))).toEqual({ clientId: "c1" });
+    expect(result.members).toHaveLength(1);
   });
 
   it("recognizes acknowledgements for the client's pending transaction", () => {

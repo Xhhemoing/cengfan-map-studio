@@ -698,6 +698,66 @@ describe("App student editing", () => {
     }
   });
 
+  it("keeps the 我 marker after a credential reconnect and shows distinguishable member names (I-12-02/I-12-03)", async () => {
+    const roomId = "RECON1";
+    const myClientId = "collab-client-me0001";
+    window.localStorage.clear();
+    // 持久化的 clientId 与房间凭证：模拟房主刷新页面后回连。
+    window.localStorage.setItem("cengfan-map-studio:collab-client-id", myClientId);
+    window.localStorage.setItem(`cengfan-map-studio:room-access:${roomId}`, "owner-token");
+    const container = renderApp(false);
+    const originalEventSource = globalThis.EventSource;
+    class QuietEventSource {
+      addEventListener() {}
+      onerror = null;
+      close() {}
+      constructor(public readonly url: string) {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    const remoteProject = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+    const members = [
+      { clientId: myClientId, role: "owner", joinedAt: "t0", lastSeenAt: "t1" },
+      { clientId: "collab-client-77aa99", role: "viewer", joinedAt: "t1", lastSeenAt: "t1" },
+    ];
+    const originalFetch = globalThis.fetch;
+    const request = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/api/rooms/${roomId}/members`)) {
+        return new Response(JSON.stringify({ id: roomId, version: 0, members }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/api/rooms/${roomId}`)) {
+        return new Response(JSON.stringify({ id: roomId, version: 0, ready: true, snapshot: createProjectPackage({ project: remoteProject, assets: [], fonts: [], customTemplates: [], renderSettings: { mode: "normal", fixedFps: 20 } }), role: "owner", members, participants: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/events-ticket")) return new Response(JSON.stringify({ ticket: "ticket" }), { status: 201, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    globalThis.fetch = request as typeof fetch;
+    try {
+      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
+      // 无需邀请凭证：凭本机保存的房间凭证直接回连。
+      click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
+      await vi.waitFor(() => expect(container.textContent).toContain("已加入房间"));
+
+      // 回连注册：clientId 被写回成员列表（I-12-03）。
+      const refreshCall = request.mock.calls.find(([input]) => String(input).endsWith(`/api/rooms/${roomId}/members`));
+      expect(refreshCall).toBeDefined();
+      expect(JSON.parse((refreshCall?.[1] as RequestInit).body as string)).toMatchObject({ clientId: myClientId });
+
+      // 回连后仍显示「我」，其他成员用尾部随机段区分，不再是「成员 collab」（I-12-02）。
+      const memberList = container.querySelector('[aria-label="房间成员"]')!;
+      expect(memberList.textContent).toContain("我");
+      expect(memberList.textContent).toContain("成员 77aa99");
+      expect(memberList.textContent).not.toContain("成员 collab");
+      // clientId 未被重建。
+      expect(window.localStorage.getItem("cengfan-map-studio:collab-client-id")).toBe(myClientId);
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    }
+  });
+
   it("shows readonly mode to editors without exposing owner-only controls", async () => {
     const container = renderApp();
     const roomId = "VIEW02";

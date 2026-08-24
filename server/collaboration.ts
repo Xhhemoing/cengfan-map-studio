@@ -296,8 +296,15 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     accessRecords.get(key)?.set(hashSecret(accessToken), participant);
     const seenAt = new Date(now()).toISOString();
     const existingMember = room.members.find((member) => member.clientId === input.clientId);
+    // 同一 clientId 换邀请重进时就地更新原成员（含新邀请的角色）而不是追加，
+    // 避免同一用户在成员列表里虚增（I-12-03）。创建者身份不被邀请降级。
     const nextRoom = existingMember
-      ? { ...room, members: room.members.map((member) => member.clientId === input.clientId ? { ...member, lastSeenAt: seenAt } : member) }
+      ? {
+        ...room,
+        members: room.members.map((member) => member.clientId === input.clientId
+          ? { ...member, ...(member.role === "owner" ? {} : { role: invitation.role }), lastSeenAt: seenAt }
+          : member),
+      }
       : { ...room, members: [...room.members, { clientId: input.clientId, role: invitation.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
     rooms.set(key, nextRoom);
     touch(key);

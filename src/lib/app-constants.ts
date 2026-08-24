@@ -8,6 +8,7 @@ import type { DataViewId } from "./project-data";
 
 export const DRAFT_KEY = "cengfan-map-studio:draft";
 export const ROOM_ACCESS_STORAGE_PREFIX = "cengfan-map-studio:room-access:";
+export const COLLABORATION_CLIENT_ID_KEY = "cengfan-map-studio:collab-client-id";
 export const COLLABORATION_DISPLAY_NAME = "本机协作者";
 export const DRAFT_SAVED_AT_KEY = "cengfan-map-studio:draft-saved-at";
 export const RENDER_SETTINGS_KEY = "cengfan-map-studio:render-settings";

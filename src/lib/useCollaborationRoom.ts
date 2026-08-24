@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import {
+  COLLABORATION_CLIENT_ID_KEY,
   COLLABORATION_DISPLAY_NAME,
   ROOM_ACCESS_STORAGE_PREFIX,
 } from "./app-constants";
@@ -21,6 +22,7 @@ import {
   fetchRoomOperations,
   joinRoom,
   leaveRoom,
+  refreshRoomMember,
   retryInitializingRoom,
   setRoomAccess,
   submitRoomSnapshot,
@@ -90,6 +92,23 @@ function loadBrowserValue<T>(load: () => T, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+/**
+ * 协作 clientId 持久化（I-12-03）：每次加载新建会让凭证回连后失去「我」标识，
+ * 也让同一用户换邀请重进时被当成新成员追加。持久化后刷新回连、换邀请重进
+ * 都复用同一 clientId，服务端成员列表不会虚增。
+ */
+export function loadCollaborationClientId(createClientId: () => string = () => createId("collab-client")): string {
+  const persisted = loadBrowserValue(() => window.localStorage.getItem(COLLABORATION_CLIENT_ID_KEY), null);
+  if (persisted && persisted.trim()) return persisted;
+  const created = createClientId();
+  try {
+    window.localStorage.setItem(COLLABORATION_CLIENT_ID_KEY, created);
+  } catch {
+    // 存储不可用时退回单次会话内的临时 clientId，协作仍可用。
+  }
+  return created;
 }
 
 export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseCollaborationRoomResult {
@@ -300,12 +319,22 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
         }).then((joined) => joined.access);
       const room = await retryInitializingRoom(() => fetchRoom<ProjectPackage>(normalizedRoomId, access.accessToken));
       if (!room.snapshot) throw new Error("房间工程数据不完整");
+      // 凭证回连不经过 /join（I-12-03）：主动把自己的 clientId 注册回成员列表，
+      // 刷新回连后才能继续显示「我」并更新在线时间。注册失败不阻塞回连。
+      let members = room.members ?? [];
+      if (persistedToken && !room.closed) {
+        try {
+          members = (await refreshRoomMember(normalizedRoomId, access.accessToken, clientId)).members ?? members;
+        } catch {
+          // 成员列表退回房间快照里的名单。
+        }
+      }
       persistRoomAccess(normalizedRoomId, access.accessToken);
       setRoomId(normalizedRoomId);
       setRoomAccessToken(access.accessToken);
       setRoomRole(room.role ?? access.role);
       setRoomParticipants(room.participants ?? []);
-      setRoomMembers(room.members ?? []);
+      setRoomMembers(members);
       setRoomReadonly(room.readonly ?? false);
       setRoomClosed(room.closed ?? false);
       setInviteTokenInput("");

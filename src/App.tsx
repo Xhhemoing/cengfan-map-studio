@@ -198,7 +198,7 @@ import {
   submitRoomOperations,
 } from "./lib/collaboration-client";
 import { applyCollaborationOperations, diffCollaborationDocument } from "./lib/collaboration-operations";
-import { useCollaborationRoom } from "./lib/useCollaborationRoom";
+import { loadCollaborationClientId, useCollaborationRoom } from "./lib/useCollaborationRoom";
 
 function StudioApp({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
@@ -257,7 +257,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
     }
   });
   const [zoomPercent, setZoomPercent] = useState(100);
-  const [collaborationClientId] = useState(() => createId("collab-client"));
+  // 持久化的协作 clientId（I-12-03）：刷新回连仍是「我」，换邀请重进不虚增成员。
+  const [collaborationClientId] = useState(() => loadCollaborationClientId());
 
   const projectIdRef = useRef<string | null>(projectId ?? null);
   const projectNameRef = useRef<string | null>(null);

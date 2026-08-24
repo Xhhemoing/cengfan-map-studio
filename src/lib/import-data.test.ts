@@ -76,6 +76,15 @@ describe("import data", () => {
     expect(result.candidates[0]?.rawLine).toBe("陈宁 清华大学 北京");
   });
 
+  it("splits label-free colon separated lines into three fields (I-12-04)", () => {
+    const result = parseStudentText("李想:同济大学:上海");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "李想", university: "同济大学", city: "上海" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("recognizes labeled natural-language records without requiring a delimiter", () => {
     const result = parseStudentText("姓名：林舟，就读院校：北京大学，城市：北京");
 

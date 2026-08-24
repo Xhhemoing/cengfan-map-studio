@@ -96,9 +96,11 @@ function splitParts(line: string, delimiter: string | null): string[] {
       .filter(Boolean);
   }
 
+  // 冒号也算分隔符：OCR 路径不再抹掉冒号（I-12-04），
+  // 「李想：同济大学：上海」这类无标签的冒号分隔行仍要能拆分。
   return line
     .replace(/^\d+[\.、\)]\s*/, "")
-    .split(/[\s,，、;；\-\|]+/)
+    .split(/[\s,，、;；\-\|：:]+/)
     .map((part) => part.trim())
     .filter(Boolean);
 }

@@ -117,6 +117,10 @@ export function ProjectMenu({
     action();
   };
 
+  // clientId 形如 collab-client-<随机段>，前 6 字恒为「collab」无法区分成员，
+  // 取尾部随机段作为展示名（I-12-02）。
+  const memberLabel = (clientId: string) => `成员 ${clientId.slice(-6)}`;
+
   return (
     <details ref={rootRef} className="project-menu" open={open}>
       <summary
@@ -179,7 +183,7 @@ export function ProjectMenu({
                         {members.map((member) => (
                           <li key={member.clientId} data-member-role={member.role}>
                             {member.role === "owner" && "👑 "}
-                            {member.clientId === ownClientId ? "我" : `成员 ${member.clientId.slice(0, 6)}`}
+                            {member.clientId === ownClientId ? "我" : memberLabel(member.clientId)}
                             {member.role === "owner" ? "（创建者）" : member.role === "viewer" ? "（仅查看）" : ""}
                           </li>
                         ))}
