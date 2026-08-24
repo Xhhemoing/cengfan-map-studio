@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildConnectorGeometry,
   connectorGeometriesIntersect,
+  connectorSegmentsIntersect,
   resolveConnectorPort,
   segmentIntersectsRect,
   type ConnectorGeometry,
@@ -124,6 +125,32 @@ describe("connector geometry", () => {
       segments: [{ start: { x: 520, y: 630 }, end: { x: 539.5, y: 599.5 } }],
     };
     expect(connectorGeometriesIntersect(horizontal, longSegment, 2)).toBe(true);
+  });
+
+  it("exposes the same shared-anchor exemption to callers that only hold segments", () => {
+    // check_health 只拿得到 segments（没有 port / pathData），必须走同一份判定，
+    // 否则求解器刚解完的同锚点花束会立刻被报成 connector-conflict。
+    const anchor = { x: 515.9, y: 605.4 };
+    const first = buildConnectorGeometry({
+      card: { x: 376, y: 560.4, width: 170, height: 90 },
+      anchor,
+      preferredSide: "left",
+      style: "curve",
+    });
+    const second = buildConnectorGeometry({
+      card: { x: 376, y: 327.4, width: 170, height: 90 },
+      anchor,
+      preferredSide: "left",
+      style: "curve",
+    });
+
+    expect(connectorSegmentsIntersect(first.segments, second.segments)).toBe(false);
+    expect(connectorSegmentsIntersect(first.segments, second.segments, 2))
+      .toBe(connectorGeometriesIntersect(first, second, 2));
+    expect(connectorSegmentsIntersect(
+      [{ start: { x: 0, y: 0 }, end: { x: 10, y: 10 } }],
+      [{ start: { x: 0, y: 10 }, end: { x: 10, y: 0 } }],
+    )).toBe(true);
   });
 
   it("detects a connector entering an expanded card rectangle", () => {

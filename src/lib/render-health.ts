@@ -77,5 +77,9 @@ export function buildHealthInput(
     objects,
     connectors,
     cardsPositions: project.cards.positions,
+    // 省份轮廓与求解器避让用的是同一批多边形，遮挡判定因此和画布上看到的一致；
+    // 图片底图没有轮廓（空数组），健康检查自动退回 mapContentBounds。
+    mapPolygons: facts.geometry.provincePolygons,
+    allowMapOverlap: project.cards.allowMapOverlap === true,
   };
 }

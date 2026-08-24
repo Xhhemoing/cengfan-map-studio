@@ -194,9 +194,17 @@ function segmentDistance(left: ConnectorSegment, right: ConnectorSegment): numbe
   );
 }
 
-export function connectorGeometriesIntersect(left: ConnectorGeometry, right: ConnectorGeometry, clearance = 0): boolean {
-  const leftTail = left.segments[left.segments.length - 1];
-  const rightTail = right.segments[right.segments.length - 1];
+/**
+ * 两条折线是否冲突。带共享地理锚点豁免，是求解器与 `check_health` 的同一份判定：
+ * 谁都不该把「同锚点花束」的会合点当成交叉。
+ */
+export function connectorSegmentsIntersect(
+  left: readonly ConnectorSegment[],
+  right: readonly ConnectorSegment[],
+  clearance = 0,
+): boolean {
+  const leftTail = left[left.length - 1];
+  const rightTail = right[right.length - 1];
   // 两条连接线共享地理锚点（anchor 端重合）时，它们在锚点附近的会合区不算交叉；
   // 同锚点多卡片呈「花束」状散开，只有远离锚点的中段真正相交才算。
   const sharedAnchor = Boolean(leftTail && rightTail)
@@ -208,11 +216,15 @@ export function connectorGeometriesIntersect(left: ConnectorGeometry, right: Con
   const nearAnchorEnd = (segment: ConnectorSegment, tail: ConnectorSegment) =>
     distanceSquared(segment.end, tail.end) <= anchorRadius * anchorRadius
     && distanceSquared(segment.start, tail.end) <= anchorRadius * anchorRadius;
-  return left.segments.some((first) => right.segments.some((second) => {
+  return left.some((first) => right.some((second) => {
     if (sharedAnchor && leftTail && rightTail
       && nearAnchorEnd(first, leftTail) && nearAnchorEnd(second, rightTail)) return false;
     return segmentDistance(first, second) <= clearance + EPSILON;
   }));
+}
+
+export function connectorGeometriesIntersect(left: ConnectorGeometry, right: ConnectorGeometry, clearance = 0): boolean {
+  return connectorSegmentsIntersect(left.segments, right.segments, clearance);
 }
 
 export function segmentIntersectsRect(segment: ConnectorSegment, rect: Rect, clearance = 0): boolean {
