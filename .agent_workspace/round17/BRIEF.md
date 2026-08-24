@@ -1,24 +1,33 @@
-# Round 17 任务简报（进行中）
+# Round 17 结论简报
 
-- **前置**: Round 16 已验证：tsc 绿、208 files / 1808 tests
-- **分支**: `cursor/agent-sota-polish-cbcd`（禁止 commit/stash/新分支）
+- **时间**: 2026-08-24
+- **前置**: Round 16 BRIEF（208 files / 1808 tests）
 - **模型**: 2× claude-fable-5-thinking-xhigh · 2× claude-opus-5-thinking-high-fast · 2× gpt-5.6-sol-xhigh-fast
+- **集成**: `tsc` app+node 0 error；全量 vitest **210 files / 1831 tests passed**（72.82s）
 
-## 真实缺口
+## 相对 Round 16
 
-1. `stackAtMargin` 纵向命中不含 `space.gap`：推进时加了 gap，判定重叠时没加。两张卡之间可以只剩不足 gap 的缝（不是像素重合，但是比 pack 其它路径的 `hits(..., gap)` 更挤）。修判定，不要改饱和 clamp 堆底语义。
-2. `layeredPack` / `slotPlacements` 缺槽回落仍写死 `side: "right"`，座位在左边距。应 `space.sideOf(area)`。
-3. `GlobalSettingsScreen`（以及闲置的 `HistoryControls`）撤销/重做没有礼貌 live region；R15/R16 只修了顶栏和经典皮。
-4. `import-data.ts` 无分隔符回落 `splitParts` 仍 `.filter(Boolean)`，且正则把 `-` 当分隔符：`玛丽-克莱尔 巴黎高师 巴黎` 会被切错列。`、` / `|` / `；` 不在 `CELL_DELIMITERS` 里，空列会被丢掉。
-5. 禁止 Playwright、支付、CMYK、拆 china-universities。不要把 flock 假装成多机锁。实现文件 ≤400 行。
+| 代理 | Round 16 | Round 17 |
+| --- | --- | --- |
+| R17-fable-arch | 缺槽回落 `side: "right"` | `slotPlacements` 用 `space.sideOf(seat)` |
+| R17-fable-sota | 仅顶栏/经典皮撤销播报 | 全局设置页 + `HistoryControls` 礼貌 live region |
+| R17-opus-layout | 按 y 升序但命中不含 gap | `stackAtMargin` 占用含 gap，与 `hits(..., gap)` 对齐 |
+| R17-opus-data | workbook rawLine 留空列 | 无分隔符不再用 `-` 切姓名；`、` `|` `；` 走保列路径 |
+| R17-gpt-perf | 诚实跳过 | opt-in `stackAtMargin` 间隙残差观测（无 CI 时限） |
+| R17-gpt-server | `gzip;q=0` | `Accept-Encoding: *` 可 gzip；显式 q=0 仍拒绝 |
 
-## 路径隔离
+## 验证链
 
-| 代理 | 允许 |
-| --- | --- |
-| R17-fable-arch | `src/lib/card-layout-saturation.ts`、对应测试。缺槽回落用 `sideOf`。禁止改 pack.ts。 |
-| R17-fable-sota | `src/components/GlobalSettingsScreen.tsx`、`src/components/HistoryControls.tsx`、对应测试、`USER_GUIDE.md`（≤1 句）。禁止 LegacyEditorChrome / StudioTopbarActions。 |
-| R17-opus-layout | `src/lib/card-layout-pack.ts`、`src/lib/card-layout-pack.test.ts`。纵向命中含 gap。禁止 cache。不要改 clamp 堆底。 |
-| R17-opus-data | `src/lib/import-data.ts`、测试。修 unlabeled 切分：不要用 `-` 切姓名；空列对齐。禁止 html-table-parse / binary-import（除非测试要 import）。 |
-| R17-gpt-perf | `scripts/perf-layout-bench.ts`、测试、`src/lib/layout-perf.ts`。opt-in 形状。无 CI 时限。诚实跳过也可。 |
-| R17-gpt-server | `server/**` 或 `.github/workflows/ci.yml`。CI 串行加 eslint；或修 `Accept-Encoding: *` / identity 与 gzip;q=0 的交互。index.ts ≤400。 |
+| failure | cause | fix | recheck |
+| --- | --- | --- | --- |
+| 新卡贴进 gap 带 | 命中用像素、推进加 gap | 判定与推进共用 gap | pack 12/12；card-layout* 全绿 |
+| `玛丽-克莱尔 巴黎高师 巴黎` 错列 | unlabeled 把 `-` 当分隔符 | 只在空格包围的 hyphen 处切 | import-data 套件绿 |
+| `gzip;q=0, *` 仍压缩 | 未处理通配 | 显式 gzip 拒绝则通配无效 | security.test 谈判表绿 |
+| 无集成失败 | — | — | tsc 0；210×1831 |
+
+## 仍未达印刷级 SOTA
+
+- 无真浏览器 E2E；协作 flock 只保证单机。
+- 饱和溢出仍堆在 `y = maxY`（有意不改 clamp 堆底）。
+- CI 仍未跑 eslint。浏览器 PNG 仍为 sRGB。
+- 粘连的 `名-校-市` 无空格行改为未识别，而不是猜切。

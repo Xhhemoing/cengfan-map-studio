@@ -25,6 +25,7 @@
 | Round 14 | complete | 2026-08-24 | 2026-08-24 | issue targets；海外 scope；isotonicPack 尾卡；撤销 live region |
 | Round 15 | complete | 2026-08-24 | 2026-08-24 | 定位传 targets；顶栏撤销播报；剩余卡 side；海外迁移别名；CI workflow |
 | Round 16 | complete | 2026-08-24 | 2026-08-24 | stackAtMargin 按 y 重扫；经典皮撤销播报；workbook rawLine 留空列；CI 取消进行中任务 |
+| Round 17 | complete | 2026-08-24 | 2026-08-24 | stackAtMargin 占用含 gap；缺槽 sideOf；设置页撤销播报；unlabeled 姓名连字符；gzip * |
 
 ## Round 1 结论摘要
 
@@ -112,15 +113,19 @@
 
 详见 [round16/BRIEF.md](round16/BRIEF.md)。集成：**tsc 绿、208×1808 tests 绿**。`stackAtMargin` 按 y 升序扫列，有余量时不再像素重合；经典皮顶栏撤销播报；workbook `rawLine` 保留空单元格；CI concurrency 取消进行中任务；`gzip;q=0` 不压缩。
 
-## 全局成果（十六轮合计）
+## Round 17 结论简报
 
-| 指标 | main 基线 | Round 16 结束 |
+详见 [round17/BRIEF.md](round17/BRIEF.md)。集成：**tsc 绿、210×1831 tests 绿**。`stackAtMargin` 占用含 gap；缺槽回落 `sideOf`；全局设置撤销播报；unlabeled 导入不再切开连字符姓名；`Accept-Encoding: *` 可 gzip。
+
+## 全局成果（十七轮合计）
+
+| 指标 | main 基线 | Round 17 结束 |
 | --- | ---: | ---: |
 | App.tsx 行数 | 2466 | **333** |
-| card-layout 门面 | 1297 | 模块化 + 手摆障碍 + isotonic 尾卡 + leftover side + 列序重扫 |
+| card-layout 门面 | 1297 | 模块化 + 手摆障碍 + isotonic 尾卡 + leftover side + 列序重扫 + gap 占用 |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **398** |
-| 测试 | （基线已有大量单测） | **1808 passed / 208 files** |
+| 测试 | （基线已有大量单测） | **1831 passed / 210 files** |
 
 ## 回滚
 
