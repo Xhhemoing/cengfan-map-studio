@@ -885,11 +885,19 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
         ? [`skipped ${skippedIds.length} room(s) from persistence (${skippedIds.join(", ")})`]
         : []),
     ];
+    // 图例只解释真实发生的分组，否则一次纯裁剪的落盘会告诉运维“有房间被跳过”。
+    const legend = [
+      ...(trimmedIds.length > 0
+        ? ["Trimmed rooms remain restorable but stale clients must re-snapshot"]
+        : []),
+      ...(skippedIds.length > 0
+        ? ["skipped rooms remain in memory but will not be restored after restart"]
+        : []),
+    ];
     console.warn(
       `[collaboration] ${outcomes.join("; ")}; `
       + `per-room cap ${MAX_PERSISTED_ROOM_BYTES} bytes, total snapshot budget ${MAX_PERSISTED_SNAPSHOT_BYTES} bytes. `
-      + "Trimmed rooms remain restorable but stale clients must re-snapshot; "
-      + "skipped rooms remain in memory but will not be restored after restart",
+      + legend.join("; "),
     );
   }
 
