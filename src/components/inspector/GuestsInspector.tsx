@@ -1,4 +1,5 @@
 import { Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
+import { useState } from "react";
 import { createId } from "../../lib/ids";
 import { applyImageWithinBudget } from "../../lib/image-downscale";
 import { visibleGuestPeople } from "../../lib/render-geometry";
@@ -6,15 +7,25 @@ import type { GuestPanelSettings, GuestPerson } from "../../lib/scene-document";
 import { DeferredInput, DeferredTextarea } from "../DeferredInput";
 import { ActionGroup, CompactButton, IconButton, InspectorHeader } from "../StudioUi";
 
-const readAvatarFile = (file: File | null | undefined, done: (src: string) => void) => {
+const readAvatarFile = (
+  file: File | null | undefined,
+  done: (src: string) => void,
+  onError: (message: string) => void,
+) => {
   if (!file) return;
-  if (!file.type.startsWith("image/")) return;
+  if (!file.type.startsWith("image/")) {
+    onError("请选择图片文件");
+    return;
+  }
   const reader = new FileReader();
-  reader.onerror = () => undefined;
+  reader.onerror = () => onError("读取图片失败，请重试");
   reader.onload = () => {
     const source = String(reader.result ?? "");
-    if (!source) return;
-    applyImageWithinBudget(source, { kind: "avatar" }, done);
+    if (!source) {
+      onError("读取图片失败，请重试");
+      return;
+    }
+    applyImageWithinBudget(source, { kind: "avatar" }, done, onError);
   };
   reader.readAsDataURL(file);
 };
@@ -26,6 +37,7 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
   peopleOnly?: boolean;
   placementOnly?: boolean;
 }) {
+  const [avatarNotices, setAvatarNotices] = useState<Record<string, string>>({});
   const people = guests.people ?? [];
   const visibleCount = visibleGuestPeople(guests).length;
   const hiddenCount = people.length - visibleCount;
@@ -39,6 +51,16 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
         : hiddenCount > 0
           ? `${hiddenCount} 人取消了「显示」，画布上不会出现。`
           : null;
+
+  const setAvatarNotice = (id: string, message: string) => {
+    setAvatarNotices((current) => {
+      if ((current[id] ?? "") === message) return current;
+      const next = { ...current };
+      if (message) next[id] = message;
+      else delete next[id];
+      return next;
+    });
+  };
 
   const updatePerson = (id: string, patch: Partial<GuestPerson>) => {
     onPatch({
@@ -171,16 +193,23 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
                 aria-label={`上传 ${person.name} 的头像`}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
-                  readAvatarFile(file, (avatarSrc) => {
-                    updatePerson(person.id, { avatarSrc });
-                    event.target.value = "";
-                  });
+                  // Reselecting the same file only fires `change` again once the input is empty.
+                  event.target.value = "";
+                  setAvatarNotice(person.id, "");
+                  readAvatarFile(
+                    file,
+                    (avatarSrc) => updatePerson(person.id, { avatarSrc }),
+                    (message) => setAvatarNotice(person.id, message),
+                  );
                 }}
               />
               {person.avatarSrc && (
                 <IconButton label={`清除 ${person.name} 的头像`} icon={<X size={14} />} variant="ghost" data-guest-avatar-clear={person.id} onClick={() => updatePerson(person.id, { avatarSrc: undefined })} />
               )}
             </div>
+            {avatarNotices[person.id] && (
+              <p className="property-panel__hint" role="status" data-guest-avatar-notice={person.id}>{avatarNotices[person.id]}</p>
+            )}
             <ActionGroup label={`${person.name} 操作`} className="guest-person-row__actions">
               <label>
                 <input

@@ -174,6 +174,107 @@ describe("GuestsInspector", () => {
     vi.restoreAllMocks();
   });
 
+  it("explains a rejected oversized SVG avatar and frees the input for the same file", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const guests = { ...project.guests, people: [{ id: "g1", name: "王老师", visibility: true }] };
+    const onPatch = vi.fn();
+    class OversizedSvgReader {
+      result = `data:image/svg+xml;base64,${"A".repeat(3_000_000)}`;
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>)); }
+    }
+    vi.stubGlobal("FileReader", OversizedSvgReader);
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={guests} onPatch={onPatch} />));
+
+    const upload = container.querySelector<HTMLInputElement>('[data-guest-avatar-upload="g1"]')!;
+    Object.defineProperty(upload, "files", {
+      configurable: true,
+      value: [new File(["<svg />"], "王老师.svg", { type: "image/svg+xml" })],
+    });
+    flushSync(() => upload.dispatchEvent(new Event("change", { bubbles: true })));
+
+    await vi.waitFor(() => {
+      const notice = container.querySelector('[data-guest-avatar-notice="g1"]');
+      expect(notice?.textContent).toContain("SVG 体积过大");
+      expect(notice?.textContent).toContain("上限 2.0 MB");
+    });
+    expect(onPatch).not.toHaveBeenCalled();
+    // the input is emptied on pick, so picking the very same file fires `change` again
+    expect(upload.value).toBe("");
+
+    flushSync(() => root.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  it("explains a failed avatar read and clears the notice on the next pick", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const guests = { ...project.guests, people: [{ id: "g1", name: "王老师", visibility: true }] };
+    const onPatch = vi.fn();
+    let failing = true;
+    class FlakyFileReader {
+      result = "data:image/png;base64,AAA";
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() {
+        queueMicrotask(() => (failing ? this.onerror?.() : this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>)));
+      }
+    }
+    vi.stubGlobal("FileReader", FlakyFileReader);
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={guests} onPatch={onPatch} />));
+
+    const upload = container.querySelector<HTMLInputElement>('[data-guest-avatar-upload="g1"]')!;
+    Object.defineProperty(upload, "files", {
+      configurable: true,
+      value: [new File(["x"], "王老师.png", { type: "image/png" })],
+    });
+    flushSync(() => upload.dispatchEvent(new Event("change", { bubbles: true })));
+
+    await vi.waitFor(() => {
+      expect(container.querySelector('[data-guest-avatar-notice="g1"]')?.textContent).toBe("读取图片失败，请重试");
+    });
+    expect(onPatch).not.toHaveBeenCalled();
+
+    failing = false;
+    flushSync(() => upload.dispatchEvent(new Event("change", { bubbles: true })));
+    await vi.waitFor(() => {
+      expect(onPatch).toHaveBeenCalledWith({
+        people: [{ id: "g1", name: "王老师", visibility: true, avatarSrc: "data:image/png;base64,AAA" }],
+      });
+    });
+    expect(container.querySelector('[data-guest-avatar-notice="g1"]')).toBeNull();
+
+    flushSync(() => root.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects a non-image avatar file without touching the document", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const guests = { ...project.guests, people: [{ id: "g1", name: "王老师", visibility: true }] };
+    const onPatch = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={guests} onPatch={onPatch} />));
+
+    const upload = container.querySelector<HTMLInputElement>('[data-guest-avatar-upload="g1"]')!;
+    Object.defineProperty(upload, "files", {
+      configurable: true,
+      value: [new File(["name,province"], "名单.csv", { type: "text/csv" })],
+    });
+    flushSync(() => upload.dispatchEvent(new Event("change", { bubbles: true })));
+
+    expect(container.querySelector('[data-guest-avatar-notice="g1"]')?.textContent).toBe("请选择图片文件");
+    expect(onPatch).not.toHaveBeenCalled();
+
+    flushSync(() => root.unmount());
+  });
+
   it("reports the canvas-visible headcount and warns on an empty roster", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const container = document.createElement("div");
