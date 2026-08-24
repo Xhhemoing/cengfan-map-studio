@@ -76,7 +76,13 @@
   - opus-fast-B → `bc-0d3b0b7c-4b6e-5255-9751-0c589bd648fb`
   - gpt-sol-A → `bc-b79716f9-795d-5ac6-bdd6-29e78093b0fb`
   - gpt-sol-B → `bc-5bef0d4c-2fc9-5e92-bbbf-bb3593ef2db0`
-- [ ] Cycle 3 Round 2 — MapLayer 窄 memo 与 flowContentStart（派发中）
+- [ ] Cycle 3 Round 2 — MapLayer 窄 memo 与 flowContentStart（进行中，6 子代理并发）
+  - fable-A → `bc-6dee4c66-0734-540d-9b14-5d77ad5ff9f9`
+  - fable-B → `bc-616124f9-0e1d-5b54-a47a-1d203ce35af5`
+  - opus-fast-A → `bc-d0af3d1e-1e78-5e6f-ab91-a86649465288`
+  - opus-fast-B → `bc-5acd7e1d-a4c5-5c29-b4af-5c7c0ddcb809`
+  - gpt-sol-A → `bc-54f88c0d-52e3-52e5-8fe0-fa32260cfa87`
+  - gpt-sol-B → `bc-37734dd9-fe43-5135-8ab2-b5837f4070a1`
 - [ ] Cycle 3 Round 3 — 固化与交叉核验
 - [ ] 归档、结构化 PR
 
@@ -95,3 +101,4 @@
 - Cycle 2 Round 1：`.agent_workspace/cycle2-round1-conclusion.md`
 - Cycle 2 Round 2：`.agent_workspace/cycle2-round2-conclusion.md`
 - Cycle 2 Round 3：`.agent_workspace/cycle2-round3-conclusion.md`
+- Cycle 3 Round 1：`.agent_workspace/cycle3-round1-conclusion.md`
