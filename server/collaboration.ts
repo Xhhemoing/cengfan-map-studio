@@ -125,6 +125,11 @@ function defaultSecret(): string {
   return randomBytes(32).toString("base64url");
 }
 
+function describePersistError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return typeof error === "string" ? error : String(error);
+}
+
 function hashSecret(secret: string): string {
   return createHash("sha256").update(secret).digest("hex");
 }
@@ -237,10 +242,18 @@ export interface RoomStoreOptions {
   persistIntervalMs?: number;
 }
 
+export interface RoomPersistFailure {
+  at: number;
+  message: string;
+}
+
 export interface RoomPersistOutcome {
   skippedIds: string[];
   trimmedIds: string[];
+  /** 最近一次**成功**落盘的时刻；`0` 表示从未成功落过盘。 */
   at: number;
+  /** 最近一次落盘失败；下一次成功落盘后清除。字段缺席即当前没有失败连击。 */
+  lastFailure?: RoomPersistFailure;
 }
 
 export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): RoomStore {
@@ -264,7 +277,8 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const legacyRoomIds = new Set<string>();
   let mutationVersion = 0;
   let persistedVersion = 0;
-  let latestPersistOutcome: RoomPersistOutcome | undefined;
+  let latestPersistSuccess: { skippedIds: string[]; trimmedIds: string[]; at: number } | undefined;
+  let latestPersistFailure: RoomPersistFailure | undefined;
   let intervalPersistFailureReported = false;
   let persistInFlight: Promise<void> | undefined;
   let queuedPersist: {
@@ -911,12 +925,17 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       await persist!(persistedSnapshot);
       persistedVersion = Math.max(persistedVersion, persistedMutationVersion);
       intervalPersistFailureReported = false;
-      latestPersistOutcome = { ...outcome, at: now() };
+      latestPersistFailure = undefined;
+      latestPersistSuccess = { ...outcome, at: now() };
     });
     persistInFlight = operation;
     void operation.then(
       () => settlePersist(operation),
-      () => settlePersist(operation),
+      (error: unknown) => {
+        // 失败也要留痕，否则磁盘坏掉的整段时间里 lastPersistOutcome() 只会重复上一次成功。
+        latestPersistFailure = { at: now(), message: describePersistError(error) };
+        settlePersist(operation);
+      },
     );
     return operation;
   }
@@ -945,13 +964,16 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     timer.unref();
   }
 
-  const lastPersistOutcome = (): RoomPersistOutcome | undefined => latestPersistOutcome
-    ? {
-        ...latestPersistOutcome,
-        skippedIds: [...latestPersistOutcome.skippedIds],
-        trimmedIds: [...latestPersistOutcome.trimmedIds],
-      }
-    : undefined;
+  const lastPersistOutcome = (): RoomPersistOutcome | undefined => {
+    if (!latestPersistSuccess && !latestPersistFailure) return undefined;
+    const outcome: RoomPersistOutcome = {
+      skippedIds: [...(latestPersistSuccess?.skippedIds ?? [])],
+      trimmedIds: [...(latestPersistSuccess?.trimmedIds ?? [])],
+      at: latestPersistSuccess?.at ?? 0,
+    };
+    if (latestPersistFailure) outcome.lastFailure = { ...latestPersistFailure };
+    return outcome;
+  };
 
   return { create, get, createInvitation, join, authorize, apply, subscribe, listParticipants, refreshMember, leave, setAccess, getOperations, subscribeLifecycle, flush, lastPersistOutcome } as RoomStore;
 }
