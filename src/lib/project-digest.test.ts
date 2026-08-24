@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createProjectDocument } from "./project-document";
-import { buildProjectDigest, buildProjectFingerprint, digestByteLength, fingerprintProject } from "./project-digest";
+import {
+  buildProjectDigest,
+  buildProjectFingerprint,
+  digestByteLength,
+  fingerprintProject,
+  DIGEST_ELEMENT_LIMIT,
+  DIGEST_MAX_BYTES,
+} from "./project-digest";
 
 describe("buildProjectDigest", () => {
   it("removes binary data from asset elements", () => {
@@ -119,5 +126,47 @@ describe("buildProjectDigest", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const digest = buildProjectDigest(project);
     expect(digestByteLength(digest)).toBeLessThan(8 * 1024);
+  });
+
+  it("caps element samples and keeps the real totals when a canvas has hundreds of elements", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const digest = buildProjectDigest({
+      ...project,
+      textElements: Array.from({ length: 400 }, (_, index) => ({
+        id: `text-${index}`,
+        role: "custom" as const,
+        content: `第 ${index} 段很长的说明文字，用于撑满投影预算`,
+        x: index,
+        y: index,
+        fontSize: 16,
+        color: "#000000",
+        fontWeight: 400,
+        textAlign: "left" as const,
+        maxWidth: 320,
+        visibility: true,
+      })),
+      assetElements: Array.from({ length: 120 }, (_, index) => ({
+        id: `asset-element-${index}`,
+        assetId: `asset-${index}`,
+        label: `素材 ${index}`,
+        src: `data:image/png;base64,${"a".repeat(500)}`,
+        kind: "decoration" as const,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        rotation: 0,
+        opacity: 1,
+        zIndex: 30,
+        visibility: true,
+      })),
+    });
+
+    expect(digest.textElementCount).toBe(400);
+    expect(digest.assetElementCount).toBe(120);
+    expect(digest.textElements.length).toBeLessThanOrEqual(DIGEST_ELEMENT_LIMIT);
+    expect(digest.assetElements.length).toBeLessThanOrEqual(DIGEST_ELEMENT_LIMIT);
+    expect(digestByteLength(digest)).toBeLessThanOrEqual(DIGEST_MAX_BYTES);
+    expect(digest.students.total).toBe(0);
   });
 });

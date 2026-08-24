@@ -4,6 +4,8 @@ import { buildProvinceSummary } from "./project-data";
 
 export const DIGEST_MAX_BYTES = 8 * 1024;
 export const DIGEST_TEXT_LIMIT = 40;
+/** 每类画布元素默认最多投影多少条；总数另用 *Count 字段告知模型。 */
+export const DIGEST_ELEMENT_LIMIT = 30;
 
 export interface ProjectDigest {
   canvas: {
@@ -36,6 +38,8 @@ export interface ProjectDigest {
     visibility: boolean;
     peopleCount: number;
   };
+  textElementCount: number;
+  assetElementCount: number;
   textElements: Array<{
     id: string;
     role: string;
@@ -82,7 +86,7 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
   const provinceSummary = buildProvinceSummary(project.students);
   const duplicateGroups = findDuplicateStudentGroups(project.students);
   const duplicateStudentCount = duplicateStudentIds(project.students).size;
-  return {
+  return shrinkToBudget({
     canvas: {
       width: project.canvas.width,
       height: project.canvas.height,
@@ -113,7 +117,9 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
       visibility: project.guests.visibility,
       peopleCount: project.guests.people.length,
     },
-    textElements: project.textElements.map((text) => ({
+    textElementCount: project.textElements.length,
+    assetElementCount: project.assetElements.length,
+    textElements: project.textElements.slice(0, DIGEST_ELEMENT_LIMIT).map((text) => ({
       id: text.id,
       role: text.role,
       content: shortText(text.content),
@@ -122,7 +128,7 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
       fontSize: text.fontSize,
       visibility: text.visibility,
     })),
-    assetElements: project.assetElements.map((asset) => ({
+    assetElements: project.assetElements.slice(0, DIGEST_ELEMENT_LIMIT).map((asset) => ({
       id: asset.id,
       assetId: asset.assetId,
       label: shortText(asset.label),
@@ -139,7 +145,20 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
       duplicateGroups: duplicateGroups.length,
       duplicateStudentCount,
     },
-  };
+  });
+}
+
+/**
+ * Keep the projection inside the network budget even for huge canvases: element
+ * samples are dropped one by one while the totals stay intact.
+ */
+function shrinkToBudget(digest: ProjectDigest): ProjectDigest {
+  const current = { ...digest, textElements: [...digest.textElements], assetElements: [...digest.assetElements] };
+  while (digestByteLength(current) > DIGEST_MAX_BYTES && (current.textElements.length > 0 || current.assetElements.length > 0)) {
+    if (current.assetElements.length >= current.textElements.length) current.assetElements.pop();
+    else current.textElements.pop();
+  }
+  return current;
 }
 
 const LONG_DATA_URL_THRESHOLD = 1024;

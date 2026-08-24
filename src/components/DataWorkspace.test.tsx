@@ -346,13 +346,39 @@ describe("DataWorkspace", () => {
     expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "苏禾", city: "杭州市" })]);
   });
 
-  it("uses AI parsing for one-click import and does not leave a duplicate import action behind", async () => {
+  it("uses AI parsing for one-click import of text the local rules cannot read", async () => {
     const onAppendStudents = vi.fn();
     const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
       provider: "local-fallback",
-      candidates: [{ name: "智能同学", university: "北京大学", city: "北京", sourceLine: 1, rawLine: "智能同学 北京大学 北京" }],
+      candidates: [{ name: "智能同学", university: "北京大学", city: "北京", sourceLine: 1, rawLine: "智能同学去了北京大学" }],
       unparsed: [],
     }));
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "智能同学去了北京大学");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("一键识别并导入"))!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    expect(requestAiParse).toHaveBeenCalledWith({ text: "智能同学去了北京大学", source: "paste" });
+    expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "智能同学", city: "北京市" })]);
+    expect(container.textContent).not.toContain("确认候选");
+  });
+
+  it("imports locally parseable text without calling AI parsing", async () => {
+    const onAppendStudents = vi.fn();
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({ provider: "local-fallback", candidates: [], unparsed: [] }));
     const container = render(
       <DataWorkspace
         students={students}
@@ -371,9 +397,9 @@ describe("DataWorkspace", () => {
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     flushSync(() => {});
 
-    expect(requestAiParse).toHaveBeenCalledWith({ text: "智能同学 北京大学 北京", source: "paste" });
+    expect(requestAiParse).not.toHaveBeenCalled();
     expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "智能同学", city: "北京市" })]);
-    expect(container.textContent).not.toContain("确认候选");
+    expect(container.textContent).toContain("已从本地文本识别导入 1 条学生记录");
   });
 
   it("edits a record with its stable id and allows manual province override", () => {

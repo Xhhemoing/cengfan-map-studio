@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runAgentTurn, MAX_TURNS } from "./agent-loop";
+import { buildSystemMessage, runAgentTurn, MAX_TURNS } from "./agent-loop";
 import type { AiConfig } from "./llm-client";
 import type { ChatMessage } from "./agent-types";
 
@@ -141,6 +141,38 @@ describe("runAgentTurn", () => {
     await runAgentTurn(CONFIG, { userMessage: "x", digest: { map: { scale: 1 } }, messages: [] });
     expect(sent.filter((message) => message.role === "system")).toHaveLength(1);
     expect(sent.some((message) => message.role === "user")).toBe(true);
+  });
+
+  it("keeps the digest behind the history so the cached prefix stays stable", async () => {
+    let sent: Array<{ role: string; content?: string | null }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      sent = (JSON.parse(String(init.body)) as { messages: Array<{ role: string; content?: string | null }> }).messages;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ choices: [{ message: { role: "assistant", content: "完成" } }] }) };
+    }));
+    const history: ChatMessage[] = [
+      { role: "user", content: "旧需求" },
+      calls(["inspect_project", { path: "cards.padding" }]),
+      { role: "tool", tool_call_id: "call-0", content: "{\"ok\":true}" },
+      { role: "user", content: "地图小一点" },
+    ];
+    await runAgentTurn(CONFIG, { userMessage: "地图小一点", digest: { map: { scale: 1 } }, messages: history });
+
+    const digestIndex = sent.findIndex((message) => message.content?.includes("\"scale\":1"));
+    const historyIndexes = ["旧需求", "{\"ok\":true}"].map((content) => sent.findIndex((message) => message.content === content));
+    expect(digestIndex).toBeGreaterThan(-1);
+    for (const index of historyIndexes) {
+      expect(index).toBeGreaterThan(-1);
+      expect(index).toBeLessThan(digestIndex);
+    }
+    expect(sent.at(-1)).toMatchObject({ role: "user", content: "地图小一点" });
+    expect(sent.filter((message) => message.role === "user" && message.content === "地图小一点")).toHaveLength(1);
+  });
+
+  it("no longer forces an inspect-then-describe preamble in the system prompt", () => {
+    const prompt = String(buildSystemMessage().content);
+    expect(prompt).not.toContain("先 inspect_project 读取真实当前值，再 describe_capability");
+    expect(prompt).toContain("digest");
+    expect(prompt).toContain("inspect_project");
   });
 
   it("injects the exact user message when the client sends an empty history", async () => {

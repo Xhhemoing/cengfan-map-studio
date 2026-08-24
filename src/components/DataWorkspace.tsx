@@ -323,18 +323,21 @@ export function DataWorkspace({
       return;
     }
     setExcelRecognition(null);
-    setIsAiParsing(true);
-    let parsed;
-    let sourceLabel: string;
-    try {
-      const aiParsed = await requestAiParse({ text: importText, source: "paste" });
-      parsed = { candidates: aiParsed.candidates, unparsed: aiParsed.unparsed };
-      sourceLabel = `智能识别（${aiParsed.provider}）`;
-    } catch {
-      parsed = parseStudentText(importText);
-      sourceLabel = "本地文本识别";
-    } finally {
-      setIsAiParsing(false);
+    // 本地能整段解析时不必调用智能识别，省一次上游请求。
+    const local = parseStudentText(importText);
+    let parsed: { candidates: typeof local.candidates; unparsed: typeof local.unparsed } = local;
+    let sourceLabel = "本地文本识别";
+    if (local.unparsed.length > 0) {
+      setIsAiParsing(true);
+      try {
+        const aiParsed = await requestAiParse({ text: importText, source: "paste" });
+        parsed = { candidates: aiParsed.candidates, unparsed: aiParsed.unparsed };
+        sourceLabel = `智能识别（${aiParsed.provider}）`;
+      } catch {
+        parsed = local;
+      } finally {
+        setIsAiParsing(false);
+      }
     }
     if (parsed.candidates.length === 0) {
       setMessage(`没有从${sourceLabel}识别到可导入的学生记录`);

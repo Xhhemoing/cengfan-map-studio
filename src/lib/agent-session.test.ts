@@ -359,6 +359,153 @@ describe("AgentSession", () => {
     expect(session.steps[0]?.result.content).toContain("TOOL_ARGUMENTS_INVALID");
   });
 
+  it.each([
+    { tool: "update_text", args: { id: "text-missing", patch: { content: "新标题" } } },
+    { tool: "update_asset", args: { id: "asset-missing", patch: { x: 10 } } },
+  ])("rejects a hallucinated $tool target without touching the shadow", async ({ tool, args }) => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: tool, arguments: args }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("改一个不存在的元素");
+
+    expect(session.steps[0]?.result.ok).toBe(false);
+    expect(session.steps[0]?.result.content).toContain("TARGET_NOT_FOUND");
+    expect(session.steps[0]?.result.content).toContain("availableIds");
+    expect(session.shadowProject.textElements).toEqual(project.textElements);
+    expect(session.shadowProject.assetElements).toEqual(project.assetElements);
+  });
+
+  it("rejects an unknown province instead of writing an unrenderable province style", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "update_province", arguments: { province: "梦游省", patch: { fill: "#ff0000" } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("把梦游省涂红");
+
+    expect(session.steps[0]?.result.ok).toBe(false);
+    expect(session.steps[0]?.result.content).toContain("availableProvinces");
+    expect(session.shadowProject.map.provinceStyles?.["梦游省"]).toBeUndefined();
+  });
+
+  it("writes a province style under its canonical map name", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "update_province", arguments: { province: "广东", patch: { fill: "#ff0000" } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("把广东涂红");
+
+    expect(session.steps[0]?.result.ok).toBe(true);
+    expect(session.shadowProject.map.provinceStyles?.["广东省"]?.fill).toBe("#ff0000");
+  });
+
+  it("reads scene values that the digest does not project", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const source = { ...project, cards: { ...project.cards, padding: 17, connectorColor: "#123456" } };
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "c1", name: "inspect_project", arguments: { path: "cards.padding" } },
+        { id: "c2", name: "inspect_project", arguments: { path: "cards.connectorColor" } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(source, { mode: "conservative" });
+    await session.run("卡片内边距是多少");
+
+    expect(JSON.parse(session.steps[0]!.result.content)).toMatchObject({ ok: true, path: "cards.padding", value: 17 });
+    expect(JSON.parse(session.steps[1]!.result.content)).toMatchObject({ value: "#123456" });
+  });
+
+  it("keeps binary asset sources out of inspect results", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const source = {
+      ...project,
+      assetElements: [{
+        id: "asset-element-1", assetId: "asset-1", label: "校徽", src: `data:image/png;base64,${"a".repeat(5_000)}`,
+        kind: "decoration" as const, x: 0, y: 0, width: 100, height: 100, rotation: 0, opacity: 1, zIndex: 30, visibility: true,
+      }],
+    };
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "inspect_project", arguments: { path: "assetElements.0.src" } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(source, { mode: "conservative" });
+    await session.run("看看贴图");
+
+    expect(JSON.parse(session.steps[0]!.result.content).value).toBe("<asset:asset-element-1>");
+  });
+
+  it("reports the normalized value that a scene write actually landed on", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "update_map", arguments: { patch: { scale: 9 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("地图放到最大");
+
+    expect(session.shadowProject.map.scale).toBe(3);
+    expect(JSON.parse(session.steps[0]!.result.content).applied).toEqual({ scale: 3 });
+  });
+
+  it("queries students by province or name and keeps duplicate names apart by id", async () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "A", name: "张三", university: "中山大学", city: "广州", province: "广东省", visibility: true },
+        { id: "B", name: "张三", university: "深圳大学", city: "深圳", province: "广东省", visibility: true },
+        { id: "C", name: "李四", university: "北京大学", city: "北京", province: "北京市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "c1", name: "query_students", arguments: { province: "广东" } },
+        { id: "c2", name: "query_students", arguments: { name: "张三" } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("广东有谁");
+
+    const byProvince = JSON.parse(session.steps[0]!.result.content);
+    expect(byProvince).toMatchObject({ ok: true, total: 2, offset: 0, limit: 50 });
+    expect(byProvince.students.map((student: { id: string }) => student.id)).toEqual(["A", "B"]);
+    expect(byProvince.students[0]).toEqual({ id: "A", name: "张三", province: "广东省", city: "广州", university: "中山大学", visibility: true });
+    expect(JSON.parse(session.steps[1]!.result.content).students.map((student: { id: string }) => student.id)).toEqual(["A", "B"]);
+    expect(session.landingPreview().steps).toHaveLength(0);
+  });
+
+  it("derives the province from a new city when the AI rewrites a fact", async () => {
+    const project = createProjectDocument({
+      students: [{ id: "s1", name: "张三", university: "中山大学", city: "广州", province: "广东省", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "manage_students", arguments: { action: "update_fact", studentId: "s1", fields: { city: "杭州" } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("把张三改到杭州");
+
+    expect(session.shadowProject.students[0]).toMatchObject({ city: "杭州", province: "浙江省" });
+  });
+
+  it("warns instead of guessing when a new city cannot be resolved to a province", async () => {
+    const project = createProjectDocument({
+      students: [{ id: "s1", name: "张三", university: "中山大学", city: "广州", province: "广东省", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "manage_students", arguments: { action: "update_fact", studentId: "s1", fields: { city: "波士顿" } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("把张三改到波士顿");
+
+    expect(session.shadowProject.students[0]).toMatchObject({ city: "波士顿", province: "广东省" });
+    expect(JSON.parse(session.steps[0]!.result.content).warning).toContain("波士顿");
+  });
+
   it("rejects concurrent runs and can continue a completed conversation", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     let release!: () => void;

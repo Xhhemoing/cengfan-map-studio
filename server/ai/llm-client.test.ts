@@ -16,7 +16,7 @@ const TEST_CONFIG: AiConfig = {
 };
 
 function mockChatCompletion(content: string, status = 200) {
-  const fetchMock = vi.fn(async () => ({
+  const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({
     ok: status >= 200 && status < 300,
     status,
     text: async () => "mock body",
@@ -83,13 +83,11 @@ describe("createAiBackend without API key", () => {
 });
 
 describe("createAiBackend with LLM", () => {
-  it("uses the LLM result for parse-data and reports the tokenfree provider", async () => {
-    mockChatCompletion(
+  it("uses the LLM result for parse-data and only sends the locally unparsed lines", async () => {
+    const fetchMock = mockChatCompletion(
       JSON.stringify({
-        candidates: [
-          { lineIndex: 1, name: "林舟", university: "北京大学", city: "北京市" },
-        ],
-        unparsed: [{ lineIndex: 2, reason: "缺少院校信息" }],
+        candidates: [{ lineIndex: 1, name: "周晴", university: "哈佛大学", city: "波士顿" }],
+        unparsed: [],
       }),
     );
     const backend = createAiBackend(TEST_CONFIG);
@@ -101,8 +99,32 @@ describe("createAiBackend with LLM", () => {
     expect(result.provider).toBe(PROVIDER_NAME);
     expect(result.candidates).toEqual([
       { name: "林舟", university: "北京大学", city: "北京市", sourceLine: 1, rawLine: "林舟 北京大学 北京市" },
+      { name: "周晴", university: "哈佛大学", city: "波士顿", sourceLine: 2, rawLine: "只有名字" },
     ]);
+    expect(result.unparsed).toEqual([]);
+
+    const prompt = JSON.stringify(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)));
+    expect(prompt).toContain("只有名字");
+    expect(prompt).not.toContain("北京大学");
+  });
+
+  it("keeps a locally unresolved line unparsed when the LLM also fails on it", async () => {
+    mockChatCompletion(JSON.stringify({ candidates: [], unparsed: [{ lineIndex: 1, reason: "缺少院校信息" }] }));
+    const backend = createAiBackend(TEST_CONFIG);
+    const result = await backend.parseData({ text: "林舟 北京大学 北京市\n只有名字", source: "paste" });
+
     expect(result.unparsed).toEqual([{ sourceLine: 2, rawLine: "只有名字", reason: "缺少院校信息" }]);
+    expect(result.candidates).toHaveLength(1);
+  });
+
+  it("skips the network entirely when local rules parse every line", async () => {
+    const fetchMock = mockChatCompletion("{}");
+    const backend = createAiBackend(TEST_CONFIG);
+    const result = await backend.parseData({ text: "林舟 北京大学 北京市\n周晴 浙江大学 杭州市", source: "paste" });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.candidates).toHaveLength(2);
+    expect(result.unparsed).toEqual([]);
   });
 
   it("validates LLM commands and drops invalid ones", async () => {

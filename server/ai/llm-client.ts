@@ -299,14 +299,27 @@ export function createAiBackend(config: AiConfig = resolveAiConfig()): AiBackend
     provider: configured ? PROVIDER_NAME : "local-fallback",
     isConfigured: configured,
     async parseData(request, context = {}) {
-      if (!configured) return localParseData(request);
+      // 本地确定性规则先解析全文，只有它解不动的行才值得花 token。
+      const local = localParseData(request);
+      if (!configured || local.unparsed.length === 0) return local;
+      const pending = local.unparsed;
       try {
-        const { candidates, unparsed } = await parseDataWithLlm(config, request, context);
-        return { provider: PROVIDER_NAME, source: request.source, candidates, unparsed };
+        const llm = await parseDataWithLlm(config, { ...request, text: pending.map((line) => line.rawLine).join("\n") }, context);
+        const toSourceLine = (lineIndex: number) => pending[lineIndex - 1]?.sourceLine ?? lineIndex;
+        const candidates = [
+          ...local.candidates,
+          ...llm.candidates.map((candidate) => ({ ...candidate, sourceLine: toSourceLine(candidate.sourceLine) })),
+        ].sort((left, right) => left.sourceLine - right.sourceLine);
+        return {
+          provider: PROVIDER_NAME,
+          source: request.source,
+          candidates,
+          unparsed: llm.unparsed.map((line) => ({ ...line, sourceLine: toSourceLine(line.sourceLine) })),
+        };
       } catch (error) {
         if (error instanceof AiCallError && error.code === "AI_ABORTED") throw error;
         fallbackReason("parse-data", error);
-        return localParseData(request);
+        return local;
       }
     },
     async proposeEdits(request, context = {}) {

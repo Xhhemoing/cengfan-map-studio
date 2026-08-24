@@ -10,6 +10,9 @@ import type { ProjectDocument, ProjectTransaction } from "./project-document";
 import { updateSceneTarget, type SceneSelection } from "./scene-document";
 import type { DataViewId, Student } from "./project-data";
 import { buildProvinceSummary } from "./project-data";
+import { resolveCityLocation, resolveStudentLocation } from "./student-data";
+import { resolveProvinceName } from "./search-catalog";
+import { getProvinceNames } from "./map-data";
 
 const MAX_TOOL_RESULT_BYTES = 16 * 1024;
 const MAX_CONVERSATION_MESSAGES = 24;
@@ -17,6 +20,10 @@ const CLIENT_ROUND_TIMEOUT_MS = 70_000;
 const MAX_HEALTH_ISSUES = 20;
 const MAX_ASSET_RESULTS = 20;
 const MAX_LAYOUT_SAMPLES = 10;
+const MAX_STUDENT_RESULTS = 50;
+/** 拒绝幻觉目标时回传的候选清单上限，避免工具结果膨胀。 */
+const MAX_AVAILABLE_HINTS = 20;
+const MAX_INSPECT_STRING = 200;
 
 function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
@@ -45,6 +52,8 @@ export function compactAgentToolResult(callName: string, content: string): strin
       compact = { ok: compact.ok, issueCount: issues.length, issues: issues.slice(0, MAX_HEALTH_ISSUES) };
     } else if (callName === "find_assets" && Array.isArray(compact.assets)) {
       compact = { ok: compact.ok, assets: compact.assets.slice(0, MAX_ASSET_RESULTS) };
+    } else if (callName === "query_students" && Array.isArray(compact.students)) {
+      compact = { ...compact, students: compact.students.slice(0, MAX_STUDENT_RESULTS) };
     }
   } catch {
     compact = { ok: false, code: "TOOL_RESULT_INVALID_JSON" };
@@ -95,7 +104,7 @@ function validateScenePatch(domain: SceneDomain, patch: Record<string, unknown>)
 }
 
 const MAX_ROUNDS = 20;
-const READ_ONLY_TOOLS = new Set(["inspect_project", "describe_capability", "check_health", "find_assets"]);
+const READ_ONLY_TOOLS = new Set(["inspect_project", "describe_capability", "check_health", "find_assets", "query_students"]);
 
 export interface AgentToolResult {
   id: string;
@@ -226,6 +235,79 @@ function readPath(value: unknown, path: string): unknown {
     else return undefined;
   }
   return current;
+}
+
+/** 与 readPath 相同的寻址，同时保留父对象，便于把 data URL 换成 `<asset:id>`。 */
+function readPathWithParent(value: unknown, path: string): { value: unknown; parent: unknown } {
+  const tokens = path.match(/[^.[\]]+/g) ?? [];
+  let parent: unknown;
+  let current: unknown = value;
+  for (const token of tokens) {
+    if (!current || typeof current !== "object" || !(token in current)) return { value: undefined, parent: undefined };
+    parent = current;
+    current = (current as Record<string, unknown>)[token];
+  }
+  return { value: current, parent };
+}
+
+function sceneView(project: ProjectDocument) {
+  return {
+    canvas: project.canvas,
+    map: project.map,
+    cards: project.cards,
+    guests: project.guests,
+    textElements: project.textElements,
+    assetElements: project.assetElements,
+  };
+}
+
+/** 场景真值可能带 data URL 或超长文本，回传前统一压成引用或截断。 */
+function sanitizeSceneValue(value: unknown, assetId?: string): unknown {
+  if (typeof value === "string") {
+    if (value.startsWith("data:")) return assetId ? `<asset:${assetId}>` : `<data-url:length=${value.length}>`;
+    return value.length > MAX_INSPECT_STRING ? `${value.slice(0, MAX_INSPECT_STRING)}…` : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => sanitizeSceneValue(item));
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id : assetId;
+    return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, sanitizeSceneValue(item, id)]));
+  }
+  return value;
+}
+
+/** 影子工程中真实存在的省名：地图省名 + 已有省份样式 + 学生省份。 */
+function knownProvinceNames(project: ProjectDocument): string[] {
+  const names = new Set<string>(getProvinceNames());
+  for (const key of Object.keys(project.map.provinceStyles ?? {})) {
+    if (key.trim()) names.add(resolveProvinceName(key) || key.trim());
+  }
+  for (const group of buildProvinceSummary(project.students)) {
+    if (group.province && group.province !== "未知") names.add(group.province);
+  }
+  return [...names];
+}
+
+function sceneTargetRecord(project: ProjectDocument, target: SceneSelection): Record<string, unknown> | undefined {
+  switch (target.type) {
+    case "canvas": return project.canvas as unknown as Record<string, unknown>;
+    case "map": return project.map as unknown as Record<string, unknown>;
+    case "cards": return project.cards as unknown as Record<string, unknown>;
+    case "guests": return project.guests as unknown as Record<string, unknown>;
+    case "province": return project.map.provinceStyles?.[target.province] as Record<string, unknown> | undefined;
+    case "text": return project.textElements.find((element) => element.id === target.id) as unknown as Record<string, unknown> | undefined;
+    case "asset": return project.assetElements.find((element) => element.id === target.id) as unknown as Record<string, unknown> | undefined;
+  }
+}
+
+/** 写入后回读 normalize 的最终值，让 clamp（例如 scale>3 → 3）对模型可见。 */
+function appliedPatchValues(project: ProjectDocument, target: SceneSelection, patch: Record<string, unknown>): Record<string, unknown> {
+  const record = sceneTargetRecord(project, target);
+  return Object.fromEntries(Object.keys(patch).map((key) => [key, sanitizeSceneValue(record?.[key])]));
+}
+
+function matchesQuery(value: string, query: string): boolean {
+  return !query || value.toLocaleLowerCase("zh-CN").includes(query.toLocaleLowerCase("zh-CN"));
 }
 
 function sceneTargetForTool(name: string, args: Record<string, unknown>): SceneSelection | null {
@@ -399,6 +481,41 @@ export class AgentSession {
     return null;
   }
 
+  /** 幻觉 id/省名必须显式失败，否则写入会落到一个永远不渲染的目标上并被当成成功。 */
+  private resolveSceneTarget(target: SceneSelection): { ok: true; target: SceneSelection } | { ok: false; content: string } {
+    if (target.type === "text" && !this.shadow.textElements.some((element) => element.id === target.id)) {
+      return { ok: false, content: JSON.stringify({
+        ok: false, code: "TARGET_NOT_FOUND", target: "text", id: target.id,
+        availableIds: this.shadow.textElements.slice(0, MAX_AVAILABLE_HINTS).map((element) => element.id),
+        totalCount: this.shadow.textElements.length,
+        error: `文本元素 ${target.id} 不存在，请使用 availableIds 中的 id。`,
+      }) };
+    }
+    if (target.type === "asset" && !this.shadow.assetElements.some((element) => element.id === target.id)) {
+      return { ok: false, content: JSON.stringify({
+        ok: false, code: "TARGET_NOT_FOUND", target: "asset", id: target.id,
+        availableIds: this.shadow.assetElements.slice(0, MAX_AVAILABLE_HINTS).map((element) => element.id),
+        totalCount: this.shadow.assetElements.length,
+        error: `贴图元素 ${target.id} 不存在，请使用 availableIds 中的 id。`,
+      }) };
+    }
+    if (target.type === "province") {
+      const available = knownProvinceNames(this.shadow);
+      const resolved = resolveProvinceName(target.province.trim());
+      const province = available.find((name) => name === resolved || name === target.province.trim());
+      if (!province) {
+        return { ok: false, content: JSON.stringify({
+          ok: false, code: "TARGET_NOT_FOUND", target: "province", province: target.province,
+          availableProvinces: available.slice(0, MAX_AVAILABLE_HINTS),
+          totalCount: available.length,
+          error: `省份「${target.province}」不在当前工程中，请使用 availableProvinces 中的省名。`,
+        }) };
+      }
+      return { ok: true, target: { type: "province", province } };
+    }
+    return { ok: true, target };
+  }
+
   private compactToolResult(callName: string, content: string): string {
     return compactAgentToolResult(callName, content);
   }
@@ -438,7 +555,15 @@ export class AgentSession {
     try {
       if (call.name === "inspect_project") {
         const path = String(args.path ?? "");
-        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, path, value: readPath(buildProjectDigest(this.shadow), path) }) };
+        // students 走 digest（聚合计数），其余路径读影子场景真值，digest 未投影的属性才能被读到。
+        if (!path || path === "students" || path.startsWith("students.")) {
+          return { id: call.id, ok: true, content: JSON.stringify({ ok: true, path, value: readPath(buildProjectDigest(this.shadow), path) }) };
+        }
+        const { value, parent } = readPathWithParent(sceneView(this.shadow), path);
+        const parentId = parent && typeof parent === "object" && typeof (parent as Record<string, unknown>).id === "string"
+          ? (parent as Record<string, string>).id
+          : undefined;
+        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, path, value: sanitizeSceneValue(value, parentId) }) };
       }
       if (call.name === "describe_capability") {
         const domain = String(args.domain);
@@ -457,11 +582,33 @@ export class AgentSession {
         }).map(({ id, label, kind, provinceIds, source }) => ({ id, label, kind, provinceIds, source }));
         return { id: call.id, ok: true, content: JSON.stringify({ ok: true, assets }) };
       }
+      if (call.name === "query_students") {
+        const offset = Math.max(0, Math.floor(Number(args.offset ?? 0) || 0));
+        const rows = this.shadow.students.map((student) => {
+          const location = resolveStudentLocation(student);
+          return {
+            id: student.id,
+            name: student.name,
+            province: student.province?.trim() || location.province,
+            city: student.city,
+            university: student.university,
+            visibility: student.visibility !== false,
+          };
+        }).filter((row) =>
+          matchesQuery(row.province, String(args.province ?? "").trim())
+          && matchesQuery(row.city, String(args.city ?? "").trim())
+          && matchesQuery(row.university, String(args.university ?? "").trim())
+          && matchesQuery(row.name, String(args.name ?? "").trim()));
+        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, students: rows.slice(offset, offset + MAX_STUDENT_RESULTS), total: rows.length, offset, limit: MAX_STUDENT_RESULTS }) };
+      }
       const target = sceneTargetForTool(call.name, args);
       if (target) {
+        const resolution = this.resolveSceneTarget(target);
+        if (!resolution.ok) return { id: call.id, ok: false, content: resolution.content };
+        const resolvedTarget = resolution.target;
         const patch = patchForTool(call.name, args)?.patch ?? {};
-        this.shadow = { ...this.shadow, ...scenePatch(this.shadow, target, patch) };
-        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, target }) };
+        this.shadow = { ...this.shadow, ...scenePatch(this.shadow, resolvedTarget, patch) };
+        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, target: resolvedTarget, applied: appliedPatchValues(this.shadow, resolvedTarget, patch) }) };
       }
       if (call.name === "set_data_view") {
         this.shadow = applyDataViewChange(this.shadow, String(args.view) as DataViewId);
@@ -496,9 +643,17 @@ export class AgentSession {
           return { id: call.id, ok: true, content: JSON.stringify({ ok: true, studentId: student.id, visibility: action === "show" }) };
         }
         if (action === "update_fact") {
-          const fields = (args.fields ?? {}) as Partial<Pick<Student, "name" | "university" | "city" | "province">>;
+          // 模型只能传 name/university/city；province 由执行层按 city 推导。
+          // 回滚方案：删掉下面的 city→province 推导块即可回到「只改 city」。
+          const fields = { ...(args.fields ?? {}) } as Partial<Pick<Student, "name" | "university" | "city" | "province">>;
+          let warning: string | undefined;
+          if (typeof fields.city === "string" && fields.city.trim()) {
+            const location = resolveCityLocation(fields.city);
+            if (location.status === "resolved" && location.province) fields.province = location.province;
+            else warning = `无法根据城市「${fields.city.trim()}」推断省份，已保留原省份 ${student.province || "（空）"}。`;
+          }
           this.shadow = { ...this.shadow, students: this.shadow.students.map((item) => item.id === student.id ? { ...item, ...fields } : item) };
-          return { id: call.id, ok: true, content: JSON.stringify({ ok: true, studentId: student.id, before: student, after: { ...student, ...fields } }) };
+          return { id: call.id, ok: true, content: JSON.stringify({ ok: true, studentId: student.id, before: student, after: { ...student, ...fields }, ...(warning ? { warning } : {}) }) };
         }
       }
       throw new Error(`未知工具 ${call.name}`);

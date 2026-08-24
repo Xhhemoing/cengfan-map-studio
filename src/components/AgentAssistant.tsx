@@ -6,7 +6,7 @@ import { loadAssistantConversationState, saveAssistantConversationState, type As
 import { fingerprintProject } from "../lib/project-digest";
 import type { ProjectDocument, ProjectTransaction } from "../lib/project-document";
 
-const READ_ONLY = new Set(["inspect_project", "describe_capability", "check_health", "find_assets"]);
+const READ_ONLY = new Set(["inspect_project", "describe_capability", "check_health", "find_assets", "query_students"]);
 type Mode = "conservative" | "smart";
 type ConversationStatus = "draft" | "running" | "completed" | "failed" | "cancelled" | "applied";
 
