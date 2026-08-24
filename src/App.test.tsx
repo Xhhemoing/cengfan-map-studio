@@ -2780,3 +2780,81 @@ describe("Missing project honesty under a degraded store (R6-5)", () => {
     window.location.hash = originalHash;
   });
 });
+
+describe("Editor orchestration seams extracted into src/lib (R7-9)", () => {
+  function renderLegacyStage(stage: string): HTMLDivElement {
+    window.localStorage.clear();
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+      stage,
+      savedAt: "2026-08-24T00:00:00.000Z",
+    }));
+    return renderLegacyApp({ clearStorage: false });
+  }
+
+  function pressKey(target: EventTarget, init: KeyboardEventInit): KeyboardEvent {
+    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+    flushSync(() => target.dispatchEvent(event));
+    return event;
+  }
+
+  it("names the pending step on the topbar history buttons", () => {
+    const container = renderLegacyStage("content");
+    expect(container.querySelector('button[aria-label="暂无可撤销操作"]')).not.toBeNull();
+
+    click([...container.querySelectorAll<HTMLButtonElement>(".content-add-actions button")]
+      .find((button) => button.textContent?.includes("添加文本框"))!);
+
+    expect(container.querySelector('button[aria-label="撤销：添加文本框"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="暂无可重做操作"]')).not.toBeNull();
+  });
+
+  it("drives undo and redo from the keyboard on the live canvas", () => {
+    const container = renderLegacyStage("content");
+    const countTexts = () => container.querySelectorAll("svg.poster [data-text-id]").length;
+    const before = countTexts();
+
+    click([...container.querySelectorAll<HTMLButtonElement>(".content-add-actions button")]
+      .find((button) => button.textContent?.includes("添加文本框"))!);
+    expect(countTexts()).toBe(before + 1);
+
+    const undo = pressKey(window, { key: "z", ctrlKey: true });
+    expect(undo.defaultPrevented).toBe(true);
+    expect(countTexts()).toBe(before);
+
+    pressKey(window, { key: "y", metaKey: true });
+    expect(countTexts()).toBe(before + 1);
+  });
+
+  it("leaves the browser's own undo to a focused text field", () => {
+    const container = renderLegacyStage("content");
+    click([...container.querySelectorAll<HTMLButtonElement>(".content-add-actions button")]
+      .find((button) => button.textContent?.includes("添加文本框"))!);
+    const after = container.querySelectorAll("svg.poster [data-text-id]").length;
+
+    const field = document.createElement("input");
+    container.append(field);
+    const event = pressKey(field, { key: "z", ctrlKey: true });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(container.querySelectorAll("svg.poster [data-text-id]").length).toBe(after);
+    field.remove();
+  });
+
+  it("applies a built-in template as one undoable step", () => {
+    const container = renderLegacyStage("frame");
+    const cards = [...container.querySelectorAll<HTMLButtonElement>(".template-grid .template-card")];
+    const target = cards.find((card) => !card.classList.contains("selected"))!;
+    const name = target.querySelector("strong")?.textContent ?? "";
+
+    click(target);
+
+    expect(container.querySelector(`button[aria-label="撤销：应用内置模板：${name}"]`)).not.toBeNull();
+    expect([...container.querySelectorAll(".template-grid .template-card.selected")]
+      .map((card) => card.querySelector("strong")?.textContent)).toEqual([name]);
+
+    pressKey(window, { key: "z", ctrlKey: true });
+
+    expect([...container.querySelectorAll(".template-grid .template-card.selected")]
+      .map((card) => card.querySelector("strong")?.textContent)).not.toEqual([name]);
+  });
+});
