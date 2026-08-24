@@ -58,6 +58,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 ## Round 4 notes
 
 - Merge gate this round includes `npx tsc -p tsconfig.node.json --noEmit` and `npx tsc -p tsconfig.app.json --noEmit` at every merge (R4-9 will make `npm run typecheck` permanent).
+- Permanent merge gate: full suite + lint + `npm run typecheck` (`tsc -b --noEmit`).
 - R4-1 (`bb92a69`): inherit `RoomStoreSnapshot`; corrupt `collaboration-rooms.json` → `.bad` sidecar; boot logs restored-room count. Do not revert R3-5 runtime.
 - R4-6 (`b50d55a`): ack-lost submit converges (2/2). Test imports server store from `src/`; excluded from `tsconfig.app.json` so app `noUnusedParameters` does not fail on pre-existing unused `setAccess` `clientId` (R4-4 owns that file).
 
