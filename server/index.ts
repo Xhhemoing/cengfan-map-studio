@@ -1,6 +1,6 @@
 import http from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, statSync, type Stats } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createBudgetReceiptLedger, createBudgetReceiptSigner, type BudgetReceiptLedger } from "./ai/budget-receipt";
 import { createFileAiStateStore, createMemoryAiStateStore, emptyAiRuntimeState, type AiRuntimeState, type AiStateStore } from "./ai/ai-state-store";
@@ -23,7 +23,7 @@ import {
   parseDataRequestSchema,
   proposeEditsRequestSchema,
 } from "./ai/schemas";
-import { CollaborationError, createRoomStore } from "./collaboration";
+import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent } from "./collaboration";
 
 export const DEFAULT_PORT = 8787;
 export type AiServer = http.Server & { flushAiState?: () => Promise<void>; lifecycle?: ReturnType<typeof createServerLifecycle> };
@@ -67,6 +67,7 @@ export interface AiServerOptions {
   roomTtlMs?: number;
   roomInvitationTtlMs?: number;
   roomEventsTicketTtlMs?: number;
+  roomHeartbeatIntervalMs?: number;
   trustProxy?: boolean;
   budgetReceiptSecret?: string;
   budgetReceiptLedger?: BudgetReceiptLedger;
@@ -90,6 +91,7 @@ const DEFAULT_MAX_ROOM_SUBSCRIBERS = 50;
 const DEFAULT_ROOM_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_ROOM_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ROOM_EVENTS_TICKET_TTL_MS = 60 * 1000;
+const DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS = 20 * 1000;
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -246,6 +248,15 @@ async function readJson(request: http.IncomingMessage, maxBytes: number): Promis
 }
 
 
+/** 单次 stat：不存在、权限不足或路径非法都返回 undefined，避免同步抛错击穿请求处理。 */
+function statOrUndefined(filePath: string): Stats | undefined {
+  try {
+    return statSync(filePath, { throwIfNoEntry: false }) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function serveStatic(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -262,6 +273,12 @@ function serveStatic(
     }, corsOrigins);
     return true;
   }
+  if (urlPath.includes("\0")) {
+    sendJson(request, response, 400, {
+      error: { code: "INVALID_URL_ENCODING", message: "URL 编码无效" },
+    }, corsOrigins);
+    return true;
+  }
   const relativePath = urlPath === "/" ? "index.html" : urlPath.replace(/^\//, "");
   const candidate = resolve(staticDir, relativePath);
   const root = resolve(staticDir);
@@ -273,26 +290,60 @@ function serveStatic(
   }
 
   let filePath = candidate;
-  if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
-    const fallback = join(staticDir, "index.html");
-    if (!existsSync(fallback)) {
-      return false;
-    }
-    filePath = fallback;
+  let stats = statOrUndefined(filePath);
+  if (!stats || stats.isDirectory()) {
+    filePath = join(staticDir, "index.html");
+    stats = statOrUndefined(filePath);
   }
+  if (!stats || !stats.isFile()) return false;
 
   const shouldGzip = acceptsGzip(request)
     && /\.(?:html|js|css|json|svg)$/i.test(filePath)
-    && statSync(filePath).size > 128;
-  response.writeHead(200, {
+    && stats.size > 128;
+  const headers = {
     ...securityHeaders(),
     "Content-Type": contentTypeFor(filePath),
     "Cache-Control": cacheControlFor(filePath),
     ...(shouldGzip ? { "Content-Encoding": "gzip", "Vary": "Accept-Encoding" } : {}),
-  });
+  };
   const stream = createReadStream(filePath);
-  if (shouldGzip) stream.pipe(createGzip()).pipe(response);
-  else stream.pipe(response);
+  const abortTransfer = () => {
+    stream.destroy();
+    if (!response.writableEnded && !response.destroyed) response.destroy();
+  };
+  // 响应端出错时 pipe 会重新抛出，必须自己兜住；客户端提前断开时同步销毁文件流。
+  response.once("error", () => { stream.destroy(); });
+  response.once("close", () => { if (!response.writableEnded) stream.destroy(); });
+  stream.once("error", (error: NodeJS.ErrnoException) => {
+    stream.destroy();
+    if (response.headersSent) {
+      // 头已发出，无法再改状态码，只能中断连接而不是让未处理的流错误终止进程。
+      abortTransfer();
+      return;
+    }
+    const missing = error.code === "ENOENT" || error.code === "ENOTDIR";
+    sendJson(request, response, missing ? 404 : 500, {
+      error: {
+        code: missing ? "NOT_FOUND" : "STATIC_READ_FAILED",
+        message: missing ? "资源不存在" : "静态资源读取失败",
+      },
+    }, corsOrigins);
+  });
+  // 等到文件真正打开再发响应头，关闭 stat 与 open 之间的 TOCTOU 窗口。
+  stream.once("open", () => {
+    if (response.writableEnded || response.destroyed) {
+      stream.destroy();
+      return;
+    }
+    response.writeHead(200, headers);
+    if (!shouldGzip) {
+      stream.pipe(response);
+      return;
+    }
+    const gzip = createGzip();
+    gzip.once("error", abortTransfer);
+    stream.pipe(gzip).pipe(response);
+  });
   return true;
 }
 
@@ -362,6 +413,36 @@ export function createAiServer(options: AiServerOptions = {}) {
     invitationTtlMs: options.roomInvitationTtlMs ?? DEFAULT_ROOM_INVITATION_TTL_MS,
   });
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
+  const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
+  // 一次广播会同步回调每个订阅者，且房间监听器给每个订阅者一份浅拷贝，
+  // 所以按 (房间, 版本, 更新时间, 事务, 是否携带快照) 记忆化，并在当前微任务结束后清空。
+  // 每个事件因此最多序列化两次（带快照 / 不带快照），与订阅者数量无关。
+  const roomEventPayloads = new Map<string, string>();
+  let roomEventPayloadsScheduledFlush = false;
+  const serializeRoomEvent = (room: CollaborationRoom, withoutSnapshot: boolean): string => {
+    const key = `${room.id}\u0000${room.version}\u0000${room.updatedAt}\u0000${room.lastTxId ?? ""}\u0000${withoutSnapshot ? "lite" : "full"}`;
+    const cached = roomEventPayloads.get(key);
+    if (cached !== undefined) return cached;
+    const serialized = JSON.stringify(withoutSnapshot ? { ...room, snapshot: undefined } : room);
+    roomEventPayloads.set(key, serialized);
+    if (!roomEventPayloadsScheduledFlush) {
+      roomEventPayloadsScheduledFlush = true;
+      queueMicrotask(() => {
+        roomEventPayloads.clear();
+        roomEventPayloadsScheduledFlush = false;
+      });
+    }
+    return serialized;
+  };
+  // 生命周期事件对象在所有订阅者之间共享同一个引用，可以直接按引用记忆化。
+  const lifecycleEventPayloads = new WeakMap<LifecycleEvent, string>();
+  const serializeLifecycleEvent = (event: LifecycleEvent, build: () => unknown): string => {
+    const cached = lifecycleEventPayloads.get(event);
+    if (cached !== undefined) return cached;
+    const serialized = JSON.stringify(build());
+    lifecycleEventPayloads.set(event, serialized);
+    return serialized;
+  };
   const roomEventsTickets = new Map<string, { roomId: string; accessToken: string; expiresAt: number }>();
   const MAX_ROOM_EVENTS_TICKETS = 10_000;
   const evictExpiredTickets = () => {
@@ -419,7 +500,9 @@ export function createAiServer(options: AiServerOptions = {}) {
     }
     try {
       if (request.method === "OPTIONS") {
-        send( 204, {});
+        // 204 不允许携带响应体，也就不该声明 Content-Type/Content-Length。
+        response.writeHead(204, { ...securityHeaders(), ...corsHeaders(request, corsOrigins) });
+        response.end();
         return;
       }
 
@@ -763,27 +846,68 @@ export function createAiServer(options: AiServerOptions = {}) {
         roomEventsTickets.delete(ticket!);
         const knownVersionParam = eventUrl.searchParams.get("version");
         const knownVersion = knownVersionParam === null ? Number.NaN : Number(knownVersionParam);
-        let unsubscribe: () => void;
-        let unsubscribeLifecycle: () => void;
+        let unsubscribe: (() => void) | undefined;
+        let unsubscribeLifecycle: (() => void) | undefined;
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        let streamTornDown = false;
+        const teardownStream = () => {
+          if (streamTornDown) return;
+          streamTornDown = true;
+          if (heartbeat) clearInterval(heartbeat);
+          heartbeat = undefined;
+          const releaseRoom = unsubscribe;
+          const releaseLifecycle = unsubscribeLifecycle;
+          unsubscribe = undefined;
+          unsubscribeLifecycle = undefined;
+          releaseRoom?.();
+          releaseLifecycle?.();
+        };
+        const writeStream = (chunk: string): boolean => {
+          // 房间事件可能在响应结束之后到达（例如房主关闭房间后有成员退出）。
+          if (streamTornDown || response.writableEnded || response.destroyed) return false;
+          try {
+            // 背压时 write 返回 false，这里只关心是否抛错，不把 false 当成失败。
+            response.write(chunk);
+            return true;
+          } catch {
+            teardownStream();
+            return false;
+          }
+        };
+        const endStream = () => {
+          if (!response.writableEnded && !response.destroyed) {
+            try {
+              response.end();
+            } catch {
+              // 连接已被对端销毁，交给 teardown 收尾即可。
+            }
+          }
+          teardownStream();
+        };
+        response.on("error", teardownStream);
         try {
           const room = roomStore.get(eventsMatch[1]!);
           if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
           const participant = roomStore.authorize(eventsMatch[1]!, ticketRecord.accessToken, "read");
           unsubscribe = roomStore.subscribe(eventsMatch[1]!, ticketRecord.accessToken, (next) => {
-            const payload = next.operations || next.updatedBy === participant.id ? { ...next, snapshot: undefined } : next;
-            response.write(`event: snapshot\ndata: ${JSON.stringify(payload)}\n\n`);
+            const withoutSnapshot = Boolean(next.operations) || next.updatedBy === participant.id;
+            const data = serializeRoomEvent(next, withoutSnapshot);
+            writeStream(`event: snapshot\ndata: ${data}\n\n`);
           });
           unsubscribeLifecycle = roomStore.subscribeLifecycle(eventsMatch[1]!, ticketRecord.accessToken, (event) => {
             if (event.kind === "closed") {
-              response.write(`event: closed\ndata: ${JSON.stringify({ id: event.room.id, version: event.room.version, readonly: event.room.readonly === true, closed: true })}\n\n`);
-              response.end();
+              const data = serializeLifecycleEvent(event, () => ({ id: event.room.id, version: event.room.version, readonly: event.room.readonly === true, closed: true }));
+              writeStream(`event: closed\ndata: ${data}\n\n`);
+              endStream();
               return;
             }
             if (event.kind === "access") {
-              response.write(`event: snapshot\ndata: ${JSON.stringify({ ...event.room, snapshot: undefined })}\n\n`);
+              const data = serializeLifecycleEvent(event, () => ({ ...event.room, snapshot: undefined }));
+              writeStream(`event: snapshot\ndata: ${data}\n\n`);
               return;
             }
-            response.write(`event: members\ndata: ${JSON.stringify(event.members)}\n\n`);
+            const data = serializeLifecycleEvent(event, () => event.members);
+            writeStream(`event: members\ndata: ${data}\n\n`);
           });
           response.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
@@ -793,22 +917,20 @@ export function createAiServer(options: AiServerOptions = {}) {
           });
           response.flushHeaders();
           if (!Number.isInteger(knownVersion) || knownVersion < room.version) {
-            response.write(`event: snapshot\ndata: ${JSON.stringify(room)}\n\n`);
+            writeStream(`event: snapshot\ndata: ${JSON.stringify(room)}\n\n`);
           }
         } catch (error) {
+          teardownStream();
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;
           return;
         }
-        const heartbeat = setInterval(() => {
-          roomStore.get(eventsMatch[1]!);
-          response.write(": heartbeat\n\n");
-        }, 20_000);
-        request.on("close", () => {
-          clearInterval(heartbeat);
-          unsubscribe();
-          unsubscribeLifecycle();
-        });
+        heartbeat = setInterval(() => {
+          // 心跳只保活 TCP 连接，不刷新房间 TTL（房间活跃度由已授权的读写操作决定）。
+          if (!writeStream(": heartbeat\n\n")) teardownStream();
+        }, roomHeartbeatIntervalMs);
+        request.on("close", teardownStream);
+        response.on("close", teardownStream);
         return;
       }
 

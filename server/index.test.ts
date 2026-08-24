@@ -1,14 +1,28 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import type { AddressInfo } from "node:net";
 import type http from "node:http";
 import { createAiLogger } from "./ai/ai-observability";
 import { createRateLimiter } from "./ai/rate-limit";
 import { createAiServer, DEFAULT_PORT, resolvePort } from "./index";
+
+const fsHooks = vi.hoisted(() => ({ createReadStream: null as null | ((filePath: string) => unknown) }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const createReadStream = (filePath: unknown, options?: unknown) => (
+    fsHooks.createReadStream
+      ? fsHooks.createReadStream(String(filePath))
+      : (actual.createReadStream as (path: unknown, options?: unknown) => unknown)(filePath, options)
+  );
+  return { ...actual, default: { ...actual, createReadStream }, createReadStream };
+});
 
 async function startServer(server: http.Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -16,17 +30,77 @@ async function startServer(server: http.Server): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function rawGet(origin: string, path: string): Promise<{ status: number; body: string }> {
+async function rawGet(origin: string, path: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string }> {
   const target = new URL(origin);
   return new Promise((resolve, reject) => {
-    const request = httpRequest({ hostname: target.hostname, port: target.port, path, method: "GET" }, (response) => {
+    const request = httpRequest({ hostname: target.hostname, port: target.port, path, method: "GET", headers }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
       response.on("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
+      response.on("error", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
     });
     request.on("error", reject);
     request.end();
   });
+}
+
+/** 捕获进程级崩溃信号：写入已结束的响应会以未处理的 error 事件形式冒泡。 */
+function captureProcessFailures(): { failures: unknown[]; restore: () => void } {
+  const failures: unknown[] = [];
+  const record = (error: unknown) => { failures.push(error); };
+  process.on("uncaughtException", record);
+  process.on("unhandledRejection", record);
+  return {
+    failures,
+    restore: () => {
+      process.off("uncaughtException", record);
+      process.off("unhandledRejection", record);
+    },
+  };
+}
+
+const wait = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+
+/**
+ * 内存中的 SSE 请求/响应对：真实 socket 无法稳定复现「房间关闭后又收到成员事件」的时序，
+ * 这里直接驱动服务器回调，并像 Node 一样把结束后的写入视为致命错误。
+ */
+function createInMemoryEventStream(path: string) {
+  const request = Object.assign(new EventEmitter(), {
+    url: path,
+    method: "GET",
+    headers: {} as Record<string, string>,
+    socket: { remoteAddress: "127.0.0.1" },
+  }) as unknown as http.IncomingMessage;
+  const chunks: string[] = [];
+  const writesAfterEnd: string[] = [];
+  const response = Object.assign(new EventEmitter(), {
+    headersSent: false,
+    writableEnded: false,
+    destroyed: false,
+    writeHead(this: { headersSent: boolean }) { this.headersSent = true; return this; },
+    flushHeaders() { return undefined; },
+    write(chunk: string) {
+      if (response.writableEnded) {
+        writesAfterEnd.push(chunk);
+        throw new Error("ERR_STREAM_WRITE_AFTER_END");
+      }
+      chunks.push(chunk);
+      return true;
+    },
+    end(chunk?: string) {
+      if (typeof chunk === "string") chunks.push(chunk);
+      response.writableEnded = true;
+      return response;
+    },
+  }) as unknown as http.ServerResponse & { writableEnded: boolean };
+  return {
+    request,
+    response,
+    chunks,
+    writesAfterEnd,
+    disconnect: () => { request.emit("close"); },
+  };
 }
 
 async function createCollaborationRoom(origin: string, snapshot: unknown, clientId = "client-a") {
@@ -50,6 +124,51 @@ async function createEventsTicket(origin: string, roomId: string, accessToken: s
   });
   expect(response.status).toBe(201);
   return (await response.json() as { ticket: string }).ticket;
+}
+
+async function joinRoomMember(
+  origin: string,
+  roomId: string,
+  ownerToken: string,
+  role: "editor" | "viewer",
+  clientId: string,
+): Promise<string> {
+  const invitation = await fetch(`${origin}/api/rooms/${roomId}/invitations`, {
+    method: "POST",
+    headers: roomHeaders(ownerToken, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ role }),
+  }).then((response) => response.json()) as { token: string };
+  const joined = await fetch(`${origin}/api/rooms/${roomId}/join`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ inviteToken: invitation.token, clientId, displayName: clientId }),
+  });
+  expect(joined.status).toBe(200);
+  return (await joined.json() as { access: { accessToken: string } }).access.accessToken;
+}
+
+async function openEventStream(origin: string, roomId: string, accessToken: string, version = 0) {
+  const ticket = await createEventsTicket(origin, roomId, accessToken);
+  const controller = new AbortController();
+  const response = await fetch(
+    `${origin}/api/rooms/${roomId}/events?ticket=${encodeURIComponent(ticket)}&version=${version}`,
+    { signal: controller.signal },
+  );
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  return {
+    response,
+    controller,
+    reader,
+    read: async () => {
+      const chunk = await reader.read();
+      return chunk.done ? null : decoder.decode(chunk.value, { stream: true });
+    },
+    close: async () => {
+      controller.abort();
+      await reader.cancel().catch(() => undefined);
+    },
+  };
 }
 
 async function rawPost(origin: string, path: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: string }> {
@@ -86,11 +205,13 @@ describe("unified application server", () => {
   const directories: string[] = [];
 
   afterEach(async () => {
+    fsHooks.createReadStream = null;
     await Promise.all(
       servers.map(
         (server) =>
           new Promise<void>((resolve) => {
             server.close(() => resolve());
+            server.closeAllConnections?.();
           }),
       ),
     );
@@ -1122,6 +1243,277 @@ describe("unified application server", () => {
 
     const response = await rawPost(origin, "/api/ai/explain", { message: "为什么", studentCount: 1 });
     expect(response.status).toBe(200);
+  });
+
+  it("never writes to an event stream that was ended by a room close", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const editorToken = await joinRoomMember(origin, created.room.id, created.access.accessToken, "editor", "editor");
+    const ticket = await createEventsTicket(origin, created.room.id, created.access.accessToken);
+    const stream = createInMemoryEventStream(`/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(ticket)}&version=0`);
+    server.emit("request", stream.request, stream.response);
+    try {
+      const closed = await fetch(`${origin}/api/rooms/${created.room.id}/access`, {
+        method: "POST",
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ clientId: "client-a", action: "close" }),
+      });
+      expect(closed.status).toBe(200);
+      expect(stream.chunks.join("")).toContain("event: closed");
+      expect(stream.response.writableEnded).toBe(true);
+
+      const left = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+        method: "POST",
+        headers: roomHeaders(editorToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ clientId: "editor" }),
+      });
+
+      expect(stream.writesAfterEnd).toEqual([]);
+      expect(left.status).toBe(200);
+    } finally {
+      stream.disconnect();
+    }
+  });
+
+  it("survives a member leaving after the owner closed the room", async () => {
+    const monitor = captureProcessFailures();
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const editorToken = await joinRoomMember(origin, created.room.id, created.access.accessToken, "editor", "editor");
+    const stream = await openEventStream(origin, created.room.id, created.access.accessToken);
+    try {
+      const closed = await fetch(`${origin}/api/rooms/${created.room.id}/access`, {
+        method: "POST",
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ clientId: "client-a", action: "close" }),
+      });
+      expect(closed.status).toBe(200);
+      expect(await stream.read()).toContain("event: closed");
+      expect(await stream.read()).toBeNull();
+
+      const left = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+        method: "POST",
+        headers: roomHeaders(editorToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ clientId: "editor" }),
+      });
+      expect(left.status).toBe(200);
+      await wait(50);
+
+      expect(monitor.failures).toEqual([]);
+      expect((await rawGet(origin, "/api/live")).status).toBe(200);
+    } finally {
+      monitor.restore();
+      await stream.close();
+    }
+  });
+
+  it("serializes one payload per broadcast no matter how many subscribers are attached", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { project: { title: "initial" }, assets: ["large"] });
+    const streams = [] as Array<Awaited<ReturnType<typeof openEventStream>>>;
+    for (let index = 0; index < 10; index += 1) {
+      streams.push(await openEventStream(origin, created.room.id, created.access.accessToken));
+    }
+    const serialize = JSON.stringify;
+    let broadcastSerializations = 0;
+    const spy = vi.spyOn(JSON, "stringify").mockImplementation(((value: unknown, ...rest: unknown[]) => {
+      const room = value as { id?: unknown; members?: unknown; snapshot?: unknown; version?: unknown } | null;
+      if (
+        room && typeof room === "object" && !Array.isArray(room)
+        && room.id === created.room.id && Array.isArray(room.members)
+        && typeof room.version === "number" && room.snapshot === undefined
+      ) {
+        broadcastSerializations += 1;
+      }
+      return (serialize as (...args: unknown[]) => string)(value, ...rest);
+    }) as typeof JSON.stringify);
+    try {
+      const applied = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
+        method: "POST",
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ txId: "fanout-1", clientId: "client-a", baseVersion: 0, operations: [{ type: "set", path: ["project", "title"], value: "patched" }] }),
+      });
+      expect(applied.status).toBe(200);
+      const received = await Promise.all(streams.map((stream) => stream.read()));
+      expect(received.every((chunk) => chunk?.includes("fanout-1"))).toBe(true);
+      expect(received.every((chunk) => !chunk?.includes("large"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+      await Promise.all(streams.map((stream) => stream.close()));
+    }
+    expect(broadcastSerializations).toBe(1);
+  });
+
+  it("frees the subscriber slot and stops the heartbeat when a stream disconnects mid-session", async () => {
+    const server = createAiServer({ maxRoomSubscribers: 1 });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const stream = await openEventStream(origin, created.room.id, created.access.accessToken);
+    const secondTicket = await createEventsTicket(origin, created.room.id, created.access.accessToken);
+    const rejected = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(secondTicket)}&version=0`);
+    expect(rejected.status).toBe(429);
+    await expect(rejected.json()).resolves.toMatchObject({ error: { code: "SUBSCRIBER_LIMIT_REACHED" } });
+
+    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+    try {
+      await stream.close();
+      await wait(80);
+      expect(clearIntervalSpy).toHaveBeenCalled();
+    } finally {
+      clearIntervalSpy.mockRestore();
+    }
+
+    const reconnected = await openEventStream(origin, created.room.id, created.access.accessToken);
+    try {
+      expect(reconnected.response.status).toBe(200);
+    } finally {
+      await reconnected.close();
+    }
+  });
+
+  it("keeps heartbeats from extending the room lifetime", async () => {
+    const monitor = captureProcessFailures();
+    const server = createAiServer({ roomHeartbeatIntervalMs: 25, roomTtlMs: 150 });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const stream = await openEventStream(origin, created.room.id, created.access.accessToken);
+    try {
+      expect(await stream.read()).toContain(": heartbeat");
+      await wait(300);
+      const expired = await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(created.access.accessToken) });
+      expect(expired.status).toBe(404);
+      await expect(expired.json()).resolves.toMatchObject({ error: { code: "ROOM_NOT_FOUND" } });
+      expect(monitor.failures).toEqual([]);
+    } finally {
+      monitor.restore();
+      await stream.close();
+    }
+  });
+
+  it("does not throw when a slow subscriber stops draining the stream", async () => {
+    const monitor = captureProcessFailures();
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const ticket = await createEventsTicket(origin, created.room.id, created.access.accessToken);
+    const target = new URL(origin);
+    const idleResponse = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const request = httpRequest({
+        hostname: target.hostname,
+        port: target.port,
+        path: `/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(ticket)}&version=0`,
+        method: "GET",
+      }, resolve);
+      request.on("error", reject);
+      request.end();
+    });
+    idleResponse.pause();
+    try {
+      const applied = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
+        method: "POST",
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ txId: "slow-1", clientId: "client-a", baseVersion: 0, snapshot: { title: "x".repeat(1_000_000) } }),
+      });
+      expect(applied.status).toBe(200);
+      await wait(50);
+      expect(monitor.failures).toEqual([]);
+      expect((await rawGet(origin, "/api/live")).status).toBe(200);
+    } finally {
+      monitor.restore();
+      idleResponse.destroy();
+    }
+  });
+
+  it("tears the connection down when a static read stream fails after the headers were sent", async () => {
+    const monitor = captureProcessFailures();
+    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-error-"));
+    directories.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<main>SPA</main>");
+    await writeFile(join(staticDir, "asset.txt"), "content");
+    fsHooks.createReadStream = () => {
+      const stream = new Readable({ read() { /* pushed manually */ } });
+      setImmediate(() => {
+        stream.emit("open");
+        stream.push("partial");
+        setImmediate(() => stream.emit("error", Object.assign(new Error("read failed"), { code: "EIO" })));
+      });
+      return stream;
+    };
+    const server = createAiServer({ staticDir });
+    servers.push(server);
+    const origin = await startServer(server);
+    try {
+      await rawGet(origin, "/asset.txt").catch(() => undefined);
+      await wait(50);
+      expect(monitor.failures).toEqual([]);
+      fsHooks.createReadStream = null;
+      expect((await rawGet(origin, "/api/live")).status).toBe(200);
+    } finally {
+      monitor.restore();
+    }
+  });
+
+  it("answers with JSON when the static file disappears before the stream opens", async () => {
+    const monitor = captureProcessFailures();
+    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-vanish-"));
+    directories.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<main>SPA</main>");
+    await writeFile(join(staticDir, "asset.txt"), "content");
+    fsHooks.createReadStream = () => {
+      const stream = new Readable({ read() { /* pushed manually */ } });
+      setImmediate(() => stream.emit("error", Object.assign(new Error("gone"), { code: "ENOENT" })));
+      return stream;
+    };
+    const server = createAiServer({ staticDir });
+    servers.push(server);
+    const origin = await startServer(server);
+    try {
+      const response = await rawGet(origin, "/asset.txt");
+      expect(response.status).toBe(404);
+      expect(JSON.parse(response.body)).toMatchObject({ error: { code: "NOT_FOUND" } });
+      expect(monitor.failures).toEqual([]);
+    } finally {
+      monitor.restore();
+    }
+  });
+
+  it("keeps rejecting hostile static paths and ignores unsupported range requests", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-hostile-"));
+    directories.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<main>SPA</main>");
+    await writeFile(join(staticDir, "index-Bf9xZGZi.js"), "console.log('asset');\n".repeat(20));
+    const server = createAiServer({ staticDir });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    expect((await rawGet(origin, "/%2e%2e/%2e%2e/etc/passwd")).status).toBe(403);
+    expect((await rawGet(origin, "/..%2f..%2fetc/passwd")).status).toBe(403);
+    expect((await rawGet(origin, "/%zz")).status).toBe(400);
+    expect((await rawGet(origin, "/%00passwd")).status).toBe(400);
+
+    const ranged = await rawGet(origin, "/index-Bf9xZGZi.js", { Range: "bytes=abc-def" });
+    expect(ranged.status).toBe(200);
+    expect(ranged.body).toContain("console.log('asset');");
+  });
+
+  it("answers preflight requests with an empty 204", async () => {
+    const server = createAiServer({ corsOrigins: ["https://studio.example"] });
+    servers.push(server);
+    const origin = await startServer(server);
+    const response = await fetch(`${origin}/api/rooms`, { method: "OPTIONS", headers: { Origin: "https://studio.example" } });
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+    expect(response.headers.get("content-length")).toBeNull();
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://studio.example");
   });
 
   it("keeps AI endpoints open without a token in development", async () => {
