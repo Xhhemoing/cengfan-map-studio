@@ -3,15 +3,38 @@
  * Run five fresh processes with:
  *   npx tsx scripts/perf-transaction-bench.ts
  */
-import {
+import { register } from "node:module";
+import type { ProjectDocument } from "../src/lib/project-document";
+import type { Student } from "../src/lib/project-data";
+import type { ProvinceStyle } from "../src/lib/scene-document";
+
+// project-document's migration boundary reaches Vite's `?raw` GeoJSON import.
+// Teach direct Node/tsx benchmark runs the one Vite loader behavior they need.
+const rawAssetLoader = `
+  import { readFile } from "node:fs/promises";
+
+  export async function load(url, context, nextLoad) {
+    if (url.endsWith(".geojson?raw")) {
+      const assetUrl = new URL(url);
+      assetUrl.search = "";
+      const contents = await readFile(assetUrl, "utf8");
+      return {
+        format: "module",
+        shortCircuit: true,
+        source: \`export default \${JSON.stringify(contents)};\`,
+      };
+    }
+    return nextLoad(url, context);
+  }
+`;
+register(`data:text/javascript,${encodeURIComponent(rawAssetLoader)}`, import.meta.url);
+
+const {
   applyTransaction,
   createProjectDocument,
   redoTransaction,
   undoTransaction,
-  type ProjectDocument,
-} from "../src/lib/project-document";
-import type { Student } from "../src/lib/project-data";
-import type { ProvinceStyle } from "../src/lib/scene-document";
+} = await import("../src/lib/project-document");
 
 const STUDENT_COUNT = 500;
 const PROVINCE_STYLE_COUNT = 34;
