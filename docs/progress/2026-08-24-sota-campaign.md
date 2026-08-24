@@ -41,7 +41,8 @@
 | 18 | 已完成 | 混编 ×5 | 项目库 CAS、字体上限、删 editor-commands、复查 |
 | 19 | 已完成 | opus ×5 | SSE ping/watchdog、tablist 键盘、右栏单挂载、导入体积与对话框、删死 UI |
 | 20 | 已完成 | 混编 ×5 | 工作区镜像 CAS、工程包资源预算、Combobox/滑条 a11y、复查 |
-| 21 | 进行中 | opus ×5 | 续聊瞬时失败、对话框焦点圈闭、Excel 多表、工作区 CAS 接线、删死封装 |
+| 21 | 已完成 | opus ×5 | 续聊瞬时失败、对话框焦点圈闭、Excel 多表、工作区 CAS 接线、删死封装 |
+| 22 | 进行中 | fable ×5 | 达标后继续：分区复查下一轮可落地缺口 |
 
 ### 第 1 轮工作流（只读）
 
@@ -79,6 +80,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 21 轮续聊重试、对话框焦点、Excel 多表、工作区 CAS 接线已合入；启动第 22 轮复查。
 - 2026-08-24：第 20 轮工作区 CAS API、工程包资源预算、Combobox/滑条已合入；启动第 21 轮。
 - 2026-08-24：第 19 轮 SSE ping、tablist、右栏单挂载、导入上限与对话框、死 UI 已合入；启动第 20 轮。
 - 2026-08-24：第 18 轮 CAS / 字体上限 / 删 editor-commands 已合入；启动第 19 轮落地。
@@ -264,6 +266,18 @@
 | Excel 多工作表 | `src/lib/binary-import.ts`、`DataImportPanel.tsx` 及测试 |
 | 工作区 CAS 接线 | `src/App.tsx`（仅 `saveLocal` / workspace snapshot）、对应 `App.test.tsx` 用例。不改 confirm/CAS 项目库其它逻辑。 |
 | 删 workspace-persistence | 仅 `src/lib/workspace-persistence.ts` 与其测试；生产零引用则删。 |
+
+## 第 21 轮已合入
+
+- AI：续聊瞬时失败复用原会话，回滚悬空 user 消息；可续时按钮为「重试并继续」。
+- 对话框：WorkbenchDialog 焦点圈闭/归还；SaveTemplateDialog 复用外壳；导入同意框 Esc=仅本地。
+- Excel：按表头档位+候选数选最佳工作表，提示未读表。
+- App 自动保存工作区传入 `expectedExportedAt`，冲突锁存并提示重新加载。
+- 删除无引用的 `workspace-persistence` 客户端封装。
+
+## 第 22 轮（只读分区复查）
+
+避开刚合入的行为，找下一轮互不抢文件的落地切片。P2 视觉与计费仍不做。
 
 ## 第 2 轮已合入
 
