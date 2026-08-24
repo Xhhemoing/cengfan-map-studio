@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -256,6 +256,7 @@ describe("unified application server", () => {
 
   afterEach(async () => {
     fsHooks.createReadStream = null;
+    vi.restoreAllMocks();
     await Promise.all(
       servers.map(
         (server) =>
@@ -1864,6 +1865,81 @@ describe("unified application server", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ id: created.room.id, snapshot: { title: "落盘" } });
+  });
+
+  it("quarantines a corrupt room snapshot and keeps the sidecar across the next flush", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-corrupt-"));
+    directories.push(dataDir);
+    const snapshotFile = join(dataDir, "collaboration-rooms.json");
+    // 半截 JSON：进程在落盘途中被杀掉时磁盘上就是这种内容。
+    const corrupt = "{\"version\":1,\"rooms\":[{\"room\":";
+    await writeFile(snapshotFile, corrupt, "utf8");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const server = await createReadyAiServer({ dataDir });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    // 坏文件必须离开正常路径，否则下一次成功落盘会把事故现场覆盖掉。
+    await expect(readFile(snapshotFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(`${snapshotFile}.bad`, "utf8")).resolves.toBe(corrupt);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`${snapshotFile}.bad`));
+    expect((await fetch(`${origin}/api/live`)).status).toBe(200);
+
+    const created = await createCollaborationRoom(origin, { title: "坏快照之后" });
+    await attachServerLifecycle(server, { timeoutMs: 2_000 }).shutdown("SIGTERM");
+
+    const rewritten = JSON.parse(await readFile(snapshotFile, "utf8")) as { version: number; rooms: Array<{ room: { id: string } }> };
+    expect(rewritten.version).toBe(1);
+    expect(rewritten.rooms.map((entry) => entry.room.id)).toEqual([created.room.id]);
+    await expect(readFile(`${snapshotFile}.bad`, "utf8")).resolves.toBe(corrupt);
+  });
+
+  it("keeps the earlier sidecar by timestamping a second corrupt boot", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-corrupt-twice-"));
+    directories.push(dataDir);
+    const snapshotFile = join(dataDir, "collaboration-rooms.json");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await writeFile(snapshotFile, "first-corrupt", "utf8");
+    servers.push(await createReadyAiServer({ dataDir }));
+    await writeFile(snapshotFile, "second-corrupt", "utf8");
+    servers.push(await createReadyAiServer({ dataDir }));
+
+    await expect(readFile(snapshotFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    // 第一次隔离出来的证据不能被第二次坏启动顶掉。
+    await expect(readFile(`${snapshotFile}.bad`, "utf8")).resolves.toBe("first-corrupt");
+    const sidecars = (await readdir(dataDir)).filter((name) => name.endsWith(".bad"));
+    expect(sidecars).toHaveLength(2);
+    const timestamped = sidecars.find((name) => name !== "collaboration-rooms.json.bad")!;
+    expect(timestamped).toMatch(/^collaboration-rooms\.json\.\d+(?:\.\d+)?\.bad$/);
+    await expect(readFile(join(dataDir, timestamped), "utf8")).resolves.toBe("second-corrupt");
+  });
+
+  it("reports how many rooms the boot snapshot handed back", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    let snapshot: unknown;
+    const first = createAiServer({ persistRooms: (value) => { snapshot = value; } });
+    servers.push(first);
+    const origin = await startServer(first);
+    await createCollaborationRoom(origin, { title: "计数" });
+    await attachServerLifecycle(first, { timeoutMs: 2_000 }).shutdown("SIGTERM");
+
+    info.mockClear();
+    const restored = createAiServer({ roomSnapshot: snapshot });
+    servers.push(restored);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 1 collaboration room(s)"));
+
+    info.mockClear();
+    const cold = createAiServer();
+    servers.push(cold);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 0 collaboration room(s)"));
+
+    // 形状不对的快照同样按 0 计：房间存储会整份丢弃它。
+    info.mockClear();
+    const bogus = createAiServer({ roomSnapshot: { version: 2, rooms: "nope" } });
+    servers.push(bogus);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 0 collaboration room(s)"));
   });
 
   it("keeps AI endpoints open without a token in development", async () => {
