@@ -19,7 +19,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | --- | --- | --- | --- | --- |
 | 1 | CLOSED | T1–T10 + R2-0 | — | Hotfix-after full suite 1391 pass / 1 skip |
 | 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
-| 3 | DISPATCHING | — | — | Deep-chain: partition holes, room durability, disaster recovery |
+| 3 | IMPLEMENTING | R3-9 | — | worker reuse −62.3% repeat-import; remaining R3 isolated |
 
 ## Round 0 Baseline (pre-optimization)
 
