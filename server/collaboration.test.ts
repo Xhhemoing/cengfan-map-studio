@@ -113,6 +113,81 @@ describe("collaboration room store", () => {
       .toEqual(["owner", "editor"]);
   });
 
+  it("rejects an invitation join that reuses a member clientId with a different role", () => {
+    const secrets = ["owner-access", "forged-invite", "editor-invite", "editor-access", "promote-invite"];
+    const store = createRoomStore({ generateId: () => "IMP01", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+
+    const forgedInvite = store.createInvitation("IMP01", owner.access.accessToken, "viewer");
+    expect(() => store.join("IMP01", { inviteToken: forgedInvite.token, clientId: "owner", displayName: "冒名" }))
+      .toThrowError(expect.objectContaining({ code: "INVITATION_INVALID" }));
+    expect(store.get("IMP01")!.members.map((member) => ({ clientId: member.clientId, role: member.role })))
+      .toEqual([{ clientId: "owner", role: "owner" }]);
+
+    const editorInvite = store.createInvitation("IMP01", owner.access.accessToken, "editor");
+    store.join("IMP01", { inviteToken: editorInvite.token, clientId: "editor", displayName: "编辑同学" });
+    const promoteInvite = store.createInvitation("IMP01", owner.access.accessToken, "viewer");
+    expect(() => store.join("IMP01", { inviteToken: promoteInvite.token, clientId: "editor", displayName: "编辑同学" }))
+      .toThrowError(expect.objectContaining({ code: "INVITATION_INVALID" }));
+    expect(store.get("IMP01")!.members.map((member) => ({ clientId: member.clientId, role: member.role }))).toEqual([
+      { clientId: "owner", role: "owner" },
+      { clientId: "editor", role: "editor" },
+    ]);
+  });
+
+  it("readmits a kicked member joining with the same clientId and role", () => {
+    let tick = 1_000;
+    const secrets = ["owner-access", "editor-invite", "editor-access", "editor-reinvite", "editor-reaccess", "editor-same-invite", "editor-same-access"];
+    const store = createRoomStore({ generateId: () => "IMP02", generateSecret: () => secrets.shift()!, now: () => tick });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const editorInvite = store.createInvitation("IMP02", owner.access.accessToken, "editor");
+    store.join("IMP02", { inviteToken: editorInvite.token, clientId: "editor", displayName: "编辑同学" });
+    expect(store.leave("IMP02", owner.access.accessToken, "editor").members.map((member) => member.clientId)).toEqual(["owner"]);
+
+    tick += 5_000;
+    const reinvite = store.createInvitation("IMP02", owner.access.accessToken, "editor");
+    const readmitted = store.join("IMP02", { inviteToken: reinvite.token, clientId: "editor", displayName: "编辑同学" });
+    expect(readmitted.room.members.map((member) => ({ clientId: member.clientId, role: member.role }))).toEqual([
+      { clientId: "owner", role: "owner" },
+      { clientId: "editor", role: "editor" },
+    ]);
+    expect(store.authorize("IMP02", readmitted.access.accessToken, "write")).toMatchObject({ id: "editor", role: "editor" });
+
+    // 同角色再次受邀只刷新在场时间,不会重复占名额。
+    tick += 5_000;
+    const sameRoleInvite = store.createInvitation("IMP02", owner.access.accessToken, "editor");
+    const refreshed = store.join("IMP02", { inviteToken: sameRoleInvite.token, clientId: "editor", displayName: "编辑同学" });
+    expect(refreshed.room.members).toHaveLength(2);
+    expect(refreshed.room.members.find((member) => member.clientId === "editor")!.lastSeenAt)
+      .toBe(new Date(11_000).toISOString());
+  });
+
+  it("denies room control and owner eviction to a viewer holding the createdBy clientId", () => {
+    const secrets = ["owner-access", "forged-invite", "forged-access"];
+    const store = createRoomStore({ generateId: () => "IMP03", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+
+    // 房主自离后名册出现空位,伪造 clientId 的 viewer 才可能拿到 createdBy 身份的凭证。
+    expect(store.leave("IMP03", owner.access.accessToken, "owner").members).toEqual([]);
+    const forgedInvite = store.createInvitation("IMP03", owner.access.accessToken, "viewer");
+    const forged = store.join("IMP03", { inviteToken: forgedInvite.token, clientId: "owner", displayName: "冒名" });
+
+    expect(() => store.setAccess("IMP03", forged.access.accessToken, "owner", "close"))
+      .toThrowError(expect.objectContaining({ code: "FORBIDDEN" }));
+    expect(() => store.setAccess("IMP03", forged.access.accessToken, "owner", "set-readonly"))
+      .toThrowError(expect.objectContaining({ code: "FORBIDDEN" }));
+    expect(store.get("IMP03")!.closed).toBeUndefined();
+    expect(store.get("IMP03")!.readonly).toBeUndefined();
+
+    // 伪造者自离只能带走自己的 viewer 名额;房主回到名单后再自离一次也动不了房主。
+    expect(store.leave("IMP03", forged.access.accessToken, "owner").members).toEqual([]);
+    expect(store.refreshMember("IMP03", owner.access.accessToken, "owner").members)
+      .toMatchObject([{ clientId: "owner", role: "owner" }]);
+    expect(store.leave("IMP03", forged.access.accessToken, "owner").members)
+      .toMatchObject([{ clientId: "owner", role: "owner" }]);
+    expect(store.setAccess("IMP03", owner.access.accessToken, "owner", "close")).toMatchObject({ closed: true });
+  });
+
   it("refreshes only the caller's own membership", () => {
     let tick = 1_000;
     const secrets = ["owner-access", "viewer-invite", "viewer-access"];

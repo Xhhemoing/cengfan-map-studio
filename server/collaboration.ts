@@ -284,6 +284,12 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       roomInvitations?.delete(invitationHash);
       throw new CollaborationError("INVITATION_EXPIRED", "邀请凭证已过期");
     }
+    // 邀请凭证只能换到与名册一致的身份:同 clientId 但角色不同说明在冒名顶替
+    // (例如 viewer 用 createdBy 加入),此时不消费邀请,直接拒绝。
+    const existingMember = room.members.find((member) => member.clientId === input.clientId);
+    if (existingMember && existingMember.role !== invitation.role) {
+      throw new CollaborationError("INVITATION_INVALID", "该 clientId 已在房间内且角色不同");
+    }
     roomInvitations?.delete(invitationHash);
     const accessToken = generateSecret();
     const participant: RoomParticipant = {
@@ -293,7 +299,6 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     };
     accessRecords.get(key)?.set(hashSecret(accessToken), participant);
     const seenAt = new Date(now()).toISOString();
-    const existingMember = room.members.find((member) => member.clientId === input.clientId);
     const nextRoom = existingMember
       ? { ...room, members: room.members.map((member) => member.clientId === input.clientId ? { ...member, lastSeenAt: seenAt } : member) }
       : { ...room, members: [...room.members, { clientId: input.clientId, role: invitation.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
@@ -446,6 +451,8 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
    * - 房主踢人:同时撤销被踢者的全部 token,否则 authorize 仍会放行其读写,
    *   并且被踢者的 refreshMember 心跳会把自己重新加回成员列表。
    * 房间关闭后成员名单已经冻结,自离与踢人都按 refreshMember 的同一口径拒绝。
+   * 自离只能移除与凭证角色一致的名额:同 clientId 但角色更高的名额(如房主)必须留在名单里,
+   * 否则冒用 createdBy 的 viewer 能靠“自离”把真正房主挤出去。房主踢人不受该限制。
    * 回滚:删除下面的 revokeParticipantAccess 调用即可恢复“只删成员、不撤凭证”的旧行为;
    * 删除 room.closed 检查即可恢复“关闭房间仍可离开/踢人”的旧行为。
    */
@@ -460,7 +467,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       throw new CollaborationError("ROOM_FORBIDDEN", "只有房间创建者可以移除其他成员");
     }
     if (leavingClientId !== participant.id) revokeParticipantAccess(key, leavingClientId);
-    const nextRoom = { ...room, members: room.members.filter((member) => member.clientId !== leavingClientId) };
+    const removable = (member: RoomMember) => member.clientId === leavingClientId
+      && (participant.role === "owner" || member.role === participant.role);
+    const nextRoom = { ...room, members: room.members.filter((member) => !removable(member)) };
     rooms.set(key, nextRoom);
     touch(key);
     notifyLifecycle(key, "members", nextRoom);
@@ -473,7 +482,8 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
-    if (participant.id !== room.createdBy) throw new CollaborationError("FORBIDDEN", "只有创建者可以修改房间权限");
+    // 以凭证角色判定,而不是比对自报的 createdBy:clientId 可以被伪造,role 只能由邀请签发。
+    if (participant.role !== "owner") throw new CollaborationError("FORBIDDEN", "只有创建者可以修改房间权限");
     const updatedAt = new Date(now()).toISOString();
     const nextRoom = action === "set-readonly"
       ? { ...room, readonly: !room.readonly, updatedAt }

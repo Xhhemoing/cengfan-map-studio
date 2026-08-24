@@ -1160,6 +1160,60 @@ describe("unified application server", () => {
     expect(rejoined.members.map((member) => member.clientId)).toEqual(["client-a", "leaver"]);
   });
 
+  it("blocks a forged clientId from taking over the room owner", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const invite = async (): Promise<string> => {
+      const response = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, {
+        method: "POST",
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ role: "viewer" }),
+      });
+      return (await response.json() as { token: string }).token;
+    };
+
+    const forgedJoin = await fetch(`${origin}/api/rooms/${created.room.id}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken: await invite(), clientId: "client-a", displayName: "冒名" }),
+    });
+    expect(forgedJoin.status).toBe(400);
+    await expect(forgedJoin.json()).resolves.toMatchObject({ error: { code: "INVITATION_INVALID" } });
+
+    const honestJoin = await fetch(`${origin}/api/rooms/${created.room.id}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken: await invite(), clientId: "viewer", displayName: "查看同学" }),
+    });
+    expect(honestJoin.status).toBe(200);
+    const viewerAccess = (await honestJoin.json() as { access: { accessToken: string } }).access;
+
+    const forgedClose = await fetch(`${origin}/api/rooms/${created.room.id}/access`, {
+      method: "POST",
+      headers: roomHeaders(viewerAccess.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "client-a", action: "close" }),
+    });
+    expect(forgedClose.status).toBe(403);
+    await expect(forgedClose.json()).resolves.toMatchObject({ error: { code: "FORBIDDEN" } });
+
+    const forgedLeave = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+      method: "POST",
+      headers: roomHeaders(viewerAccess.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "client-a" }),
+    });
+    expect(forgedLeave.status).toBe(403);
+    await expect(forgedLeave.json()).resolves.toMatchObject({ error: { code: "ROOM_FORBIDDEN" } });
+
+    const room = await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(created.access.accessToken) });
+    expect(room.status).toBe(200);
+    const roomBody = await room.json() as { closed?: boolean; readonly?: boolean; members: Array<{ clientId: string; role: string }> };
+    expect(roomBody.closed).toBeFalsy();
+    expect(roomBody.readonly).toBeFalsy();
+    expect(roomBody.members).toEqual(expect.arrayContaining([expect.objectContaining({ clientId: "client-a", role: "owner" })]));
+  });
+
   it("validates member bodies and rejects heartbeat on closed rooms", async () => {
     const server = createAiServer();
     servers.push(server);
