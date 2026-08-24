@@ -45,7 +45,7 @@
 | 22 | 已完成 | fable ×5 | 达标后继续：分区复查下一轮可落地缺口 |
 | 23 | 已完成 | opus ×5 | 续聊回滚影子、禁并发会话、被踢 UI、心跳不续命、嘉宾零位移 |
 | 24 | 已完成 | opus ×5 | SVG 延迟 revoke、工作台包体积、导出对话框、字体去重映射、同 z 重叠 |
-| 25 | 进行中 | 混编 ×5 | 任务段 lastIndex、设置焦点、删不安全镜像工厂、空白选画布、复查 |
+| 25 | 已完成 | 混编 ×5 | 任务段 lastIndex、设置焦点、删不安全镜像工厂、空白选画布、复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -83,6 +83,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 25 轮任务段边界、设置焦点、删不安全镜像、空白选画布已合入。
 - 2026-08-24：第 24 轮 SVG revoke、工作台包体积、导出对话框、字体映射、同层重叠已合入；启动第 25 轮。
 - 2026-08-24：第 23 轮续聊回滚、禁并发、被踢 UI、心跳 sweep、嘉宾零位移已合入；启动第 24 轮。
 - 2026-08-24：第 22 轮五区复查齐；启动第 23 轮落地。
@@ -339,6 +340,19 @@
 | 删 createLocalStorageMirror | `src/lib/browser-workspace-store.ts` 及测试。`loadBrowserWorkspaceMirror` 的 mirror 改为必传。 |
 | 空白选画布 | `src/components/canvas/PosterCanvas.tsx` 及测试。核实背景 rect 是否吞掉空白点击。 |
 | 剩余复查 | 只读。避开本轮落地文件。 |
+
+## 第 25 轮已合入
+
+- 任务段边界取最后一条真实 user 消息，并跳过 parser 回声。
+- 进出全局设置管理焦点落点。
+- 删除 `createLocalStorageMirror`。
+- 点击背景层可选中画布。
+
+## 第 25 轮复查结论（下一轮候选）
+
+1. `downloadProjectPackage` / `downloadResourcePack` 仍同步 revoke，工程包/资源包体积更大，应走 `downloadBlob`。
+2. 删除使用中的字体无确认；`isFontInUse` 是生产死代码。
+3. 资源包导入仍无体积上限。
 
 ## 第 2 轮已合入
 
