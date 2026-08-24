@@ -1079,6 +1079,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       roomClosed={collaboration.roomClosed}
       roomExpired={collaboration.roomExpired}
       roomPersistenceDegraded={collaboration.roomPersistenceDegraded}
+      roomPersistenceKind={collaboration.roomPersistenceKind}
       collaborationOffline={collaboration.collaborationOffline}
       invitationToken={collaboration.invitationToken}
       hasStoredRoomAccess={collaboration.hasStoredRoomAccess}

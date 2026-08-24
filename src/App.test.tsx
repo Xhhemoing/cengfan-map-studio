@@ -2743,6 +2743,43 @@ describe("Collaboration send effect recovery (R2-3)", () => {
         restoreStream();
       }
     });
+
+    it("tells a trimmed room the snapshot survives a restart instead of repeating the death copy", async () => {
+      const container = renderApp();
+      const roomId = "PRSST2";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        // 上一次落盘是裁剪不是跳过:快照留下了,丢的只是增量历史。
+        if (url.endsWith("/api/rooms")) {
+          const created = await ownedRoom(roomId).json();
+          return json({ ...created, persistedAtLastFlush: false, persistence: { outcome: "trimmed", at: 1700000000500 } });
+        }
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        }
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+
+        const note = await vi.waitFor(() => {
+          const node = persistNote(container);
+          expect(node).not.toBeNull();
+          return node!;
+        }, { timeout: 5_000 });
+        expect(note.getAttribute("data-collaboration-persist-kind")).toBe("trimmed");
+        expect(note.textContent).not.toContain("服务器重启后将无法恢复");
+        expect(note.textContent).toContain("重启后房间会恢复");
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
   });
 });
 
