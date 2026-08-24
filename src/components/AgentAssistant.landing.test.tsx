@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { AgentAssistant, AssistantConversationProvider } from "./AgentAssistant";
 import { applyTransaction, createProjectDocument, type ProjectDocument, type ProjectTransaction } from "../lib/project-document";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
 
 function response(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
@@ -21,6 +23,7 @@ function render(project: ProjectDocument, onCommit: (transaction: ProjectTransac
   window.localStorage.clear();
   const container = document.createElement("div");
   const root = createRoot(container);
+  mounted.push({ root, container });
   flushSync(() => root.render(
     <AssistantConversationProvider>
       <AgentAssistant project={project} assets={[]} onCommit={onCommit} onPreview={onPreview} />
@@ -50,6 +53,14 @@ function clickText(container: HTMLElement, text: string) {
 }
 
 afterEach(() => {
+  // The assistant keeps an in-flight transport and debounced persistence armed; an
+  // assertion throwing before the inline unmount leaves that root racing jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -78,7 +89,7 @@ describe("AgentAssistant landing failures", () => {
         { id: "call-fact", name: "manage_students", arguments: { action: "update_fact", studentId: "A", fields: { city: "深圳" } } },
       ], assistantMessage: { role: "assistant", content: null } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "已规划两项改动" })));
-    const { container, root } = render(project, onCommit);
+    const { container } = render(project, onCommit);
     openAssistant(container);
     setMessage(container, "缩小地图并把甲同学改到深圳");
     clickText(container, "开始规划");
@@ -109,7 +120,6 @@ describe("AgentAssistant landing failures", () => {
     expect(checkboxes.every((checkbox) => checkbox.checked)).toBe(true);
     clickText(container, "确认应用");
     await vi.waitFor(() => expect(onCommit).toHaveBeenCalledTimes(2));
-    root.unmount();
   });
 
   it("drops the refused step and lands the rest after the user deselects it", async () => {
@@ -127,7 +137,7 @@ describe("AgentAssistant landing failures", () => {
         { id: "call-fact", name: "manage_students", arguments: { action: "update_fact", studentId: "A", fields: { city: "深圳" } } },
       ], assistantMessage: { role: "assistant", content: null } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "已规划" })));
-    const { container, root } = render(project, onCommit);
+    const { container } = render(project, onCommit);
     openAssistant(container);
     setMessage(container, "缩小地图并改学生");
     clickText(container, "开始规划");
@@ -144,7 +154,6 @@ describe("AgentAssistant landing failures", () => {
 
     expect(landings.at(-1)?.map.scale).toBe(0.9);
     expect(container.textContent).not.toContain("未能应用");
-    root.unmount();
   });
 
   it("reverts the smart-mode auto-apply claim when the automatic landing is refused", async () => {
@@ -163,7 +172,7 @@ describe("AgentAssistant landing failures", () => {
         { id: "call-text", name: "update_text", arguments: { id: "note-1", patch: { fontSize: 40 } } },
       ], assistantMessage: { role: "assistant", content: null } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "备注已放大" })));
-    const { container, root } = render(project, onCommit);
+    const { container } = render(project, onCommit);
     openAssistant(container);
     flushSync(() => container.querySelector<HTMLInputElement>('input[type="radio"][value="smart"]')?.click());
     setMessage(container, "把备注放大");
@@ -174,7 +183,6 @@ describe("AgentAssistant landing failures", () => {
     expect(container.textContent).toContain("目标元素已不在当前工程中");
     expect(container.textContent).not.toContain("低风险修改已自动应用");
     expect(container.querySelector('[aria-label="确认应用"]')).not.toBeNull();
-    root.unmount();
   });
 
   it("stays silent and terminal when the landing succeeds", async () => {
@@ -188,7 +196,7 @@ describe("AgentAssistant landing failures", () => {
         { id: "call-map", name: "update_map", arguments: { patch: { scale: 0.9 } } },
       ], assistantMessage: { role: "assistant", content: null } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "已规划地图" })));
-    const { container, root } = render(project, onCommit);
+    const { container } = render(project, onCommit);
     openAssistant(container);
     setMessage(container, "缩小地图");
     clickText(container, "开始规划");
@@ -199,6 +207,5 @@ describe("AgentAssistant landing failures", () => {
     expect(container.textContent).toContain("已应用");
     expect(container.textContent).not.toContain("未能应用");
     expect(container.querySelector('[aria-label="确认应用"]')).toBeNull();
-    root.unmount();
   });
 });

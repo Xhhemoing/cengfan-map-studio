@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { AgentAssistant, AssistantConversationProvider } from "./AgentAssistant";
 import { createProjectDocument } from "../lib/project-document";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
 
 type RequestPayload = {
   messages: Array<{ role?: string; content?: unknown }>;
@@ -15,6 +17,7 @@ function renderAssistant(project: ReturnType<typeof createProjectDocument>, onCo
   window.localStorage.clear();
   const container = document.createElement("div");
   const root = createRoot(container);
+  mounted.push({ root, container });
   flushSync(() => root.render(
     <AssistantConversationProvider>
       <AgentAssistant project={project} assets={[]} onCommit={onCommit} />
@@ -67,6 +70,14 @@ function project() {
 }
 
 afterEach(() => {
+  // Unmount before the timers and globals go back: a deadline case that dies on an
+  // assertion would otherwise leave a root with a pending request racing jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -92,7 +103,7 @@ describe("AgentAssistant transport failures", () => {
       }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "网络恢复后已完成" }));
     vi.stubGlobal("fetch", fetchMock);
-    const { container, root, onCommit } = renderAssistant(document_);
+    const { container, onCommit } = renderAssistant(document_);
     openAssistant(container);
     setMessage(container, "缩小地图并放大卡片");
     clickText(container, "开始规划");
@@ -118,7 +129,6 @@ describe("AgentAssistant transport failures", () => {
     expect(container.textContent).not.toContain("网络连接中断");
     expect(findButton(container, "网络恢复后重试")).toBeUndefined();
     expect(onCommit).not.toHaveBeenCalled();
-    root.unmount();
   });
 
   it("keeps exactly one resume affordance and swaps it when the user rewrites the request", async () => {
@@ -135,7 +145,7 @@ describe("AgentAssistant transport failures", () => {
       .mockRejectedValueOnce(new TypeError("Failed to fetch"))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "改写后已完成" }));
     vi.stubGlobal("fetch", fetchMock);
-    const { container, root } = renderAssistant(document_);
+    const { container } = renderAssistant(document_);
     openAssistant(container);
     setMessage(container, "缩小地图并放大卡片");
     clickText(container, "开始规划");
@@ -168,14 +178,13 @@ describe("AgentAssistant transport failures", () => {
     expect(resumed.messages.some((entry) => entry.content === "改成只放大卡片")).toBe(true);
     expect(resumed.taskId).toBe("task-1");
     expect(resumed.budget).toMatchObject({ usedTokens: 1_200, rounds: 1 });
-    root.unmount();
   });
 
   it("offers the same retry action when the request deadline fires", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(() => new Promise<never>(() => {}));
     vi.stubGlobal("fetch", fetchMock);
-    const { container, root } = renderAssistant(project());
+    const { container } = renderAssistant(project());
     openAssistant(container);
     setMessage(container, "永远不会返回的请求");
     clickText(container, "开始规划");
@@ -185,7 +194,6 @@ describe("AgentAssistant transport failures", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("AI 请求超时"));
 
     expect(findButton(container, "网络恢复后重试")).toBeDefined();
-    root.unmount();
   });
 
   it("keeps restarting the conversation after a non-retriable failure", async () => {
@@ -202,7 +210,7 @@ describe("AgentAssistant transport failures", () => {
       .mockResolvedValueOnce(response({ kind: "failed", error: "模型拒绝继续" }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "重开后完成" }));
     vi.stubGlobal("fetch", fetchMock);
-    const { container, root } = renderAssistant(document_);
+    const { container } = renderAssistant(document_);
     openAssistant(container);
     setMessage(container, "缩小地图");
     clickText(container, "开始规划");
@@ -219,7 +227,6 @@ describe("AgentAssistant transport failures", () => {
     expect(restarted.taskId).toBeUndefined();
     expect(restarted.budgetReceipt).toBeUndefined();
     expect(restarted.budget).toMatchObject({ usedTokens: 0, rounds: 0 });
-    root.unmount();
   });
 
   it("restarts instead of resuming after the user cancels a run", async () => {
@@ -228,7 +235,7 @@ describe("AgentAssistant transport failures", () => {
         new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "取消后重开完成" }));
     vi.stubGlobal("fetch", fetchMock);
-    const { container, root } = renderAssistant(project());
+    const { container } = renderAssistant(project());
     openAssistant(container);
     setMessage(container, "先跑起来");
     clickText(container, "开始规划");
@@ -244,6 +251,5 @@ describe("AgentAssistant transport failures", () => {
     const restarted = requestBody(fetchMock, 1);
     expect(restarted.messages).toHaveLength(1);
     expect(restarted.messages[0]?.content).toBe("取消后重来");
-    root.unmount();
   });
 });

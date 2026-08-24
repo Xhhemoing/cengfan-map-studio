@@ -1,13 +1,32 @@
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Check, Trash2 } from "lucide-react";
 import { ActionGroup, CompactButton, IconButton, SegmentedControl, ToolbarButton } from "./StudioUi";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function createTrackedRoot(container: HTMLElement): Root {
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return root;
+}
+
+// An assertion throwing before an inline unmount leaves the root mounted for the rest of
+// the run, so React's scheduler can wake up against a torn-down jsdom.
+afterEach(() => {
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 describe("StudioUi compact controls", () => {
   it("keeps icon actions labelled and exposes tooltip text", () => {
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     const onClick = vi.fn();
 
     flushSync(() => root.render(
@@ -27,12 +46,11 @@ describe("StudioUi compact controls", () => {
 
     flushSync(() => icon?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onClick).toHaveBeenCalledOnce();
-    flushSync(() => root.unmount());
   });
 
   it("renders a compact segmented control with one pressed option", () => {
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     const onChange = vi.fn();
 
     flushSync(() => root.render(
@@ -49,6 +67,5 @@ describe("StudioUi compact controls", () => {
     expect(container.querySelector(".segmented-control button[aria-pressed='true']")?.textContent).toBe("省份");
     flushSync(() => container.querySelectorAll("button")[0].dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onChange).toHaveBeenCalledWith("pins");
-    flushSync(() => root.unmount());
   });
 });
