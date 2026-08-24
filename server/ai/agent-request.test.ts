@@ -92,6 +92,13 @@ describe("parseAgentRequest", () => {
     if (parsed.ok) expect(parsed.value.budget).toEqual({ usedTokens: 0, maxTokens: 60000, rounds: 2, maxRounds: 20 });
   });
 
+  // 客户端已不再发送 budget（服务端只认回执），缺省必须退回运行时限额而不是报错。
+  it("defaults the budget when the client omits it", () => {
+    const parsed = parseAgentRequest(valid, { maxTokens: 1200, maxRounds: 5 });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value.budget).toEqual({ usedTokens: 0, maxTokens: 1200, rounds: 0, maxRounds: 5 });
+  });
+
   it("enforces server runtime budgets over client-supplied limits", () => {
     const parsed = parseAgentRequest(
       { ...valid, budget: { usedTokens: 999, maxTokens: 999999, rounds: 4, maxRounds: 99 } },

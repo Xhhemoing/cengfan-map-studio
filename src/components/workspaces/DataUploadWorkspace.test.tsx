@@ -87,6 +87,8 @@ describe("DataUploadWorkspace", () => {
     const importRoster = container.querySelector<HTMLButtonElement>('button[aria-label="展开导入名单"]');
     expect(addStudent?.getAttribute("aria-expanded")).toBe("false");
     expect(importRoster?.getAttribute("aria-expanded")).toBe("false");
+    // 模板下载不藏在折叠里：导入区还没展开就要能点到。
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).not.toBeNull();
     flushSync(() => addStudent?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     flushSync(() => importRoster?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(container.querySelector('button[aria-label="收起新增学生"]')?.getAttribute("aria-expanded")).toBe("true");
@@ -96,6 +98,34 @@ describe("DataUploadWorkspace", () => {
     expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).not.toBeNull();
     expect(container.querySelector(".student-table")).not.toBeNull();
     expect(container.querySelector('[aria-label="数据质量"]')).not.toBeNull();
+  });
+
+  it("keeps the XLSX template download reachable without expanding the import area", async () => {
+    const { container } = renderWorkspace();
+
+    const download = container.querySelector<HTMLButtonElement>('button[aria-label="下载学生数据 XLSX 模板"]');
+    expect(download).not.toBeNull();
+    expect(container.querySelector('button[aria-label="展开导入名单"]')?.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector(".import-box textarea")).toBeNull();
+
+    flushSync(() => download!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await vi.waitFor(() => {
+      flushSync(() => {});
+      expect(container.textContent).toContain("已下载学生数据导入模板");
+    });
+  });
+
+  it("expands the import area by default when the roster is empty", () => {
+    const { container } = renderWorkspace({
+      project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
+      summary: { total: 0, visible: 0, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 },
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), students: [] },
+    });
+
+    expect(container.querySelector('button[aria-label="展开导入名单"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="收起导入名单"]')?.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector(".import-box textarea")).not.toBeNull();
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).not.toBeNull();
   });
 
   it("forwards row selection without rendering a return-editor action", () => {

@@ -151,6 +151,8 @@ function sanitizedReplayStep(step: AgentSessionReplayStep, facts: readonly strin
   return argumentsSafe ? { ...structuredClone(step), arguments: argumentsSafe } : null;
 }
 
+// 对话文本、模型原文一律不落盘；taskId 与 budgetReceipt 必须留下，
+// 否则重载后的会话没有回执，只能新开任务重新计费。
 function sanitizedSnapshot(snapshot: AgentSessionSnapshot | null, steps: AgentSessionReplayStep[]): AgentSessionSnapshot | null {
   if (!snapshot) return null;
   return {

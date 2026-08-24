@@ -154,8 +154,8 @@ describe("health input", () => {
     const framed = { ...base, cards: { ...base.cards, preset: "standard" as const, opacity: 0 } };
 
     expect(buildHealthInput(borderless).connectors).toEqual([]);
-    expect(buildHealthInput(opaque).connectors.length).toBeGreaterThan(0);
-    expect(buildHealthInput(framed).connectors.length).toBeGreaterThan(0);
+    expect(buildHealthInput(opaque).connectors!.length).toBeGreaterThan(0);
+    expect(buildHealthInput(framed).connectors!.length).toBeGreaterThan(0);
   });
 
   it("reports no connector conflict when the hidden borderless connectors would cross", () => {

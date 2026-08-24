@@ -107,23 +107,6 @@ function parseLabeledCandidate(
   };
 }
 
-export function parseDelimitedTable(text: string): ImportCandidate[] {
-  const lines = splitLines(text);
-  if (lines.length === 0) return [];
-
-  const delimiter = detectDelimiter(lines[0] ?? "") ?? detectDelimiter(lines[1] ?? "") ?? ",";
-  const candidates: ImportCandidate[] = [];
-
-  lines.forEach((line, index) => {
-    const parts = splitParts(line, delimiter);
-    if (index === 0 && looksLikeHeaderRow(parts)) return;
-    const candidate = toCandidate(parts, index + 1, line);
-    if (candidate) candidates.push(candidate);
-  });
-
-  return candidates;
-}
-
 export function parseStudentText(text: string): TextImportResult {
   const lines = splitLines(text);
   const candidates: ImportCandidate[] = [];

@@ -334,7 +334,7 @@ button { font: inherit; }
 .data-upload-workspace--expanded .draft-form { margin-top: 8px; }
 .data-upload-workspace--expanded .import-box { padding: 0; background: transparent; border: 0; }
 .data-upload-workspace--expanded .import-box .import-toggle { min-height: 32px; margin: 0; border-style: solid; }
-.data-upload-workspace--expanded .import-box > :not(.import-toggle) { margin-top: 8px; }
+.data-upload-workspace--expanded .import-box > :not(.import-box__entry) { margin-top: 8px; }
 .data-upload-workspace--expanded .import-recognition,
 .data-upload-workspace--expanded .import-review { grid-column: 1 / -1; order: 4; }
 .data-upload-workspace--expanded .student-table { min-width: 720px; }
@@ -405,6 +405,11 @@ button { font: inherit; }
 .data-workspace .import-box,
 .data-workspace .import-review { display: grid; gap: 8px; padding: 10px; background: #fff; border: 1px solid #dfe5e8; border-radius: 6px; }
 .data-workspace .import-toggle { margin-bottom: 0; }
+.import-box__entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.import-box__entry .compact-button { white-space: nowrap; }
+@media (max-width: 560px) {
+  .import-box__entry { grid-template-columns: minmax(0, 1fr); }
+}
 .data-workspace label { display: grid; gap: 4px; color: #5b6c7d; font-size: 11px; }
 .data-workspace input,
 .data-workspace textarea { width: 100%; padding: 8px 9px; color: #24384d; background: #f7fafb; border: 1px solid #d5dee4; border-radius: 4px; font: inherit; }

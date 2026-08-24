@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { parseDelimitedTable, parseStudentText, type ImportCandidate } from "./import-data";
+import { parseStudentText } from "./import-data";
 
 describe("import data", () => {
-  it("parses comma and tab separated student rows", () => {
-    const comma = parseDelimitedTable("姓名,院校,城市\n林舟,北京大学,北京\n苏禾,浙江大学,杭州");
-    const tab = parseDelimitedTable("姓名\t院校\t城市\n顾言\t复旦大学\t上海");
+  it("parses comma and tab separated student rows below a header line", () => {
+    const comma = parseStudentText("姓名,院校,城市\n林舟,北京大学,北京\n苏禾,浙江大学,杭州");
+    const tab = parseStudentText("姓名\t院校\t城市\n顾言\t复旦大学\t上海");
 
-    expect(comma).toEqual([
+    expect(comma.candidates).toEqual([
       {
         name: "林舟",
         university: "北京大学",
@@ -21,14 +21,19 @@ describe("import data", () => {
         sourceLine: 3,
         rawLine: "苏禾,浙江大学,杭州",
       },
-    ] satisfies ImportCandidate[]);
+    ]);
+    expect(comma.unparsed).toEqual([]);
 
-    expect(tab[0]).toMatchObject({
-      name: "顾言",
-      university: "复旦大学",
-      city: "上海",
-      sourceLine: 2,
-    });
+    expect(tab.candidates).toEqual([
+      {
+        name: "顾言",
+        university: "复旦大学",
+        city: "上海",
+        sourceLine: 2,
+        rawLine: "顾言\t复旦大学\t上海",
+      },
+    ]);
+    expect(tab.unparsed).toEqual([]);
   });
 
   it("parses free-form Chinese lines into three-field candidates", () => {
@@ -130,9 +135,6 @@ describe("import data", () => {
       rawLine: "苏禾,浙江大学,杭州市",
     }]);
     expect(result.unparsed).toEqual([]);
-    expect(parseDelimitedTable("学生姓名,录取学校,城市\n苏禾,浙江大学,杭州市")).toEqual([
-      expect.objectContaining({ name: "苏禾", sourceLine: 2 }),
-    ]);
   });
 
   it("keeps blank delimited cells as column slots instead of shifting the scope column", () => {
@@ -146,23 +148,6 @@ describe("import data", () => {
         reason: "无法识别学生名称、录取院校和城市",
       },
     ]);
-  });
-
-  it("drops rows with a blank middle column in parseDelimitedTable instead of shifting them", () => {
-    const rows = parseDelimitedTable([
-      "姓名,院校,城市,去向类型",
-      "张三,,北京市,海外",
-      "周晴,哈佛大学,美国·波士顿,海外",
-    ].join("\n"));
-
-    expect(rows).toEqual([{
-      name: "周晴",
-      university: "哈佛大学",
-      city: "美国·波士顿",
-      locationScope: "international",
-      sourceLine: 3,
-      rawLine: "周晴,哈佛大学,美国·波士顿,海外",
-    }]);
   });
 
   it("keeps a leading blank tab cell as a column slot", () => {

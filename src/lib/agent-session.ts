@@ -142,11 +142,14 @@ export interface AgentSessionReplayStep {
 }
 
 export interface AgentSessionSnapshot {
-  schemaVersion: 2;
+  /** 2：无回执的历史快照，恢复后只读；3：带 taskId + budgetReceipt，可继续同一个 AI 任务。 */
+  schemaVersion: 2 | 3;
   conversation: Array<{ role: "user" | "assistant"; content: string }>;
   steps: AgentSessionReplayStep[];
   metrics: AgentSessionMetrics;
   completed: boolean;
+  taskId?: string;
+  budgetReceipt?: string;
 }
 
 export interface AgentSessionOptions {
@@ -170,6 +173,15 @@ const MAX_SNAPSHOT_BYTES = 256 * 1024;
 const MAX_SNAPSHOT_STRING = 64 * 1024;
 const MAX_SNAPSHOT_DEPTH = 32;
 const MAX_SNAPSHOT_STEPS = MAX_CONVERSATION_MESSAGES * 2;
+/**
+ * v3 在快照里多带 taskId + budgetReceipt，恢复出来的会话才能续用同一份服务端预算。
+ * 回滚方案：把这里改回 2 并删掉 exportSnapshot 里的回执字段即可；校验层仍然接受 2 和 3，
+ * 已写入的 v3 快照会退化成「只读恢复」，不会让历史对话打不开。
+ */
+const AGENT_SNAPSHOT_SCHEMA_VERSION = 3;
+/** 与服务端 taskId / 回执长度约束保持一致，超出的快照按无效处理。 */
+const SNAPSHOT_TASK_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+const MAX_SNAPSHOT_RECEIPT_LENGTH = 2048;
 
 function cloneProject(project: ProjectDocument): ProjectDocument {
   const cloned = structuredClone(project) as ProjectDocument;
@@ -213,7 +225,7 @@ function isPersistedStep(value: unknown): value is AgentSessionReplayStep {
 }
 
 export function validateAgentSessionSnapshot(value: unknown): asserts value is AgentSessionSnapshot {
-  if (!isRecord(value) || value.schemaVersion !== 2 || !Array.isArray(value.conversation) ||
+  if (!isRecord(value) || (value.schemaVersion !== 2 && value.schemaVersion !== 3) || !Array.isArray(value.conversation) ||
     value.conversation.length > MAX_CONVERSATION_MESSAGES || !value.conversation.every((message) => isRecord(message) &&
       (message.role === "user" || message.role === "assistant") && typeof message.content === "string" && isSafeJson(message)) ||
     !Array.isArray(value.steps) || value.steps.length > MAX_SNAPSHOT_STEPS || !value.steps.every(isPersistedStep) ||
@@ -228,6 +240,9 @@ export function validateAgentSessionSnapshot(value: unknown): asserts value is A
     (value.metrics.provider !== undefined && (typeof value.metrics.provider !== "string" || value.metrics.provider.length > 512)) ||
     (value.metrics.fallbackReason !== undefined && (typeof value.metrics.fallbackReason !== "string" || value.metrics.fallbackReason.length > 2048)) ||
     !isSafeJson(value.metrics)) throw new Error("Agent 会话快照字段无效");
+  if (value.schemaVersion === 2 && (value.taskId !== undefined || value.budgetReceipt !== undefined)) throw new Error("v2 会话快照不得携带预算回执");
+  if (value.taskId !== undefined && (typeof value.taskId !== "string" || !SNAPSHOT_TASK_ID_PATTERN.test(value.taskId))) throw new Error("Agent 会话快照 taskId 无效");
+  if (value.budgetReceipt !== undefined && (typeof value.budgetReceipt !== "string" || !value.budgetReceipt || value.budgetReceipt.length > MAX_SNAPSHOT_RECEIPT_LENGTH)) throw new Error("Agent 会话快照预算回执无效");
   if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_SNAPSHOT_BYTES) throw new Error("Agent 会话快照过大");
 }
 
@@ -371,9 +386,10 @@ export class AgentSession {
   private activeController: AbortController | null = null;
   private activeRun: Promise<{ kind: "finish" | "tool-rejected" | "failed" | "cancelled"; summary?: string; error?: string }> | null = null;
   private completed = false;
-  private budget = { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: 20 };
   private taskId: string | undefined;
   private budgetReceipt: string | undefined;
+  /** 恢复出来的会话只有带回执才能续聊：无回执时服务端会拒绝带历史的请求，只能新开任务。 */
+  private continuable = true;
   private _metrics = { rounds: 0, usedTokens: 0, route: undefined as "primary" | "fallback" | "local" | undefined, provider: undefined as string | undefined, fallbackReason: undefined as string | undefined };
 
   constructor(project: ProjectDocument, options: AgentSessionOptions) {
@@ -392,6 +408,7 @@ export class AgentSession {
     }
     session._metrics = structuredClone(snapshot.metrics);
     session.completed = snapshot.completed;
+    session.adoptBudgetReceipt(snapshot);
     return session;
   }
 
@@ -401,18 +418,28 @@ export class AgentSession {
     session.conversation.push(...structuredClone(snapshot.conversation));
     session._metrics = structuredClone(snapshot.metrics);
     session.completed = true;
+    session.adoptBudgetReceipt(snapshot);
     return session;
+  }
+
+  /** 回执与 taskId 必须成对出现，缺一即视为 v2 只读快照。 */
+  private adoptBudgetReceipt(snapshot: AgentSessionSnapshot): void {
+    const receipted = snapshot.schemaVersion === 3 && Boolean(snapshot.taskId) && Boolean(snapshot.budgetReceipt);
+    this.taskId = receipted ? snapshot.taskId : undefined;
+    this.budgetReceipt = receipted ? snapshot.budgetReceipt : undefined;
+    this.continuable = receipted;
   }
 
   exportSnapshot(): AgentSessionSnapshot {
     const snapshot: AgentSessionSnapshot = {
-      schemaVersion: 2,
+      schemaVersion: AGENT_SNAPSHOT_SCHEMA_VERSION,
       conversation: textOnlyConversation(this.conversation),
       steps: this._steps
         .filter((step) => !READ_ONLY_TOOLS.has(step.name) && step.result.ok)
         .map(({ id, name, arguments: args, risk, lostManualLayout }) => ({ id, name, arguments: structuredClone(args), risk, lostManualLayout })),
       metrics: structuredClone(this._metrics),
       completed: this.completed,
+      ...(this.taskId && this.budgetReceipt ? { taskId: this.taskId, budgetReceipt: this.budgetReceipt } : {}),
     };
     validateAgentSessionSnapshot(snapshot);
     return structuredClone(snapshot);
@@ -431,7 +458,7 @@ export class AgentSession {
   }
 
   get canContinue(): boolean {
-    return this.completed && !this.activeRun;
+    return this.completed && !this.activeRun && this.continuable;
   }
 
   cancel(): void {
@@ -642,9 +669,9 @@ export class AgentSession {
     if (!options.continue) {
       this.conversation.length = 0;
       this.completed = false;
-      this.budget = { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: 20 };
       this.taskId = undefined;
       this.budgetReceipt = undefined;
+      this.continuable = true;
     }
     this.conversation.push({ role: "user", content: message });
     const controller = new AbortController();
@@ -669,7 +696,8 @@ export class AgentSession {
             response = await fetch(this.options.endpoint ?? "/api/ai/agent", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation, budget: this.budget, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
+              // 预算只认服务端回执：客户端镜像发过去也会被忽略，发了反而像是可协商的。
+              body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
               signal: roundController.signal,
             });
           } catch (cause) {
@@ -704,7 +732,6 @@ export class AgentSession {
           if (outcome.meta) {
             this._metrics = { ...this._metrics, route: outcome.meta.route, provider: outcome.meta.provider ?? outcome.meta.model, fallbackReason: outcome.meta.fallbackReason };
           }
-          if (outcome.budget) this.budget = outcome.budget;
           if (outcome.kind === "failed") return { kind: "failed" as const, error: outcome.error ?? "Agent 失败" };
           if (outcome.kind === "finish") { this.completed = true; return { kind: "finish" as const, summary: outcome.summary ?? "已完成。" }; }
           if (outcome.kind === "tool-rejected") {

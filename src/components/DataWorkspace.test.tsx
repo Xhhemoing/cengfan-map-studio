@@ -98,6 +98,62 @@ describe("DataWorkspace", () => {
     expect(container.textContent).toContain("已下载学生数据导入模板");
   });
 
+  it("keeps the template download outside the collapsed import area of the compact roster", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        compactRosterControls
+      />,
+    );
+
+    expect(container.querySelector('button[aria-label="展开导入名单"]')?.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).not.toBeNull();
+  });
+
+  it("expands the compact import area when the roster has no records yet", () => {
+    const container = render(
+      <DataWorkspace
+        students={[]}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        compactRosterControls
+      />,
+    );
+
+    expect(container.querySelector('button[aria-label="收起导入名单"]')?.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector("textarea")).not.toBeNull();
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).not.toBeNull();
+  });
+
+  it("hides the template download when the host workspace already offers one", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        hideTemplateDownload
+      />,
+    );
+
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="导出学生名单 XLSX"]')).not.toBeNull();
+  });
+
   it("exports the roster as an XLSX built from the import template header", async () => {
     const container = render(
       <DataWorkspace

@@ -143,8 +143,8 @@ describe("AgentAssistant", () => {
     });
     project.assetElements = [{ ...project.assetElements[0]!, id: "private-asset", src: "data:image/png;base64,private-asset-data", label: "私有素材" }];
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "secret-task-id", budgetReceipt: "secret-budget-receipt", calls: [{ id: "private-step", name: "update_cards", arguments: { patch: { showCount: false } } }], assistantMessage: { role: "assistant", content: "可手动应用的方案", tool_calls: [{ id: "private-call", type: "function", function: { name: "update_cards", arguments: "{}" } }] }, budget: { usedTokens: 12, maxTokens: 60000, rounds: 1, maxRounds: 20 } }))
-      .mockResolvedValueOnce(response({ kind: "finish", taskId: "secret-task-id", budgetReceipt: "secret-budget-receipt", summary: "可恢复方案" }));
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-private", budgetReceipt: "v1.receipt.private", calls: [{ id: "private-step", name: "update_cards", arguments: { patch: { showCount: false } } }], assistantMessage: { role: "assistant", content: "可手动应用的方案", tool_calls: [{ id: "private-call", type: "function", function: { name: "update_cards", arguments: "{}" } }] }, budget: { usedTokens: 12, maxTokens: 60000, rounds: 1, maxRounds: 20 } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-private", budgetReceipt: "v1.receipt.private", summary: "可恢复方案" }));
     vi.stubGlobal("fetch", fetchMock);
     const first = await renderAssistant(project);
     setMessage(first.container, "保存隐私方案");
@@ -154,9 +154,10 @@ describe("AgentAssistant", () => {
     const serialized = window.localStorage.getItem("cengfan-map-studio:ai-conversations:v1")!;
     expect(serialized).not.toContain("隐私学生姓名");
     expect(serialized).not.toContain("private-asset-data");
-    expect(serialized).not.toContain("secret-task-id");
-    expect(serialized).not.toContain("secret-budget-receipt");
+    expect(serialized).not.toContain("可手动应用的方案");
     expect(serialized).not.toContain('"tool_calls"');
+    // 续聊闭环需要回执随快照落盘；它只带签名后的预算计数，不含学生数据或模型原文。
+    expect(JSON.parse(serialized).conversations[0].snapshot).toMatchObject({ schemaVersion: 3, taskId: "task-private", budgetReceipt: "v1.receipt.private" });
     await vi.waitFor(() => {
       const persisted = JSON.parse(window.localStorage.getItem("cengfan-map-studio:ai-conversations:v1")!);
       expect(persisted.conversations[0]).toMatchObject({ status: "completed", selectedStepIds: ["private-step"] });
@@ -306,18 +307,54 @@ describe("AgentAssistant", () => {
     const saved = JSON.parse(window.localStorage.getItem("cengfan-map-studio:ai-conversations:v1")!).conversations[0];
     expect(saved.projectDigest).not.toBeUndefined();
     expect(saved.snapshot.steps).toEqual([]);
-    expect(saved.snapshot.taskId).toBeUndefined();
-    expect(saved.snapshot.budgetReceipt).toBeUndefined();
+    restored.root.unmount();
+  });
+
+  it("opens a persisted v2 conversation read-only and starts a new task instead of continuing", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-v2", budgetReceipt: "v1.receipt.v2", calls: [{ id: "v2-step", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-v2", budgetReceipt: "v1.receipt.v2", summary: "旧版本完成" }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-new", budgetReceipt: "v1.receipt.new", summary: "新任务完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const first = await renderAssistant(project);
+    setMessage(first.container, "旧版本会话");
+    clickText(first.container, "开始规划");
+    await vi.waitFor(() => expect(first.container.textContent).toContain("旧版本完成"));
+    await vi.waitFor(() => expect(JSON.parse(window.localStorage.getItem("cengfan-map-studio:ai-conversations:v1")!).conversations[0].snapshot.budgetReceipt).toBe("v1.receipt.v2"));
+    first.root.unmount();
+
+    // 旧版本写下的快照没有回执：降级成 v2 后必须仍能只读打开。
+    const saved = JSON.parse(window.localStorage.getItem("cengfan-map-studio:ai-conversations:v1")!);
+    delete saved.conversations[0].snapshot.taskId;
+    delete saved.conversations[0].snapshot.budgetReceipt;
+    saved.conversations[0].snapshot.schemaVersion = 2;
+    window.localStorage.setItem("cengfan-map-studio:ai-conversations:v1", JSON.stringify(saved));
+
+    const restored = await renderAssistant(project, vi.fn(), false);
+    await vi.waitFor(() => expect(restored.container.querySelector('[aria-label="描述 AI 修改需求"]')).not.toBeNull());
+    clickText(restored.container, "AI 对话");
+    expect(restored.container.textContent).toContain("历史会话已只读恢复");
+    expect(restored.container.textContent).not.toContain("继续对话");
+    expect(restored.container.querySelector('[aria-label="确认应用"]')).not.toBeNull();
+
+    setMessage(restored.container, "换个方向");
+    clickText(restored.container, "新开任务");
+    await vi.waitFor(() => expect(restored.container.textContent).toContain("新任务完成"));
+    const newTaskBody = JSON.parse(String(((fetchMock.mock.calls[2] as unknown[])[1] as RequestInit).body)) as { taskId?: string; budgetReceipt?: string; messages: Array<{ role: string }> };
+    expect(newTaskBody.taskId).toBeUndefined();
+    expect(newTaskBody.budgetReceipt).toBeUndefined();
+    expect(newTaskBody.messages.every((entry) => entry.role === "user")).toBe(true);
     restored.root.unmount();
   });
 
   it("does not auto-commit a low-risk continuation of a restored smart conversation", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "first", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
-      .mockResolvedValueOnce(response({ kind: "finish", summary: "第一轮完成" }))
-      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "second", name: "update_cards", arguments: { patch: { fontSize: project.cards.fontSize + 2 } } }], assistantMessage: { role: "assistant", content: null } }))
-      .mockResolvedValueOnce(response({ kind: "finish", summary: "继续完成" }));
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-smart", budgetReceipt: "v1.receipt.smart-1", calls: [{ id: "first", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-smart", budgetReceipt: "v1.receipt.smart-2", summary: "第一轮完成" }))
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-smart", budgetReceipt: "v1.receipt.smart-3", calls: [{ id: "second", name: "update_cards", arguments: { patch: { fontSize: project.cards.fontSize + 2 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-smart", budgetReceipt: "v1.receipt.smart-4", summary: "继续完成" }));
     vi.stubGlobal("fetch", fetchMock);
     const first = await renderAssistant(project);
     setMessage(first.container, "第一轮");
@@ -341,6 +378,8 @@ describe("AgentAssistant", () => {
     await vi.waitFor(() => expect(restored.container.textContent).toContain("继续完成"));
     expect(onCommit).not.toHaveBeenCalled();
     expect(restored.container.querySelector('[aria-label="确认应用"]')).not.toBeNull();
+    const continuationBody = JSON.parse(String(((fetchMock.mock.calls[2] as unknown[])[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(continuationBody).toMatchObject({ taskId: "task-smart", budgetReceipt: "v1.receipt.smart-2" });
     restored.root.unmount();
   });
 
@@ -388,8 +427,10 @@ describe("AgentAssistant", () => {
     const continuationBody = JSON.parse(String((fetchMock.mock.calls[2] as unknown[])[1] && ((fetchMock.mock.calls[2] as unknown[])[1] as RequestInit).body));
     expect(continuationBody.messages.some((entry: { content?: string }) => entry.content === "保留这段上下文" || entry.content === "旧方案说明")).toBe(false);
     expect(continuationBody.messages.some((entry: { role?: string; tool_calls?: unknown[]; tool_call_id?: string }) => entry.role === "tool" || entry.tool_calls || entry.tool_call_id === "old-call")).toBe(false);
-    expect(continuationBody.taskId).toBeUndefined();
-    expect(continuationBody.budgetReceipt).toBeUndefined();
+    // 项目换了不代表换了 AI 任务：预算回执要跟着文本历史一起带回去。
+    expect(continuationBody.taskId).toBe("old-task");
+    expect(continuationBody.budgetReceipt).toBe("old-receipt");
+    expect(continuationBody.budget).toBeUndefined();
     expect(restored.container.querySelectorAll('.agent-assistant--docked input[type="checkbox"]')).toHaveLength(0);
     restored.root.unmount();
   });

@@ -266,7 +266,8 @@ export function DataWorkspace({
         requestAiParse={requestAiParse}
         confirmReplace={confirmReplace}
         hideTemplateDownload={hideTemplateDownload}
-        defaultExpanded={!compactRosterControls}
+        // 名单为空时导入是唯一出路，折叠布局也直接展开导入区。
+        defaultExpanded={!compactRosterControls || students.length === 0}
       />
 
       {message && <p className="panel-note data-message">{message}</p>}

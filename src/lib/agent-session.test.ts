@@ -16,8 +16,8 @@ describe("AgentSession", () => {
   it("exports only replay data and restores it by replaying on the current project", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     vi.stubGlobal("fetch", vi.fn()
-      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "snapshot-step", name: "update_map", arguments: { patch: { width: 640 } } }], assistantMessage: { role: "assistant", content: null } }))
-      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-snapshot", budgetReceipt: "v1.receipt.snapshot", calls: [{ id: "snapshot-step", name: "update_map", arguments: { patch: { width: 640 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-snapshot", budgetReceipt: "v1.receipt.snapshot", summary: "完成" })));
     const source = new AgentSession(project, { mode: "conservative" });
     await source.run("调整地图");
 
@@ -25,15 +25,65 @@ describe("AgentSession", () => {
     const restored = AgentSession.restore(project, snapshot, { mode: "conservative" });
     expect(snapshot).not.toHaveProperty("shadowProject");
     expect(snapshot).not.toHaveProperty("budget");
-    expect(snapshot).not.toHaveProperty("taskId");
-    expect(snapshot).not.toHaveProperty("budgetReceipt");
+    expect(snapshot.schemaVersion).toBe(3);
+    expect(snapshot.taskId).toBe("task-snapshot");
+    expect(snapshot.budgetReceipt).toBe("v1.receipt.snapshot");
     expect(snapshot.conversation).toEqual([{ role: "user", content: "调整地图" }]);
     expect(snapshot.steps[0]?.arguments).toEqual({ patch: { width: 640 } });
     expect(snapshot.steps[0]).not.toHaveProperty("result");
     expect(restored.shadowProject.map.width).toBe(640);
     expect(restored.steps[0]?.arguments).toEqual({ patch: { width: 640 } });
     expect(restored.canContinue).toBe(true);
-    expect(() => AgentSession.restore(project, { ...snapshot, schemaVersion: 3 } as unknown as AgentSessionSnapshot, { mode: "conservative" })).toThrow();
+    expect(() => AgentSession.restore(project, { ...snapshot, schemaVersion: 4 } as unknown as AgentSessionSnapshot, { mode: "conservative" })).toThrow();
+  });
+
+  it("sends the restored task id and budget receipt when continuing an exported session", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-continue", budgetReceipt: "v1.receipt.first", calls: [{ id: "first-step", name: "update_map", arguments: { patch: { width: 640 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-continue", budgetReceipt: "v1.receipt.second", summary: "第一轮完成" }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-continue", budgetReceipt: "v1.receipt.third", summary: "继续完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const source = new AgentSession(project, { mode: "conservative" });
+    await source.run("调整地图");
+
+    const restored = AgentSession.restore(project, source.exportSnapshot(), { mode: "conservative" });
+    expect(restored.canContinue).toBe(true);
+    expect((await restored.continue("再小一点")).kind).toBe("finish");
+
+    const continuationBody = JSON.parse(String(((fetchMock.mock.calls.at(-1) as unknown[])[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(continuationBody.taskId).toBe("task-continue");
+    expect(continuationBody.budgetReceipt).toBe("v1.receipt.second");
+    // 预算由服务端回执决定，客户端镜像已经从请求体里去掉。
+    expect(continuationBody).not.toHaveProperty("budget");
+    expect(restored.exportSnapshot().budgetReceipt).toBe("v1.receipt.third");
+  });
+
+  it("restores a v2 snapshot read-only and refuses to continue it without a receipt", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-legacy", budgetReceipt: "v1.receipt.legacy", calls: [{ id: "legacy-step", name: "update_map", arguments: { patch: { width: 640 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-legacy", budgetReceipt: "v1.receipt.legacy", summary: "完成" })));
+    const source = new AgentSession(project, { mode: "conservative" });
+    await source.run("调整地图");
+    const { taskId: _taskId, budgetReceipt: _budgetReceipt, ...v2Snapshot } = source.exportSnapshot();
+
+    const restored = AgentSession.restore(project, { ...v2Snapshot, schemaVersion: 2 }, { mode: "conservative" });
+    expect(restored.shadowProject.map.width).toBe(640);
+    expect(restored.steps[0]?.arguments).toEqual({ patch: { width: 640 } });
+    expect(restored.canContinue).toBe(false);
+    await expect(restored.continue("再小一点")).rejects.toThrow(/不能继续/);
+    expect(restored.exportSnapshot()).not.toHaveProperty("budgetReceipt");
+  });
+
+  it.each([
+    { label: "v2 携带回执", snapshot: { schemaVersion: 2, taskId: "task-1", budgetReceipt: "v1.receipt" } },
+    { label: "taskId 非法", snapshot: { taskId: "task id 带空格", budgetReceipt: "v1.receipt" } },
+    { label: "回执过长", snapshot: { taskId: "task-1", budgetReceipt: "r".repeat(2049) } },
+  ])("rejects an invalid continuation credential in a snapshot: $label", ({ snapshot: invalid }) => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const snapshot = new AgentSession(project, { mode: "conservative" }).exportSnapshot();
+    expect(() => AgentSession.restore(project, { ...snapshot, ...invalid } as AgentSessionSnapshot, { mode: "conservative" })).toThrow();
   });
 
   it("does not restore active execution state", async () => {
@@ -636,11 +686,12 @@ describe("AgentSession", () => {
     let usedTokens = 0;
     const fetchMock = vi.fn().mockImplementation(async () => {
       const meta = { route: "primary", provider: "test-provider", usage: { totalTokens: 7_000 } };
+      const credential = { taskId: "task-exhausted", budgetReceipt: `v1.receipt.${fetchMock.mock.calls.length}` };
       if (rounds >= 20) {
         // 只读连轮等收尾分支不带 budget，客户端只能自增 rounds，越界会让整段预览失效。
         return fetchMock.mock.calls.length > 21
-          ? response({ kind: "finish", summary: "连续只读未动手，已交回结论", meta })
-          : response({ kind: "finish", summary: "已达到 AI 任务预算", meta, budget: { usedTokens, maxTokens: 60_000, rounds, maxRounds: 20 } });
+          ? response({ kind: "finish", summary: "连续只读未动手，已交回结论", meta, ...credential })
+          : response({ kind: "finish", summary: "已达到 AI 任务预算", meta, ...credential, budget: { usedTokens, maxTokens: 60_000, rounds, maxRounds: 20 } });
       }
       rounds += 1;
       usedTokens = Math.min(60_000, usedTokens + 3_000);
@@ -649,6 +700,7 @@ describe("AgentSession", () => {
         calls: [{ id: `round-${rounds}`, name: "update_map", arguments: { patch: { width: 600 + rounds } } }],
         assistantMessage: { role: "assistant", content: null, tool_calls: [{ id: `round-${rounds}`, type: "function", function: { name: "update_map", arguments: "{}" } }] },
         meta,
+        ...credential,
         budget: { usedTokens, maxTokens: 60_000, rounds, maxRounds: 20 },
       });
     });

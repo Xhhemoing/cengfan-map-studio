@@ -113,6 +113,45 @@ describe("agent-conversation-store", () => {
     expect(restored.shadowProject.cards.layoutMode).toBe(layoutMode);
   });
 
+  it("keeps the continuation receipt so a reloaded conversation continues the same AI task", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const target = storage();
+    const step = { id: "receipt-step", name: "update_map", arguments: { patch: { scale: 0.9 } }, risk: "low" as const };
+    const snapshot = new AgentSession(project, { mode: "conservative" }).exportSnapshot();
+    const source = record(project, {
+      steps: [step],
+      selectedStepIds: [step.id],
+      snapshot: { ...snapshot, steps: [step], completed: true, taskId: "task-durable", budgetReceipt: "v1.receipt.durable" },
+    });
+
+    saveAssistantConversationState(target, project, state([source]));
+
+    const loaded = loadAssistantConversationState(target, project)?.conversations[0];
+    expect(loaded?.snapshot).toMatchObject({ schemaVersion: 3, taskId: "task-durable", budgetReceipt: "v1.receipt.durable" });
+    expect(AgentSession.restore(project, loaded!.snapshot!, { mode: "conservative" }).canContinue).toBe(true);
+  });
+
+  it("loads a legacy v2 snapshot read-only instead of discarding the conversation", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const target = storage();
+    const step = { id: "legacy-step", name: "update_map", arguments: { patch: { scale: 0.9 } }, risk: "low" as const };
+    const snapshot = new AgentSession(project, { mode: "conservative" }).exportSnapshot();
+    const source = record(project, {
+      steps: [step],
+      selectedStepIds: [step.id],
+      snapshot: { ...snapshot, schemaVersion: 2, steps: [step], completed: true },
+    });
+
+    saveAssistantConversationState(target, project, state([source]));
+
+    const loaded = loadAssistantConversationState(target, project)?.conversations[0];
+    expect(loaded).toMatchObject({ status: "completed", selectedStepIds: [step.id] });
+    expect(loaded?.snapshot?.schemaVersion).toBe(2);
+    const restored = AgentSession.restore(project, loaded!.snapshot!, { mode: "conservative" });
+    expect(restored.shadowProject.map.scale).toBe(0.9);
+    expect(restored.canContinue).toBe(false);
+  });
+
   it("sanitizes prompts, model text, student facts, and continuation secrets before durable storage", () => {
     const project = createProjectDocument({
       students: [{ id: "student-secret-id", name: "学生秘密姓名", university: "秘密大学", city: "秘密城市", province: "秘密省份", visibility: true }],

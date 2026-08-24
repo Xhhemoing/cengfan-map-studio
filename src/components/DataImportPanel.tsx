@@ -272,15 +272,28 @@ export function DataImportPanel({
   return (
     <>
       <div className="import-box">
-        <button
-          type="button"
-          className="wide-button secondary import-toggle"
-          aria-label={showImport ? "收起导入名单" : "展开导入名单"}
-          aria-expanded={showImport}
-          onClick={() => setShowImport((current) => !current)}
-        >
-          {showImport ? "收起导入" : "展开导入 / OCR / Excel"}
-        </button>
+        {/* 模板下载留在折叠外：折叠态下用户也要能拿到导入模板，不必先展开导入区。 */}
+        <div className="import-box__entry">
+          <button
+            type="button"
+            className="wide-button secondary import-toggle"
+            aria-label={showImport ? "收起导入名单" : "展开导入名单"}
+            aria-expanded={showImport}
+            onClick={() => setShowImport((current) => !current)}
+          >
+            {showImport ? "收起导入" : "展开导入 / OCR / Excel"}
+          </button>
+          {!hideTemplateDownload && (
+            <CompactButton
+              variant="secondary"
+              aria-label="下载学生数据 XLSX 模板"
+              icon={<Download size={16} aria-hidden />}
+              onClick={() => { void downloadImportTemplate(); }}
+            >
+              下载 XLSX 模板
+            </CompactButton>
+          )}
+        </div>
         {showImport && (
           <>
             <PanelHeader title="导入文本" meta="可粘贴 OCR 识别文字；学生姓名 · 就读院校 · 城市 · 去向类型（可选：海外）" />
@@ -310,14 +323,6 @@ export function DataImportPanel({
                 icon={<FileUp size={16} aria-hidden />}
                 onFile={(file) => { void handleExcelFile(file); }}
               />
-              {!hideTemplateDownload && <CompactButton
-                variant="secondary"
-                aria-label="下载学生数据 XLSX 模板"
-                icon={<Download size={16} aria-hidden />}
-                onClick={() => { void downloadImportTemplate(); }}
-              >
-                下载 XLSX 模板
-              </CompactButton>}
               <CompactButton
                 variant="secondary"
                 aria-label="导出学生名单 XLSX"

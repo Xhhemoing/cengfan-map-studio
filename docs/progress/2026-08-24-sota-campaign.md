@@ -26,7 +26,8 @@
 | 3 | 已完成 | 混编 ×5 | 深化打磨与回归 |
 | 4 | 已完成 | opus ×5 | 复查 P0 与导入/兜底收紧 |
 | 5 | 已完成 | 混编 ×5 | 达标后继续 |
-| 6 | 进行中 | 混编 ×5 | 续聊闭环与死代码清理 |
+| 6 | 已完成 | 混编 ×5 | 续聊闭环与死代码清理 |
+| 7 | 进行中 | 混编 ×5 | 导出补省份、digest 分层、续聊 HTTP 验收 |
 
 ### 第 1 轮工作流（只读）
 
@@ -100,4 +101,15 @@
 
 **复查 P1（第 6 轮）：** 恢复的会话点「继续对话」可能 400（快照无 taskId/budgetReceipt）。客户端请求体仍发已被忽略的 budget。
 
-**第 6 轮：** 续聊闭环（快照升 v3 或禁用 continue）；去掉死 budget 载荷；修 render-facts.test TS2532；模板按钮可发现性。
+## 第 6 轮已合入
+
+- 快照升 `schemaVersion: 3`，导出 `taskId` + `budgetReceipt`；恢复后 `continue()` 带同一回执。
+- v2 无回执快照仍可打开，但 `canContinue === false`：按钮改成「新开任务」，不会对服务端发会 400 的续聊。
+- 客户端不再发送已被服务端忽略的 `budget`；`localStorage` 必须保留回执，否则重载等于新开任务。
+- `parseDelimitedTable` 已删除（仅测试引用，解析语义走 `parseStudentText`）。
+- `render-facts.test.ts` 补上 `connectors!`，消除 TS2532。
+- DATA 折叠态也能下载模板；空名单默认展开导入区。
+
+回滚：把 `AGENT_SNAPSHOT_SCHEMA_VERSION` 改回 2 并去掉回执字段；校验仍接受 2/3，已写入的 v3 退化为只读恢复。导入区改动是纯 UI。
+
+**第 7 轮候选：** 导出名单补省份列（round-trip 丢手动覆盖）；digest 分层/去重（P1）；恢复续聊的真 HTTP 集成测试；大名单健康检查仍在主线程求解；`/api/ai/propose-edits` 服务端仍保留。P2 视觉核对仍不做。

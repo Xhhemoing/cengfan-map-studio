@@ -369,7 +369,8 @@ export function AgentAssistant({
         progress: `第 ${round} 轮 · ${name} · ${status === "running" ? "执行中" : status === "done" ? "已完成" : "已拒绝"}`,
       }));
     };
-    const isFresh = active.status === "draft" || active.status === "failed" || active.status === "cancelled";
+    // 没有预算回执的会话（v2 快照恢复）只能只读打开，续聊会被服务端拒绝，这里直接改成新开任务。
+    const isFresh = active.status === "draft" || active.status === "failed" || active.status === "cancelled" || !active.session.canContinue;
     const session = isFresh
       ? new AgentSession(project, { mode: active.mode, assets, onProgress: progress })
       : active.session;
@@ -485,8 +486,9 @@ export function AgentAssistant({
         {conversation.status === "running" ? (
           <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
         ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && conversation.status === "completed" ? "继续对话" : "开始规划"}</button>
+          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && conversation.status === "completed" ? (conversation.session.canContinue ? "继续对话" : "新开任务") : "开始规划"}</button>
         )}
+        {projectIsCurrent && conversation.status === "completed" && !conversation.session.canContinue && <p className="panel-note" role="status">历史会话已只读恢复，发送新需求会新开一个 AI 任务。</p>}
         {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
         {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
         {conversation.route === "local" && <p className="panel-note" role="status">已使用本地规则完成可识别的修改。</p>}
