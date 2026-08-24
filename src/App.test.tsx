@@ -60,14 +60,33 @@ function renderLegacyApp({ clearStorage = true } = {}): HTMLDivElement {
   return mountApp();
 }
 
-function saveWorkspaceMirror(project: ReturnType<typeof createProjectDocument>): void {
-  window.localStorage.setItem("cengfan-map-studio:workspace-mirror", JSON.stringify(createProjectPackage({
+const WORKSPACE_MIRROR_KEY = "cengfan-map-studio:workspace-mirror";
+
+function saveWorkspaceMirror(project: ReturnType<typeof createProjectDocument>, now?: Date): void {
+  window.localStorage.setItem(WORKSPACE_MIRROR_KEY, JSON.stringify(createProjectPackage({
     project,
     assets: [],
     fonts: [],
     customTemplates: [],
     renderSettings: { mode: "normal", fixedFps: 20 },
+    now,
   })));
+}
+
+function studentProject(name: string): ReturnType<typeof createProjectDocument> {
+  return createProjectDocument({
+    students: [{ ...sampleStudents[0], name }],
+    templateId: "original",
+    dataView: "province",
+  });
+}
+
+function readWorkspaceMirror(): string {
+  return window.localStorage.getItem(WORKSPACE_MIRROR_KEY) ?? "";
+}
+
+function forceSaveLocally(container: HTMLElement): void {
+  click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
 }
 
 function click(element: Element): void {
@@ -751,17 +770,64 @@ describe("App student editing", () => {
     request.mockRestore();
   });
 
-  it("immediately overwrites the compatibility draft and complete local mirror", () => {
+  it("immediately overwrites the compatibility draft and complete local mirror", async () => {
     const container = renderApp();
     window.localStorage.setItem("cengfan-map-studio:draft", "stale-local-data");
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+    forceSaveLocally(container);
 
+    // 兼容草稿是同步写的；完整镜像要等 IndexedDB 那一路先落空，所以只能等一拍。
     const saved = window.localStorage.getItem("cengfan-map-studio:draft");
     expect(saved).toContain("林舟");
     expect(saved).not.toContain("stale-local-data");
-    const mirror = window.localStorage.getItem("cengfan-map-studio:workspace-mirror");
-    expect(mirror).toContain("林舟");
-    expect(mirror).toContain("renderSettings");
+    await vi.waitFor(() => expect(readWorkspaceMirror()).toContain("林舟"));
+    expect(readWorkspaceMirror()).toContain("renderSettings");
+  });
+
+  it("still overwrites the mirror when no other tab touched it", async () => {
+    saveWorkspaceMirror(studentProject("本页草稿"), new Date("2026-01-01T00:00:00.000Z"));
+    const container = renderApp(false);
+    await Promise.resolve();
+
+    forceSaveLocally(container);
+
+    await vi.waitFor(() => expect(container.textContent).toContain("强制保存完成"));
+    expect(readWorkspaceMirror()).toContain("本页草稿");
+    expect(container.querySelector('[data-sync-status="saved"]')).not.toBeNull();
+  });
+
+  it("keeps another tab's newer workspace mirror instead of overwriting it", async () => {
+    saveWorkspaceMirror(studentProject("本页草稿"), new Date("2026-01-01T00:00:00.000Z"));
+    const container = renderApp(false);
+    await Promise.resolve();
+
+    // 另一个标签页在本页加载之后写入了更新的工作区快照。
+    saveWorkspaceMirror(studentProject("其他标签页学生"), new Date("2026-01-01T01:00:00.000Z"));
+    forceSaveLocally(container);
+
+    await vi.waitFor(() => expect(container.textContent).toContain("工作区已被其他标签页修改"));
+    expect(container.textContent).toContain("请重新加载页面");
+    expect(container.querySelector('[data-sync-status="failed"]')).not.toBeNull();
+    expect(readWorkspaceMirror()).toContain("其他标签页学生");
+    expect(readWorkspaceMirror()).not.toContain("本页草稿");
+  });
+
+  it("stops writing the workspace mirror after a conflict until the page reloads", async () => {
+    saveWorkspaceMirror(studentProject("本页草稿"), new Date("2026-01-01T00:00:00.000Z"));
+    const container = renderApp(false);
+    await Promise.resolve();
+
+    saveWorkspaceMirror(studentProject("其他标签页学生"), new Date("2026-01-01T01:00:00.000Z"));
+    forceSaveLocally(container);
+    await vi.waitFor(() => expect(container.textContent).toContain("工作区已被其他标签页修改"));
+
+    // 冲突已锁存:对方的快照此刻不再比本页新,CAS 本可以通过,本页也不再覆盖它。
+    saveWorkspaceMirror(studentProject("其他标签页学生"), new Date("2026-01-01T00:00:00.000Z"));
+    forceSaveLocally(container);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(container.textContent).toContain("工作区已被其他标签页修改");
+    expect(readWorkspaceMirror()).toContain("其他标签页学生");
+    expect(readWorkspaceMirror()).not.toContain("本页草稿");
   });
 
   it("asks whether to include the resource pack before exporting a project", () => {

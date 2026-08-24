@@ -166,6 +166,7 @@ import {
   loadBrowserWorkspaceMirror,
   loadLatestBrowserWorkspace,
   saveBrowserWorkspaceSnapshot,
+  WorkspaceStoreConflictError,
 } from "./lib/browser-workspace-store";
 import {
   LocalWorkspaceOverwrite,
@@ -184,6 +185,16 @@ import {
 import { useCollaborationRoom } from "./lib/useCollaborationRoom";
 
 const PROJECT_CONFLICT_MESSAGE = "项目已被其他标签页修改，已停止覆盖以免丢失对方的改动，请重新加载页面后再编辑";
+const WORKSPACE_CONFLICT_MESSAGE = "工作区已被其他标签页修改，已停止覆盖以免丢失对方的改动，请重新加载页面后再编辑";
+
+/** 只有槽位里的快照比本页期望的更新，才说明别的标签页抢先写过；更旧的副本是本页上次写盘降级留下的。 */
+function isNewerSnapshot(storedExportedAt: string | null, expectedExportedAt: string): boolean {
+  if (storedExportedAt === null) return false;
+  const stored = Date.parse(storedExportedAt);
+  if (!Number.isFinite(stored)) return false;
+  const expected = Date.parse(expectedExportedAt);
+  return !Number.isFinite(expected) || stored > expected;
+}
 
 function StudioApp({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
@@ -250,6 +261,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const projectUpdatedAtRef = useRef<string | null>(null);
   const projectConflictRef = useRef(false);
   const projectRecordSaveErrorRef = useRef<string | null>(null);
+  // 工作区快照是所有标签页共用的一个槽位；这里存最近一次读到/写出的 exportedAt 作为写入的 CAS 期望值。
+  // 项目记录的 updatedAt 与该槽位无关，打开项目时不能拿它当期望值，否则第一次保存就会误判成冲突。
+  const workspaceExportedAtRef = useRef<string | null>(initialWorkspace?.exportedAt ?? null);
+  const workspaceConflictRef = useRef(false);
   const backNavigatingRef = useRef(false);
   const hasLocalWorkspaceEditsRef = useRef(false);
   // saveLocal 只在事件处理器(强制保存按钮)经 LocalWorkspaceOverwrite.drain() 触发,属于渲染期之后;
@@ -263,11 +278,37 @@ function StudioApp({ projectId }: { projectId?: string }) {
       } catch {
         // The complete mirror or IndexedDB copy can still preserve the workspace.
       }
-      const result = await saveBrowserWorkspaceSnapshot(pack, browserStores);
-      if (result.durable === "failed" && result.mirror === "failed") {
-        projectRecordSaveErrorRef.current = null; // put 分支不会执行,清空旧错误,避免 overwriteBrowserStorage 误报"本地已保存"
-        throw new Error("浏览器本地存储不可写");
+      const writeWorkspaceSnapshot = async () => {
+        try {
+          return await saveBrowserWorkspaceSnapshot(pack, browserStores, {
+            expectedExportedAt: workspaceExportedAtRef.current ?? undefined,
+          });
+        } catch (error) {
+          if (!(error instanceof WorkspaceStoreConflictError)) throw error;
+          if (isNewerSnapshot(error.storedExportedAt, error.expectedExportedAt)) throw error;
+          // 槽位里的副本比本页已知版本还旧(上次写盘降级留下的),对齐后重试一次,不算别的标签页抢写。
+          return await saveBrowserWorkspaceSnapshot(pack, browserStores, {
+            expectedExportedAt: error.storedExportedAt ?? undefined,
+          });
+        }
+      };
+      // 冲突后锁存:本页在重新加载读回最新快照之前都不再覆盖工作区槽位。
+      let workspaceConflict = workspaceConflictRef.current;
+      if (!workspaceConflict) {
+        try {
+          const result = await writeWorkspaceSnapshot();
+          workspaceExportedAtRef.current = pack.exportedAt;
+          if (result.durable === "failed" && result.mirror === "failed") {
+            projectRecordSaveErrorRef.current = null; // put 分支不会执行,清空旧错误,避免 overwriteBrowserStorage 误报"本地已保存"
+            throw new Error("浏览器本地存储不可写");
+          }
+        } catch (error) {
+          if (!(error instanceof WorkspaceStoreConflictError)) throw error;
+          workspaceConflictRef.current = true;
+          workspaceConflict = true;
+        }
       }
+      // 工作区冲突不牵连项目记录:项目记录有自己的 CAS,仍要写完再把冲突报出去。
       if (projectIdRef.current) {
         if (projectConflictRef.current) {
           projectRecordSaveErrorRef.current = PROJECT_CONFLICT_MESSAGE;
@@ -291,6 +332,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
             : error instanceof Error ? error.message : String(error);
           throw new Error("项目记录写入失败", { cause: error });
         }
+      }
+      if (workspaceConflict) {
+        throw new Error("工作区镜像写入失败", { cause: new Error(WORKSPACE_CONFLICT_MESSAGE) });
       }
     },
     onStateChange: setSyncState,
@@ -445,6 +489,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
       const restoredTime = Date.parse(pack.exportedAt);
       if (initialWorkspace && (!Number.isFinite(restoredTime) || restoredTime <= initialTime)) return;
       const restored = restoreProjectPackage(pack);
+      // 刚读回槽位里的最新快照,后续保存以它作为 CAS 期望值。
+      workspaceExportedAtRef.current = pack.exportedAt;
+      workspaceConflictRef.current = false;
       workspaceHydratedRef.current = true;
       skipNextWorkspacePendingRef.current = true;
       setProject(restored.project);
@@ -831,6 +878,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
       setStatusMessage("强制保存完成：全部数据已覆盖到浏览器本地");
     } else if (projectRecordSaveErrorRef.current) {
       setStatusMessage(`浏览器本地已保存，但项目记录写入失败（${projectRecordSaveErrorRef.current}）。请导出工程包备份，否则项目列表不会更新。`);
+    } else if (workspaceConflictRef.current) {
+      setStatusMessage(`${WORKSPACE_CONFLICT_MESSAGE}。请先导出工程包备份。`);
     } else {
       setStatusMessage("强制保存失败：浏览器本地存储不可写，请立即导出工程包");
     }
