@@ -76,6 +76,14 @@ const TERMINAL_ROOM_MESSAGE: Record<SubscribeTerminalReason, string> = {
   ROOM_CLOSED: "房间已关闭，无法继续同步或编辑",
 };
 
+/**
+ * 服务端拒绝码里哪些是终局。上传路径在调用方那一侧,它拿到的拒绝码要经过同一张表才能落到
+ * 终局态——否则「房间没了」这件事会有两套判据,面板迟早说两种话。
+ */
+function terminalRejectionReason(code: string): SubscribeTerminalReason | null {
+  return code === "ROOM_NOT_FOUND" || code === "ROOM_FORBIDDEN" || code === "ROOM_CLOSED" ? code : null;
+}
+
 export interface UseCollaborationRoomRefs {
   baselineRef: MutableRefObject<ProjectPackage | null>;
   versionRef: MutableRefObject<number>;
@@ -128,6 +136,12 @@ export interface UseCollaborationRoomResult {
    * 让调用方把自己那一侧的传输层失败(例如上传事务超时)并入同一个离线叙事;终局房间不受影响。
    */
   setCollaborationOffline: (offline: boolean) => void;
+  /**
+   * 让调用方上报自己那一侧拿到的服务端拒绝码。终局码(房间没了/凭证失效/房间已关闭)当场把
+   * 房间带到终局并返回 `true`,调用方据此收手、不再画自己的错误文案;其余码返回 `false`,
+   * 仍由调用方按冲突或离线处理。重复上报只认第一个成因。
+   */
+  reportTerminalRejection: (code: string) => boolean;
   setCollaborationMessage: (message: string) => void;
   setCollaborationOpen: (open: boolean) => void;
   setRoomInput: (value: string) => void;
@@ -698,6 +712,16 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     else markOnline();
   };
 
+  const reportTerminalRejection = (code: string): boolean => {
+    const reason = terminalRejectionReason(code);
+    if (!reason) return false;
+    // 已经在终局里:第一个终局码才是成因,在途请求带回来的第二个不该把提示改写成另一种说法。
+    if (isTerminal()) return true;
+    if (reason === "ROOM_CLOSED") markRoomClosed();
+    else markRoomExpired(reason);
+    return true;
+  };
+
   return {
     roomId,
     roomAccessToken,
@@ -721,6 +745,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setRoomVersion,
     setCollaborationStatus,
     setCollaborationOffline,
+    reportTerminalRejection,
     setCollaborationMessage,
     setCollaborationOpen,
     setRoomInput,

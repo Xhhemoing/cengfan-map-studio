@@ -6,7 +6,7 @@ import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { createProjectDocument, serializeProjectDocument } from "./lib/project-document";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
 import { sampleStudents } from "./lib/project-data";
-import { COLLABORATION_SEND_DELAY_MS } from "./lib/app-constants";
+import { COLLABORATION_SEND_DELAY_MS, ROOM_ACCESS_STORAGE_PREFIX } from "./lib/app-constants";
 import { CollaborationClientError } from "./lib/collaboration-client";
 import { createProjectPackage } from "./lib/project-package";
 
@@ -2590,6 +2590,103 @@ describe("Collaboration send effect recovery (R2-3)", () => {
         // 服务端明确拒绝,网络好得很:摆出离线态会让用户以为等一等就能自己上去。
         expect(offlineBanner(container)).toBeNull();
         expect(container.textContent).toContain("同一内容被其他成员修改");
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
+  });
+
+  /**
+   * 终局只从流那一侧落地时,提交被终局码拒掉的那一刻房间还是"活着"的样子:面板照旧显示
+   * 已连接,送出 effect 下一次编辑照旧武装,用户会一直往一间死房里编辑,直到流自己发现过期。
+   * 提交回执本身就是最早的终局证据,必须当场把房间带到终局。
+   */
+  describe("terminal submit rejection (R5-6)", () => {
+    function offlineBanner(container: HTMLElement): HTMLElement | null {
+      return container.querySelector<HTMLElement>('[data-collaboration-offline="true"]');
+    }
+
+    function expiredBanner(container: HTMLElement): HTMLElement | null {
+      return container.querySelector<HTMLElement>('p[data-collaboration-terminal="expired"]');
+    }
+
+    it("lands the expired state from a submit rejection instead of waiting for the stream", async () => {
+      const container = renderApp();
+      const roomId = "GONE01";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const uploads: UploadedTransaction[] = [];
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+          uploads.push(body);
+          // 房间在两次编辑之间被清理:提交是本端第一个知道这件事的路径。
+          return json({ error: { code: "ROOM_NOT_FOUND", message: "房间不存在" } }, 404);
+        }
+        // 流一直是健康的:终局不能靠它兜底,否则这段时间里的编辑全是白编。
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+        renameStudent(container, "林舟", "死房林舟");
+        await vi.waitFor(() => expect(uploads).toHaveLength(1), { timeout: 5_000 });
+
+        await vi.waitFor(() => expect(expiredBanner(container)).not.toBeNull(), { timeout: 5_000 });
+        expect(collaborationStatus(container)?.getAttribute("data-collaboration-terminal")).toBe("expired");
+        expect(collaborationStatus(container)?.textContent).toContain("房间已过期或已失效");
+        // 拒绝的是协议层,网络好得很:摆出离线态等于承诺"恢复后自动续传",而这间房不会回来。
+        expect(offlineBanner(container)).toBeNull();
+        expect(ScriptedEventSource.instances).toHaveLength(1);
+
+        // 送出 effect 不该再武装:再改一次也不会有第二笔注定失败的事务。
+        renameStudent(container, "死房林舟", "死房林二");
+        await new Promise((resolve) => setTimeout(resolve, COLLABORATION_SEND_DELAY_MS * 4));
+        expect(uploads).toHaveLength(1);
+        expect(collaborationStatus(container)?.getAttribute("data-collaboration-terminal")).toBe("expired");
+        // 失效的房间凭证不再留在本机,"加入"不会继续给出可点的假象。
+        expect(window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${roomId}`)).toBeNull();
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
+
+    it("closes the room from a submit rejection and stops re-arming the send effect", async () => {
+      const container = renderApp();
+      const roomId = "SHUT01";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const uploads: UploadedTransaction[] = [];
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+          uploads.push(body);
+          return json({ error: { code: "ROOM_CLOSED", message: "共享房间已关闭" } }, 409);
+        }
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+        renameStudent(container, "林舟", "关闭林舟");
+        await vi.waitFor(() => expect(uploads).toHaveLength(1), { timeout: 5_000 });
+
+        await vi.waitFor(() => expect(collaborationStatus(container)?.getAttribute("data-collaboration-status")).toBe("closed"), { timeout: 5_000 });
+        expect(container.textContent).toContain("房间已关闭");
+        expect(offlineBanner(container)).toBeNull();
+
+        await new Promise((resolve) => setTimeout(resolve, COLLABORATION_SEND_DELAY_MS * 4));
+        expect(uploads).toHaveLength(1);
       } finally {
         globalThis.fetch = originalFetch;
         restoreStream();

@@ -596,4 +596,89 @@ describe("useCollaborationRoom", () => {
     expect(harness.controller().collaborationMessage).toContain("房间已过期");
     harness.unmount();
   });
+
+  /**
+   * 上传路径在调用方那一侧,它拿到的终局码是本端最早的终局证据。没有这个入口,调用方只能
+   * 画一句错误文案,房间在面板上继续活着,用户会一直往一间死房里编辑。
+   */
+  describe("reportTerminalRejection", () => {
+    async function connected(): Promise<Harness> {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoom(harness);
+      await vi.waitFor(() => expect(harness.refs.versionRef.current).toBe(1));
+      return harness;
+    }
+
+    it("lands the expired state and forgets the dead room credential", async () => {
+      const harness = await connected();
+
+      expect(flushSync(() => harness.controller().reportTerminalRejection("ROOM_NOT_FOUND"))).toBe(true);
+
+      expect(harness.controller().roomExpired).toBe(true);
+      expect(harness.controller().collaborationStatus).toBe("error");
+      expect(harness.controller().collaborationMessage).toContain("房间已过期");
+      // 协议层拒绝不是分区:既不摆离线态,也不算一次愈合——愈合会让调用方立刻再投一笔。
+      expect(harness.controller().collaborationOffline).toBe(false);
+      expect(harness.controller().connectionHealCount).toBe(0);
+      expect(window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`)).toBeNull();
+      harness.unmount();
+    });
+
+    it("maps a forbidden rejection onto the same expired narrative", async () => {
+      const harness = await connected();
+
+      flushSync(() => harness.controller().reportTerminalRejection("ROOM_FORBIDDEN"));
+
+      expect(harness.controller().roomExpired).toBe(true);
+      expect(harness.controller().collaborationMessage).toContain("凭证已失效");
+      expect(harness.controller().collaborationOffline).toBe(false);
+      harness.unmount();
+    });
+
+    it("closes the room for a closed rejection", async () => {
+      const harness = await connected();
+
+      flushSync(() => harness.controller().reportTerminalRejection("ROOM_CLOSED"));
+
+      expect(harness.controller().roomClosed).toBe(true);
+      expect(harness.controller().collaborationStatus).toBe("closed");
+      expect(harness.controller().canEdit).toBe(false);
+      expect(harness.controller().connectionHealCount).toBe(0);
+      harness.unmount();
+    });
+
+    it("keeps the first terminal cause when later rejections pile up", async () => {
+      const harness = await connected();
+
+      flushSync(() => harness.controller().reportTerminalRejection("ROOM_NOT_FOUND"));
+      // 在途的第二笔事务会带回另一个终局码:成因是第一个,后到的不该改写提示。
+      expect(flushSync(() => harness.controller().reportTerminalRejection("ROOM_CLOSED"))).toBe(true);
+      flushSync(() => harness.controller().reportTerminalRejection("ROOM_NOT_FOUND"));
+
+      expect(harness.controller().roomExpired).toBe(true);
+      expect(harness.controller().roomClosed).toBe(false);
+      expect(harness.controller().collaborationStatus).toBe("error");
+      expect(harness.controller().collaborationMessage).toContain("房间已过期");
+      expect(harness.controller().connectionHealCount).toBe(0);
+      harness.unmount();
+    });
+
+    it("leaves non-terminal rejections to the caller", async () => {
+      const harness = await connected();
+
+      expect(flushSync(() => harness.controller().reportTerminalRejection("VERSION_CONFLICT"))).toBe(false);
+      expect(flushSync(() => harness.controller().reportTerminalRejection("REQUEST_TIMEOUT"))).toBe(false);
+
+      // 冲突要靠补齐重投,超时属于离线叙事:两者都不能被当成终局把房间掐掉。
+      expect(harness.controller().roomExpired).toBe(false);
+      expect(harness.controller().roomClosed).toBe(false);
+      expect(harness.controller().collaborationStatus).toBe("connected");
+      harness.unmount();
+    });
+  });
 });
