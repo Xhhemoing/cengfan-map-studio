@@ -106,6 +106,60 @@ describe("createAiBackend with LLM", () => {
     expect(prompt).not.toContain("北京大学");
   });
 
+  it("keeps the destination type and province the LLM reports", async () => {
+    const fetchMock = mockChatCompletion(
+      JSON.stringify({
+        candidates: [
+          { lineIndex: 1, name: "周晴", university: "哈佛大学", city: "波士顿", locationScope: "overseas" },
+          { lineIndex: 2, name: "陈迪", university: "西湖大学", city: "余杭", province: "浙江" },
+        ],
+        unparsed: [],
+      }),
+    );
+    const backend = createAiBackend(TEST_CONFIG);
+    const result = await backend.parseData({ text: "只有名字\n陈迪同学去了西湖大学", source: "paste" });
+
+    expect(result.candidates).toEqual([
+      { name: "周晴", university: "哈佛大学", city: "波士顿", locationScope: "international", sourceLine: 1, rawLine: "只有名字" },
+      { name: "陈迪", university: "西湖大学", city: "余杭", province: "浙江省", sourceLine: 2, rawLine: "陈迪同学去了西湖大学" },
+    ]);
+
+    const prompt = String(fetchMock.mock.calls[0]?.[1]?.body);
+    expect(prompt).toContain("locationScope");
+    expect(prompt).toContain("province");
+  });
+
+  it("drops unusable destination fields without dropping the row", async () => {
+    mockChatCompletion(
+      JSON.stringify({
+        candidates: [
+          { lineIndex: 1, name: "周晴", university: "北京大学", city: "北京市", locationScope: "china", province: "火星省" },
+          { lineIndex: 2, name: "陈迪", university: "剑桥大学", city: "剑桥", locationScope: "international", province: "浙江省" },
+        ],
+        unparsed: [],
+      }),
+    );
+    const backend = createAiBackend(TEST_CONFIG);
+    const result = await backend.parseData({ text: "只有名字\n陈迪同学去了剑桥", source: "paste" });
+
+    expect(result.candidates).toEqual([
+      { name: "周晴", university: "北京大学", city: "北京市", sourceLine: 1, rawLine: "只有名字" },
+      { name: "陈迪", university: "剑桥大学", city: "剑桥", locationScope: "international", sourceLine: 2, rawLine: "陈迪同学去了剑桥" },
+    ]);
+  });
+
+  it("still parses the three core fields when the optional ones are missing", async () => {
+    mockChatCompletion(
+      JSON.stringify({ candidates: [{ lineIndex: 1, name: "周晴", university: "哈佛大学", city: "波士顿" }], unparsed: [] }),
+    );
+    const backend = createAiBackend(TEST_CONFIG);
+    const result = await backend.parseData({ text: "只有名字", source: "paste" });
+
+    expect(result.candidates).toEqual([
+      { name: "周晴", university: "哈佛大学", city: "波士顿", sourceLine: 1, rawLine: "只有名字" },
+    ]);
+  });
+
   it("keeps a locally unresolved line unparsed when the LLM also fails on it", async () => {
     mockChatCompletion(JSON.stringify({ candidates: [], unparsed: [{ lineIndex: 1, reason: "缺少院校信息" }] }));
     const backend = createAiBackend(TEST_CONFIG);

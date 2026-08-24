@@ -1,3 +1,5 @@
+import { chinaProvinces } from "../../src/data/china-locations";
+import { parseLocationScope } from "../../src/lib/import-aliases";
 import type { ImportCandidate, UnparsedLine } from "../../src/lib/import-data";
 import type { ParseDataRequest, SourceType } from "./schemas";
 import { localParseData } from "./local-fallback";
@@ -149,6 +151,31 @@ async function chatJson(config: AiConfig, system: string, user: string, maxToken
   return result.value;
 }
 
+/**
+ * 与 `src/lib/map-data.ts` 的 `toShortProvinceName` 同一套后缀。
+ *
+ * 不复用 `src/lib/search-catalog` 的 `resolveProvinceName`：那条依赖链是
+ * `search-catalog → map-data → ../assets/china.geojson?raw`，`?raw` 是 Vite 专有导入，
+ * 服务端由 tsx 直接运行会在 import 阶段抛 ERR_UNKNOWN_FILE_EXTENSION（同 local-preroute.ts 的取舍）。
+ */
+const PROVINCE_SUFFIXES = ["特别行政区", "维吾尔自治区", "壮族自治区", "回族自治区", "自治区", "省", "市"];
+
+const PROVINCE_BY_TOKEN: ReadonlyMap<string, string> = new Map(
+  chinaProvinces.flatMap(({ name }) => {
+    const shortName = PROVINCE_SUFFIXES.reduce((value, suffix) => value.replace(suffix, ""), name);
+    const tokens: Array<readonly [string, string]> = [[name, name]];
+    if (shortName && shortName !== name) tokens.push([shortName, name]);
+    return tokens;
+  }),
+);
+
+/** 只认目录里的省名与简称；模型编出来的写法丢掉字段本身，不牵连整行。 */
+function normalizeProvince(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? PROVINCE_BY_TOKEN.get(trimmed) : undefined;
+}
+
 /** 与前端 import-data 的 splitLines 保持一致的行切分，保证行号对应。 */
 function splitLines(text: string): string[] {
   return text
@@ -162,7 +189,7 @@ async function parseDataWithLlm(config: AiConfig, request: ParseDataRequest, con
   const lines = splitLines(request.text);
   if (lines.length === 0) throw new Error("没有可解析的数据行");
   const numbered = lines.map((line, index) => `第 ${index + 1} 行：${line}`).join("\n");
-  const userPrompt = `以下是学生去向数据的每一行（行号已标注，来源类型：${request.source}）：\n\n${numbered}\n\n请解析每一行，提取：姓名/学生名称、录取院校、所在城市。\n只输出 JSON，格式：\n{"candidates":[{"lineIndex":1,"name":"姓名","university":"院校","city":"城市"}],"unparsed":[{"lineIndex":2,"reason":"无法识别原因"}]}\n要求：\n1. lineIndex 必须引用上面标注的行号。\n2. 无法提取出完整三要素（姓名、院校、城市）的行放入 unparsed 并给出中文原因。\n3. 保持真实数据，不要编造；一行只能对应一条记录。`;
+  const userPrompt = `以下是学生去向数据的每一行（行号已标注，来源类型：${request.source}）：\n\n${numbered}\n\n请解析每一行，提取：姓名/学生名称、录取院校、所在城市；能判断时再补上去向类型与省份。\n只输出 JSON，格式：\n{"candidates":[{"lineIndex":1,"name":"姓名","university":"院校","city":"城市","locationScope":"china 或 international","province":"省级行政区"}],"unparsed":[{"lineIndex":2,"reason":"无法识别原因"}]}\n要求：\n1. lineIndex 必须引用上面标注的行号。\n2. 无法提取出完整三要素（姓名、院校、城市）的行放入 unparsed 并给出中文原因。\n3. 保持真实数据，不要编造；一行只能对应一条记录。\n4. locationScope 与 province 是可选字段，缺了不影响该行成为候选：拿不准就整个省略，不要猜。\n5. 院校或城市在中国境外时 locationScope 填 "international" 并省略 province；境内可省略 locationScope，province 填省级行政区名（如「浙江省」「内蒙古自治区」）。`;
 
   const data = await chatJson(config, JSON_ONLY_SYSTEM, userPrompt, 3000, context);
   if (!isRecord(data)) throw new Error("LLM 解析结果不是对象");
@@ -178,7 +205,19 @@ async function parseDataWithLlm(config: AiConfig, request: ParseDataRequest, con
     const city = typeof raw.city === "string" ? raw.city.trim() : "";
     if (!Number.isInteger(lineIndex) || lineIndex < 1 || lineIndex > lines.length) continue;
     if (!name || !university || !city) continue;
-    candidates.push({ name, university, city, sourceLine: lineIndex, rawLine: lines[lineIndex - 1]! });
+    // 与本地规则同一套判定：只有明确的海外写法才落 international，其余（含 "china"）留空按国内处理。
+    const locationScope = parseLocationScope(typeof raw.locationScope === "string" ? raw.locationScope : undefined);
+    // 海外去向没有中国省份可言，模型给了也丢掉，免得海外学生被钉在某个省的卡片里。
+    const province = locationScope === "international" ? undefined : normalizeProvince(raw.province);
+    candidates.push({
+      name,
+      university,
+      city,
+      ...(locationScope ? { locationScope } : {}),
+      ...(province ? { province } : {}),
+      sourceLine: lineIndex,
+      rawLine: lines[lineIndex - 1]!,
+    });
   }
   for (const raw of rawUnparsed) {
     if (!isRecord(raw)) continue;

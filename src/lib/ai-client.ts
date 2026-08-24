@@ -4,6 +4,10 @@ export interface ParseDataResult {
     name: string;
     university: string;
     city: string;
+    /** 服务端识别出海外去向时才有；缺省按国内处理，兼容不返回该字段的旧服务端。 */
+    locationScope?: "china" | "international";
+    /** 服务端归一化后的省级行政区名；缺省交给下游按城市推断。 */
+    province?: string;
     sourceLine: number;
     rawLine: string;
   }>;
