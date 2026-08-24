@@ -12,14 +12,22 @@ import { usePosterExport, type UsePosterExportResult } from "./usePosterExport";
 const mocks = vi.hoisted(() => ({
   svgToPngBlob: vi.fn(async () => new Blob(["png"], { type: "image/png" })),
   downloadBlob: vi.fn(),
+  downloadText: vi.fn(),
   ensureUserFontsLoaded: vi.fn(async () => {}),
+  inlineSvgImages: vi.fn(async (markup: string) => `<!--inlined-->${markup}`),
+  hasExternalSvgImages: vi.fn(() => true),
 }));
 
 // 只桩掉栅格化与下载副作用，面积校验仍走真实的 availablePngScales。
 vi.mock("./export-poster", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./export-poster")>();
-  return { ...actual, svgToPngBlob: mocks.svgToPngBlob, downloadBlob: mocks.downloadBlob };
+  return { ...actual, svgToPngBlob: mocks.svgToPngBlob, downloadBlob: mocks.downloadBlob, downloadText: mocks.downloadText };
 });
+
+vi.mock("./svg-image-inline", () => ({
+  inlineSvgImages: mocks.inlineSvgImages,
+  hasExternalSvgImages: mocks.hasExternalSvgImages,
+}));
 
 vi.mock("./fonts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./fonts")>();
@@ -98,6 +106,7 @@ describe("usePosterExport PNG 面积防护", () => {
     expect(result().exportError).toContain("请改用 1× 导出");
     expect(statusMessages.at(-1)).toBe(result().exportError);
     expect(mocks.svgToPngBlob).not.toHaveBeenCalled();
+    expect(mocks.inlineSvgImages).not.toHaveBeenCalled();
     expect(mocks.ensureUserFontsLoaded).not.toHaveBeenCalled();
     expect(mocks.downloadBlob).not.toHaveBeenCalled();
     expect(result().exportingPng).toBe(false);
@@ -121,6 +130,55 @@ describe("usePosterExport PNG 面积防护", () => {
     await act(async () => { await result().exportPng(); });
 
     expect(mocks.svgToPngBlob).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ width: 3000, height: 2000 }));
+    expect(result().exportState).toBe("success");
+  });
+});
+
+describe("usePosterExport 校徽内联", () => {
+  it("rasterizes the inlined markup, not the raw serialization", async () => {
+    const result = await mountExport(projectWithCanvas(1200, 800));
+
+    await act(async () => { await result().exportPng(); });
+
+    expect(mocks.inlineSvgImages).toHaveBeenCalledTimes(1);
+    expect(mocks.inlineSvgImages).toHaveBeenCalledWith(expect.stringContaining("<svg"));
+    const [rasterized] = mocks.svgToPngBlob.mock.calls[0]!;
+    expect(rasterized).toBe(await mocks.inlineSvgImages.mock.results[0]!.value);
+    expect(mocks.inlineSvgImages.mock.invocationCallOrder[0]!)
+      .toBeLessThan(mocks.svgToPngBlob.mock.invocationCallOrder[0]!);
+    expect(result().exportState).toBe("success");
+  });
+
+  it("downloads the inlined markup as SVG", async () => {
+    const result = await mountExport(projectWithCanvas(1200, 800));
+
+    await act(async () => { await result().exportSvg(); });
+
+    expect(mocks.inlineSvgImages).toHaveBeenCalledTimes(1);
+    expect(mocks.downloadText).toHaveBeenCalledWith(
+      await mocks.inlineSvgImages.mock.results[0]!.value,
+      "我的毕业去向图.svg",
+      "image/svg+xml;charset=utf-8",
+    );
+    expect(mocks.inlineSvgImages.mock.invocationCallOrder[0]!)
+      .toBeLessThan(mocks.downloadText.mock.invocationCallOrder[0]!);
+    expect(result().exportState).toBe("success");
+    expect(statusMessages.at(-1)).toBe("SVG 已导出");
+  });
+
+  it("keeps SVG export synchronous when the poster has no external image to fetch", async () => {
+    mocks.hasExternalSvgImages.mockReturnValueOnce(false);
+    const result = await mountExport(projectWithCanvas(1200, 800));
+
+    await act(async () => {
+      const pending = result().exportSvg();
+      // 没有校徽的海报不该因为内联能力而多等一个事件循环：错误/成功状态仍在点击这一拍就绪。
+      expect(mocks.downloadText).toHaveBeenCalledTimes(1);
+      await pending;
+    });
+
+    expect(mocks.inlineSvgImages).not.toHaveBeenCalled();
+    expect(mocks.downloadText).toHaveBeenCalledWith(expect.stringContaining("<svg"), "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
     expect(result().exportState).toBe("success");
   });
 });

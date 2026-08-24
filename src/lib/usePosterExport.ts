@@ -9,6 +9,7 @@ import { availablePngScales, describePngScaleLimit, downloadBlob, downloadText, 
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
 import { PROJECT_PACKAGE_IMPORT_LIMIT, checkImportFileSize } from "./import-file-limits";
 import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
+import { hasExternalSvgImages, inlineSvgImages } from "./svg-image-inline";
 import type { CustomTemplateRecord } from "./template-store";
 import type { UserAsset } from "./assets";
 import type { ProjectDocument } from "./project-document";
@@ -53,7 +54,7 @@ export interface UsePosterExportResult {
   setShowProjectExportDialog: (open: boolean) => void;
   setIncludeResourcesInProjectExport: (checked: boolean) => void;
   openProjectExportDialog: () => void;
-  exportSvg: () => void;
+  exportSvg: () => Promise<void>;
   exportPng: () => Promise<void>;
   exportProjectPackage: () => void;
   retryLastExport: () => void;
@@ -76,14 +77,17 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const [includeResourcesInProjectExport, setIncludeResourcesInProjectExport] = useState(true);
   const [pendingProjectImport, setPendingProjectImport] = useState<{ pack: ProjectPackage; fileName: string } | null>(null);
 
-  const exportSvg = () => {
+  const exportSvg = async () => {
     lastExportRef.current = "svg";
     setExportState("exporting");
     setExportError(undefined);
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
-      const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
+      // 校徽是同源相对路径，导出的 .svg 换个环境打开就取不到，内联成 data URL 再落盘。
+      // 没有外链时保持同步：不给「无校徽的海报」凭空加一次事件循环往返。
+      const serialized = serializePosterSvg(svg, { transparentBackground: transparentExport });
+      const source = hasExternalSvgImages(serialized) ? await inlineSvgImages(serialized) : serialized;
       downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
       setExportState("success");
       reportStatus("SVG 已导出");
@@ -182,7 +186,9 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
         throw new Error(describePngScaleLimit(width, height, pngScale));
       }
       await ensureUserFontsLoaded(userFonts);
-      const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
+      // 内联必须在栅格化之前：SVG-as-image 是受限文档，`/emblems/*.webp` 这类外链
+      // 一律加载不到，校徽会静默从 PNG 里消失。
+      const source = await inlineSvgImages(serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true }));
       // PNG 走 blob：大倍率导出不再产生整包 base64 字符串，下载后由 downloadBlob 负责 revoke。
       const blob = await svgToPngBlob(source, {
         width: width * pngScale,
@@ -203,7 +209,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   };
 
   const retryLastExport = () => {
-    if (lastExportRef.current === "svg") exportSvg();
+    if (lastExportRef.current === "svg") void exportSvg();
     else if (lastExportRef.current === "project") exportProjectPackage();
     else void exportPng();
   };
