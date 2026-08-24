@@ -148,6 +148,13 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R8-5 (`2320e1e`): afterEach unmount in 21 canvas/inspector suites (165→0 leaked roots). Rollback = revert the merge. 164/164; tsc app 0.
 - R8-3b (`4f70e66` / `0685e66`+`a68a230`): App wires `roomPersistFailureAt`. Rollback = revert the merge. `src/App.test.tsx` 138/138; tsc app 0.
 
+## Round 8 closeout (gates; fable pending)
+
+- Full suite on merged tree: **197 files, 1846 passed / 2 skipped** (89.3s).
+- Lint: 0 errors, **1 warning** (frozen DataWorkspace exhaustive-deps only; react-refresh gone). Typecheck: `tsc -b --noEmit` 0.
+- Behavior: persist-failure streak visible on HTTP + menu + App; warn legend scoped; banner export errors in-notice; App.tsx 1728.
+- Known leftovers for R9: durable capacity ceiling 12 MiB; snapshot `.<pid>.tmp` not reclaimed if rename fails; App still ≫ 400 lines.
+
 ## Round Briefings
 
 ### Round 1 briefing (for implementers)
