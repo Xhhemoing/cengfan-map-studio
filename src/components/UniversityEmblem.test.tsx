@@ -1,14 +1,17 @@
 import { type ReactElement } from "react";
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { UniversityEmblem } from "./UniversityEmblem";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
 
 function render(element: ReactElement): HTMLElement {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
+  mounted.push({ root, container: host });
   act(() => {
     root.render(element);
     flushSync(() => {});
@@ -39,6 +42,14 @@ function installIntersectionObserver(intersecting: boolean) {
 
 describe("UniversityEmblem", () => {
   afterEach(() => {
+    // The emblem arms an IntersectionObserver and image handlers; a root left mounted
+    // outlives the case and races React's scheduler against jsdom teardown.
+    flushSync(() => {
+      for (const { root, container } of mounted.splice(0)) {
+        root.unmount();
+        container.remove();
+      }
+    });
     document.body.innerHTML = "";
     vi.unstubAllGlobals();
   });

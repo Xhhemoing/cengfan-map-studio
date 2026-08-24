@@ -1,3 +1,4 @@
+import { type ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
@@ -8,9 +9,26 @@ import { sampleStudents } from "./project-data";
 import { createMemoryProjectStore } from "./project-store";
 import { ProjectWorkbench } from "../components/ProjectWorkbench";
 
-let roots: Array<{ root: Root; container: HTMLElement }> = [];
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function mount(element: ReactElement): HTMLElement {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  flushSync(() => root.render(element));
+  return container;
+}
 
 afterEach(() => {
+  // ProjectWorkbench keeps async store effects running; a root left mounted outlives
+  // the case and races React's scheduler against jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
   window.localStorage.clear();
 });
 
@@ -67,12 +85,8 @@ describe("workbench resume", () => {
       now: new Date("2026-08-13T00:00:00.000Z"),
     });
     window.localStorage.setItem("cengfan-map-studio:workspace-mirror", JSON.stringify(pack));
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ root, container });
     const navigate = vi.fn();
-    flushSync(() => root.render(<ProjectWorkbench store={store} navigate={navigate} />));
+    const container = mount(<ProjectWorkbench store={store} navigate={navigate} />);
     await vi.waitFor(() => expect(container.textContent).toContain("继续编辑本地内容"));
     container.querySelector<HTMLButtonElement>('button[aria-label^="继续编辑本地内容"]')?.click();
     await vi.waitFor(() => expect(navigate).toHaveBeenCalled());
