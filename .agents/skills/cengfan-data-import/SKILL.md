@@ -9,12 +9,12 @@ description: 蹭饭图学生数据导入导出流程:下载 xlsx 模板、智能
 
 ## 1. 模板下载
 
-- 模板由服务端生成,路径与字段定义见 `src/server` 中的导入模块(关键词 `xlsx`、`template`)。
-- 用户要求"下载模板"时,调用现有下载入口,不要手工构造模板。
+- 模板由前端 `createImportTemplateSheets`（`src/lib/binary-import.ts`）生成，经 DATA 工作台「下载 XLSX 模板」按钮输出（动态 `import("xlsx")`）。
+- 用户要求"下载模板"时，调用现有下载入口，不要手工构造模板。
 
 ## 2. 表头智能识别
 
-- 列映射逻辑在 `src/lib`(或 `src/server`)的导入解析模块中,支持表头别名(如"姓名"/"学生姓名"、"去向"/"录取学校")。
+- 列映射逻辑在 `src/lib/import-aliases.ts`（`src/lib/import-data.ts` / `src/lib/binary-import.ts` 共用），支持表头别名（如「姓名」/「学生姓名」/「学生名称」、「去向」/「录取学校」）。
 - 修改识别规则时必须同步更新对应 `*.test.ts`,覆盖至少:标准表头、别名表头、缺失必填列、多余未知列。
 
 ## 3. 校验与导入
