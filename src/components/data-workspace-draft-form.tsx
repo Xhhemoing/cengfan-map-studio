@@ -101,7 +101,7 @@ export function DataWorkspaceDraftForm({
             </label>
           )}
           <ActionButton onClick={onAddStudent}>
-            <Plus size={16} /> 新增学生
+            <Plus size={16} aria-hidden /> 新增学生
           </ActionButton>
         </div>
       )}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { overlaps } from "./card-layout-geometry";
-import { containFree, layoutGrid, orderResult, stackAtMargin } from "./card-layout-pack";
-import { LayoutSpace, PlacementIndex } from "./card-layout-space";
+import { containFree, layoutGrid, orderResult, stackAtMargin, sweepPack } from "./card-layout-pack";
+import { LayoutSpace, PlacementIndex, validateHard } from "./card-layout-space";
 import type { CardArea, CardLayoutInput, CardPlacement } from "./card-layout-types";
 
 const map: CardArea = { x: 300, y: 220, width: 300, height: 260 };
@@ -450,5 +450,62 @@ describe("layoutGrid", () => {
     expect(seated!.y).toBe(space.margin);
     expect(seated!.side).toBe("top");
     expect(seated!.side).toBe(space.sideOf(seated!));
+  });
+});
+
+describe("sweepPack", () => {
+  /** A wide, shallow map: the margin column runs along its *top* edge. */
+  const wideMap: CardArea = { x: 100, y: 300, width: 700, height: 100 };
+  const fullyOccupied: CardArea = { x: 0, y: 0, width: 900, height: 700 };
+
+  function sweepCards(count: number): CardLayoutInput[] {
+    return Array.from({ length: count }, (_, index) => inputCard(`s${index}`));
+  }
+
+  it("sides a leftover the sweep could not fit by the seat it was stacked into", () => {
+    // The whole canvas is protected, so every row of the sweep is rejected and
+    // all four cards fall through to the margin stack.
+    const space = makeSpace([fullyOccupied]);
+
+    const placements = sweepPack(sweepCards(4), space);
+
+    expect(placements.map((placement) => placement.id)).toEqual(["s0", "s1", "s2", "s3"]);
+    for (const placement of placements) {
+      expect(placement.x).toBe(space.margin);
+      expect(space.inside(placement)).toBe(true);
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+  });
+
+  it("does not label a stacked leftover left when its seat sits above the map", () => {
+    // Same saturated canvas, but the map is wide and shallow, so the column the
+    // leftovers stack into is north of it rather than west. A probe that stamps
+    // "left" before the seat exists points every leader line out of an edge
+    // none of these cards sit against.
+    const space = makeSpace([fullyOccupied], wideMap);
+
+    const placements = sweepPack(sweepCards(4), space);
+
+    const sides = placements.map((placement) => placement.side);
+    for (const placement of placements) {
+      expect(placement.x).toBe(space.margin);
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+    expect(sides).toContain("top");
+    expect(sides).not.toContain("left");
+    // The column runs past the map, so the tail of it is genuinely below.
+    expect(sides).toContain("bottom");
+  });
+
+  it("still packs a dense board into a legal layout", () => {
+    const space = makeSpace();
+
+    const placements = sweepPack(sweepCards(12), space);
+
+    expect(placements.map((placement) => placement.id)).toEqual(sweepCards(12).map((card) => card.id));
+    expect(validateHard(placements, space)).toBe(true);
+    for (const placement of placements) {
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
   });
 });

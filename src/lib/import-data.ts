@@ -119,8 +119,8 @@ function joinQuotedLines(lines: string[]): SourceLine[] {
 /** Delimiters a paste may use, in the order they are believed. */
 const CELL_DELIMITERS = ["\t", ",", "，", ";", "；", "|", "、"];
 
-/** The "1." / "2、" / "３)" opening a numbered list: a marker, never a cell. */
-const LIST_MARKER = /^\p{Nd}+[.、)]\s*(?=[^\p{Nd}])/u;
+/** The "1." / "2、" / "３)" / "４．" / "５）" / "６。" opening a numbered list: a marker, never a cell. */
+const LIST_MARKER = /^\p{Nd}+[.．。、)）]\s*(?=[^\p{Nd}])/u;
 
 /**
  * `、` is believed only from its second occurrence on: it is also the Chinese

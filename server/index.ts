@@ -47,9 +47,9 @@ const DEFAULT_DATA_DIR = fileURLToPath(new URL("../.data", import.meta.url));
 function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
   if (trustProxy) {
     const forwarded = request.headers["x-forwarded-for"];
-    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-    const firstIp = value?.split(",")[0]?.trim();
-    if (firstIp) return firstIp;
+    const lastIp = (Array.isArray(forwarded) ? forwarded.join(",") : forwarded)
+      ?.split(",").map((hop) => hop.trim()).filter(Boolean).pop();
+    if (lastIp) return lastIp.replace(/^::ffff:/, "");
   }
   return (request.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
 }

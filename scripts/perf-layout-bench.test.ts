@@ -9,6 +9,7 @@ import {
   runLayoutHealthBenchmark,
   runLayoutBenchmark,
   runStackAtMarginBenchmark,
+  runSweepPackBenchmark,
   runWorkerMessageBenchmark,
 } from "./perf-layout-bench";
 
@@ -194,6 +195,69 @@ describe("layout performance benchmark", () => {
       expect(result.gapClearanceResidualPx)
         .toBeCloseTo(result.minimumClearancePx - report.requiredGapPx, 8);
     }
+  });
+
+  it("reports successful sweeps beside all-leftover sweeps without asserting elapsed time", () => {
+    const report = runSweepPackBenchmark({
+      cardCounts: [2, 4],
+      warmupIterations: 1,
+      iterations: 2,
+    });
+
+    expect(report).toMatchObject({
+      methodology: "same-card sweepPack on a clear canvas versus a canvas fully covered by one exact rectangular obstacle; fixture construction, LayoutSpace indexing, and output-shape summary excluded",
+      warmupIterations: 1,
+      iterations: 2,
+      cardCounts: [2, 4],
+      cardWidth: 48,
+      cardHeight: 28,
+      results: [
+        {
+          scenario: "clear-first-fit",
+          cardCount: 2,
+          placementCount: 2,
+          blockedPlacementCount: 0,
+          distinctPositionCount: 2,
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number),
+          minMs: expect.any(Number),
+          maxMs: expect.any(Number),
+        },
+        {
+          scenario: "full-obstacle-leftovers",
+          cardCount: 2,
+          placementCount: 2,
+          blockedPlacementCount: 2,
+          distinctPositionCount: 2,
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number),
+          minMs: expect.any(Number),
+          maxMs: expect.any(Number),
+        },
+        {
+          scenario: "clear-first-fit",
+          cardCount: 4,
+          placementCount: 4,
+          blockedPlacementCount: 0,
+          distinctPositionCount: 4,
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number),
+          minMs: expect.any(Number),
+          maxMs: expect.any(Number),
+        },
+        {
+          scenario: "full-obstacle-leftovers",
+          cardCount: 4,
+          placementCount: 4,
+          blockedPlacementCount: 4,
+          distinctPositionCount: 4,
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number),
+          minMs: expect.any(Number),
+          maxMs: expect.any(Number),
+        },
+      ],
+    });
   });
 
   it("reports worker transport beside the same-fixture main-thread solve without timing budgets", async () => {

@@ -463,6 +463,78 @@ describe("server request security", () => {
     });
   });
 
+  it("uses the rightmost forwarded hop for room join rate limits", async () => {
+    const server = createAiServer({
+      trustProxy: true,
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify({
+      inviteToken: "invalid-invite",
+      clientId: "attacker",
+      displayName: "attacker",
+    }));
+
+    const first = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Forwarded-For": "203.0.113.1, 198.51.100.9",
+    });
+    const limited = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Forwarded-For": "203.0.113.2, 198.51.100.9",
+    });
+
+    expect(first.status).toBe(404);
+    expect(limited.status).toBe(429);
+  });
+
+  it("does not use the leftmost forwarded hop for room join rate limits", async () => {
+    const server = createAiServer({
+      trustProxy: true,
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify({
+      inviteToken: "invalid-invite",
+      clientId: "attacker",
+      displayName: "attacker",
+    }));
+
+    const first = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Forwarded-For": "203.0.113.8, 198.51.100.1",
+    });
+    const second = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Forwarded-For": "203.0.113.8, 198.51.100.2",
+    });
+
+    expect(first.status).toBe(404);
+    expect(second.status).toBe(404);
+  });
+
+  it("ignores forwarded hops when proxy trust is disabled", async () => {
+    const server = createAiServer({
+      trustProxy: false,
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify({
+      inviteToken: "invalid-invite",
+      clientId: "attacker",
+      displayName: "attacker",
+    }));
+
+    const first = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Forwarded-For": "203.0.113.10",
+    });
+    const limited = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Forwarded-For": "198.51.100.10",
+    });
+
+    expect(first.status).toBe(404);
+    expect(limited.status).toBe(429);
+  });
+
   it.each([
     ["/api/rooms", "INVALID_JSON"],
     ["/api/ai/explain", "AI_VALIDATION_ERROR"],

@@ -55,7 +55,7 @@ export function AssetPanelResourcePack({
     <PanelSection title="本地资源包" label="资源包">
       <div className="asset-panel__pack-actions">
         <ActionButton onClick={() => onExportResourcePack?.()}>
-          <Download size={16} />导出资源包
+          <Download size={16} aria-hidden />导出资源包
         </ActionButton>
         <FileDropzone
           id="asset-pack-import"

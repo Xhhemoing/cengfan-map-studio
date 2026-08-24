@@ -300,11 +300,9 @@ export function sweepPack(
   }
   // A card the sweep rejected has no free spot at all: the sweep already
   // scanned every row under the same constraints, so re-scanning would only
-  // burn time. Stack it instead.
-  for (const card of leftovers) {
-    const probe: CardPlacement = { ...card, x: space.margin, y: space.margin, side: "left" };
-    placed.add(stackAtMargin(probe, space, placed));
-  }
+  // burn time. Stack it from the same margin seat every other exit falls back
+  // to, so the side is read off the seat instead of guessed before it exists.
+  for (const card of leftovers) placed.add(stackAtMargin(marginSeat(card, space), space, placed));
   return orderResult(cards, placed.items, space);
 }
 

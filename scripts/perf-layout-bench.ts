@@ -18,7 +18,7 @@ import {
   type CardLayoutResult,
 } from "../src/lib/card-layout";
 import { createCardLayoutCacheKey } from "../src/lib/card-layout-cache";
-import { stackAtMargin } from "../src/lib/card-layout-pack";
+import { stackAtMargin, sweepPack } from "../src/lib/card-layout-pack";
 import { LayoutSpace, PlacementIndex } from "../src/lib/card-layout-space";
 import { posterPngExportSize } from "../src/lib/export-poster";
 import {
@@ -46,6 +46,7 @@ export const LAYOUT_HEALTH_BENCH_SHAPES: readonly LayoutHealthBenchmarkShape[] =
   "pinned-card-positions",
 ];
 export const DEFAULT_MARGIN_STACK_BENCH_COLUMN_COUNTS = [16, 60, 120, 400] as const;
+export const DEFAULT_SWEEP_PACK_BENCH_CARD_COUNTS = [16, 60, 120, 400] as const;
 
 export interface LayoutBenchmarkConfig {
   counts?: readonly number[];
@@ -112,6 +113,7 @@ export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
   cacheKeyGeneration: CardLayoutCacheKeyBenchmarkReport;
   layoutHealth: LayoutHealthBenchmarkReport;
   stackAtMargin: StackAtMarginBenchmarkReport;
+  sweepPackBranches: SweepPackBenchmarkReport;
   printBleedExport: PrintBleedExportBenchmarkReport;
   printPreflight: PrintPreflightBenchmarkReport;
 }
@@ -193,6 +195,36 @@ export interface StackAtMarginBenchmarkReport {
   cardHeight: number;
   requiredGapPx: number;
   results: StackAtMarginBenchmarkResult[];
+}
+
+export type SweepPackBenchmarkScenario = "clear-first-fit" | "full-obstacle-leftovers";
+
+export interface SweepPackBenchmarkConfig {
+  cardCounts?: readonly number[];
+  warmupIterations?: number;
+  iterations?: number;
+}
+
+export interface SweepPackBenchmarkResult {
+  scenario: SweepPackBenchmarkScenario;
+  cardCount: number;
+  placementCount: number;
+  blockedPlacementCount: number;
+  distinctPositionCount: number;
+  p50Ms: number;
+  p95Ms: number;
+  minMs: number;
+  maxMs: number;
+}
+
+export interface SweepPackBenchmarkReport {
+  methodology: "same-card sweepPack on a clear canvas versus a canvas fully covered by one exact rectangular obstacle; fixture construction, LayoutSpace indexing, and output-shape summary excluded";
+  warmupIterations: number;
+  iterations: number;
+  cardCounts: number[];
+  cardWidth: number;
+  cardHeight: number;
+  results: SweepPackBenchmarkResult[];
 }
 
 export interface PrintBleedExportBenchmarkResult {
@@ -753,6 +785,101 @@ export function runStackAtMarginBenchmark(
   };
 }
 
+function makeSweepPackBenchmarkFixture(
+  cardCount: number,
+  scenario: SweepPackBenchmarkScenario,
+): {
+  cards: CardLayoutInput[];
+  space: LayoutSpace;
+} {
+  const width = 1500;
+  const height = 1000;
+  const margin = 8;
+  const cards = Array.from({ length: cardCount }, (_, index): CardLayoutInput => ({
+    id: `sweep-${scenario}-${index}`,
+    anchorX: 200 + (index % 12) * 90,
+    anchorY: 120 + Math.floor(index / 12) * 42,
+    width: 48,
+    height: 28,
+  }));
+  return {
+    cards,
+    space: new LayoutSpace({
+      width,
+      height,
+      map: { x: 0, y: 0, width: 0, height: 0 },
+      occupiedAreas: scenario === "clear-first-fit"
+        ? []
+        : [{ x: 0, y: 0, width, height }],
+      margin,
+      gap: 4,
+    }),
+  };
+}
+
+/**
+ * Isolates the two shapes hidden inside whole-solver timings: an unconstrained
+ * sweep where every card finds a legal seat, and a saturated sweep where every
+ * card exhausts the rows and enters the leftover margin-stack pass.
+ */
+export function runSweepPackBenchmark(
+  config: SweepPackBenchmarkConfig = {},
+): SweepPackBenchmarkReport {
+  const cardCounts = [...(config.cardCounts ?? DEFAULT_SWEEP_PACK_BENCH_CARD_COUNTS)]
+    .map((count) => positiveInteger(count, "sweep pack card count"));
+  const warmupIterations = positiveInteger(
+    config.warmupIterations ?? 2,
+    "sweep pack warmupIterations",
+  );
+  const iterations = positiveInteger(config.iterations ?? 10, "sweep pack iterations");
+  if (cardCounts.length === 0) throw new Error("sweep pack cardCounts must not be empty");
+
+  const scenarios: readonly SweepPackBenchmarkScenario[] = [
+    "clear-first-fit",
+    "full-obstacle-leftovers",
+  ];
+  const results = cardCounts.flatMap((cardCount) =>
+    scenarios.map((scenario): SweepPackBenchmarkResult => {
+      const fixture = makeSweepPackBenchmarkFixture(cardCount, scenario);
+      for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+        sweepPack(fixture.cards, fixture.space);
+      }
+
+      const samples: number[] = [];
+      let placements: CardPlacement[] = [];
+      for (let iteration = 0; iteration < iterations; iteration += 1) {
+        const startedAt = performance.now();
+        placements = sweepPack(fixture.cards, fixture.space);
+        samples.push(performance.now() - startedAt);
+      }
+      return {
+        scenario,
+        cardCount,
+        placementCount: placements.length,
+        blockedPlacementCount: placements.filter((placement) =>
+          fixture.space.blocked(placement)).length,
+        distinctPositionCount: new Set(
+          placements.map(({ x, y }) => `${rounded(x)},${rounded(y)}`),
+        ).size,
+        p50Ms: rounded(percentile(samples, 0.5)),
+        p95Ms: rounded(percentile(samples, 0.95)),
+        minMs: rounded(Math.min(...samples)),
+        maxMs: rounded(Math.max(...samples)),
+      };
+    }),
+  );
+
+  return {
+    methodology: "same-card sweepPack on a clear canvas versus a canvas fully covered by one exact rectangular obstacle; fixture construction, LayoutSpace indexing, and output-shape summary excluded",
+    warmupIterations,
+    iterations,
+    cardCounts,
+    cardWidth: 48,
+    cardHeight: 28,
+    results,
+  };
+}
+
 /**
  * Times the full layout-health pass against a scalable synthetic scene. The
  * production map and content-layout builders are intentionally absent: plain
@@ -1098,6 +1225,7 @@ if (isDirectRun) {
     cacheKeyGeneration: runCardLayoutCacheKeyBenchmark(),
     layoutHealth: runLayoutHealthBenchmark({ shapes: LAYOUT_HEALTH_BENCH_SHAPES }),
     stackAtMargin: runStackAtMarginBenchmark(),
+    sweepPackBranches: runSweepPackBenchmark(),
     printBleedExport: runPrintBleedExportBenchmark(),
     printPreflight: runPrintPreflightBenchmark(),
   };

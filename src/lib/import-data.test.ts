@@ -547,6 +547,61 @@ describe("a 序号 typed in fullwidth digits", () => {
     expect(result.unparsed).toEqual([]);
   });
 
+  it("reads a fullwidth full stop after the 序号 as punctuation", () => {
+    // The IME types the period fullwidth too, and "．" was outside the marker class:
+    // "１．林舟" stayed one word, so the roster imported students named "１．林舟".
+    const result = parseStudentText("１．林舟 北京大学 北京市\n２．苏禾 浙江大学 杭州市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("reads a fullwidth closing parenthesis after the 序号 as punctuation", () => {
+    const result = parseStudentText("1）林舟 北京大学 北京市\n2）苏禾 浙江大学 杭州市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("reads the 。 a Chinese IME types for the period as punctuation", () => {
+    const result = parseStudentText("１。林舟 北京大学 北京市\n２。苏禾 浙江大学 杭州市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("finds the ，separator of a line a fullwidth marker opens", () => {
+    // The marker is stripped before the delimiter is looked for, so "１．" must not
+    // hide the ，columns behind it.
+    const result = parseStudentText("１．林舟，北京大学，北京市\n２．苏禾，浙江大学，杭州市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("keeps a fullwidth decimal a number rather than a marker and its name", () => {
+    // "２．５" is one serial: reading "．" as a list marker would have made 5 the
+    // student and pushed 林舟 into the 院校 slot.
+    const result = parseStudentText("２．５ 林舟 北京大学 北京市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("keeps a fullwidth number the line has no word to spare for", () => {
     // Same face-value rule as the ASCII "001": an anonymized roster still imports.
     const result = parseStudentText("００１ 北京大学 北京市\n００２ 浙江大学 杭州市");
