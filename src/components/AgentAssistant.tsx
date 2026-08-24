@@ -28,6 +28,8 @@ type AssistantConversation = {
   restored: boolean;
   projectDigest: string;
   landingError: string;
+  /** 传输中断留下的会话仍能续跑：只有这种失败可以接着聊，模型拒绝或快照失败仍要重开。 */
+  resumable: boolean;
 };
 
 function digestFor(project: ProjectDocument): string {
@@ -69,6 +71,7 @@ function restoreConversation(project: ProjectDocument, assets: UserAsset[], reco
     restored: true,
     projectDigest: record.projectDigest ?? digestFor(project),
     landingError: "",
+    resumable: false,
   };
 }
 
@@ -173,6 +176,7 @@ function createConversation(project: ProjectDocument, mode: Mode, assets: UserAs
     restored: false,
     projectDigest: digestFor(project),
     landingError: "",
+    resumable: false,
   };
 }
 
@@ -289,6 +293,7 @@ export function AgentAssistant({
           selectedStepIds: [],
           projectDigest: currentDigest,
           landingError: "",
+          resumable: false,
         };
       }));
       onPreview?.(null);
@@ -317,7 +322,7 @@ export function AgentAssistant({
         setConversations((current) => current.map((conversation) => {
           const record = records.find((candidate) => candidate.id === conversation.id);
           return record?.status === "failed" && conversation.steps.length > 0
-            ? { ...conversation, status: "failed", summary: record.summary, error: record.error, steps: [], selectedStepIds: [] }
+            ? { ...conversation, status: "failed", summary: record.summary, error: record.error, steps: [], selectedStepIds: [], resumable: conversation.resumable && record.snapshot !== null }
             : conversation;
         }));
         onPreview?.(null);
@@ -431,9 +436,11 @@ export function AgentAssistant({
     });
   };
 
-  const run = async () => {
-    if (!mountedRef.current || !active || !projectIsCurrent || !message.trim() || active.status === "running") return;
-    const request = message.trim();
+  /** `resumeRequest` 重发那次被网络中断的需求，此时输入框可能已被清空或改写。 */
+  const run = async (resumeRequest?: string) => {
+    if (!mountedRef.current || !active || !projectIsCurrent || active.status === "running") return;
+    const request = (resumeRequest ?? message).trim();
+    if (!request) return;
     const runProjectDigest = currentProjectDigest;
     const runProjectGeneration = projectGenerationRef.current;
     const isCurrentRun = () => mountedRef.current && activeRunIdRef.current === active.id &&
@@ -444,7 +451,7 @@ export function AgentAssistant({
         progress: `第 ${round} 轮 · ${name} · ${status === "running" ? "执行中" : status === "done" ? "已完成" : "已拒绝"}`,
       }));
     };
-    const isFresh = active.status === "draft" || active.status === "failed" || active.status === "cancelled";
+    const isFresh = active.status === "draft" || active.status === "cancelled" || (active.status === "failed" && !active.resumable);
     const session = isFresh
       ? new AgentSession(project, { mode: active.mode, assets, onProgress: progress })
       : active.session;
@@ -463,6 +470,7 @@ export function AgentAssistant({
       selectedStepIds: isFresh ? [] : active.selectedStepIds,
       progress: "",
       mode: active.mode,
+      resumable: false,
     }));
     try {
       const sessionWithProgress = session;
@@ -483,7 +491,9 @@ export function AgentAssistant({
         return;
       }
       if (outcome.kind === "failed") {
-        updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", error: outcome.error ?? "AI 会话失败", steps: preview.steps, progress: "" }));
+        // 传输中断没有污染对话：预算、taskId 与消息都还在，所以只标记可续跑，不清空任何东西。
+        const resumable = outcome.retriable === true && sessionWithProgress.canContinue;
+        updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", error: outcome.error ?? "AI 会话失败", steps: preview.steps, progress: "", resumable }));
         onPreview?.(null);
         return;
       }
@@ -586,10 +596,13 @@ export function AgentAssistant({
         {conversation.status === "running" ? (
           <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
         ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && conversation.status === "completed" ? "继续对话" : "开始规划"}</button>
+          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && (conversation.status === "completed" || (conversation.status === "failed" && conversation.resumable)) ? "继续对话" : "开始规划"}</button>
         )}
         {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
         {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
+        {conversation.status === "failed" && conversation.resumable && (
+          <button className="wide-button" type="button" aria-label="网络恢复后重试" onClick={() => void run(conversation.request)}><Sparkles size={16} aria-hidden /> 网络恢复后重试</button>
+        )}
         {conversation.landingError && <p className="panel-note agent-error" role="alert">{conversation.landingError}</p>}
         {conversation.route === "local" && <p className="panel-note" role="status">已使用本地规则完成可识别的修改。</p>}
         {conversation.route === "fallback" && <p className="panel-note" role="status">已切换备选模型：{conversation.provider || "备选模型"}。</p>}
@@ -630,6 +643,7 @@ export function AgentAssistant({
     restored: false,
     projectDigest: currentProjectDigest,
     landingError: "",
+    resumable: false,
   } : null);
 
   if (presentation === "docked") {
