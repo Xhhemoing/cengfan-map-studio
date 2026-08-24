@@ -24,7 +24,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
 | 6 | CLOSED | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn; fable 6 ACCEPT + 4 NITS; no blocker. |
 | 7 | CLOSED | R7-1–R7-9 + R7-3b + R7-10 | — | 189/1757/2; lint 0/6; CI `362c318`; fable 8 ACCEPT + 2 NITS; no blocker. |
-| 8 | IN_PROGRESS | R8-1–R8-9 | — | Awaiting R8-3b App wiring, then R8-10. |
+| 8 | IN_PROGRESS | R8-1–R8-9 + R8-3b | — | Code complete. Awaiting full gates, fable, R8-10. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -146,6 +146,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R8-3 (`4f1b13c` / `4bd7dcb`+`d1625fa`): client/hook/menu surface `lastFailureAt`. App wiring is R8-3b after R8-7. Rollback = revert the merge. 97/97; tsc app 0.
 - R8-7 (`56c2d7b`): App.tsx 1989→1728; WorkbenchBackButton + four action seams. Rollback = revert the merge. Owned tests 197/197; tsc app 0.
 - R8-5 (`2320e1e`): afterEach unmount in 21 canvas/inspector suites (165→0 leaked roots). Rollback = revert the merge. 164/164; tsc app 0.
+- R8-3b (`4f70e66` / `0685e66`+`a68a230`): App wires `roomPersistFailureAt`. Rollback = revert the merge. `src/App.test.tsx` 138/138; tsc app 0.
 
 ## Round Briefings
 
