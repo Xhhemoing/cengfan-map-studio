@@ -19,7 +19,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | --- | --- | --- | --- | --- |
 | 1 | CLOSED | T1–T10 + R2-0 | — | Hotfix-after full suite 1391 pass / 1 skip |
 | 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
-| 3 | IMPLEMENTING | R3-1, R3-4, R3-6, R3-8–R3-10 | — | degraded store + crash export; remaining R3-2/3/5/7 |
+| 3 | IMPLEMENTING | R3-1, R3-2, R3-4, R3-6, R3-8–R3-10 | — | partition heal resend 122 tests; remaining R3-3/5/7 |
 
 ## Round 0 Baseline (pre-optimization)
 
