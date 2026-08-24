@@ -269,6 +269,65 @@ describe("collaboration room store", () => {
     }
   });
 
+  it("restores an API-accepted near-limit room after degrading its operation history", async () => {
+    let persisted: RoomStoreSnapshot | undefined;
+    const payload = "x".repeat(MAX_PERSISTED_ROOM_BYTES - 8 * 1024);
+    const operation: CollaborationOperation = { type: "set", path: ["payload"], value: payload };
+    const transaction = {
+      txId: "near-limit-op",
+      clientId: "owner",
+      baseVersion: 0,
+      operations: [operation],
+    };
+    expect(Buffer.byteLength(JSON.stringify({
+      snapshot: { payload },
+      clientId: "owner",
+      displayName: "Owner",
+    }), "utf8")).toBeLessThanOrEqual(MAX_PERSISTED_ROOM_BYTES);
+    expect(Buffer.byteLength(JSON.stringify({
+      accessToken: "owner-access",
+      ...transaction,
+    }), "utf8")).toBeLessThanOrEqual(MAX_PERSISTED_ROOM_BYTES);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const store = createRoomStore({
+        generateId: () => "NEARLIMIT",
+        generateSecret: () => "owner-access",
+        now: () => 1_000,
+        persistIntervalMs: Number.POSITIVE_INFINITY,
+        persist: (snapshot) => {
+          persisted = snapshot;
+        },
+      });
+      store.create({ payload }, { clientId: "owner", displayName: "Owner" });
+      store.apply("NEARLIMIT", "owner-access", transaction);
+
+      await store.flush();
+
+      expect(persisted).toMatchObject({
+        version: 1,
+        trimmedRoomIds: ["NEARLIMIT"],
+        rooms: [expect.objectContaining({
+          room: expect.objectContaining({ id: "NEARLIMIT", version: 1, snapshot: { payload } }),
+          operationHistory: [],
+        })],
+      });
+      const restored = createRoomStore({ restore: persisted, now: () => 1_000 });
+      expect(restored.get("NEARLIMIT")?.snapshot).toEqual({ payload });
+      expect(restored.authorize("NEARLIMIT", "owner-access", "read"))
+        .toMatchObject({ id: "owner", role: "owner" });
+      expect(() => restored.getOperations("NEARLIMIT", "owner-access", 0))
+        .toThrowError(expect.objectContaining({
+          code: "VERSION_CONFLICT",
+          message: "增量历史已被裁剪，请重新获取完整快照",
+          currentVersion: 1,
+        }));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("omits oversized rooms from persistence and records the restart fallback", async () => {
     let persisted: RoomStoreSnapshot | undefined;
     const roomIds = ["OVERSIZED", "PERSIST4"];
