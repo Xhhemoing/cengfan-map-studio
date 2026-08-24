@@ -882,3 +882,252 @@ describe("DataWorkspace", () => {
     expect(onUpdateStudent).toHaveBeenCalledWith("student-1", { province: undefined });
   });
 });
+
+/** 校验过的 GBK 双字节：中文版 Excel/WPS 另存 CSV 就是这套编码。 */
+const GBK_BYTES: Record<string, [number, number]> = {
+  姓: [0xd0, 0xd5], 名: [0xc3, 0xfb], 院: [0xd4, 0xba], 校: [0xd0, 0xa3],
+  城: [0xb3, 0xc7], 市: [0xca, 0xd0], 林: [0xc1, 0xd6], 舟: [0xd6, 0xdb],
+  北: [0xb1, 0xb1], 京: [0xbe, 0xa9], 大: [0xb4, 0xf3], 学: [0xd1, 0xa7],
+  苏: [0xcb, 0xd5], 禾: [0xba, 0xcc], 浙: [0xd5, 0xe3], 江: [0xbd, 0xad],
+  杭: [0xba, 0xbc], 州: [0xd6, 0xdd],
+};
+
+function encodeGbk(text: string): Uint8Array {
+  const bytes: number[] = [];
+  for (const character of text) {
+    if (character.codePointAt(0)! < 0x80) {
+      bytes.push(character.codePointAt(0)!);
+      continue;
+    }
+    const pair = GBK_BYTES[character];
+    if (!pair) throw new Error(`测试用 GBK 表缺少字符：${character}`);
+    bytes.push(pair[0], pair[1]);
+  }
+  return new Uint8Array(bytes);
+}
+
+function fileWithBytes(name: string, bytes: () => Promise<ArrayBufferLike>): File {
+  const file = new File([], name);
+  Object.defineProperty(file, "arrayBuffer", { value: bytes });
+  return file;
+}
+
+function dropFile(container: HTMLDivElement, file: File): void {
+  const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+  const event = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: { files: [file] } });
+  flushSync(() => dropzone.dispatchEvent(event));
+}
+
+async function settle(): Promise<void> {
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  flushSync(() => {});
+}
+
+function renderWorkspace(overrides: Partial<Parameters<typeof DataWorkspace>[0]> = {}): HTMLDivElement {
+  return render(
+    <DataWorkspace
+      students={students}
+      onAppendStudents={vi.fn()}
+      onReplaceStudents={vi.fn()}
+      onUpdateStudent={vi.fn()}
+      onToggleVisibility={vi.fn()}
+      onDeleteStudent={vi.fn()}
+      onSetStudentsVisibility={vi.fn()}
+      {...overrides}
+    />,
+  );
+}
+
+async function workbookBytes(sheets: Array<{ name: string; rows: unknown[][] }>): Promise<ArrayBufferLike> {
+  const xlsx = await import("xlsx");
+  const workbook = xlsx.utils.book_new();
+  for (const sheet of sheets) {
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet(sheet.rows), sheet.name);
+  }
+  return xlsx.write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBufferLike;
+}
+
+describe("DataWorkspace import fidelity", () => {
+  it("reports every dropped row with its sheet line and reason instead of skipping silently", async () => {
+    const container = renderWorkspace();
+    dropFile(container, fileWithBytes("roster.xlsx", () => workbookBytes([{
+      name: "学生数据",
+      rows: [
+        ["学生姓名", "录取院校", "城市"],
+        ["林舟", "北京大学", "北京市"],
+        ["苏禾", "浙江大学", "杭州市"],
+        ["陈宁", "清华大学", "北京市"],
+        ["周晴", "复旦大学", "上海市"],
+        ["何越", "南京大学", "南京市"],
+        ["缺城市", "武汉大学", ""],
+        ["", "四川大学", "成都市"],
+        ["缺院校", "", "广州市"],
+      ],
+    }])));
+    await settle();
+
+    expect(container.textContent).toContain("识别到 5 条候选");
+    expect(container.textContent).toContain("另有 3 行未识别");
+    const dropped = container.querySelector<HTMLElement>(".import-unparsed")!;
+    expect(dropped.textContent).toContain("3 行被跳过");
+    expect(dropped.textContent).toContain("第 7 行");
+    expect(dropped.textContent).toContain("缺少必填字段：城市");
+    expect(dropped.textContent).toContain("第 8 行");
+    expect(dropped.textContent).toContain("缺少必填字段：学生姓名");
+    expect(dropped.textContent).toContain("第 9 行");
+    expect(dropped.textContent).toContain("缺少必填字段：录取院校");
+  });
+
+  it("keeps the skipped-row count visible in the import outcome", async () => {
+    const onAppendStudents = vi.fn();
+    const container = renderWorkspace({ onAppendStudents });
+    dropFile(container, fileWithBytes("roster.xlsx", () => workbookBytes([{
+      name: "学生数据",
+      rows: [
+        ["学生姓名", "录取院校", "城市"],
+        ["林舟", "北京大学", "北京市"],
+        ["缺城市", "武汉大学", ""],
+      ],
+    }])));
+    await settle();
+
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "林舟" })]);
+    expect(container.textContent).toContain("已追加 1 条学生数据，跳过 1 行");
+    expect(container.querySelector(".import-unparsed")).toBeNull();
+  });
+
+  it("finds the roster on the second sheet when a cover sheet comes first", async () => {
+    const container = renderWorkspace();
+    dropFile(container, fileWithBytes("毕业去向.xlsx", () => workbookBytes([
+      { name: "封面", rows: [["2026 届毕业生去向"], ["制表单位", "教务处"]] },
+      {
+        name: "名单",
+        rows: [
+          ["学生姓名", "录取院校", "城市"],
+          ["苏禾", "浙江大学", "杭州市"],
+          ["陈宁", "清华大学", "北京市"],
+        ],
+      },
+    ])));
+    await settle();
+
+    expect(container.textContent).toContain("工作表「名单」");
+    expect(container.textContent).toContain("识别到 2 条候选");
+    expect(container.textContent).toContain("另有 1 张工作表未读取（封面）");
+    expect(container.querySelector(".import-review")?.textContent).toContain("苏禾");
+  });
+
+  it("reads a GB18030 encoded CSV instead of importing mojibake", async () => {
+    const container = renderWorkspace();
+    const csv = "姓名,院校,城市\n林舟,北京大学,北京市\n苏禾,浙江大学,杭州市\n";
+    dropFile(container, fileWithBytes("名单.csv", async () => encodeGbk(csv).buffer as ArrayBuffer));
+    await settle();
+
+    expect(container.textContent).toContain("按 GB18030 解码");
+    expect(container.textContent).toContain("识别到 2 条候选");
+    const review = container.querySelector(".import-review")!;
+    expect(review.textContent).toContain("林舟");
+    expect(review.textContent).toContain("北京大学");
+    expect(review.textContent).toContain("杭州市");
+    expect(container.textContent).not.toContain("\uFFFD");
+  });
+
+  it("keeps a UTF-8 CSV on the UTF-8 path", async () => {
+    const container = renderWorkspace();
+    const csv = "姓名,院校,城市\n林舟,北京大学,北京市\n";
+    dropFile(container, fileWithBytes("roster.csv", async () => new TextEncoder().encode(csv).buffer as ArrayBuffer));
+    await settle();
+
+    expect(container.textContent).toContain("识别到 1 条候选");
+    expect(container.textContent).not.toContain("按 GB18030 解码");
+  });
+
+  it("publishes only the latest file when a slower earlier pick resolves last", async () => {
+    const container = renderWorkspace();
+    let releaseSlow!: () => void;
+    const slowBytes = await workbookBytes([{
+      name: "学生数据",
+      rows: [["学生姓名", "录取院校", "城市"], ["慢同学", "北京大学", "北京市"]],
+    }]);
+    const slowFile = fileWithBytes("slow.xlsx", () => new Promise<ArrayBufferLike>((resolve) => {
+      releaseSlow = () => resolve(slowBytes);
+    }));
+    const fastFile = fileWithBytes("fast.xlsx", () => workbookBytes([{
+      name: "学生数据",
+      rows: [["学生姓名", "录取院校", "城市"], ["快同学", "浙江大学", "杭州市"]],
+    }]));
+
+    dropFile(container, slowFile);
+    dropFile(container, fastFile);
+    await settle();
+    expect(container.textContent).toContain("快同学");
+
+    releaseSlow();
+    await settle();
+    await settle();
+
+    expect(container.textContent).toContain("快同学");
+    expect(container.textContent).not.toContain("慢同学");
+    expect(container.textContent).toContain("fast.xlsx");
+  });
+
+  it("keeps the newest failure message when an earlier pick fails after it", async () => {
+    const container = renderWorkspace();
+    let failSlow!: () => void;
+    const slowFile = fileWithBytes("slow.xlsx", () => new Promise<ArrayBufferLike>((_resolve, reject) => {
+      failSlow = () => reject(new Error("慢文件读取失败"));
+    }));
+    const fastFile = fileWithBytes("fast.xlsx", () => workbookBytes([{
+      name: "学生数据",
+      rows: [["学生姓名", "录取院校", "城市"], ["快同学", "浙江大学", "杭州市"]],
+    }]));
+
+    dropFile(container, slowFile);
+    dropFile(container, fastFile);
+    await settle();
+    failSlow();
+    await settle();
+    await settle();
+
+    expect(container.textContent).not.toContain("慢文件读取失败");
+    expect(container.textContent).toContain("快同学");
+  });
+
+  it("does not let a slow AI parse overwrite a newer local text recognition", async () => {
+    let releaseAi!: () => void;
+    const requestAiParse = vi.fn(() => new Promise<ParseDataResult>((resolve) => {
+      releaseAi = () => resolve({
+        provider: "local-fallback",
+        candidates: [{ name: "智能同学", university: "北京大学", city: "北京", sourceLine: 1, rawLine: "智能同学 北京大学 北京" }],
+        unparsed: [],
+      });
+    }));
+    const container = renderWorkspace({ requestAiParse });
+
+    changeInput(container.querySelector("textarea")!, "智能同学 北京大学 北京");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    changeInput(container.querySelector("textarea")!, "本地同学 浙江大学 杭州");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("识别文本"))!);
+    expect(container.textContent).toContain("本地同学");
+
+    releaseAi();
+    await settle();
+
+    expect(container.textContent).toContain("本地同学");
+    expect(container.textContent).not.toContain("智能同学");
+  });
+
+  it("surfaces a CSV read failure without publishing candidates", async () => {
+    const onAppendStudents = vi.fn();
+    const container = renderWorkspace({ onAppendStudents });
+    dropFile(container, fileWithBytes("broken.csv", async () => { throw new Error("读取失败"); }));
+    await settle();
+
+    expect(container.textContent).toContain("读取失败");
+    expect(container.querySelector(".import-review")).toBeNull();
+    expect(onAppendStudents).not.toHaveBeenCalled();
+  });
+});
