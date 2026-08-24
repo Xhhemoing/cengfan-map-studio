@@ -3,7 +3,7 @@
 - **时间**: 2026-08-24
 - **前置**: Round 7 BRIEF
 - **模型**: 2× claude-fable-5-thinking-xhigh · 2× claude-opus-5-thinking-high-fast · 2× gpt-5.6-sol-xhigh-fast（R8-fable-sota harness 失败，交付接线由主调度补完）
-- **集成验证**: 见主调度 tsc / vitest 记录
+- **集成验证**: `tsc` app+node 0 error；全量 vitest **187 files / 1635 tests passed**
 
 ## 相对 Round 7
 

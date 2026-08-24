@@ -70,7 +70,7 @@
 
 ## Round 8 结论简报
 
-详见 [round8/BRIEF.md](round8/BRIEF.md)。印前体检接入交付「印刷检查」；出血时同时显示成品框与媒体框像素；`studio-editor-helpers` 拆到 ≤400；损坏协作快照跳过。分辨率告警只出现在印前体检，不与资源缺失重复。
+详见 [round8/BRIEF.md](round8/BRIEF.md)。集成：**tsc 绿、187×1635 tests 绿**。印前体检接入交付「印刷检查」；出血时同时显示成品框与媒体框像素；`studio-editor-helpers` 拆到 ≤400；损坏协作快照跳过。分辨率告警只出现在印前体检，不与资源缺失重复。
 
 ## 全局成果（八轮合计）
 
@@ -80,7 +80,7 @@
 | card-layout 门面 | 1297 | 模块化 + 搜索短路 |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **400** |
-| 测试 | （基线已有大量单测） | **1607 passed / 185 files** |
+| 测试 | （基线已有大量单测） | **1635 passed / 187 files** |
 
 ## 回滚
 
