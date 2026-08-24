@@ -2780,6 +2780,48 @@ describe("Collaboration send effect recovery (R2-3)", () => {
         restoreStream();
       }
     });
+
+    /**
+     * 落盘连续失败期间三态报的还是上一次**成功**落盘,房间看上去一切正常——钩子把连击读了出来,
+     * 但 App 少接一根线,房里的人就一直看不见"这段时间的改动可能丢失"。
+     */
+    it("warns the room while the server cannot write to disk", async () => {
+      const container = renderApp();
+      const roomId = "PRSST3";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        // 上一次成功落盘一切正常,连击只在 lastFailureAt 上:没有连击时服务端根本不发这个键。
+        if (url.endsWith("/api/rooms")) {
+          const created = await ownedRoom(roomId).json();
+          return json({ ...created, persistence: { outcome: "persisted", at: 1700000000500, lastFailureAt: 1764000000900 } }, 201);
+        }
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        }
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+
+        const failureNote = await vi.waitFor(() => {
+          const node = container.querySelector<HTMLElement>('[data-collaboration-persist-failure="true"]');
+          expect(node).not.toBeNull();
+          return node!;
+        }, { timeout: 5_000 });
+        expect(failureNote.textContent).toContain("服务器暂时无法写入磁盘");
+        // 纯展示态:房间照常同步,既没有终局也没有离线。
+        expect(collaborationStatus(container)?.getAttribute("data-collaboration-terminal")).toBeNull();
+        expect(container.querySelector('[data-collaboration-offline="true"]')).toBeNull();
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
   });
 });
 
