@@ -524,25 +524,42 @@ export function createAiServer(options: AiServerOptions = {}) {
    * 房间连快照带版本都还在，只是历史被裁掉，落后的客户端必须重新取一份快照。
    * `at` 是最近一次**成功**落盘的时刻；房间存储用 0 表示从未成功落过盘，那不是 1970 年，
    * 所以这里报 null。存储替身没有 lastPersistOutcome() 时同样没有结论可报，按 persisted + null 处理。
+   *
+   * `lastFailureAt` 是当前失败连击的最近一次失败时刻，null 表示没有连击（下一次成功落盘就会清除）。
+   * 三态说的是「上一次成功落盘怎么处置了这个房间」，磁盘正在坏掉的那一段时间里它只会重复
+   * 上一次成功，所以缺了这一项，落盘持续失败在房间响应上与一切正常长得一模一样。
    */
-  const roomPersistence = (roomId: string): { outcome: "persisted" | "trimmed" | "skipped"; at: number | null } => {
+  const roomPersistence = (roomId: string): {
+    outcome: "persisted" | "trimmed" | "skipped";
+    at: number | null;
+    lastFailureAt: number | null;
+  } => {
     const lastFlush = roomStore.lastPersistOutcome?.();
-    if (!lastFlush) return { outcome: "persisted", at: null };
+    if (!lastFlush) return { outcome: "persisted", at: null, lastFailureAt: null };
     // 房间存储把 id 统一成大写，外部传进来的路径参数不一定是。
     const target = roomId.toUpperCase();
     const listed = (ids: readonly string[] | undefined) => (ids ?? []).some((id) => id.toUpperCase() === target);
     const at = typeof lastFlush.at === "number" && lastFlush.at > 0 ? lastFlush.at : null;
-    if (listed(lastFlush.skippedIds)) return { outcome: "skipped", at };
-    if (listed(lastFlush.trimmedIds)) return { outcome: "trimmed", at };
-    return { outcome: "persisted", at };
+    const failedAt = lastFlush.lastFailure?.at;
+    const lastFailureAt = typeof failedAt === "number" && failedAt > 0 ? failedAt : null;
+    if (listed(lastFlush.skippedIds)) return { outcome: "skipped", at, lastFailureAt };
+    if (listed(lastFlush.trimmedIds)) return { outcome: "trimmed", at, lastFailureAt };
+    return { outcome: "persisted", at, lastFailureAt };
   };
   /**
    * 创建/加入/快照三个响应共用的落盘字段。`persistedAtLastFlush` 保留给只认布尔的旧客户端：
-   * 被跳过或被裁掉历史的房间同样报 false，两者的区别要看同级的 `persistence.outcome`。
+   * 被跳过或被裁掉历史的房间同样报 false，两者的区别要看同级的 `persistence.outcome`；
+   * 落盘连续失败不改这个布尔，它说的仍是上一次成功落盘的处置。
+   *
+   * 没有失败连击时整个键不出现：只认 `outcome`/`at` 的客户端与既有响应形状一个字都不变，
+   * 而读取端拿到缺席与拿到 null 是同一件事（都不是有限数字）。
    */
   const roomPersistenceFields = (roomId: string) => {
-    const persistence = roomPersistence(roomId);
-    return { persistedAtLastFlush: persistence.outcome === "persisted", persistence };
+    const { outcome, at, lastFailureAt } = roomPersistence(roomId);
+    return {
+      persistedAtLastFlush: outcome === "persisted",
+      persistence: { outcome, at, ...(lastFailureAt === null ? {} : { lastFailureAt }) },
+    };
   };
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
