@@ -400,6 +400,106 @@ describe("project package", () => {
     expect(parsed.warnings).toEqual([expect.stringContaining("2 处画面内嵌图片超过 5.0 MB 上限")]);
   });
 
+  it("drops oversized images smuggled inside imported custom templates", () => {
+    const hugeSrc = dataUrlOfBytes("image/png", MAX_PACKAGE_ASSET_BYTES + 3, "E");
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const scene = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    scene.canvas = { ...scene.canvas, backgroundImageSrc: hugeSrc };
+    scene.map = {
+      ...scene.map,
+      renderSource: { kind: "image", assetId: "template-map", src: hugeSrc, fit: "cover", opacity: 1 },
+      provinceStyles: {
+        浙江省: { appearance: { kind: "texture", assetId: "template-texture", src: hugeSrc, fit: "contain" } },
+        北京市: { appearance: { kind: "texture", assetId: "asset-1", src: asset.src, fit: "contain" } },
+      },
+    };
+    scene.guests = {
+      ...scene.guests,
+      people: [{ id: "guest-1", name: "林老师", visibility: true, avatarSrc: hugeSrc }],
+    };
+    scene.assetElements = [{
+      id: "element-huge",
+      assetId: "template-asset",
+      label: "巨幅装饰",
+      src: hugeSrc,
+      kind: "decoration",
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      zIndex: 1,
+      visibility: true,
+    }];
+    const document = createSystemTemplate("original");
+    document.background = { ...document.background, type: "image", imageSrc: hugeSrc };
+    document.regionalAssets = {
+      浙江省: [{ id: "regional-1", label: "巨幅地域图", src: hugeSrc, mode: "overlay", opacity: 1, scale: 1 }],
+    };
+
+    const parsed = restoreProjectPackage({
+      kind: "cengfan-project-package",
+      version: 2,
+      exportedAt: "2026-07-27T00:00:00.000Z",
+      project,
+      assets: [asset],
+      fonts: [],
+      customTemplates: [{
+        id: "custom-huge",
+        name: "夹带巨图的模板",
+        baseTemplateId: "original",
+        scope: "visual",
+        document,
+        scene,
+        createdAt: "2026-07-27T00:00:00.000Z",
+      }],
+    });
+
+    const template = parsed.customTemplates[0]!;
+    expect(template.scene?.canvas.backgroundImageSrc).toBeUndefined();
+    expect(template.scene?.map.renderSource).toEqual({ kind: "vector" });
+    expect(template.scene?.map.provinceStyles?.浙江省?.appearance).toBeUndefined();
+    expect(template.scene?.map.provinceStyles?.北京市?.appearance).toMatchObject({ assetId: "asset-1" });
+    expect(template.scene?.guests.people[0]?.avatarSrc).toBeUndefined();
+    expect(template.scene?.assetElements).toEqual([]);
+    expect(template.document.background.imageSrc).toBeUndefined();
+    expect(template.document.background.type).toBe("color");
+    expect(template.document.regionalAssets.浙江省).toEqual([]);
+    expect(JSON.stringify(parsed.customTemplates)).not.toContain(hugeSrc);
+    expect(parsed.warnings).toEqual([expect.stringContaining("7 处模板内嵌图片超过 5.0 MB 上限")]);
+  });
+
+  it("keeps compliant template images and identical records across an import", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const document = createSystemTemplate("original");
+    document.background = { ...document.background, type: "image", imageSrc: asset.src };
+    document.regionalAssets = {
+      浙江省: [{ id: "regional-1", label: "地域图", src: asset.src, mode: "overlay", opacity: 1, scale: 1 }],
+    };
+    const template = {
+      id: "custom-ok",
+      name: "合规模板",
+      baseTemplateId: "original" as const,
+      scope: "visual" as const,
+      document,
+      createdAt: "2026-07-27T00:00:00.000Z",
+    };
+
+    const parsed = restoreProjectPackage({
+      kind: "cengfan-project-package",
+      version: 2,
+      exportedAt: "2026-07-27T00:00:00.000Z",
+      project,
+      assets: [asset],
+      fonts: [],
+      customTemplates: [template],
+    });
+
+    expect(parsed.customTemplates).toEqual([template]);
+    expect(parsed.warnings).toBeUndefined();
+  });
+
   it("keeps compliant resources untouched across an export and re-import round trip", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     project.map = {

@@ -5,8 +5,10 @@ import { createProjectDocument } from "./project-document";
 import {
   applyCustomTemplateToProject,
   createCustomTemplateFromProject,
+  dropOversizedTemplateDocumentImages,
   loadCustomTemplates,
 } from "./template-store";
+import type { TemplateDocument } from "./template-document";
 
 const CUSTOM_TEMPLATES_KEY = "cengfan-map-studio:custom-templates";
 
@@ -247,6 +249,49 @@ describe("template store", () => {
     expect(loaded[0]?.scene?.cards.displayFrame?.mode).toBe("flow");
     expect(applied.cards.displayFrame?.mode).toBe("flow");
     expect(applied.cards.positions).toEqual({ 浙江省: { x: 640, y: 280 } });
+  });
+
+  it("drops only the template document images that break the caller's byte budget", () => {
+    const huge = "data:image/png;base64,HUGE";
+    const small = "data:image/png;base64,AA==";
+    const document = createSystemTemplate("original");
+    document.background = { ...document.background, type: "image", imageSrc: huge };
+    document.map = {
+      ...document.map,
+      provinceStyles: {
+        浙江省: { textureSrc: huge },
+        北京市: { textureSrc: small, appearance: { kind: "texture", assetId: "asset-1", src: huge, fit: "contain" } },
+        上海市: { appearance: { kind: "manual-color", color: "#123456" } },
+      } as TemplateDocument["map"]["provinceStyles"],
+    };
+    document.regionalAssets = {
+      浙江省: [
+        { id: "regional-huge", label: "巨幅地域图", src: huge, mode: "overlay", opacity: 1, scale: 1 },
+        { id: "regional-small", label: "地域图", src: small, mode: "overlay", opacity: 1, scale: 1 },
+      ],
+    };
+
+    const result = dropOversizedTemplateDocumentImages(document, (src) => src === huge);
+
+    expect(result.dropped).toBe(4);
+    expect(result.document.background.imageSrc).toBeUndefined();
+    expect(result.document.background.type).toBe("color");
+    expect(result.document.map.provinceStyles?.浙江省?.textureSrc).toBeUndefined();
+    expect(result.document.map.provinceStyles?.北京市?.textureSrc).toBe(small);
+    expect(result.document.map.provinceStyles?.北京市).not.toHaveProperty("appearance");
+    expect(result.document.map.provinceStyles?.上海市).toHaveProperty("appearance");
+    expect(result.document.regionalAssets.浙江省?.map((regional) => regional.id)).toEqual(["regional-small"]);
+    expect(JSON.stringify(result.document)).not.toContain(huge);
+  });
+
+  it("returns the same template document when every image fits the budget", () => {
+    const document = createSystemTemplate("original");
+    document.background = { ...document.background, type: "image", imageSrc: "data:image/png;base64,AA==" };
+
+    const result = dropOversizedTemplateDocumentImages(document, () => false);
+
+    expect(result.dropped).toBe(0);
+    expect(result.document).toBe(document);
   });
 
   it("maps legacy custom templates into canonical visual fields when applying", () => {

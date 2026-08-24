@@ -1,10 +1,11 @@
 import { createId } from "./ids";
 import type { MapTemplateId, Student } from "./project-data";
 import type { ProjectDocument } from "./project-document";
-import { normalizeScene, type SceneDocument } from "./scene-document";
+import { normalizeScene, type ProvinceAppearance, type SceneDocument } from "./scene-document";
 import {
   createSystemTemplate,
   mergeTemplateDocuments,
+  type ProvinceStyle as TemplateProvinceStyle,
   type TemplateDocument,
 } from "./template-document";
 
@@ -160,6 +161,60 @@ function isSceneDocument(value: unknown): value is SceneDocument {
     && Array.isArray(value.textElements)
     && Array.isArray(value.assetElements)
   );
+}
+
+/** Scene province styles are copied into the template document verbatim, appearance included. */
+type StoredProvinceStyle = TemplateProvinceStyle & { appearance?: ProvinceAppearance };
+
+/**
+ * A template document keeps its own copies of the background, province textures and regional
+ * assets, none of which pass through the asset catalog. Import budgets therefore have to reach
+ * inside a template too, otherwise applying it pushes the payload straight onto the canvas.
+ *
+ * The caller owns the byte budget; this only knows where a template hides images.
+ */
+export function dropOversizedTemplateDocumentImages(
+  document: TemplateDocument,
+  isOversized: (src: string) => boolean,
+): { document: TemplateDocument; dropped: number } {
+  let dropped = 0;
+  const drops = (src: string | undefined): boolean => {
+    if (!src || !isOversized(src)) return false;
+    dropped += 1;
+    return true;
+  };
+  const { imageSrc, ...backgroundRest } = document.background;
+  const backgroundDropped = drops(imageSrc);
+  const provinceStyles = Object.fromEntries(
+    Object.entries(document.map.provinceStyles ?? {}).map(([province, value]) => {
+      const { textureSrc, appearance, ...rest } = value as StoredProvinceStyle;
+      const keepsTexture = Boolean(textureSrc) && !drops(textureSrc);
+      const keepsAppearance = !appearance || appearance.kind === "manual-color" || !drops(appearance.src);
+      return [province, {
+        ...rest,
+        ...(keepsTexture ? { textureSrc } : {}),
+        ...(appearance && keepsAppearance ? { appearance } : {}),
+      }];
+    }),
+  );
+  const regionalAssets = Object.fromEntries(
+    Object.entries(document.regionalAssets ?? {}).map(([region, assets]) => [
+      region,
+      (Array.isArray(assets) ? assets : []).filter((asset) => !drops(asset?.src)),
+    ]),
+  );
+  if (dropped === 0) return { document, dropped };
+  return {
+    document: {
+      ...document,
+      background: backgroundDropped
+        ? { ...backgroundRest, type: backgroundRest.type === "image" ? "color" : backgroundRest.type }
+        : document.background,
+      map: { ...document.map, provinceStyles },
+      regionalAssets,
+    },
+    dropped,
+  };
 }
 
 function stripStudentFacts(document: TemplateDocument): TemplateDocument {

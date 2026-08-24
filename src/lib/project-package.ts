@@ -12,8 +12,12 @@ import { estimateDataUrlBytes, formatByteSize } from "./image-downscale";
 import { restoreProjectDocument, serializeProjectDocument, type ProjectDocument } from "./project-document";
 import { createResourcePack, parseResourcePack } from "./resource-pack";
 import { DEFAULT_RENDER_SETTINGS, normalizeRenderSettings, type RenderSettings } from "./render-settings";
-import { loadCustomTemplates, type CustomTemplateRecord } from "./template-store";
-import type { ProvinceAppearance } from "./scene-document";
+import {
+  dropOversizedTemplateDocumentImages,
+  loadCustomTemplates,
+  type CustomTemplateRecord,
+} from "./template-store";
+import type { ProvinceAppearance, SceneDocument } from "./scene-document";
 
 export const PROJECT_PACKAGE_VERSION = 2 as const;
 
@@ -179,11 +183,15 @@ function limitImportedFonts(fonts: UserFont[]): {
   return { fonts: kept, oversized, duplicates, fontIdRemap };
 }
 
+function isOversizedImage(src: string): boolean {
+  return estimateDataUrlBytes(src) > MAX_PACKAGE_ASSET_BYTES;
+}
+
 function limitImportedAssets(assets: UserAsset[]): { assets: UserAsset[]; droppedIds: Set<string> } {
   const kept: UserAsset[] = [];
   const droppedIds = new Set<string>();
   for (const asset of assets) {
-    if (estimateDataUrlBytes(asset.src) > MAX_PACKAGE_ASSET_BYTES) {
+    if (isOversizedImage(asset.src)) {
       droppedIds.add(asset.id);
       continue;
     }
@@ -191,6 +199,9 @@ function limitImportedAssets(assets: UserAsset[]): { assets: UserAsset[]; droppe
   }
   return { assets: kept, droppedIds };
 }
+
+/** The scene fields that can hold an image payload, shared by projects and saved template scenes. */
+type ImageBearingScene = Pick<SceneDocument, "canvas" | "map" | "guests" | "assetElements">;
 
 /**
  * Every scene reference carries its own copy of the data URL, and the canvas background, guest
@@ -200,29 +211,28 @@ function limitImportedAssets(assets: UserAsset[]): { assets: UserAsset[]; droppe
  * `inlineDropped` counts only payloads the catalog warning does not already explain.
  */
 function dropOversizedImagePayloads(
-  project: ProjectDocument,
+  scene: ImageBearingScene,
   droppedAssetIds: Set<string>,
-): { project: ProjectDocument; inlineDropped: number } {
+): { scene: ImageBearingScene; inlineDropped: number } {
   let inlineDropped = 0;
   const dropsInline = (src: string | undefined): boolean => {
-    if (!src || estimateDataUrlBytes(src) <= MAX_PACKAGE_ASSET_BYTES) return false;
+    if (!src || !isOversizedImage(src)) return false;
     inlineDropped += 1;
     return true;
   };
   const dropsReference = (assetId: string, src: string): boolean =>
     droppedAssetIds.has(assetId) || dropsInline(src);
-  const renderSource = project.map.renderSource;
+  const renderSource = scene.map.renderSource;
   const dropsRenderSource = renderSource?.kind === "image" && dropsReference(renderSource.assetId, renderSource.src);
-  const { backgroundImageSrc, ...canvas } = project.canvas;
+  const { backgroundImageSrc, ...canvas } = scene.canvas;
   const keepsBackground = Boolean(backgroundImageSrc) && !dropsInline(backgroundImageSrc);
   return {
-    project: {
-      ...project,
+    scene: {
       canvas: { ...canvas, ...(keepsBackground ? { backgroundImageSrc } : {}) },
       map: {
-        ...project.map,
+        ...scene.map,
         ...(dropsRenderSource ? { renderSource: { kind: "vector" as const } } : {}),
-        provinceStyles: Object.fromEntries(Object.entries(project.map.provinceStyles ?? {}).map(([province, style]) => {
+        provinceStyles: Object.fromEntries(Object.entries(scene.map.provinceStyles ?? {}).map(([province, style]) => {
           const { textureSrc, appearance, ...rest } = style;
           const keepsTexture = Boolean(textureSrc) && !dropsInline(textureSrc);
           const keepsAppearance = !appearance
@@ -236,16 +246,41 @@ function dropOversizedImagePayloads(
         })),
       },
       guests: {
-        ...project.guests,
-        people: project.guests.people.map((person) => {
+        ...scene.guests,
+        people: scene.guests.people.map((person) => {
           const { avatarSrc, ...rest } = person;
           return dropsInline(avatarSrc) ? rest : person;
         }),
       },
-      assetElements: project.assetElements.filter((element) => !dropsReference(element.assetId, element.src)),
+      assetElements: scene.assetElements.filter((element) => !dropsReference(element.assetId, element.src)),
     },
     inlineDropped,
   };
+}
+
+/**
+ * A custom template is only shape-checked on import, yet applying one copies its scene and its
+ * template document straight onto the canvas, so an oversized image smuggled inside a template
+ * would blow the same collaboration transaction the catalog budget protects.
+ */
+function limitImportedTemplates(
+  templates: CustomTemplateRecord[],
+): { templates: CustomTemplateRecord[]; dropped: number } {
+  let dropped = 0;
+  const limited = templates.map((template) => {
+    const cleanedDocument = dropOversizedTemplateDocumentImages(template.document, isOversizedImage);
+    const cleanedScene = template.scene
+      ? dropOversizedImagePayloads(template.scene, new Set<string>())
+      : undefined;
+    dropped += cleanedDocument.dropped + (cleanedScene?.inlineDropped ?? 0);
+    if (cleanedDocument.dropped === 0 && !cleanedScene?.inlineDropped) return template;
+    return {
+      ...template,
+      document: cleanedDocument.document,
+      ...(template.scene && cleanedScene ? { scene: { ...template.scene, ...cleanedScene.scene } } : {}),
+    };
+  });
+  return { templates: limited, dropped };
 }
 
 function hydrateMissingAssetSources(value: unknown, assets: UserAsset[]): unknown {
@@ -327,17 +362,16 @@ export function restoreProjectPackage(value: unknown): ProjectPackage {
   }), { allowEmpty: true });
   const { fonts, oversized, duplicates, fontIdRemap } = limitImportedFonts(resourcePack.pack.fonts);
   const { assets, droppedIds } = limitImportedAssets(resourcePack.pack.assets);
-  const cleaned = dropOversizedImagePayloads(
-    repairProjectAssetReferences(
-      restoreProjectDocument(JSON.stringify(hydrateMissingAssetSources(record.project, assets))),
-      assets,
-    ),
-    droppedIds,
+  const repaired = repairProjectAssetReferences(
+    restoreProjectDocument(JSON.stringify(hydrateMissingAssetSources(record.project, assets))),
+    assets,
   );
-  const project = repairProjectFontReferences(cleaned.project, fonts, {
+  const cleaned = dropOversizedImagePayloads(repaired, droppedIds);
+  const project = repairProjectFontReferences({ ...repaired, ...cleaned.scene }, fonts, {
     ...resourcePack.fontIdRemap,
     ...fontIdRemap,
   });
+  const customTemplates = limitImportedTemplates(normalizeCustomTemplates(record.customTemplates));
   const oversizedFonts = resourcePack.skippedFontCount + oversized;
   const duplicateFonts = resourcePack.duplicateFontCount + duplicates;
   const assetLimit = formatByteSize(MAX_PACKAGE_ASSET_BYTES);
@@ -354,6 +388,9 @@ export function restoreProjectPackage(value: unknown): ProjectPackage {
     ...(cleaned.inlineDropped > 0
       ? [`${cleaned.inlineDropped} 处画面内嵌图片超过 ${assetLimit} 上限，已移除`]
       : []),
+    ...(customTemplates.dropped > 0
+      ? [`${customTemplates.dropped} 处模板内嵌图片超过 ${assetLimit} 上限，已从模板中移除`]
+      : []),
   ];
   return {
     kind: "cengfan-project-package",
@@ -362,7 +399,7 @@ export function restoreProjectPackage(value: unknown): ProjectPackage {
     project,
     assets,
     fonts,
-    customTemplates: normalizeCustomTemplates(record.customTemplates),
+    customTemplates: customTemplates.templates,
     renderSettings: normalizeRenderSettings(record.renderSettings),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
