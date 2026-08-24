@@ -72,6 +72,8 @@ export interface ServerLifecycleOptions {
   drain?: () => void | Promise<void>;
   /** 截止时间到时的兜底：强行切断仍在途的连接，避免单个请求拖住退出。 */
   onTimeout?: () => void;
+  /** 刷盘失败的上报口；不传时打到 console.error，绝不能让失败静默。 */
+  onFlushError?: (error: unknown) => void;
   setTimeoutFn?: typeof setTimeout;
 }
 
@@ -81,48 +83,65 @@ export function createServerLifecycle(options: ServerLifecycleOptions) {
   const timeoutMs = Math.max(1, options.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS);
   const setTimeoutFn = options.setTimeoutFn ?? setTimeout;
 
+  // 刷盘失败意味着房间与 AI 状态没落到盘上，退出码却仍是 0；不上报就等于静默丢数据。
+  const reportFlushError = (error: unknown) => {
+    try {
+      if (options.onFlushError) options.onFlushError(error);
+      else console.error("[shutdown] 状态落盘失败，本次退出可能丢失房间与 AI 状态", error);
+    } catch {
+      // 上报通道自己坏了也不能挡住退出。
+    }
+  };
+
   const shutdown = (signal = "SIGTERM"): Promise<void> => {
     void signal;
     if (shutdownPromise) return shutdownPromise;
     draining = true;
-    options.onDraining?.();
-    shutdownPromise = new Promise<void>((resolve) => {
-      let settled = false;
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      // 关停只有在监听关闭「且」状态落盘之后才算完成；先到的一方不能代表另一方。
-      let pending = 2;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        if (timeout !== undefined) clearTimeout(timeout);
-        resolve();
-      };
-      const step = () => {
-        pending -= 1;
-        if (pending <= 0) finish();
-      };
-      timeout = setTimeoutFn(() => {
-        try {
-          options.onTimeout?.();
-        } catch {
-          // 兜底动作失败也不能挡住退出。
-        }
-        finish();
-      }, timeoutMs);
+    let resolveShutdown!: () => void;
+    // 先把 promise 记下来再跑任何钩子：钩子里若再触发一次关停（重复信号、
+    // 或 onDraining/close 回调内部重入），拿到的必须是同一个 promise。
+    shutdownPromise = new Promise<void>((resolve) => { resolveShutdown = resolve; });
+
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    // 关停只有在监听关闭「且」状态落盘之后才算完成；先到的一方不能代表另一方。
+    let pending = 2;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) clearTimeout(timeout);
+      resolveShutdown();
+    };
+    const step = () => {
+      pending -= 1;
+      if (pending <= 0) finish();
+    };
+
+    // 截止时间先武装：记名的 promise 一旦存在，就必须有人负责让它落地，
+    // 哪怕下面的同步段（onDraining/close）抛异常也不能留下永远挂着的关停。
+    timeout = setTimeoutFn(() => {
       try {
-        options.server.close(() => step());
+        options.onTimeout?.();
       } catch {
-        step();
+        // 兜底动作失败也不能挡住退出。
       }
-      // 排空排在 close 之后：close 只停止接收新连接，挂着的长连接得自己结束；
-      // 刷盘再排在排空之后，避免把「排空过程中产生的写入」漏在快照外面。
-      void Promise.resolve()
-        .then(() => options.drain?.())
-        .catch(() => undefined)
-        .then(() => options.flush())
-        .catch(() => undefined)
-        .finally(step);
-    });
+      finish();
+    }, timeoutMs);
+    options.onDraining?.();
+    try {
+      options.server.close(() => step());
+    } catch {
+      step();
+    }
+    // 排空排在 close 之后：close 只停止接收新连接，挂着的长连接得自己结束；
+    // 刷盘再排在排空之后，避免把「排空过程中产生的写入」漏在快照外面。
+    void Promise.resolve()
+      .then(() => options.drain?.())
+      .catch(() => undefined)
+      .then(() => options.flush())
+      .catch(reportFlushError)
+      .finally(step);
+
     return shutdownPromise;
   };
 
