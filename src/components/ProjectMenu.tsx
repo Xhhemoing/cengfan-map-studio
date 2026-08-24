@@ -20,6 +20,13 @@ export interface ProjectMenuProps {
   ownClientId: string;
   roomReadonly: boolean;
   roomClosed: boolean;
+  /**
+   * 房间已过期/已失效:订阅已经永久停止。可选是为了让接线方按自己的节奏传入,
+   * 缺省视为未过期。
+   */
+  roomExpired?: boolean;
+  /** 传输层不可达:重试仍在继续,本地修改不会丢。 */
+  collaborationOffline?: boolean;
   invitationToken: string | null;
   hasStoredRoomAccess: boolean;
   collaborationStatus: CollaborationStatus;
@@ -56,6 +63,8 @@ export function ProjectMenu({
   ownClientId,
   roomReadonly,
   roomClosed,
+  roomExpired = false,
+  collaborationOffline = false,
   invitationToken,
   hasStoredRoomAccess,
   collaborationStatus,
@@ -81,6 +90,9 @@ export function ProjectMenu({
   onExportProject,
   onImportProject,
 }: ProjectMenuProps) {
+  // 终局与离线是互斥的两种处境:终局房间不会再重连,离线只是等网络回来,提示语不能混用。
+  const terminalKind = roomClosed ? "closed" : roomExpired ? "expired" : undefined;
+  const isOffline = collaborationOffline && terminalKind === undefined;
   return (
     <details className="project-menu">
       <summary className="secondary-button" aria-label="打开项目菜单">
@@ -139,9 +151,13 @@ export function ProjectMenu({
                         ))}
                       </ul>
                     )}
-                    <small>模式：{roomClosed ? "已关闭" : roomReadonly ? "只读" : "可编辑"}</small>
+                    <small>模式：{roomClosed ? "已关闭" : roomExpired ? "已失效" : roomReadonly ? "只读" : "可编辑"}</small>
                     {roomClosed ? (
                       <p className="collaboration-closed">房间已关闭，无法继续同步或编辑。</p>
+                    ) : roomExpired ? (
+                      <p className="collaboration-closed" role="status" data-collaboration-terminal="expired">
+                        房间已过期或已失效，不会再自动重连。请重新创建房间，或让创建者重新邀请。
+                      </p>
                     ) : (
                       <>
                         {roomRole === "viewer" && <p>当前仅查看，无法修改此工程。</p>}
@@ -155,7 +171,12 @@ export function ProjectMenu({
                         </div>}
                       </>
                     )}
-                    <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
+                    {isOffline && (
+                      <p className="collaboration-offline" role="status" data-collaboration-offline="true">
+                        网络已断开，正在自动重连；本地修改会保留，恢复后自动续传。
+                      </p>
+                    )}
+                    <small data-collaboration-status={collaborationStatus} data-collaboration-terminal={terminalKind}>{collaborationMessage}</small>
                     <button type="button" className="collaboration-leave" onClick={onLeaveRoom}><LogOut size={14} /> 断开房间</button>
                   </>
                 ) : (
@@ -167,7 +188,17 @@ export function ProjectMenu({
                       <input aria-label="协作邀请凭证" value={inviteTokenInput} placeholder="输入邀请凭证" onChange={(event) => onInviteTokenInputChange(event.target.value)} />
                       <button type="button" disabled={!roomInput.trim() || (!inviteTokenInput.trim() && !hasStoredRoomAccess) || collaborationStatus === "connecting"} onClick={onJoinRoom}>加入</button>
                     </div>
-                    <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
+                    {roomExpired && (
+                      <p className="collaboration-closed" role="status" data-collaboration-terminal="expired">
+                        房间已过期或已失效，不会再自动重连。请重新创建房间，或让创建者重新邀请。
+                      </p>
+                    )}
+                    {isOffline && (
+                      <p className="collaboration-offline" role="status" data-collaboration-offline="true">
+                        网络已断开，本地修改会保留，恢复后自动续传。
+                      </p>
+                    )}
+                    <small data-collaboration-status={collaborationStatus} data-collaboration-terminal={terminalKind}>{collaborationMessage}</small>
                   </>
                 )}
               </section>
