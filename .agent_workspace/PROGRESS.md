@@ -23,7 +23,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
 | 6 | CLOSED | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn; fable 6 ACCEPT + 4 NITS; no blocker. |
-| 7 | IN_PROGRESS | R7-1–R7-9 + R7-3b | — | Gates green. Awaiting fable + R7-10 description polish. |
+| 7 | CLOSED | R7-1–R7-9 + R7-3b + R7-10 | — | 189/1757/2; lint 0/6; CI `362c318`; fable 8 ACCEPT + 2 NITS; no blocker. |
+| 8 | IN_PROGRESS | — | — | Warn legend; persist-failure HTTP; unmount sweep; App extract. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -124,13 +125,18 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R7-3b (`a306069` / `8244ce4`): App wires `roomPersistenceKind` so trimmed rooms get the honest copy in the editor. Rollback = revert the merge. `src/App.test.tsx` 134/134; tsc app 0.
 - R7-8 (`24bcd02` / `4678f56`): trim band over real HTTP + files (survive restart, VERSION_CONFLICT, `persistence.outcome=trimmed`). No product defect. File at 399 lines — next addition needs a split. Rollback = revert the merge. 2/2; tsc node 0.
 
-## Round 7 closeout (gates; fable pending)
+## Round 7 closeout
 
 - Full suite on merged tree: **189 files, 1757 passed / 2 skipped** (83.0s).
 - Lint: 0 errors, **6 warnings** (StorageNotice react-refresh gone after R7-4; back to R5 level). Typecheck: `tsc -b --noEmit` 0.
 - CI: push + pull_request green on `362c318`.
+- Fable: `.agent_workspace/round-7-review.md`. 8 ACCEPT + 2 ACCEPT-WITH-NITS, no blocker. Briefing: `.agent_workspace/round-7-briefing.md`.
 - Behavior: skip vs trim honesty on HTTP + menu + App wiring; persist failures recorded; trimmed rooms proven to survive restart; App.tsx 1988 lines.
-- Known leftovers for R8: 36 tests unmount only inline in `it`; durability file at 399 lines; trim warn template still says "skipped rooms remain in memory"; durable capacity ceiling 12 MiB; App still ≫ 400 lines.
+
+## Round 8 notes
+
+- Chain: R8-2 → R8-3. Independent: R8-1, R8-4, R8-5, R8-6, R8-7, R8-8, R8-9. R8-10 last.
+- Headline leftovers: `roomPersistence()` ignores `lastFailure` (stale-good on create/join/snapshot during disk failure); warn legend always mentions both skip and trim.
 
 ## Round Briefings
 
