@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "../../lib/project-document";
+import { computeGuestPanelMetrics } from "../../lib/render-geometry";
 import { GuestsInspector } from "./GuestsInspector";
 
 describe("GuestsInspector", () => {
@@ -111,6 +112,63 @@ describe("GuestsInspector", () => {
     expect(onPatch).toHaveBeenCalledWith({
       people: [{ id: "g1", name: "王老师", note: "祝大家前程似锦", avatarSrc: undefined, visibility: true }],
     });
+
+    flushSync(() => root.unmount());
+  });
+
+  it("reports the canvas-visible headcount and warns on an empty roster", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={project.guests} onPatch={vi.fn()} />));
+
+    expect(container.querySelector("[data-guest-people-count]")?.textContent).toBe("共 0 人 · 画布显示 0 人");
+    expect(container.querySelector("[data-guest-people-summary]")?.textContent)
+      .toBe("名单为空，画布上只会留下一个空的标题框。");
+
+    flushSync(() => root.unmount());
+  });
+
+  it("matches the canvas metrics when some people are hidden", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const guests = {
+      ...project.guests,
+      people: [
+        { id: "g1", name: "王老师", visibility: true },
+        { id: "g2", name: "李老师", visibility: false },
+      ],
+    };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={guests} onPatch={vi.fn()} />));
+
+    const canvasVisible = computeGuestPanelMetrics(guests, 1).visibleGuests.length;
+    expect(canvasVisible).toBe(1);
+    expect(container.querySelector("[data-guest-people-count]")?.textContent)
+      .toBe(`共 2 人 · 画布显示 ${canvasVisible} 人`);
+    expect(container.querySelector("[data-guest-people-summary]")?.textContent)
+      .toBe("1 人取消了「显示」，画布上不会出现。");
+
+    flushSync(() => root.render(<GuestsInspector guests={{ ...guests, people: guests.people.map((person) => ({ ...person, visibility: false })) }} onPatch={vi.fn()} />));
+    expect(container.querySelector("[data-guest-people-summary]")?.textContent)
+      .toBe("2 人都取消了「显示」，画布上只会留下一个空的标题框。");
+
+    flushSync(() => root.unmount());
+  });
+
+  it("flags that a hidden panel is not drawn at all", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const guests = {
+      ...project.guests,
+      visibility: false,
+      people: [{ id: "g1", name: "王老师", visibility: true }],
+    };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={guests} onPatch={vi.fn()} />));
+
+    expect(container.querySelector("[data-guest-people-summary]")?.textContent)
+      .toBe("嘉宾板块整体已隐藏，画布上不会绘制名单。");
 
     flushSync(() => root.unmount());
   });

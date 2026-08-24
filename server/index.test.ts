@@ -104,7 +104,7 @@ describe("unified application server", () => {
 
   it.each([
     ["room creation", "/api/rooms", null],
-    ["AI explanation", "/api/ai/explain", "not-an-object"],
+    ["AI data parsing", "/api/ai/parse-data", "not-an-object"],
   ])("rejects a non-object JSON body for %s", async (_name, path, body) => {
     const server = createAiServer();
     servers.push(server);
@@ -117,7 +117,19 @@ describe("unified application server", () => {
     });
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: path === "/api/ai/explain" ? "AI_VALIDATION_ERROR" : "VALIDATION_ERROR" } });
+    await expect(response.json()).resolves.toMatchObject({ error: { code: path === "/api/ai/parse-data" ? "AI_VALIDATION_ERROR" : "VALIDATION_ERROR" } });
+  });
+
+  // 单轮建议端点已下线，这里锁住“落到通用 404 而不是 500”的行为。
+  it.each(["/api/ai/propose-edits", "/api/ai/explain"])("returns a plain 404 for the retired %s endpoint", async (path) => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawPost(origin, path, { message: "按城市分组", studentCount: 12 });
+
+    expect(response.status).toBe(404);
+    expect(JSON.parse(response.body)).toMatchObject({ error: { code: "NOT_FOUND" } });
   });
 
   it("rejects an array transaction body before attempting to find the room", async () => {
@@ -273,8 +285,9 @@ describe("unified application server", () => {
     const agentBody = { userMessage: "地图缩小一点", digest: { map: { scale: 1 } }, messages: [] };
     expect((await rawPost(origin, "/api/ai/agent", agentBody)).status).toBe(200);
     expect((await rawPost(origin, "/api/ai/agent", agentBody)).status).toBe(429);
-    expect((await rawPost(origin, "/api/ai/explain", { message: "为什么", studentCount: 1 })).status).toBe(200);
-    expect((await rawPost(origin, "/api/ai/explain", { message: "为什么", studentCount: 1 })).status).toBe(429);
+    const parseBody = { text: "林舟 北京大学 北京市", source: "paste" };
+    expect((await rawPost(origin, "/api/ai/parse-data", parseBody)).status).toBe(200);
+    expect((await rawPost(origin, "/api/ai/parse-data", parseBody)).status).toBe(429);
   });
 
   it("returns the standard validation code for invalid agent requests", async () => {
@@ -368,7 +381,7 @@ describe("unified application server", () => {
     const server = createAiServer();
     servers.push(server);
     originForTest = await startServer(server);
-    const ai = await sendInvalid("/api/ai/explain");
+    const ai = await sendInvalid("/api/ai/parse-data");
     const legacy = await sendInvalid("/api/rooms");
     expect(ai.status).toBe(400);
     expect(JSON.parse(ai.body)).toMatchObject({ error: { code: "AI_VALIDATION_ERROR" } });
@@ -622,10 +635,10 @@ describe("unified application server", () => {
     servers.push(server);
     const origin = await startServer(server);
 
-    const response = await fetch(`${origin}/api/ai/explain`, {
+    const response = await fetch(`${origin}/api/ai/parse-data`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "x".repeat(200) }),
+      body: JSON.stringify({ text: "x".repeat(200), source: "paste" }),
     });
 
     expect(response.status).toBe(413);
@@ -636,16 +649,16 @@ describe("unified application server", () => {
     const server = createAiServer();
     servers.push(server);
     const origin = await startServer(server);
-    const response = await fetch(`${origin}/api/ai/explain`, {
+    const response = await fetch(`${origin}/api/ai/parse-data`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-request-id": "review-request-1" },
-      body: JSON.stringify({ message: "" }),
+      body: JSON.stringify({ text: "", source: "paste" }),
     });
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ requestId: "review-request-1", error: { code: "AI_VALIDATION_ERROR" } });
   });
 
-  it("logs a structured fallback event for legacy AI routes and preserves its request id", async () => {
+  it("logs a structured fallback event for the single-turn AI route and preserves its request id", async () => {
     const lines: string[] = [];
     const server = createAiServer({
       aiLogger: createAiLogger((line) => lines.push(line)),
@@ -663,7 +676,7 @@ describe("unified application server", () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => new Response("unavailable", { status: 503 })) as typeof fetch;
     try {
-      const response = await rawPost(origin, "/api/ai/explain", { message: "为什么这么挤", studentCount: 3 }, { "x-request-id": "legacy-fallback-1" });
+      const response = await rawPost(origin, "/api/ai/parse-data", { text: "林舟 北京大学 北京市\n只有名字", source: "paste" }, { "x-request-id": "legacy-fallback-1" });
       expect(response.status).toBe(200);
       const body = JSON.parse(response.body) as { requestId?: string; provider?: string };
       expect(body).toMatchObject({ requestId: "legacy-fallback-1", provider: "local-fallback" });
@@ -700,20 +713,15 @@ describe("unified application server", () => {
     servers.push(server);
     const origin = await startServer(server);
 
-    const [page, health, propose] = await Promise.all([
+    const [page, health, parsed] = await Promise.all([
       fetch(`${origin}/`),
       fetch(`${origin}/api/health`),
-      fetch(`${origin}/api/ai/propose-edits`, {
+      fetch(`${origin}/api/ai/parse-data`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: "按城市分组",
-          projectSummary: {
-            studentCount: 12,
-            templateId: "original",
-            dataView: "province",
-            cardPreset: "standard",
-          },
+          text: "林舟 北京大学 北京市\n苏禾 浙江大学 杭州市",
+          source: "paste",
         }),
       }),
     ]);
@@ -726,11 +734,11 @@ describe("unified application server", () => {
       ok: true,
       provider: "local-fallback",
     });
-    expect(propose.status).toBe(200);
-    const proposal = (await propose.json()) as {
-      commands?: unknown[];
+    expect(parsed.status).toBe(200);
+    const parseResult = (await parsed.json()) as {
+      candidates?: unknown[];
     };
-    expect(proposal.commands?.length).toBeGreaterThan(0);
+    expect(parseResult.candidates?.length).toBe(2);
   });
 
   it("serves hashed static assets with long immutable caching, gzip, and security headers", async () => {
@@ -1281,13 +1289,13 @@ describe("unified application server", () => {
     servers.push(server);
     const origin = await startServer(server);
 
-    const anonymous = await rawPost(origin, "/api/ai/explain", { message: "为什么", studentCount: 1 });
+    const anonymous = await rawPost(origin, "/api/ai/parse-data", { text: "林舟 北京大学 北京市", source: "paste" });
     expect(anonymous.status).toBe(401);
 
-    const authenticated = await fetch(`${origin}/api/ai/explain`, {
+    const authenticated = await fetch(`${origin}/api/ai/parse-data`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer workspace-test-token" },
-      body: JSON.stringify({ message: "为什么", studentCount: 1 }),
+      body: JSON.stringify({ text: "林舟 北京大学 北京市", source: "paste" }),
     });
     expect(authenticated.status).toBe(200);
   });
@@ -1311,7 +1319,7 @@ describe("unified application server", () => {
     servers.push(server);
     const origin = await startServer(server);
 
-    const response = await rawPost(origin, "/api/ai/explain", { message: "为什么", studentCount: 1 });
+    const response = await rawPost(origin, "/api/ai/parse-data", { text: "林舟 北京大学 北京市", source: "paste" });
     expect(response.status).toBe(200);
   });
 
@@ -1334,7 +1342,7 @@ describe("unified application server", () => {
     servers.push(server);
     const origin = await startServer(server);
 
-    const response = await rawPost(origin, "/api/ai/explain", { message: "为什么", studentCount: 1 });
+    const response = await rawPost(origin, "/api/ai/parse-data", { text: "林舟 北京大学 北京市", source: "paste" });
     expect(response.status).toBe(200);
   });
 });

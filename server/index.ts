@@ -20,10 +20,7 @@ import { parseAgentRequest } from "./ai/agent-request";
 import { digestFingerprint } from "./ai/agent-loop";
 import { createRateLimiter } from "./ai/rate-limit";
 import { createAiLogger } from "./ai/ai-observability";
-import {
-  parseDataRequestSchema,
-  proposeEditsRequestSchema,
-} from "./ai/schemas";
+import { parseDataRequestSchema } from "./ai/schemas";
 import { CollaborationError, createRoomStore } from "./collaboration";
 
 export const DEFAULT_PORT = 8787;
@@ -949,67 +946,9 @@ export function createAiServer(options: AiServerOptions = {}) {
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/ai/propose-edits") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        aiLogger.log("ai.request.started", { requestId });
-        const parsed = proposeEditsRequestSchema(body);
-        if (!parsed.ok || !parsed.value) {
-          sendAi(400, {
-            error: { code: "AI_VALIDATION_ERROR", message: parsed.error },
-          });
-          return;
-        }
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const result = await ai.proposeEdits(parsed.value, { requestId, signal: requestController.signal });
-          if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: "local", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
-          aiLogger.log("ai.request.completed", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider });
-          sendAi(200, result);
-        } catch (error) {
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
-
-      if (request.method === "POST" && pathname === "/api/ai/explain") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        aiLogger.log("ai.request.started", { requestId });
-        if (!isRecord(body) || typeof body.message !== "string" || !body.message.trim()) {
-          sendAi(400, {
-            error: { code: "AI_VALIDATION_ERROR", message: "message 不能为空" },
-          });
-          return;
-        }
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const result = await ai.explain(body.message, Number(body.studentCount ?? 0), { requestId, signal: requestController.signal });
-          if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: "local", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
-          aiLogger.log("ai.request.completed", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider });
-          sendAi(200, result);
-        } catch (error) {
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
-
+      // 破坏性变更：/api/ai/propose-edits 与 /api/ai/explain 已随前端单轮建议入口一同下线，
+      // 现在与其他未知 AI 路径一样落到下面的 404 分支。回滚办法：revert 本切片对应提交即可恢复
+      // 这两个路由及其 schema / local-fallback 实现。
       if (url.startsWith("/api/")) {
         send( 404, {
           error: { code: "NOT_FOUND", message: "接口不存在" },

@@ -245,6 +245,22 @@ describe("binary import adapters", () => {
     expect(result.candidates[1]).not.toHaveProperty("province");
   });
 
+  it("exposes the province column as a mapping row with its source header and samples", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "录取院校", "城市", "去向类型", "省/直辖市"],
+      ["苏禾", "浙江大学", "杭州市", "中国去向", "浙江省"],
+      ["顾言", "南京大学", "南京市", "中国去向", "江苏省"],
+    ]);
+
+    expect(result.columnMappings.at(-1)).toEqual({
+      field: "province",
+      sourceHeader: "省/直辖市",
+      columnIndex: 4,
+      samples: ["浙江省", "江苏省"],
+    });
+    expect(result.unmappedHeaders).toEqual([]);
+  });
+
   it("maps province aliases anywhere in the header without reporting them as unused", () => {
     const result = parseExcelWorkbookRows([
       ["所在省份", "学生姓名", "录取学校", "所在城市", "备注"],
@@ -253,8 +269,8 @@ describe("binary import adapters", () => {
 
     expect(result.candidates[0]).toMatchObject({ city: "南京市", province: "江苏省" });
     expect(result.unmappedHeaders).toEqual(["备注"]);
-    // 省份只做解析,不出现在识别面板的列映射里。
-    expect(result.columnMappings.map((mapping) => mapping.field)).toEqual(["name", "university", "city"]);
+    // 省份要出现在识别面板的列映射里,而且排在核心列之后。
+    expect(result.columnMappings.map((mapping) => mapping.field)).toEqual(["name", "university", "city", "province"]);
   });
 
   it("ignores a fifth column on the headerless fallback path instead of reading it as province", () => {

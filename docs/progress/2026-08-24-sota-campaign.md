@@ -29,7 +29,8 @@
 | 6 | 已完成 | 混编 ×5 | 续聊闭环与死代码清理 |
 | 7 | 已完成 | 混编 ×5 | 导出补省份、digest 分层、续聊 digest 去重、健康检查缓存 |
 | 8 | 已完成 | 混编 ×5 | 省份写回、可写白名单、回执过期降级、工作台菜单、OCR |
-| 9 | 进行中 | 混编 ×5 | 删死端点、识别面板省份映射、续聊 core digest |
+| 9 | 已完成 | 混编 ×5 | 删死端点、省份映射行、core digest、嘉宾人数口径 |
+| 10 | 进行中 | 混编 ×5 | core 层标记、协作冲突补齐、确认列表省份、卡片交互 |
 
 ### 第 1 轮工作流（只读）
 
@@ -73,6 +74,7 @@
 - 2026-08-24：第 6 轮落地完成并合入专属分支。启动第 7 轮。
 - 2026-08-24：第 7 轮落地完成并合入专属分支。启动第 8 轮。
 - 2026-08-24：第 8 轮落地完成并合入专属分支。启动第 9 轮。
+- 2026-08-24：第 9 轮落地完成并合入专属分支。启动第 10 轮。
 
 ## 第 2 轮已合入
 
@@ -132,4 +134,13 @@
 - 项目卡菜单：焦点、Esc、外点、方向键。
 - OCR 未识别完时升级智能识别，`source: "ocr"`。
 
-**第 9 轮候选：** 识别面板仍不展示省份映射行（binary-import `MAPPED_COLUMNS` 不含 province）；`/api/ai/propose-edits` 与 explain 死端点；客户端续聊尚未改用 `layer: "core"`。P2 视觉核对仍不做。
+## 第 9 轮已合入
+
+- 删除死端点 `/api/ai/propose-edits` 与 `/api/ai/explain`（前端 `ai-client.ts` 只剩 `parse-data`），连带清掉后端实现与 schema。两路径 404，`/api/ai/agent` 与 `/api/ai/parse-data` 不变。
+- 识别面板 `columnMappings` 含省份列。
+- 续聊请求发 `core` digest，首轮与 `inspect_project` 仍 `full`。
+- 嘉宾检查器人数与画布 `visibleGuestPeople` 同源。
+
+回滚：死端点是 API 形状破坏性变更，revert 该提交即可恢复。digest 两处改回无参 `buildProjectDigest`。P2 视觉核对仍不做。
+
+**第 10 轮候选：** core 层无 `cardBlockCount`/层标记，续聊首轮 historyHash 跨层对不上；协作 VERSION_CONFLICT 后上传永停；确认列表不展示省份；单击选卡被记成手动定位；卡片无键盘可达。

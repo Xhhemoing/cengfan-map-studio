@@ -2,8 +2,7 @@ import { useMemo } from "react";
 import type { ImportReviewRow } from "../lib/data-workspace";
 import { findDuplicateStudentGroups } from "../lib/data-duplicate";
 import type { ExcelImportResult } from "../lib/binary-import";
-// 用完整的 StudentColumn(含省份)做标签表:binary-import 对外收窄成不含省份的映射列,
-// 标签表却要覆盖省份,才能在识别面板里显示中文名。
+// 标签表要覆盖包括省份在内的全部列,识别面板才能为每条映射显示中文名。
 import type { StudentColumn } from "../lib/import-aliases";
 import { ActionButton, ActionGroup, CompactButton, PanelHeader } from "./StudioUi";
 

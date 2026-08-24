@@ -1,5 +1,6 @@
 import { Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
 import { createId } from "../../lib/ids";
+import { visibleGuestPeople } from "../../lib/render-geometry";
 import type { GuestPanelSettings, GuestPerson } from "../../lib/scene-document";
 import { DeferredInput, DeferredTextarea } from "../DeferredInput";
 import { ActionGroup, CompactButton, IconButton, InspectorHeader } from "../StudioUi";
@@ -21,6 +22,18 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
   placementOnly?: boolean;
 }) {
   const people = guests.people ?? [];
+  const visibleCount = visibleGuestPeople(guests).length;
+  const hiddenCount = people.length - visibleCount;
+  const panelHidden = guests.visibility === false;
+  const peopleSummary = panelHidden
+    ? "嘉宾板块整体已隐藏，画布上不会绘制名单。"
+    : people.length === 0
+      ? "名单为空，画布上只会留下一个空的标题框。"
+      : visibleCount === 0
+        ? `${people.length} 人都取消了「显示」，画布上只会留下一个空的标题框。`
+        : hiddenCount > 0
+          ? `${hiddenCount} 人取消了「显示」，画布上不会出现。`
+          : null;
 
   const updatePerson = (id: string, patch: Partial<GuestPerson>) => {
     onPatch({
@@ -123,8 +136,11 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
       {!layoutOnly && <div className="guest-people-editor">
         <div className="asset-section__heading">
           <strong>老师名单</strong>
-          <small>{people.length} 人</small>
+          <small data-guest-people-count>共 {people.length} 人 · 画布显示 {visibleCount} 人</small>
         </div>
+        {peopleSummary && (
+          <p className="property-panel__hint" data-guest-people-summary role="status">{peopleSummary}</p>
+        )}
         <CompactButton className="wide-button" icon={<Plus size={14} aria-hidden />} onClick={addPerson}>添加老师 / 嘉宾</CompactButton>
         {people.map((person) => (
           <div key={person.id} className="guest-person-row" data-guest-editor={person.id}>

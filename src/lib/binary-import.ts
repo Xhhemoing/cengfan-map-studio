@@ -1,23 +1,21 @@
 import {
   COLUMN_LABELS,
   findColumnIndexes,
-  HEADER_ALIASES,
   parseLocationScope,
   REQUIRED_COLUMNS,
-  type MappedStudentColumn,
   type RequiredStudentColumn,
   type StudentColumn,
 } from "./import-aliases";
 import { parseStudentText, type TextImportResult, type UnparsedLine } from "./import-data";
 
 /**
- * 对外导出的是不含省份的核心列:省份只参与解析取值,不进入识别面板的列映射展示。
- * 回滚省份列时改回 `export type { StudentColumn } from "./import-aliases";`。
+ * 对外导出完整的列类型(含省份):识别面板要为省份渲染映射行,消费方的标签表也要覆盖省份。
+ * 回滚省份列时改回 `export type { MappedStudentColumn as StudentColumn } from "./import-aliases";`。
  */
-export type { MappedStudentColumn as StudentColumn } from "./import-aliases";
+export type { StudentColumn } from "./import-aliases";
 
 export interface ExcelColumnMapping {
-  field: MappedStudentColumn;
+  field: StudentColumn;
   sourceHeader: string;
   columnIndex: number;
   samples: string[];
@@ -60,8 +58,11 @@ export function createImportTemplateSheets(): ImportTemplateSheets {
   };
 }
 
-/** 识别面板展示的列;省份不在其中,只在解析时取值。 */
-const MAPPED_COLUMNS: readonly MappedStudentColumn[] = ["name", "university", "city", "locationScope"];
+/**
+ * 识别面板展示的列与展示顺序;省份排在末位,与模板第 5 列一致。
+ * 回滚省份列时从数组里删掉 "province",省份会退回「只解析不展示」。
+ */
+const MAPPED_COLUMNS: readonly StudentColumn[] = ["name", "university", "city", "locationScope", "province"];
 
 function toRowCells(row: string[] | undefined): string[] {
   return (row ?? []).map((cell) => String(cell ?? "").trim());
@@ -115,12 +116,6 @@ function createMetadata(
   rows: string[][],
   header: { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>> },
 ): Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {
-  // 省份也算「已识别」列位,否则识别面板会把模板自带的省份列报成「未使用」。
-  const recognizedIndexes = new Set(
-    (Object.keys(HEADER_ALIASES) as StudentColumn[])
-      .map((field) => header.indexes[field])
-      .filter((columnIndex): columnIndex is number => columnIndex !== undefined),
-  );
   const columnMappings = MAPPED_COLUMNS.flatMap((field) => {
     const columnIndex = header.indexes[field];
     if (columnIndex === undefined) return [];
@@ -136,7 +131,9 @@ function createMetadata(
       samples,
     }];
   });
-  const unmappedHeaders = header.headers.filter((value, index) => value && !recognizedIndexes.has(index));
+  // 「未使用」直接取映射的补集:凡是展示了映射行的列位都算已识别,省份也不例外。
+  const mappedIndexes = new Set(columnMappings.map((mapping) => mapping.columnIndex));
+  const unmappedHeaders = header.headers.filter((value, index) => value && !mappedIndexes.has(index));
   const missingRequiredFields = REQUIRED_COLUMNS.filter((field) => header.indexes[field] === undefined);
   return {
     headerRowIndex: header.rowIndex,

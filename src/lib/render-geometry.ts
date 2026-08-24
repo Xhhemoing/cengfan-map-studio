@@ -219,8 +219,13 @@ export interface GuestPanelMetrics {
   height: number;
 }
 
+/** 画布真正会绘制的嘉宾：面板与检查器共用同一份过滤规则，避免人数口径不一致。 */
+export function visibleGuestPeople(guests: { people?: GuestPerson[] | null }): GuestPerson[] {
+  return (guests.people ?? []).filter((person) => person.visibility !== false);
+}
+
 export function computeGuestPanelMetrics(guests: GuestPanelSettings, lineHeightMultiplier: number): GuestPanelMetrics {
-  const visibleGuests = (guests.people ?? []).filter((person) => person.visibility !== false);
+  const visibleGuests = visibleGuestPeople(guests);
   const titleTypography = guests.titleTypography ?? {};
   const peopleTypography = guests.peopleTypography ?? {};
   const titleFontSize = titleTypography.fontSize ?? guests.fontSize + 1;

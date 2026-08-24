@@ -7,7 +7,7 @@ import type { StudioAsset } from "./assets";
 import { duplicateStudentIds } from "./data-duplicate";
 import { createId } from "./ids";
 import { classifyAgentCall, highestRisk, type AgentToolCall, type RiskLevel } from "./agent-risk";
-import { buildProjectDigest } from "./project-digest";
+import { buildProjectDigest, type ProjectDigestLayer } from "./project-digest";
 import type { ProjectDocument, ProjectTransaction } from "./project-document";
 import { updateSceneTarget, type SceneSelection } from "./scene-document";
 import { SCENE_DOMAIN_PROPS, type SceneDomain } from "./scene-writable-props";
@@ -548,8 +548,9 @@ export class AgentSession {
       if (call.name === "inspect_project") {
         const path = String(args.path ?? "");
         // students 走 digest（聚合计数），其余路径读影子场景真值，digest 未投影的属性才能被读到。
+        // 这里固定 full：inspect 是模型现取明细的唯一入口，续聊只发 core 时也必须能读到被裁掉的明细。
         if (!path || path === "students" || path.startsWith("students.")) {
-          return { id: call.id, ok: true, content: JSON.stringify({ ok: true, path, value: readPath(buildProjectDigest(this.shadow), path) }) };
+          return { id: call.id, ok: true, content: JSON.stringify({ ok: true, path, value: readPath(buildProjectDigest(this.shadow, { layer: "full" }), path) }) };
         }
         const { value, parent } = readPathWithParent(sceneView(this.shadow), path);
         const parentId = parent && typeof parent === "object" && typeof (parent as Record<string, unknown>).id === "string"
@@ -664,6 +665,10 @@ export class AgentSession {
       this.budgetReceipt = undefined;
       this.continuable = true;
     }
+    // 首轮（新任务或历史为空）发 full 建立上下文；续聊时明细已在历史里，只发 core（统计+几何），
+    // 模型要明细可随时用 inspect_project 现取。必须在压入本轮用户消息之前判断，否则历史永远非空。
+    // 回滚：删掉本行与请求体里的 layer 参数、以及 inspect_project 处的 { layer: "full" }，两处都回到无参 buildProjectDigest(this.shadow)。
+    const digestLayer: ProjectDigestLayer = options.continue && this.conversation.length > 0 ? "core" : "full";
     this.conversation.push({ role: "user", content: message });
     const controller = new AbortController();
     this.activeController = controller;
@@ -688,7 +693,7 @@ export class AgentSession {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               // 预算只认服务端回执：客户端镜像发过去也会被忽略，发了反而像是可协商的。
-              body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
+              body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow, { layer: digestLayer }), messages: this.conversation, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
               signal: roundController.signal,
             });
           } catch (cause) {

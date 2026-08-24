@@ -43,8 +43,8 @@ describe("extractJsonObject", () => {
   });
 
   it("extracts JSON embedded in prose", () => {
-    const content = '好的，这是结果：{"mode":"explain","explanation":"回答"} 希望对你有帮助。';
-    expect(extractJsonObject(content)).toEqual({ mode: "explain", explanation: "回答" });
+    const content = '好的，这是结果：{"candidates":[],"unparsed":[]} 希望对你有帮助。';
+    expect(extractJsonObject(content)).toEqual({ candidates: [], unparsed: [] });
   });
 
   it("throws when no JSON object is present", () => {
@@ -72,12 +72,10 @@ describe("createAiBackend without API key", () => {
     expect(backend.isConfigured).toBe(false);
     expect(backend.provider).toBe("local-fallback");
 
-    const proposal = await backend.proposeEdits({
-      message: "按城市分组",
-      projectSummary: { studentCount: 12, templateId: "original", dataView: "province", cardPreset: "standard" },
-    });
-    expect(proposal.provider).toBe("local-fallback");
-    expect(proposal.commands.length).toBeGreaterThan(0);
+    const result = await backend.parseData({ text: "林舟 北京大学 北京市\n只有名字", source: "paste" });
+    expect(result.provider).toBe("local-fallback");
+    expect(result.candidates).toHaveLength(1);
+    expect(result.unparsed).toHaveLength(1);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
@@ -127,67 +125,24 @@ describe("createAiBackend with LLM", () => {
     expect(result.unparsed).toEqual([]);
   });
 
-  it("validates LLM commands and drops invalid ones", async () => {
-    mockChatCompletion(
-      JSON.stringify({
-        mode: "proposal",
-        explanation: "已生成建议",
-        commands: [
-          {
-            id: "cmd-city-a1b2c3",
-            type: "setDataView",
-            label: "切换为城市分组",
-            risk: "medium",
-            before: "province",
-            after: "city",
-            reason: "用户要求",
-          },
-          { type: "setDataView", after: "city" },
-        ],
-      }),
-    );
-    const backend = createAiBackend(TEST_CONFIG);
-    const result = await backend.proposeEdits({
-      message: "按城市分组",
-      projectSummary: { studentCount: 12, templateId: "original", dataView: "province", cardPreset: "standard" },
-    });
-
-    expect(result.provider).toBe(PROVIDER_NAME);
-    expect(result.mode).toBe("proposal");
-    expect(result.commands).toHaveLength(1);
-    expect(result.commands[0]?.type).toBe("setDataView");
-  });
-
   it("falls back to local rules when the LLM output is unusable", async () => {
     mockChatCompletion("抱歉，我没法完成这个任务。");
     const backend = createAiBackend(TEST_CONFIG);
-    const result = await backend.proposeEdits({
-      message: "改成紧凑卡片",
-      projectSummary: { studentCount: 12, templateId: "original", dataView: "province", cardPreset: "standard" },
-    });
+    const result = await backend.parseData({ text: "林舟 北京大学 北京市\n只有名字", source: "paste" });
 
     expect(result.provider).toBe("local-fallback");
-    expect(result.commands.length).toBeGreaterThan(0);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.unparsed).toHaveLength(1);
   });
 
   it("falls back to local rules when the API returns an error", async () => {
     mockChatCompletion("", 429);
     const backend = createAiBackend(TEST_CONFIG);
-    const result = await backend.explain("为什么这么挤", 30);
+    const result = await backend.parseData({ text: "林舟 北京大学 北京市\n只有名字", source: "paste" });
 
     expect(result.provider).toBe("local-fallback");
-    expect(result.mode).toBe("explain");
-    expect(result.explanation).toContain("30");
-  });
-
-  it("uses the LLM explanation when the API succeeds", async () => {
-    mockChatCompletion(JSON.stringify({ explanation: "因为人数多，建议使用紧凑卡片。" }));
-    const backend = createAiBackend(TEST_CONFIG);
-    const result = await backend.explain("为什么这么挤", 30);
-
-    expect(result.provider).toBe(PROVIDER_NAME);
-    expect(result.explanation).toBe("因为人数多，建议使用紧凑卡片。");
-    expect(result.commands).toEqual([]);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.unparsed).toHaveLength(1);
   });
 
   it("propagates cancellation instead of returning a local single-turn fallback", async () => {
@@ -197,6 +152,8 @@ describe("createAiBackend with LLM", () => {
       throw new DOMException("aborted", "AbortError");
     }));
     const backend = createAiBackend(TEST_CONFIG);
-    await expect(backend.explain("为什么这么挤", 30, { signal: controller.signal })).rejects.toMatchObject({ code: "AI_ABORTED" });
+    await expect(
+      backend.parseData({ text: "林舟 北京大学 北京市\n只有名字", source: "paste" }, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "AI_ABORTED" });
   });
 });

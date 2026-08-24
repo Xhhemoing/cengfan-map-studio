@@ -2,9 +2,39 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProjectDocument, type ProjectDocument } from "./project-document";
 import { buildCardFacts } from "./render-facts";
 import { AgentSession, compactAgentToolResult, type AgentSessionSnapshot } from "./agent-session";
+import type { ProjectDigest } from "./project-digest";
 
 function response(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
+}
+
+/** 取第 index 次 agent 请求体里的 digest，用来断言分层。 */
+function requestDigest(fetchMock: { mock: { calls: unknown[][] } }, index: number): ProjectDigest {
+  const init = fetchMock.mock.calls[index]?.[1] as RequestInit;
+  return (JSON.parse(String(init.body)) as { digest: ProjectDigest }).digest;
+}
+
+/** 一份带学生与文案的工程：full 层会投影卡片方位与文本明细，core 层应把它们裁空。 */
+function digestLayerProject(): ProjectDocument {
+  const project = createProjectDocument({
+    students: ["广东省", "浙江省", "北京市"].flatMap((province, provinceIndex) => Array.from({ length: 3 - provinceIndex }, (_, index) => ({
+      id: `s-${province}-${index}`,
+      name: `同学${index}`,
+      university: `${province}大学`,
+      city: `${province}城市${index}`,
+      province,
+      visibility: true,
+    }))),
+    templateId: "original",
+    dataView: "province",
+  });
+  return {
+    ...project,
+    textElements: [{
+      id: "text-0", role: "custom", content: "毕业去向速览", x: 40, y: 40,
+      fontSize: 18, color: "#000000", fontWeight: 400, textAlign: "left", maxWidth: 320, visibility: true,
+    }],
+  };
 }
 
 afterEach(() => {
@@ -481,6 +511,51 @@ describe("AgentSession", () => {
 
     expect(JSON.parse(session.steps[0]!.result.content)).toMatchObject({ ok: true, path: "cards.padding", value: 17 });
     expect(JSON.parse(session.steps[1]!.result.content)).toMatchObject({ value: "#123456" });
+  });
+
+  it("sends the full digest on the first turn and only the core digest when continuing", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-layer", budgetReceipt: "v1.receipt.first", summary: "第一轮完成" }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-layer", budgetReceipt: "v1.receipt.second", summary: "续聊完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(digestLayerProject(), { mode: "conservative" });
+    await session.run("先看看现状");
+    await session.continue("再把地图调小一点");
+
+    const first = requestDigest(fetchMock, 0);
+    const second = requestDigest(fetchMock, 1);
+    // 首轮建立上下文：明细必须在场，否则模型没有可对齐的方位与文案。
+    expect(first.layout.cardBlocks.length).toBeGreaterThan(0);
+    expect(first.textElements.length).toBeGreaterThan(0);
+    // 续聊只发统计与关键几何，明细整段裁掉。
+    expect(second.layout.cardBlocks).toEqual([]);
+    expect(second.textElements).toEqual([]);
+    expect(second.assetElements).toEqual([]);
+    expect(second.students).toEqual(first.students);
+    expect(second.layout.mapContentBounds).toEqual(first.layout.mapContentBounds);
+    expect(second.textElementCount).toBe(first.textElementCount);
+    expect(JSON.stringify(second).length).toBeLessThan(JSON.stringify(first).length);
+  });
+
+  it("still answers core-dropped detail from the shadow project while continuing", async () => {
+    const project = digestLayerProject();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-inspect", budgetReceipt: "v1.receipt.first", summary: "第一轮完成" }))
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-inspect", budgetReceipt: "v1.receipt.second", calls: [
+        { id: "c1", name: "inspect_project", arguments: { path: "" } },
+        { id: "c2", name: "inspect_project", arguments: { path: "textElements.0.content" } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-inspect", budgetReceipt: "v1.receipt.third", summary: "续聊完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("先看看现状");
+    await session.continue("第一段文字写的是什么");
+
+    expect(requestDigest(fetchMock, 1).textElements).toEqual([]);
+    const inspected = JSON.parse(session.steps[0]!.result.content).value as ProjectDigest;
+    expect(inspected.textElements.length).toBeGreaterThan(0);
+    expect(inspected.layout.cardBlocks.length).toBeGreaterThan(0);
+    expect(JSON.parse(session.steps[1]!.result.content).value).toBe(project.textElements[0]?.content);
   });
 
   it("keeps binary asset sources out of inspect results", async () => {

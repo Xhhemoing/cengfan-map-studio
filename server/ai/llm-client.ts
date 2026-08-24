@@ -1,16 +1,6 @@
 import type { ImportCandidate, UnparsedLine } from "../../src/lib/import-data";
-import {
-  validateEditorCommandPayload,
-  type EditorCommandPayload,
-  type ParseDataRequest,
-  type ProposeEditsRequest,
-  type SourceType,
-} from "./schemas";
-import {
-  localExplain,
-  localParseData,
-  localProposeEdits,
-} from "./local-fallback";
+import type { ParseDataRequest, SourceType } from "./schemas";
+import { localParseData } from "./local-fallback";
 import type { AiCallMeta, AiRoute, ChatMessage, ToolDefinition } from "./agent-types";
 import { AiCallError } from "./ai-errors";
 import { requestChatCompletion } from "./ai-transport";
@@ -56,20 +46,6 @@ export interface ParseDataResult {
   source: SourceType;
   candidates: ImportCandidate[];
   unparsed: UnparsedLine[];
-}
-
-export interface ProposalResult {
-  provider: string;
-  mode: "proposal" | "explain";
-  explanation: string;
-  commands: EditorCommandPayload[];
-}
-
-export interface ExplainResult {
-  provider: string;
-  mode: "explain";
-  explanation: string;
-  commands: EditorCommandPayload[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -215,75 +191,10 @@ async function parseDataWithLlm(config: AiConfig, request: ParseDataRequest, con
   return { candidates, unparsed };
 }
 
-const PROPOSE_SYSTEM =
-  `${JSON_ONLY_SYSTEM}\n\n` +
-  "你是“蹭饭图”（中国学生去向海报编辑器）的 AI 助手。用户会用中文自然语言描述对海报的修改需求，你负责把它们转成白名单编辑器命令；如果用户只是在提问，则用 explain 模式回答。";
-
-const COMMAND_VALUES = {
-  dataView: ["province", "pins", "heat", "city", "university"],
-  template: ["original", "cartoon", "grain", "q", "scenery", "regional"],
-  cardPreset: ["standard", "compact", "ticket", "photo"],
-} as const;
-
-async function proposeEditsWithLlm(config: AiConfig, request: ProposeEditsRequest, context: AiRequestContext = {}) {
-  const summary = request.projectSummary;
-  const userPrompt =
-    `当前项目状态：\n` +
-    `{"studentCount":${summary.studentCount},"templateId":"${summary.templateId}","dataView":"${summary.dataView}","cardPreset":"${summary.cardPreset}"}\n\n` +
-    `用户需求：${request.message}\n\n` +
-    `可用的命令类型白名单：\n` +
-    `- setDataView：切换分组视图，after 取值 ${JSON.stringify(COMMAND_VALUES.dataView)}\n` +
-    `- setTemplate：切换地图模板，after 取值 ${JSON.stringify(COMMAND_VALUES.template)}\n` +
-    `- setCardPreset：切换卡片预设，after 取值 ${JSON.stringify(COMMAND_VALUES.cardPreset)}\n` +
-    `- setMapScale：地图缩放倍数（数字，如 1.1）\n` +
-    `- setBackgroundColor：背景颜色（十六进制，如 "#f5f0e8"）\n` +
-    `- setVisibleFields：设置可见字段，after 取值如 ["name","university"]\n` +
-    `- moveText：移动文字，必须提供 targetId 和 before/after 的 {x,y} 坐标\n\n` +
-    `每条命令必须是对象：\n` +
-    `{"id":"cmd-<前缀>-<6位随机>","type":"...","label":"中文动作描述","risk":"low|medium|high","before":<修改前值>,"after":<修改后值>,"reason":"中文理由"}\n\n` +
-    `如果用户是在提问（包含“为什么/怎么/是否/可不可以/吗/？/?”，且没有明确的修改指令），返回 {"mode":"explain","explanation":"用中文简洁回答用户问题","commands":[]}。\n\n` +
-    `只输出 JSON：{"mode":"proposal"|"explain","explanation":"中文说明","commands":[...]}`;
-
-  const data = await chatJson(config, PROPOSE_SYSTEM, userPrompt, undefined, context);
-  if (!isRecord(data)) throw new Error("LLM 返回结果不是对象");
-  const mode: "proposal" | "explain" = data.mode === "explain" ? "explain" : "proposal";
-  const explanation =
-    typeof data.explanation === "string" && data.explanation.trim()
-      ? data.explanation.trim()
-      : `已根据“${request.message}”生成修改建议。`;
-  const commands: EditorCommandPayload[] = [];
-  if (Array.isArray(data.commands)) {
-    for (const raw of data.commands) {
-      const validated = validateEditorCommandPayload(raw);
-      if (validated.ok && validated.value) commands.push(validated.value);
-    }
-  }
-  if (mode === "proposal" && commands.length === 0) throw new Error("LLM 未返回有效命令");
-  return { mode, explanation, commands };
-}
-
-async function explainWithLlm(config: AiConfig, message: string, studentCount: number, context: AiRequestContext = {}) {
-  const data = await chatJson(
-    config,
-    JSON_ONLY_SYSTEM,
-    `当前学生人数：${studentCount}\n用户问题：${message}\n\n只输出 JSON：{"explanation":"用中文回答用户的问题，不超过 200 字，语气简洁友好"}`,
-    500,
-    context,
-  );
-  if (!isRecord(data)) throw new Error("LLM 返回结果不是对象");
-  const explanation =
-    typeof data.explanation === "string" && data.explanation.trim()
-      ? data.explanation.trim()
-      : `关于“${message}”的说明。`;
-  return { explanation };
-}
-
 export interface AiBackend {
   provider: string;
   isConfigured: boolean;
   parseData(request: ParseDataRequest, context?: AiRequestContext): Promise<ParseDataResult>;
-  proposeEdits(request: ProposeEditsRequest, context?: AiRequestContext): Promise<ProposalResult>;
-  explain(message: string, studentCount: number, context?: AiRequestContext): Promise<ExplainResult>;
 }
 
 /**
@@ -320,28 +231,6 @@ export function createAiBackend(config: AiConfig = resolveAiConfig()): AiBackend
         if (error instanceof AiCallError && error.code === "AI_ABORTED") throw error;
         fallbackReason("parse-data", error);
         return local;
-      }
-    },
-    async proposeEdits(request, context = {}) {
-      if (!configured) return localProposeEdits(request);
-      try {
-        const { mode, explanation, commands } = await proposeEditsWithLlm(config, request, context);
-        return { provider: PROVIDER_NAME, mode, explanation, commands };
-      } catch (error) {
-        if (error instanceof AiCallError && error.code === "AI_ABORTED") throw error;
-        fallbackReason("propose-edits", error);
-        return localProposeEdits(request);
-      }
-    },
-    async explain(message, studentCount, context = {}) {
-      if (!configured) return localExplain(message, studentCount);
-      try {
-        const { explanation } = await explainWithLlm(config, message, studentCount, context);
-        return { provider: PROVIDER_NAME, mode: "explain" as const, explanation, commands: [] as EditorCommandPayload[] };
-      } catch (error) {
-        if (error instanceof AiCallError && error.code === "AI_ABORTED") throw error;
-        fallbackReason("explain", error);
-        return localExplain(message, studentCount);
       }
     },
   };
