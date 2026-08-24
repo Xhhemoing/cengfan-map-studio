@@ -121,6 +121,18 @@ function riskLabel(risk: AgentStep["risk"]): string {
   return "低风险";
 }
 
+/**
+ * 运行按钮文案。已完成会话续聊、失败但仍可续的会话重试都沿用同一个 AI 任务；
+ * 回执过期或只读恢复的会话只能新开任务，其余情况从头规划。
+ */
+function runButtonLabel(conversation: AssistantConversation, projectIsCurrent: boolean): string {
+  if (!projectIsCurrent) return "开始规划";
+  if (conversation.budgetExpired) return "新开任务";
+  if (conversation.status === "completed") return conversation.session.canContinue ? "继续对话" : "新开任务";
+  if (conversation.status === "failed" && conversation.session.canContinue) return "重试并继续";
+  return "开始规划";
+}
+
 function newId(): string {
   return `assistant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -484,7 +496,9 @@ export function AgentAssistant({
     };
     // 没有预算回执的会话（v2 快照恢复）只能只读打开，续聊会被服务端拒绝，这里直接改成新开任务。
     // 回执过期（服务端台账默认 30 分钟 TTL）同理：上一次续聊已经判定过期，这一次必须新开任务。
-    const isFresh = active.status === "draft" || active.status === "failed" || active.status === "cancelled" || active.budgetExpired || !active.session.canContinue;
+    // 但一次瞬时失败（超时/限流/上游不可用）不该丢掉对话历史与预算回执：会话仍 canContinue，
+    // 复用它重试就沿用同一个 AI 任务；只有草稿、已取消与真正续不上的会话才新开。
+    const isFresh = active.status === "draft" || active.status === "cancelled" || active.budgetExpired || !active.session.canContinue;
     const session = isFresh
       ? new AgentSession(project, { mode: active.mode, assets, onProgress: progress })
       : active.session;
@@ -609,8 +623,9 @@ export function AgentAssistant({
         {conversation.status === "running" ? (
           <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
         ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !draftFor(conversation).trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && (conversation.budgetExpired || conversation.status === "completed") ? (!conversation.budgetExpired && conversation.session.canContinue ? "继续对话" : "新开任务") : "开始规划"}</button>
+          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !draftFor(conversation).trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {runButtonLabel(conversation, projectIsCurrent)}</button>
         )}
+        {projectIsCurrent && conversation.status === "failed" && !conversation.budgetExpired && conversation.session.canContinue && <p className="panel-note" role="status">上一次请求失败，会话仍然有效，重试会沿用原有上下文与预算。</p>}
         {projectIsCurrent && conversation.budgetExpired && <p className="panel-note" role="status">会话预算已过期或已被占用，发送新需求会新开一个 AI 任务。</p>}
         {projectIsCurrent && conversation.status === "completed" && !conversation.session.canContinue && <p className="panel-note" role="status">历史会话已只读恢复，发送新需求会新开一个 AI 任务。</p>}
         {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}

@@ -448,6 +448,7 @@ export class AgentSession {
     return { ...this._metrics };
   }
 
+  /** 瞬时失败（超时/限流/上游不可用）不改 completed 与 continuable，会话仍然可以带着原 taskId 重试。 */
   get canContinue(): boolean {
     return this.completed && !this.activeRun && this.continuable;
   }
@@ -680,7 +681,15 @@ export class AgentSession {
     // 现取（它固定读 full 层）。必须在压入本轮用户消息之前判断，否则历史永远非空。
     // 回滚：删掉本行与请求体里的 layer 参数、以及 inspect_project 处的 { layer: "full" }，两处都回到无参 buildProjectDigest(this.shadow)。
     const digestLayer: ProjectDigestLayer = options.continue && this.conversation.length > 0 ? "core" : "full";
-    this.conversation.push({ role: "user", content: message });
+    // 失败必须把本轮压入的消息弹回去：留着它，续聊重试会在历史里堆出一条没有回答的悬空提问，
+    // 同一句需求也会被发第二遍。压缩会挪动下标，所以按对象定位这条消息，而不是记死压入前的长度；
+    // 已经被压缩折叠掉的那一轮本来就不在历史里，无需回滚。
+    const turnMessage: Record<string, unknown> = { role: "user", content: message };
+    this.conversation.push(turnMessage);
+    const rollbackTurn = () => {
+      const index = this.conversation.indexOf(turnMessage);
+      if (index >= 0) this.conversation.splice(index);
+    };
     const controller = new AbortController();
     this.activeController = controller;
     const onAbort = () => controller.abort();
@@ -799,7 +808,11 @@ export class AgentSession {
       }
     })();
     this.activeRun = work;
-    try { return await work; } finally { this.activeRun = null; }
+    try {
+      const outcome = await work;
+      if (outcome.kind === "failed") rollbackTurn();
+      return outcome;
+    } finally { this.activeRun = null; }
   }
 
   continue(message: string, options: { signal?: AbortSignal } = {}) {

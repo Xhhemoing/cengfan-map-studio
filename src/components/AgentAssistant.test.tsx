@@ -373,6 +373,8 @@ describe("AgentAssistant", () => {
     expect(container.textContent).toContain("发送新需求会新开一个 AI 任务");
     expect(container.textContent).not.toContain("请求内容未通过校验");
     expect(container.textContent).not.toContain("继续对话");
+    // 回执过期与瞬时失败不同：这段会话再也续不上，只能新开任务。
+    expect(container.textContent).not.toContain("重试并继续");
 
     setMessage(container, "换个方向");
     clickText(container, "新开任务");
@@ -381,6 +383,41 @@ describe("AgentAssistant", () => {
     expect(freshBody.taskId).toBeUndefined();
     expect(freshBody.budgetReceipt).toBeUndefined();
     expect(freshBody.messages).toEqual([{ role: "user", content: "换个方向" }]);
+    root.unmount();
+  });
+
+  it("retries a transient continuation failure on the same session instead of opening a new task", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-transient", budgetReceipt: "v1.receipt.transient", summary: "第一轮完成" }))
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ error: { code: "AI_UPSTREAM_UNAVAILABLE", message: "上游不可用" } }) })
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-transient", budgetReceipt: "v1.receipt.transient-2", summary: "重试完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, root } = await renderAssistant(project);
+    setMessage(container, "第一轮");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("第一轮完成"));
+
+    setMessage(container, "继续调整");
+    clickText(container, "继续对话");
+    await vi.waitFor(() => expect(container.textContent).toContain("AI 服务暂时不可用"));
+    // 超时/限流/上游不可用是瞬时故障，会话与预算都还在，入口不该退回"开始规划"。
+    expect(container.textContent).toContain("重试并继续");
+    expect(container.textContent).toContain("重试会沿用原有上下文与预算");
+    expect(container.textContent).not.toContain("开始规划");
+    expect(container.textContent).not.toContain("新开任务");
+
+    clickText(container, "重试并继续");
+    await vi.waitFor(() => expect(container.textContent).toContain("重试完成"));
+    const retryBody = JSON.parse(String(((fetchMock.mock.calls[2] as unknown[])[1] as RequestInit).body)) as { taskId?: string; budgetReceipt?: string; messages: Array<{ role: string; content: string }> };
+    expect(retryBody.taskId).toBe("task-transient");
+    expect(retryBody.budgetReceipt).toBe("v1.receipt.transient");
+    // 失败那一轮压入的提问已经弹出，重试的历史里只有一条"继续调整"，前面还接着上一轮的总结。
+    expect(retryBody.messages).toEqual([
+      { role: "user", content: "第一轮" },
+      { role: "assistant", content: "第一轮完成" },
+      { role: "user", content: "继续调整" },
+    ]);
     root.unmount();
   });
 

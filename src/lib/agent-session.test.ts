@@ -385,6 +385,52 @@ describe("AgentSession", () => {
     expect(session.canContinue).toBe(false);
   });
 
+  it("pops the pending question after a transient continuation failure and keeps the session continuable", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-retry", budgetReceipt: "v1.receipt.first", summary: "第一轮完成" }))
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ error: { code: "AI_UPSTREAM_UNAVAILABLE", message: "上游不可用" } }) })
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-retry", budgetReceipt: "v1.receipt.second", summary: "重试完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("地图小一点");
+
+    await expect(session.continue("再小一点")).resolves.toMatchObject({ kind: "failed", error: expect.stringContaining("AI 服务暂时不可用") });
+    // 瞬时失败不改会话状态：仍可续聊，且历史里不能留下这条没被回答的提问。
+    expect(session.canContinue).toBe(true);
+    expect(session.exportSnapshot().conversation).toEqual([
+      { role: "user", content: "地图小一点" },
+      { role: "assistant", content: "第一轮完成" },
+    ]);
+
+    await expect(session.continue("再小一点")).resolves.toMatchObject({ kind: "finish", summary: "重试完成" });
+    const retryBody = JSON.parse(String(((fetchMock.mock.calls[2] as unknown[])[1] as RequestInit).body)) as { taskId?: string; budgetReceipt?: string; messages: Array<{ role: string; content: string }> };
+    expect(retryBody.taskId).toBe("task-retry");
+    expect(retryBody.budgetReceipt).toBe("v1.receipt.first");
+    expect(retryBody.messages).toEqual([
+      { role: "user", content: "地图小一点" },
+      { role: "assistant", content: "第一轮完成" },
+      { role: "user", content: "再小一点" },
+    ]);
+  });
+
+  it("pops the pending question and stops continuation when the receipt expires", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-expired", budgetReceipt: "v1.receipt.expired", summary: "第一轮完成" }))
+      .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: { code: "AI_RECEIPT_EXPIRED", message: "回执已过期" } }) }));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("地图小一点");
+    await expect(session.continue("再小一点")).resolves.toMatchObject({ kind: "failed" });
+
+    expect(session.canContinue).toBe(false);
+    expect(session.exportSnapshot().conversation).toEqual([
+      { role: "user", content: "地图小一点" },
+      { role: "assistant", content: "第一轮完成" },
+    ]);
+    await expect(session.continue("再试一次")).rejects.toThrow("当前会话不能继续");
+  });
+
   it("aborts a hung round after the client timeout", async () => {
     vi.useFakeTimers();
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
