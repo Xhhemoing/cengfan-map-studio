@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { createRoomStore } from "./collaboration";
+import { createRoomStore, MAX_PERSISTED_ROOM_BYTES } from "./collaboration";
 import type { RoomStoreSnapshot } from "./collaboration";
 import type { CollaborationOperation } from "../src/lib/collaboration-operations";
 
@@ -158,6 +158,42 @@ describe("collaboration room store", () => {
       }));
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("omits oversized rooms from persistence and records the restart fallback", async () => {
+    let persisted: RoomStoreSnapshot | undefined;
+    const roomIds = ["OVERSIZED", "PERSIST4"];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const store = createRoomStore({
+        generateId: () => roomIds.shift()!,
+        generateSecret: () => "owner-access",
+        now: () => 1_000,
+        persistIntervalMs: Number.POSITIVE_INFINITY,
+        persist: (snapshot) => {
+          persisted = snapshot;
+        },
+      });
+      store.create({ payload: "x".repeat(MAX_PERSISTED_ROOM_BYTES) }, { clientId: "large-owner", displayName: "Large owner" });
+      store.create({ title: "persist me" }, { clientId: "small-owner", displayName: "Small owner" });
+
+      await store.flush();
+
+      expect(store.get("OVERSIZED")).toBeDefined();
+      expect(persisted).toMatchObject({
+        version: 1,
+        skippedRoomCount: 1,
+        rooms: [expect.objectContaining({ room: expect.objectContaining({ id: "PERSIST4" }) })],
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("skipped 1 room(s)"));
+
+      const restored = createRoomStore({ restore: persisted, now: () => 1_000 });
+      expect(restored.get("OVERSIZED")).toBeUndefined();
+      expect(restored.get("PERSIST4")?.snapshot).toEqual({ title: "persist me" });
+    } finally {
+      warn.mockRestore();
     }
   });
 

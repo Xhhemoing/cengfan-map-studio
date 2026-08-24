@@ -90,6 +90,8 @@ type InvitationRecord = { role: Exclude<CollaborationRole, "owner">; expiresAt: 
 type OperationHistoryEntry = { version: number; operations: CollaborationOperation[] };
 export interface RoomStoreSnapshot {
   version: 1;
+  /** Rooms omitted because their persistence record exceeded the safety cap. */
+  skippedRoomCount?: number;
   rooms: Array<{
     room: CollaborationRoom;
     accessRecords: Array<{ tokenHash: string; participant: RoomParticipant }>;
@@ -103,6 +105,9 @@ export interface RoomStoreSnapshot {
 const MAX_TRACKED_TRANSACTIONS = 256;
 const MAX_OPERATION_HISTORY = 256;
 const DEFAULT_PERSIST_INTERVAL_MS = 30_000;
+// Oversized rooms stay live but are omitted from disk, so after a restart they
+// fall back to the same process-local lifetime rooms had before persistence.
+export const MAX_PERSISTED_ROOM_BYTES = 5 * 1024 * 1024;
 
 function defaultRoomId(): string {
   return randomBytes(9).toString("hex").slice(0, 12).toUpperCase();
@@ -122,6 +127,91 @@ function publicParticipant(participant: RoomParticipant): RoomParticipant {
     displayName: participant.displayName,
     role: participant.role,
   };
+}
+
+function jsonStringBytesWithin(value: string, remainingBytes: number): number | undefined {
+  // Every UTF-16 code unit occupies at least one JSON byte. This rejects large
+  // asset strings without scanning or allocating another copy of the payload.
+  if (value.length + 2 > remainingBytes) return undefined;
+  let bytes = Buffer.byteLength(value, "utf8") + 2;
+  if (bytes > remainingBytes) return undefined;
+
+  const escapedCharacters = /["\\\u0000-\u001f\uD800-\uDFFF]/g;
+  let match: RegExpExecArray | null;
+  while ((match = escapedCharacters.exec(value)) !== null) {
+    const code = value.charCodeAt(match.index);
+    if (code === 34 || code === 92 || code === 8 || code === 9 || code === 10 || code === 12 || code === 13) {
+      bytes += 1;
+    } else if (code <= 0x1f) {
+      bytes += 5;
+    } else {
+      const pairedHighSurrogate = code >= 0xd800
+        && code <= 0xdbff
+        && value.charCodeAt(match.index + 1) >= 0xdc00
+        && value.charCodeAt(match.index + 1) <= 0xdfff;
+      const pairedLowSurrogate = code >= 0xdc00
+        && code <= 0xdfff
+        && value.charCodeAt(match.index - 1) >= 0xd800
+        && value.charCodeAt(match.index - 1) <= 0xdbff;
+      if (!pairedHighSurrogate && !pairedLowSurrogate) bytes += 3;
+    }
+    if (bytes > remainingBytes) return undefined;
+  }
+  return bytes;
+}
+
+function jsonFitsWithinByteLimit(value: unknown, maxBytes: number): boolean {
+  let usedBytes = 0;
+  const ancestors = new Set<object>();
+  const reserve = (bytes: number) => {
+    usedBytes += bytes;
+    return usedBytes <= maxBytes;
+  };
+  const visitString = (text: string) => {
+    const bytes = jsonStringBytesWithin(text, maxBytes - usedBytes);
+    return bytes !== undefined && reserve(bytes);
+  };
+  const isOmitted = (item: unknown) => item === undefined || typeof item === "function" || typeof item === "symbol";
+
+  const visit = (item: unknown): boolean => {
+    if (item === null) return reserve(4);
+    if (typeof item === "string") return visitString(item);
+    if (typeof item === "number") return reserve(JSON.stringify(item)?.length ?? 4);
+    if (typeof item === "boolean") return reserve(item ? 4 : 5);
+    if (typeof item !== "object") return false;
+    if (item instanceof Date) {
+      const serialized = JSON.stringify(item);
+      return serialized !== undefined && reserve(Buffer.byteLength(serialized, "utf8"));
+    }
+    if (ancestors.has(item)) return false;
+    ancestors.add(item);
+    try {
+      if (Array.isArray(item)) {
+        if (!reserve(1)) return false;
+        for (let index = 0; index < item.length; index += 1) {
+          if (index > 0 && !reserve(1)) return false;
+          const entry = item[index];
+          if (!(isOmitted(entry) ? reserve(4) : visit(entry))) return false;
+        }
+        return reserve(1);
+      }
+
+      if (!reserve(1)) return false;
+      let first = true;
+      for (const key of Object.keys(item)) {
+        const entry = (item as Record<string, unknown>)[key];
+        if (isOmitted(entry)) continue;
+        if (!first && !reserve(1)) return false;
+        first = false;
+        if (!visitString(key) || !reserve(1) || !visit(entry)) return false;
+      }
+      return reserve(1);
+    } finally {
+      ancestors.delete(item);
+    }
+  };
+
+  return visit(value);
 }
 
 export interface RoomStoreOptions {
@@ -639,33 +729,56 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     };
   };
 
-  const snapshot = (): RoomStoreSnapshot => ({
-    version: 1,
-    rooms: Array.from(rooms, ([id, room]) => ({
-      room: structuredClone(room),
-      accessRecords: Array.from(accessRecords.get(id) ?? [], ([tokenHash, participant]) => ({
-        tokenHash,
-        participant: publicParticipant(participant),
-      })),
-      invitations: Array.from(invitations.get(id) ?? [], ([tokenHash, invitation]) => ({
-        tokenHash,
-        ...invitation,
-      })),
-      transactionIds: Array.from(transactions.get(id) ?? []),
-      operationHistory: (operationHistory.get(id) ?? []).map((entry) => ({
-        version: entry.version,
-        operations: structuredClone(entry.operations),
-      })),
-      lastActivity: lastActivity.get(id) ?? now(),
-      legacy: legacyRoomIds.has(id),
-    })),
-  });
+  const snapshot = (): RoomStoreSnapshot => {
+    const persistedRooms: RoomStoreSnapshot["rooms"] = [];
+    let skippedRoomCount = 0;
+    for (const [id, room] of rooms) {
+      const record: RoomStoreSnapshot["rooms"][number] = {
+        room,
+        accessRecords: Array.from(accessRecords.get(id) ?? [], ([tokenHash, participant]) => ({
+          tokenHash,
+          participant: publicParticipant(participant),
+        })),
+        invitations: Array.from(invitations.get(id) ?? [], ([tokenHash, invitation]) => ({
+          tokenHash,
+          ...invitation,
+        })),
+        transactionIds: Array.from(transactions.get(id) ?? []),
+        operationHistory: operationHistory.get(id) ?? [],
+        lastActivity: lastActivity.get(id) ?? now(),
+        legacy: legacyRoomIds.has(id),
+      };
+      if (!jsonFitsWithinByteLimit(record, MAX_PERSISTED_ROOM_BYTES)) {
+        skippedRoomCount += 1;
+        continue;
+      }
+      persistedRooms.push({
+        ...record,
+        room: structuredClone(room),
+        operationHistory: record.operationHistory.map((entry) => ({
+          version: entry.version,
+          operations: structuredClone(entry.operations),
+        })),
+      });
+    }
+    return {
+      version: 1,
+      rooms: persistedRooms,
+      ...(skippedRoomCount > 0 ? { skippedRoomCount } : {}),
+    };
+  };
 
   const flush = async (): Promise<void> => {
     purgeExpired();
     if (!persist) return;
     const persistedMutationVersion = mutationVersion;
     const persistedSnapshot = snapshot();
+    if (persistedSnapshot.skippedRoomCount) {
+      console.warn(
+        `[collaboration] skipped ${persistedSnapshot.skippedRoomCount} room(s) over the ${MAX_PERSISTED_ROOM_BYTES}-byte persistence cap; `
+        + "they remain available in memory but will not be restored after restart",
+      );
+    }
     const operation = persistQueue.catch(() => undefined).then(async () => {
       await persist(persistedSnapshot);
       persistedVersion = Math.max(persistedVersion, persistedMutationVersion);
