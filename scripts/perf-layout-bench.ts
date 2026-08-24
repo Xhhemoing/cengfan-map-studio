@@ -70,6 +70,8 @@ interface ObstacleScene {
 /**
  * 30 jittered rings laid out over the map rect, each with ~48 vertices — the
  * same order of magnitude as the projected province geometry the canvas emits.
+ * Rings carry a precomputed `bounds` because `PosterCanvas.projectedPolygon`
+ * always does; a bench without it would mostly measure bound recomputation.
  */
 function makeObstacleScene(seed = 20260824): ObstacleScene {
   const rand = makeRandom(seed);
@@ -87,15 +89,27 @@ function makeObstacleScene(seed = 20260824): ObstacleScene {
     const radiusX = cellWidth * 0.42;
     const radiusY = cellHeight * 0.42;
     const ring: CardPoint[] = [];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
     for (let step = 0; step < OBSTACLE_RING_VERTICES; step += 1) {
       const angle = (step / OBSTACLE_RING_VERTICES) * Math.PI * 2;
       const wobble = 0.78 + rand() * 0.34;
-      ring.push({
+      const point = {
         x: cx + Math.cos(angle) * radiusX * wobble,
         y: cy + Math.sin(angle) * radiusY * wobble,
-      });
+      };
+      ring.push(point);
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
     }
-    polygons.push({ rings: [ring] });
+    polygons.push({
+      rings: [ring],
+      bounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+    });
     centers.push({ x: cx, y: cy });
   }
   return { polygons, centers };
