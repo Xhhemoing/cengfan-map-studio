@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 
 vi.mock("./MapLayer", () => ({ MapLayer: () => null }));
@@ -10,12 +10,27 @@ vi.mock("./TextLayer", () => ({ TextLayer: () => null }));
 import { PosterCanvas } from "./PosterCanvas";
 import { createProjectDocument } from "../../lib/project-document";
 
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
 function renderProject(project: ReturnType<typeof createProjectDocument>) {
   const container = document.createElement("div");
   const root = createRoot(container);
+  mounted.push({ root, container });
   flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
   return { container, root };
 }
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted for
+  // the rest of the run, racing React's scheduler against jsdom teardown. Cases that
+  // remount mid-test keep their inline unmount; unmounting twice is a no-op.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 describe("PosterCanvas card sizing", () => {
   it("grows card row spacing and guest panel height with the global line-height multiplier", () => {
@@ -59,8 +74,6 @@ describe("PosterCanvas card sizing", () => {
     }
     expect(spacedCardHeight).toBeGreaterThan(baseCardHeight);
     expect(spacedGuestHeight).toBeGreaterThan(baseGuestHeight);
-
-    flushSync(() => spaced.root.unmount());
   });
 
   it.each([250, 350])("renders the exact configured card width: %i", (width) => {
@@ -72,12 +85,10 @@ describe("PosterCanvas card sizing", () => {
     project.cards = { ...project.cards, maxWidth: width };
     project.textElements = [];
     project.guests = { ...project.guests, visibility: false };
-    const { container, root } = renderProject(project);
+    const { container } = renderProject(project);
 
     const card = container.querySelector('[data-destination-card="北京市"]')!;
     expect(Number(card.querySelector("rect")?.getAttribute("width"))).toBe(width);
-
-    flushSync(() => root.unmount());
   });
 
   it("keeps preserved fields on one line instead of splitting them across rows", () => {
@@ -109,8 +120,6 @@ describe("PosterCanvas card sizing", () => {
       .filter((line) => line.textContent?.includes("一所名称特别特别长的大学"));
     expect(preservedUniversityRows).toHaveLength(1);
     expect(preservedUniversityRows[0]?.textContent).toContain("一所名称特别特别长的大学");
-
-    flushSync(() => preserved.root.unmount());
   });
 
   it("wraps a long card title instead of letting it overflow the header", () => {
@@ -128,13 +137,11 @@ describe("PosterCanvas card sizing", () => {
     project.cards = { ...project.cards, maxWidth: 250, horizontalPadding: 12 };
     project.textElements = [];
     project.guests = { ...project.guests, visibility: false };
-    const { container, root } = renderProject(project);
+    const { container } = renderProject(project);
 
     const card = container.querySelector("[data-destination-card]")!;
     expect(card.querySelectorAll("[data-card-title-line]").length).toBeGreaterThan(1);
     expect(card.textContent).toContain("自动换行展示");
-
-    flushSync(() => root.unmount());
   });
 
   it("adds independently configurable empty space below the final row", () => {
@@ -154,7 +161,6 @@ describe("PosterCanvas card sizing", () => {
     const second = renderProject(project);
     const roomyHeight = Number(second.container.querySelector("[data-destination-card] rect")?.getAttribute("height"));
     expect(roomyHeight - compactHeight).toBe(40);
-    flushSync(() => second.root.unmount());
   });
 
   it("wraps overflowing rows and grows the card to contain every line", () => {
@@ -172,14 +178,12 @@ describe("PosterCanvas card sizing", () => {
     project.cards = { ...project.cards, maxWidth: 180, horizontalPadding: 12 };
     project.textElements = [];
     project.guests = { ...project.guests, visibility: false };
-    const { container, root } = renderProject(project);
+    const { container } = renderProject(project);
 
     const card = container.querySelector("[data-destination-card]")!;
     expect(card.querySelectorAll("[data-card-row-line]").length).toBeGreaterThan(1);
     expect(Number(card.querySelector("rect")?.getAttribute("height"))).toBeGreaterThan(80);
     expect(card.textContent).toContain("自动换行展示");
     expect(card.querySelector("[data-card-row-line]")?.getAttribute("x")).toBe("12");
-
-    flushSync(() => root.unmount());
   });
 });

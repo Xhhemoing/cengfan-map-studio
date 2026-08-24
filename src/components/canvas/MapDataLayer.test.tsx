@@ -95,7 +95,6 @@ describe("MapDataLayer", () => {
 
     expect(container.querySelector('[data-province-id="beijing"]')?.getAttribute("fill")).toBe("#d9f0e5");
     expect(container.querySelector('[data-province-id="zhejiang"]')?.getAttribute("fill")).toBe("#237a62");
-
   });
 
   it("uses configured heat depths and colors while retaining manual province overrides", () => {
@@ -114,7 +113,6 @@ describe("MapDataLayer", () => {
 
     expect(container.querySelector('[data-province-id="beijing"]')?.getAttribute("fill")).toBe("#e56a54");
     expect(container.querySelector('[data-province-id="zhejiang"]')?.getAttribute("fill")).toBe("#174a7c");
-
   });
 
   it("applies a deterministic poster palette to active provinces and keeps manual overrides", () => {
@@ -130,14 +128,12 @@ describe("MapDataLayer", () => {
     expect(["#e95646", "#f3c847", "#efb8c6", "#3d8fc2", "#263b78"]).toContain(
       container.querySelector('[data-province-id="zhejiang"]')?.getAttribute("fill"),
     );
-
   });
 
   it("shows the canvas background through zero-count provinces when enabled", () => {
     const { container } = renderMap({ emptyProvinceFill: "transparent" });
 
     expect(container.querySelector('[data-province-id="sichuan"]')?.getAttribute("fill")).toBe("transparent");
-
   });
 
   it("uses a single centered clipped texture image instead of a tiling pattern fill", () => {
@@ -176,7 +172,6 @@ describe("MapDataLayer", () => {
     expect(Number(image?.getAttribute("y"))).toBeCloseTo(30);
     // only one image node for the province — no pattern tiling
     expect(container.querySelectorAll('[data-province-texture="zhejiang"]')).toHaveLength(1);
-
   });
 
   it("distinguishes province-stretched sizing from natural image aspect ratio", () => {
@@ -209,7 +204,6 @@ describe("MapDataLayer", () => {
 
     expect(container.querySelector('[data-province-texture="beijing"]')?.getAttribute("preserveAspectRatio")).toBe("none");
     expect(container.querySelector('[data-province-texture="zhejiang"]')?.getAttribute("preserveAspectRatio")).toBe("xMidYMid meet");
-
   });
 
   it("uses one explicit image box for every province when uniform texture size is enabled", () => {
@@ -246,7 +240,6 @@ describe("MapDataLayer", () => {
       expect(Number(image.getAttribute("height"))).toBeCloseTo(44);
       expect(image.getAttribute("data-texture-uniform")).toBe("true");
     }
-
   });
 
   it("separates nearby overflow textures inside the map bounds", () => {
@@ -310,7 +303,6 @@ describe("MapDataLayer", () => {
       }
     }
     expect(images.some((image) => image.getAttribute("data-texture-adjusted") === "true")).toBe(true);
-
   });
 
   it("renders multi-layer decorative province borders", () => {
@@ -324,7 +316,6 @@ describe("MapDataLayer", () => {
     expect(edges.length).toBeGreaterThanOrEqual(2);
     expect(container.querySelector('[data-edge-layer="underlay"]')).not.toBeNull();
     expect(container.querySelector('[data-edge-layer="stroke"]')).not.toBeNull();
-
   });
 
   it("injects glow filters for soft-glow borders", () => {
@@ -335,7 +326,6 @@ describe("MapDataLayer", () => {
 
     expect(container.querySelector('[data-edge-filter="soft-glow"]')).not.toBeNull();
     expect(container.querySelector('[data-edge-layer="underlay"]')?.getAttribute("filter")).toContain("map-edge-soft-glow");
-
   });
 
   it("renders overflow textures above solid fills so they are not covered by pure color", () => {
@@ -367,6 +357,5 @@ describe("MapDataLayer", () => {
     expect(nodes[0]?.getAttribute("data-province-id")).toBe("zhejiang");
     expect(nodes[nodes.length - 1]?.getAttribute("data-province-overflow")
       ?? nodes[nodes.length - 1]?.getAttribute("data-province-texture")).toBe("zhejiang");
-
   });
 });

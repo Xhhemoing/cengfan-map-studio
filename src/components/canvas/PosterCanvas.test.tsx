@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { PosterCanvas } from "./PosterCanvas";
 import { createProjectDocument } from "../../lib/project-document";
@@ -31,8 +31,27 @@ class CanvasFakeWorker {
 const globalWithWorker = globalThis as unknown as { Worker?: unknown };
 const originalWorker = globalWithWorker.Worker;
 
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
 describe("PosterCanvas", () => {
   afterEach(() => {
+    // An assertion throwing before an inline unmount would leave the canvas mounted
+    // for the rest of the run — 47 cases mount here — racing React's scheduler
+    // against jsdom teardown. Cases that remount mid-test keep their inline unmount;
+    // unmounting twice is a no-op.
+    flushSync(() => {
+      for (const { root, container } of mounted.splice(0)) {
+        root.unmount();
+        container.remove();
+      }
+    });
     globalWithWorker.Worker = originalWorker;
     cardLayoutCache.clear();
   });
@@ -40,37 +59,28 @@ describe("PosterCanvas", () => {
   it("keeps cards present in the initial browser-worker export state", () => {
     globalWithWorker.Worker = CanvasFakeWorker;
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
 
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelectorAll("[data-destination-card]")).toHaveLength(1);
     expect(container.textContent).toContain("可见");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders the project canvas dimensions and visible student data", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const svg = container.querySelector("svg");
     expect(svg?.getAttribute("viewBox")).toBe("0 0 1500 1000");
     expect(container.textContent).toContain("可见");
     expect(container.textContent).not.toContain("隐藏");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("orders the map and cards layers by zIndex (default: map below cards)", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const order = () => Array.from(
@@ -90,24 +100,17 @@ describe("PosterCanvas", () => {
     project.cards = { ...project.cards, zIndex: -50 };
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
     expect(order()).toEqual(["cards", "map"]);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("masks student names on cards with the configured name format", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, nameFormat: "{surname}xx" };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.textContent).toContain("可xx");
     expect(container.textContent).not.toContain("可见");
     expect(container.textContent).not.toContain("隐xx");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("applies the name format to the {names} placeholder of custom row expressions", () => {
@@ -117,16 +120,12 @@ describe("PosterCanvas", () => {
       nameFormat: "{surname}*{last}",
       expressionTemplates: { title: "{group}", city: "{city}", row: "{names}｜{university}" },
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.textContent).toContain("可*见");
     expect(container.textContent).not.toContain("可见");
     expect(container.textContent).toContain("｜北京大学");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders the matching province texture inside data cards when enabled", () => {
@@ -147,15 +146,11 @@ describe("PosterCanvas", () => {
         },
       },
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const texture = container.querySelector('[data-card-province-texture="北京市"]');
     expect(texture?.getAttribute("href")).toBe("data:image/png;base64,beijing");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("anchors destination cards to matching provinces without card collisions", () => {
@@ -168,8 +163,7 @@ describe("PosterCanvas", () => {
       templateId: "original",
       dataView: "province",
     });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const cards = Array.from(container.querySelectorAll<SVGGElement>("[data-destination-card]"));
@@ -187,9 +181,6 @@ describe("PosterCanvas", () => {
         expect(left.x < right.x + right.width && left.x + left.width > right.x && left.y < right.y + right.height && left.y + left.height > right.y).toBe(false);
       }
     }
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders international students in a destination card without a China map anchor or connector", () => {
@@ -205,8 +196,7 @@ describe("PosterCanvas", () => {
       templateId: "original",
       dataView: "province",
     });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelector('[data-destination-card="海外"]')).not.toBeNull();
@@ -214,9 +204,6 @@ describe("PosterCanvas", () => {
     expect(container.querySelector('[data-destination-anchor="海外"]')).toBeNull();
     expect(container.querySelector('[data-destination-connector="海外"]')).toBeNull();
     expect(container.querySelectorAll("[data-map-province-active]")).toHaveLength(0);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("keeps automatic cards clear of visible text and the guest panel", () => {
@@ -250,8 +237,7 @@ describe("PosterCanvas", () => {
         },
       },
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const overlaps = (
@@ -288,9 +274,6 @@ describe("PosterCanvas", () => {
 
     expect(cards.some((card) => textObstacles.some((obstacle) => overlaps(card, obstacle)))).toBe(false);
     expect(cards.some((card) => overlaps(card, guestObstacle))).toBe(false);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders every person even when a card has more than five rows", () => {
@@ -306,29 +289,21 @@ describe("PosterCanvas", () => {
       dataView: "university",
     });
     project.cards = { ...project.cards, grouping: "university", compactLayout: true };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     for (let index = 1; index <= 8; index += 1) expect(container.textContent).toContain(`同学${index}`);
     expect(container.textContent).not.toContain("另有");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("uses the configured card width instead of capping it to the space left of the map", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, maxWidth: 900 };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const card = container.querySelector('[data-destination-card="北京市"]')!;
     expect(Number(card.querySelector("rect")?.getAttribute("width"))).toBe(900);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("keeps a saved display-frame position fixed when the map geometry changes", () => {
@@ -338,8 +313,7 @@ describe("PosterCanvas", () => {
       ...base,
       map: { ...base.map, x: 920, y: 520, scale: 1.35 },
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
 
     flushSync(() => root.render(<PosterCanvas project={base} exportMode />));
     const before = container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform");
@@ -347,25 +321,18 @@ describe("PosterCanvas", () => {
 
     expect(before).toBe("translate(1110 700)");
     expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform")).toBe(before);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("reports the current automatic display-frame positions for an explicit refresh", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const onCardPositionsResolved = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { root } = trackedRoot();
 
     flushSync(() => root.render(<PosterCanvas project={project} exportMode onCardPositionsResolved={onCardPositionsResolved} />));
 
     expect(onCardPositionsResolved).toHaveBeenCalledWith(expect.objectContaining({
       北京市: expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
     }));
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("uses display-frame local coordinates without changing final card placement", () => {
@@ -374,8 +341,7 @@ describe("PosterCanvas", () => {
     frame.fixed.items = frame.fixed.items.map((item) => item.id === "name" ? { ...item, x: 88, y: 74 } : item);
     base.cards = { ...base.cards, positions: { 北京市: { x: 700, y: 260 } }, displayFrame: frame };
     const moved = { ...base, cards: { ...base.cards, displayFrame: { ...frame, fixed: { items: frame.fixed.items.map((item) => item.id === "name" ? { ...item, x: 132, y: 92 } : item) } } } };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
 
     flushSync(() => root.render(<PosterCanvas project={base} exportMode />));
     const firstCard = container.querySelector('[data-destination-card="北京市"]')!;
@@ -387,9 +353,6 @@ describe("PosterCanvas", () => {
     expect(secondCard.getAttribute("transform")).toBe(firstTransform);
     expect(secondCard.querySelector('[data-card-row-line]')?.getAttribute("y")).not.toBe(firstNameY);
     expect(secondCard.querySelector("rect")?.getAttribute("data-display-frame-mode")).toBe("fixed");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("uses flow block order, spacing, and line height in destination-card text layout", () => {
@@ -402,8 +365,7 @@ describe("PosterCanvas", () => {
         ? { ...block, order: 0, spacing: 4, lineHeight: 2, style: { color: "#456789", fontSize: 15 } }
         : block);
     project.cards = { ...project.cards, displayFrame: frame };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const card = container.querySelector('[data-destination-card="北京市"]')!;
@@ -413,9 +375,6 @@ describe("PosterCanvas", () => {
     expect(rowLines.some((line) => line.getAttribute("fill") === "#456789")).toBe(true);
     expect(rowLines.some((line) => line.getAttribute("font-size") === "15")).toBe(true);
     expect(Math.max(...rowLines.map((line) => Number(line.getAttribute("y"))))).toBeGreaterThan(60);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders display frame surface and custom local layers without moving the destination card", () => {
@@ -428,8 +387,7 @@ describe("PosterCanvas", () => {
       { id: "decoration-1", kind: "decoration", decoration: "line", x: 24, y: 86, width: 120, height: 1, zIndex: 19, style: { color: "#123456", strokeWidth: 2 } },
     ];
     project.cards = { ...project.cards, positions: { 北京市: { x: 700, y: 260 } }, displayFrame: frame };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const card = container.querySelector('[data-destination-card="北京市"]')!;
@@ -439,9 +397,6 @@ describe("PosterCanvas", () => {
     expect(card.querySelector('[data-display-frame-surface]')?.getAttribute("stroke-width")).toBe("3");
     expect(card.querySelector('[data-display-frame-text="text-1"]')?.textContent).toBe("毕业快乐");
     expect(card.querySelector('[data-display-frame-decoration="decoration-1"]')).not.toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("wraps overflowing card rows and grows the card to contain every line", () => {
@@ -457,8 +412,7 @@ describe("PosterCanvas", () => {
       dataView: "university",
     });
     project.cards = { ...project.cards, maxWidth: 180, horizontalPadding: 12 };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const card = container.querySelector("[data-destination-card]")!;
@@ -466,24 +420,17 @@ describe("PosterCanvas", () => {
     expect(wrappedLines.length).toBeGreaterThan(1);
     expect(Number(card.querySelector("rect")?.getAttribute("height"))).toBeGreaterThan(80);
     expect(card.textContent).toContain("自动换行展示");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("anchors a province connector to its projected administrative center", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const anchor = container.querySelector<SVGCircleElement>('[data-destination-anchor="北京市"]')!;
     expect(Number(anchor.getAttribute("cx"))).toBeCloseTo(889.58, 1);
     expect(Number(anchor.getAttribute("cy"))).toBeCloseTo(351.56, 1);
     expect(Math.abs(Number(anchor.getAttribute("cy")) - 347.26)).toBeGreaterThan(4);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("updates destination cards when the edited project records change", () => {
@@ -492,24 +439,19 @@ describe("PosterCanvas", () => {
       ...project,
       students: [{ id: "edited", name: "苏禾", university: "浙江大学", city: "杭州市", visibility: true }],
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
     expect(container.textContent).toContain("可见");
 
     flushSync(() => root.render(<PosterCanvas project={updated} exportMode />));
     expect(container.textContent).toContain("苏禾");
     expect(container.textContent).not.toContain("可见");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("reuses the layout result for cosmetic changes but invalidates geometry changes", () => {
     cardLayoutCache.clear();
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { root } = trackedRoot();
 
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
     expect(cardLayoutCache.size).toBe(1);
@@ -528,10 +470,6 @@ describe("PosterCanvas", () => {
     };
     flushSync(() => root.render(<PosterCanvas project={geometry} exportMode />));
     expect(cardLayoutCache.size).toBe(2);
-
-    flushSync(() => root.unmount());
-    container.remove();
-    cardLayoutCache.clear();
   });
 
   it("switches cards to the selected university data expression", () => {
@@ -543,16 +481,12 @@ describe("PosterCanvas", () => {
       templateId: "original",
       dataView: "university",
     });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelectorAll("[data-destination-card]")).toHaveLength(2);
     expect(container.textContent).toContain("北京大学 · 北京市");
     expect(container.textContent).toContain("清华大学 · 北京市");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders city subsections inside a province card and includes them in card height", () => {
@@ -564,17 +498,13 @@ describe("PosterCanvas", () => {
       templateId: "original",
       dataView: "province",
     });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const card = container.querySelector('[data-destination-card="浙江省"]')!;
     expect(card.querySelector('[data-city-section="杭州市"]')?.textContent).toContain("杭州市");
     expect(card.querySelector('[data-city-section="宁波市"]')?.textContent).toContain("宁波市");
     expect(Number(card.querySelector("rect")?.getAttribute("height"))).toBeGreaterThan(100);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("keeps every compact city subsection together with its people", () => {
@@ -587,8 +517,7 @@ describe("PosterCanvas", () => {
       dataView: "province",
     });
     project.cards = { ...project.cards, preset: "compact" };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const card = container.querySelector('[data-destination-card="浙江省"]')!;
@@ -598,9 +527,6 @@ describe("PosterCanvas", () => {
     expect(card.textContent).toContain("宁波市");
     expect(card.textContent).toContain("江潮");
     expect(card.textContent).not.toContain("另有");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders custom card expressions with group, city, university, and names", () => {
@@ -619,24 +545,19 @@ describe("PosterCanvas", () => {
         row: "{names} → {university}（{city}）",
       },
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const card = container.querySelector('[data-destination-card="浙江省"]')!;
     expect(card.textContent).toContain("去向：浙江省");
     expect(card.textContent).toContain("城市 / 杭州市");
     expect(card.textContent).toContain("苏禾 → 浙江大学（杭州市）");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders a distinct card treatment for each configured preset", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, preset: "ticket" };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const ticket = container.querySelector<SVGGElement>("[data-destination-card]")!;
@@ -657,15 +578,11 @@ describe("PosterCanvas", () => {
     expect(background.getAttribute("stroke")).toBe("none");
     expect(background.getAttribute("rx")).toBe("0");
     expect(borderless.querySelector("line")).toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("hides the per-card person count when showCount is off", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const shown = container.querySelector("[data-destination-card]")!.textContent ?? "";
@@ -676,16 +593,12 @@ describe("PosterCanvas", () => {
     const hidden = container.querySelector("[data-destination-card]")!.textContent ?? "";
     expect(hidden).not.toMatch(/\d+ 人/);
     expect(hidden).not.toContain("人");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("runs borderless connectors to the card center and hides them under transparent fills", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, preset: "borderless" };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const connector = container.querySelector<SVGPathElement>("[data-destination-connector]")!;
@@ -708,16 +621,12 @@ describe("PosterCanvas", () => {
     project.cards = { ...project.cards, preset: "standard", opacity: 0.5 };
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
     expect(container.querySelector("[data-destination-connector]")).not.toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("respects hidden visible fields in card rows and city headings", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, visibleFields: ["name", "city"] };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const card = container.querySelector("[data-destination-card]");
@@ -732,16 +641,12 @@ describe("PosterCanvas", () => {
     expect(hiddenCity.querySelector("[data-city-section]")).toBeNull();
     // Only the city heading is gone — the province name in the card title stays.
     expect(hiddenCity.textContent).toContain("可见");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("uses scene text properties and reports selection targets", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const onSelect = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} onSelect={onSelect} />));
 
     const title = container.querySelector('[data-text-id="text-title"]') as SVGGElement;
@@ -761,23 +666,16 @@ describe("PosterCanvas", () => {
     });
     flushSync(() => title.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 72, clientY: 126 })));
     expect(onSelect).toHaveBeenCalledWith({ type: "text", id: "text-title" });
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("uses the configured card background opacity and unified font size", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, opacity: 0.42, fontSize: 16 };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelector('[data-destination-card] rect')?.getAttribute("fill-opacity")).toBe("0.42");
     expect(container.querySelector('[data-destination-card] text')?.getAttribute("font-size")).toBe("16");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders independent typography styles for card fields and guest rows", () => {
@@ -796,24 +694,19 @@ describe("PosterCanvas", () => {
       peopleTypography: { fontSize: 14, color: "#556677" },
       people: [{ id: "guest-1", name: "张老师", visibility: true }],
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelector("[data-card-title-line]")?.getAttribute("font-size")).toBe("20");
     expect(container.querySelector("[data-card-title-line]")?.getAttribute("fill")).toBe("#112233");
     expect(container.querySelector("[data-guest-title]")?.getAttribute("font-size")).toBe("19");
     expect(container.querySelector("[data-guest-person=\"guest-1\"]")?.getAttribute("fill")).toBe("#556677");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("reports a dragged destination card position", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const onMoveCard = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} />));
 
     const card = container.querySelector<SVGGElement>("[data-destination-card]")!;
@@ -824,8 +717,6 @@ describe("PosterCanvas", () => {
     expect(onMoveCard).not.toHaveBeenCalled();
     flushSync(() => card.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 160, clientY: 150, pointerId: 1 })));
     expect(onMoveCard).toHaveBeenCalledTimes(1);
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("keeps an allowed manual card position inside the map", () => {
@@ -837,22 +728,17 @@ describe("PosterCanvas", () => {
     };
     project.textElements = [];
     project.guests = { ...project.guests, visibility: false };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform"))
       .toBe("translate(600 400)");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("limits destination-card drag previews to the configured render interval", () => {
     vi.useFakeTimers();
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} renderIntervalMs={100} onMoveCard={vi.fn()} />));
     const card = container.querySelector<SVGGElement>("[data-destination-card]")!;
     Object.assign(card, { setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() });
@@ -864,55 +750,41 @@ describe("PosterCanvas", () => {
     flushSync(() => vi.advanceTimersByTime(100));
     expect(card.getAttribute("transform")).not.toBe(initial);
 
-    flushSync(() => root.unmount());
-    container.remove();
     vi.useRealTimers();
   });
 
   it("renders the selected connector path style", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, connectorStyle: "straight" };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const connector = container.querySelector<SVGPathElement>("[data-destination-connector]")!;
     expect(connector.getAttribute("data-connector-style")).toBe("straight");
     expect(connector.getAttribute("d")).not.toContain("C");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders connector color width and dash settings from the card scene", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, connectorColor: "#123456", connectorWidth: 3, connectorDash: "dotted" };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const connector = container.querySelector<SVGPathElement>("[data-destination-connector]")!;
     expect(connector.getAttribute("stroke")).toBe("#123456");
     expect(connector.getAttribute("data-connector-dash")).toBe("dotted");
     expect(connector.getAttribute("stroke-dasharray")).toBeTruthy();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders province-style textures on connectors", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, connectorDash: "rail", connectorWidth: 2 };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const connector = container.querySelector<SVGPathElement>("[data-destination-connector]")!;
     expect(connector.getAttribute("data-connector-dash")).toBe("rail");
     expect(container.querySelector("[data-destination-connector-underlay]")).not.toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders the guest panel in the lower-left area", () => {
@@ -921,38 +793,29 @@ describe("PosterCanvas", () => {
       ...project.guests,
       people: [{ id: "g1", name: "李老师", title: "特邀嘉宾", visibility: true }],
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelector("[data-guests-layer]")).not.toBeNull();
     expect(container.querySelector("[data-guest-person=\"g1\"]")?.textContent).toContain("李老师");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("folds the south china sea inset when enabled", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.map = { ...project.map, collapseSouthChinaSea: true };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelector("[data-map-layer]")?.getAttribute("data-collapse-south-sea")).toBe("true");
     expect(container.querySelector("[data-south-sea-inset]")).not.toBeNull();
     expect(container.querySelector("[data-south-sea-label]")?.textContent).toContain("南海诸岛");
     expect(container.querySelector('[data-province-label="460000"]')?.textContent).toContain("海南");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("reports canvas, map, and card selections without rendering editor overlays for export", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const onSelect = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} onSelect={onSelect} />));
 
     const svg = container.querySelector("svg")!;
@@ -968,15 +831,11 @@ describe("PosterCanvas", () => {
     flushSync(() => root.render(<PosterCanvas project={project} exportMode onSelect={onSelect} />));
     expect(container.querySelector("[data-map-selection-overlay]")).toBeNull();
     expect(container.querySelector("[data-selection-overlay]")).toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders an editor-only grid overlay that is omitted in export mode", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} showGrid gridSize={25} />));
 
     const grid = container.querySelector("[data-editor-grid]");
@@ -985,9 +844,6 @@ describe("PosterCanvas", () => {
 
     flushSync(() => root.render(<PosterCanvas project={project} showGrid gridSize={25} exportMode />));
     expect(container.querySelector("[data-editor-grid]")).toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("applies different fonts to card title and field parts", () => {
@@ -1005,8 +861,7 @@ describe("PosterCanvas", () => {
         city: "font-system-rounded",
       },
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const card = container.querySelector("[data-destination-card]")!;
@@ -1016,9 +871,6 @@ describe("PosterCanvas", () => {
     expect(rowTspans.length).toBeGreaterThanOrEqual(2);
     expect(rowTspans.some((node) => (node.getAttribute("font-family") || "").includes("Consolas"))).toBe(true);
     expect(rowTspans.some((node) => (node.getAttribute("font-family") || "").includes("Songti SC"))).toBe(true);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders guest title and per-person font overrides", () => {
@@ -1035,13 +887,11 @@ describe("PosterCanvas", () => {
         fontId: "font-system-kaiti",
       }],
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelector("[data-guest-title]")?.getAttribute("font-family")).toContain("Songti SC");
     expect(container.querySelector('[data-guest-person="guest-1"]')?.getAttribute("font-family")).toContain("KaiTi");
-    flushSync(() => root.unmount());
   });
 
   it("renders per-guest custom note text and avatar image in list mode", () => {
@@ -1053,8 +903,7 @@ describe("PosterCanvas", () => {
         { id: "g2", name: "王老师", visibility: true },
       ],
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelector('[data-guest-person="g1"]')?.textContent).toContain("李老师 · 班主任");
@@ -1066,9 +915,6 @@ describe("PosterCanvas", () => {
     // second person without avatar keeps a placeholder circle so rows stay aligned
     expect(container.querySelector('[data-guest-avatar="g2"] circle')).not.toBeNull();
     expect(container.querySelector('[data-guest-note="g2"]')).toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders the guest panel in avatar-card mode as a grid", () => {
@@ -1081,8 +927,7 @@ describe("PosterCanvas", () => {
         { id: "g2", name: "王老师", avatarSrc: "data:image/png;base64,BBB", visibility: true },
       ],
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const first = container.querySelector('[data-guest-card="g1"]');
@@ -1099,9 +944,6 @@ describe("PosterCanvas", () => {
     // name centered inside the card, note rendered on the card
     expect(container.querySelector('[data-guest-person="g1"]')?.textContent).toBe("李老师");
     expect(container.querySelector('[data-guest-note="g1"]')?.textContent).toBe("桃李满天下");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("renders the panel free-form custom text above the people list", () => {
@@ -1111,8 +953,7 @@ describe("PosterCanvas", () => {
       customText: "感谢老师三年的陪伴\n愿大家前程似锦",
       people: [{ id: "g1", name: "李老师", visibility: true }],
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     const lines = container.querySelectorAll("[data-guest-custom-text]");
@@ -1128,22 +969,15 @@ describe("PosterCanvas", () => {
     const firstLineY = Number(lines[0]?.getAttribute("y"));
     const fontSize = Number(lines[0]?.getAttribute("font-size"));
     expect(firstLineY - fontSize).toBeGreaterThanOrEqual(titleY + 8 + 10);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("hides the empty-list hint when custom text fills the panel", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     project.guests = { ...project.guests, customText: "仅自定义文本", people: [] };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(container.querySelectorAll("[data-guest-custom-text]").length).toBe(1);
     expect(container.textContent).not.toContain("在右侧添加老师");
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 });
