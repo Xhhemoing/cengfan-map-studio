@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
 import { Palette, Users } from "lucide-react";
-import { ActionButton, PanelHeader, PanelSection, SegmentedNav, ToolbarGroup, WorkspaceNav } from "./StudioUi";
+import { ActionButton, CompactButton, IconButton, PanelHeader, PanelSection, SegmentedNav, ToolbarGroup, WorkspaceNav } from "./StudioUi";
 
 describe("StudioUi primitives", () => {
   it("renders reusable editor chrome with stable classes and accessible labels", () => {
@@ -47,6 +47,27 @@ describe("StudioUi primitives", () => {
     const action = container.querySelector<HTMLButtonElement>(".wide-button")!;
     flushSync(() => action.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onClick).toHaveBeenCalledOnce();
+
+    flushSync(() => root.unmount());
+  });
+
+  it("keeps icon slots decorative even when a call site omits aria-hidden", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(
+      <>
+        <IconButton label="重置画布" icon={<Palette size={15} />} onClick={vi.fn()} />
+        <CompactButton icon={<Users size={14} />} onClick={vi.fn()}>添加老师</CompactButton>
+      </>,
+    ));
+
+    // The button name comes from label/text; the raw icon element must be
+    // hidden centrally so no icon button ever exposes an unnamed graphic.
+    expect(container.querySelector(".icon-button svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(container.querySelector(".compact-button svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(container.querySelector(".icon-button")?.getAttribute("aria-label")).toBe("重置画布");
+    expect(container.querySelector(".compact-button")?.textContent).toContain("添加老师");
 
     flushSync(() => root.unmount());
   });

@@ -1,5 +1,5 @@
 import { Bot, MapPinned, Redo2, Undo2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   loadInitialProject,
   loadBrowserValue,
@@ -7,7 +7,6 @@ import {
 } from "./lib/app-initialization";
 import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
 import {
-  COLLABORATION_SEND_DELAY_MS,
   provinceNames,
   dataViews,
   type ActivePanel,
@@ -35,7 +34,7 @@ import {
   type WorkflowStageId,
 } from "./lib/workflow-stages";
 import { deriveStageOverviewModel, type StageOverviewAction } from "./lib/stage-overview";
-import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
+import { LEGACY_EDITOR_STORAGE_KEY } from "./lib/workspace-session";
 import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { SkinSelector } from "./components/SkinSelector";
@@ -49,10 +48,6 @@ import {
   type ProjectDocument,
   type ProjectTransaction,
 } from "./lib/project-document";
-import {
-  removeUserAsset,
-  removeUserFont,
-} from "./lib/catalog-usage";
 
 import { createSystemTemplate } from "./lib/template-document";
 import {
@@ -60,46 +55,21 @@ import {
   type CustomTemplateRecord,
 } from "./lib/template-store";
 import { createDecorationElement } from "./lib/asset-elements";
-import { createDefaultScene, type SceneSelection } from "./lib/scene-document";
-
-import { createProvinceThemeTransaction, createSceneTransaction } from "./lib/inspector-operations";
-import {
-  buildFontFaceCss,
-  ensureUserFontsLoaded,
-  type UserFont,
-} from "./lib/fonts";
-import {
-  type StudioAsset,
-  type UserAsset,
-} from "./lib/assets";
-import {
-  createResourcePack,
-  downloadResourcePack,
-  mergeResourcePack,
-  parseResourcePack,
-} from "./lib/resource-pack";
-import {
-  restoreProjectPackage,
-  type ProjectPackage,
-} from "./lib/project-package";
+import type { SceneSelection } from "./lib/scene-document";
+import { type StudioAsset } from "./lib/assets";
 import { usePosterExport } from "./lib/usePosterExport";
-import { applyTypographyFont, type TypographyTarget } from "./lib/typography";
-import type { ImageThemeResult } from "./lib/image-color";
 import { listResourceHealthIssues } from "./lib/resource-health";
 
 import { DEFAULT_GRID_SIZE } from "./lib/grid";
 import { renderIntervalMs } from "./lib/render-settings";
-import {
-  CollaborationClientError,
-  submitRoomOperations,
-} from "./lib/collaboration-client";
-import { applyCollaborationOperations, diffCollaborationDocument } from "./lib/collaboration-operations";
-import { useCollaborationRoom } from "./lib/useCollaborationRoom";
+import { useCollaborationSync } from "./hooks/use-collaboration-sync";
+import { useResourceLibrary } from "./hooks/use-resource-library";
+import { useSceneActions } from "./hooks/use-scene-actions";
 import { useStudioChrome } from "./hooks/use-studio-chrome";
+import { useUndoRedoShortcuts } from "./hooks/use-undo-redo-shortcuts";
 import { useWorkspacePersistence } from "./hooks/use-workspace-persistence";
+import { useWorkspaceSessionAutosave, useWorkspaceSessionState } from "./hooks/use-workspace-session";
 import {
-  buildAssetUsageMap,
-  buildCollaborationPackage,
   buildCustomTemplateDraft,
   createAppendStudentsTransaction,
   createApplySystemTemplateTransaction,
@@ -109,10 +79,10 @@ import {
   createStudentUpdateTransaction,
   createStudentVisibilityToggleTransaction,
   createStudentsVisibilityTransaction,
-  freezeCardPositions,
+  deriveSessionSelection,
+  describeProjectHistory,
   listContentLayoutIssues,
   resolveLayoutIssueSelection,
-  snapCanvasPoint,
   type StudentEditPatch,
 } from "./lib/studio-editor-helpers";
 import type { StageSlotsContext } from "./components/studio-editor/stage-slots";
@@ -142,27 +112,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
     handleBackToWorkbench,
   } = useWorkspacePersistence({ projectId });
   const [agentPreview, setAgentPreview] = useState<ProjectDocument | null>(null);
-  const [workspaceSession] = useState(() => typeof window === "undefined"
-    ? loadWorkspaceSession(null)
-    : loadBrowserValue(() => loadWorkspaceSession(window.localStorage), loadWorkspaceSession(null)));
-  const [selection, setSelection] = useState<SceneSelection>(() => {
-    if (workspaceSession.selectedProvince) return { type: "province", province: workspaceSession.selectedProvince };
-    if (workspaceSession.selectedObject === "cards") return { type: "cards" };
-    if (workspaceSession.selectedObject === "guests") return { type: "guests" };
-    if (workspaceSession.selectedObject) return { type: "asset", id: workspaceSession.selectedObject };
-    return { type: "text", id: "text-note" };
-  });
+  const workspaceSession = useWorkspaceSessionState();
+  const [selection, setSelection] = useState<SceneSelection>(() => deriveSessionSelection(workspaceSession));
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [showGrid] = useState(false);
   const [gridSize] = useState(DEFAULT_GRID_SIZE);
-  const [collaborationClientId] = useState(() => createId("collab-client"));
-
-  const collaborationBaselineRef = useRef<ProjectPackage | null>(null);
-  const collaborationVersionRef = useRef(0);
-  const collaborationRoomRef = useRef<string | null>(null);
-  const collaborationAccessTokenRef = useRef<string | null>(null);
-  const suppressCollaborationSendRef = useRef(false);
-  const backfillInFlightRef = useRef(false);
 
   const posterRef = useRef<SVGSVGElement>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel>(() => WORKFLOW_STAGE_TO_LEGACY_PANEL[workspaceSession.stage] ?? "roster");
@@ -179,21 +133,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const resolvedRenderInterval = renderIntervalMs(renderSettings);
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const storage = loadBrowserValue(() => window.localStorage, null);
-    if (!storage) return;
-    const selectedProvince = selection.type === "province" ? selection.province : undefined;
-    const selectedObject = selection.type === "asset" ? selection.id : selection.type === "cards" || selection.type === "guests" ? selection.type : undefined;
-    const { selectedProvince: _savedProvince, selectedObject: _savedObject, ...sessionBase } = workspaceSession;
-    saveWorkspaceSession(storage, {
-      ...sessionBase,
-      stage: activeStage,
-      ...(selectedProvince ? { selectedProvince } : {}),
-      ...(selectedObject ? { selectedObject } : {}),
-      savedAt: new Date().toISOString(),
-    });
-  }, [activeStage, selection, workspaceSession]);
+  useWorkspaceSessionAutosave(workspaceSession, activeStage, selection);
   const dataHealth = useMemo(() => buildDataHealthSummary(project), [project]);
   const dataIssues = useMemo(() => listDataIssues(project), [project]);
   const resourceHealthIssues = useMemo(
@@ -209,97 +149,22 @@ function StudioApp({ projectId }: { projectId?: string }) {
     [resourceHealthIssues],
   );
 
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const styleId = "cengfan-user-fonts";
-    let style = document.getElementById(styleId) as HTMLStyleElement | null;
-    if (!style) {
-      style = document.createElement("style");
-      style.id = styleId;
-      document.head.appendChild(style);
-    }
-    style.textContent = buildFontFaceCss(userFonts);
-  }, [userFonts]);
-
-  useEffect(() => {
-    void ensureUserFontsLoaded(userFonts);
-  }, [userFonts]);
-
   const renderProject = agentPreview ?? project;
 
   const template = renderProject.templateId;
   const dataView = renderProject.dataView;
   const summary = buildProvinceSummary(renderProject.students);
 
-  const currentCollaborationPackage = (exportedAt = new Date().toISOString()): ProjectPackage =>
-    buildCollaborationPackage(latestWorkspaceRef.current, exportedAt);
-
-  const applySharedPackage = (pack: ProjectPackage, _version: number): ProjectPackage => {
-    const restored = restoreProjectPackage(pack);
-    setProject((current) => ({ ...restored.project, history: current.history, version: current.version + 1 }));
-    setUserAssets(restored.assets);
-    setUserFonts(restored.fonts);
-    setCustomTemplates(restored.customTemplates);
-    setRenderSettings(restored.renderSettings);
-    workspaceSync.markPending();
-    return restored;
-  };
-
-  const collaboration = useCollaborationRoom({
-    clientId: collaborationClientId,
-    currentPackage: currentCollaborationPackage,
-    applyPackage: applySharedPackage,
-    baselineRef: collaborationBaselineRef,
-    versionRef: collaborationVersionRef,
-    roomRef: collaborationRoomRef,
-    accessTokenRef: collaborationAccessTokenRef,
-    suppressSendRef: suppressCollaborationSendRef,
-    backfillInFlightRef,
+  const collaboration = useCollaborationSync({
+    latestWorkspaceRef,
+    workspace: { project, assets: userAssets, fonts: userFonts, customTemplates, renderSettings },
+    setProject,
+    setUserAssets,
+    setUserFonts,
+    setCustomTemplates,
+    setRenderSettings,
+    markWorkspacePending: () => workspaceSync.markPending(),
   });
-
-  useEffect(() => {
-    const { roomId, roomAccessToken, roomRole, roomReadonly, roomClosed } = collaboration;
-    if (!roomId || !roomAccessToken || roomRole === "viewer" || roomReadonly || roomClosed || !collaborationBaselineRef.current) return;
-    if (suppressCollaborationSendRef.current) {
-      suppressCollaborationSendRef.current = false;
-      return;
-    }
-    const timer = window.setTimeout(async () => {
-      const baseline = collaborationBaselineRef.current;
-      if (!baseline || collaborationRoomRef.current !== roomId) return;
-      const current = buildCollaborationPackage(latestWorkspaceRef.current, baseline.exportedAt);
-      const operations = diffCollaborationDocument(baseline, current);
-      if (operations.length === 0) return;
-      const txId = createId("collab-op");
-      collaboration.setCollaborationStatus("syncing");
-      collaboration.setCollaborationMessage(`正在同步 ${operations.length} 项增量修改`);
-      try {
-        const acknowledged = await submitRoomOperations<ProjectPackage>(roomId, roomAccessToken, {
-          txId,
-          clientId: collaborationClientId,
-          baseVersion: collaborationVersionRef.current,
-          operations,
-        });
-        collaborationBaselineRef.current = applyCollaborationOperations(baseline, operations);
-        collaborationVersionRef.current = acknowledged.version;
-        collaboration.setRoomVersion(acknowledged.version);
-        collaboration.setCollaborationStatus("connected");
-        collaboration.setCollaborationMessage(acknowledged.rebasedFromVersion === undefined ? "增量同步已完成" : "已自动合并互不冲突的并发修改");
-      } catch (error) {
-        if (error instanceof CollaborationClientError && error.code === "VERSION_CONFLICT") {
-          collaboration.setCollaborationStatus("conflict");
-          collaboration.setCollaborationMessage("同一内容被其他成员修改；已暂停上传，请重新加入房间确认最新版本");
-        } else {
-          collaboration.setCollaborationStatus("error");
-          collaboration.setCollaborationMessage(error instanceof Error ? error.message : "增量同步失败");
-        }
-      }
-    }, COLLABORATION_SEND_DELAY_MS);
-    return () => window.clearTimeout(timer);
-    // Depend on the individual room fields rather than the whole controller
-    // object so the debounce only re-arms when the room or workspace changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collaborationClientId, customTemplates, project, renderSettings, collaboration.roomAccessToken, collaboration.roomId, collaboration.roomRole, collaboration.roomReadonly, collaboration.roomClosed, userAssets, userFonts]);
 
   const commitProject = (next: ProjectDocument) => {
     if (!collaboration.canEdit) {
@@ -341,14 +206,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     reportStatus: setStatusMessage,
   });
 
-  const canUndo = project.history.past.length > 0;
-  const canRedo = project.history.future.length > 0;
-  const undoLabel = canUndo
-    ? `撤销：${project.history.past[project.history.past.length - 1]?.label ?? "上一步"}`
-    : "暂无可撤销操作";
-  const redoLabel = canRedo
-    ? `重做：${project.history.future[0]?.label ?? "下一步"}`
-    : "暂无可重做操作";
+  const { canUndo, canRedo, undoLabel, redoLabel } = describeProjectHistory(project.history);
 
   const handleUndo = () => {
     if (!canUndo) return;
@@ -360,173 +218,34 @@ function StudioApp({ projectId }: { projectId?: string }) {
     commitProject(redoTransaction(project));
   };
 
-  const maybeSnap = (x: number, y: number) => snapCanvasPoint(x, y, showGrid, gridSize);
+  useUndoRedoShortcuts(handleUndo, handleRedo);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
-        return;
-      }
-      const key = event.key.toLowerCase();
-      const mod = event.metaKey || event.ctrlKey;
-      if (!mod) return;
-      if (key === "z" && !event.shiftKey) {
-        event.preventDefault();
-        handleUndo();
-        return;
-      }
-      if ((key === "z" && event.shiftKey) || key === "y") {
-        event.preventDefault();
-        handleRedo();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  });
+  const {
+    captureCardPositions,
+    refreshDisplayFramePositions,
+    patchScene,
+    applyFont,
+    resetSceneTarget,
+    applyProvinceThemes,
+    moveProvinceTexture,
+    resizeMapImage,
+    moveTextElement,
+    moveAssetElement,
+    resizeAssetElement,
+    moveCardPosition,
+    moveGuestsPanel,
+  } = useSceneActions({ project, showGrid, gridSize, commitProject, commitProjectTransaction, setStatusMessage });
 
-  const resolvedCardPositionsRef = useRef<Record<string, { x: number; y: number }> | null>(null);
-  const captureCardPositions = (positions: Record<string, { x: number; y: number }>) => {
-    resolvedCardPositionsRef.current = positions;
-  };
-  const freezeCardPositionsForMapChange = (current: ProjectDocument) =>
-    freezeCardPositions(current, resolvedCardPositionsRef.current);
-  const refreshDisplayFramePositions = () => {
-    if (typeof window !== "undefined" && Object.keys(project.cards.positions ?? {}).length > 0
-      && !window.confirm("刷新展示框位置会重新按当前地图计算数据框位置，是否继续？")) return;
-    resolvedCardPositionsRef.current = null;
-    commitProjectTransaction({
-      id: createId("tx-display-frame-position-refresh"),
-      label: "刷新展示框位置",
-      source: "manual",
-      apply: (current) => ({ ...current, cards: { ...current.cards, positions: {} } }),
-    });
-    setStatusMessage("已刷新展示框位置");
-  };
-  const patchScene = (target: SceneSelection, patch: Record<string, unknown>) => {
-    if (target.type !== "map" && target.type !== "province") {
-      commitProjectTransaction(createSceneTransaction(target, patch));
-      return;
-    }
-    const transaction = createSceneTransaction(target, patch);
-    commitProjectTransaction({
-      ...transaction,
-      apply: (current) => {
-        const next = transaction.apply(current);
-        return { ...next, cards: freezeCardPositionsForMapChange(current) };
-      },
-    });
-  };
-
-  const applyFont = (target: TypographyTarget, fontId: string, applyToAll: boolean) => {
-    commitProjectTransaction({
-      id: createId("tx-typography"),
-      label: applyToAll ? "应用字体到全部同类文本" : "修改字体",
-      source: "manual",
-      apply: (current) => applyTypographyFont(current, target, fontId, applyToAll),
-    });
-  };
-
-  const resetSceneTarget = (target: Extract<SceneSelection, { type: "canvas" | "map" | "cards" }>) => {
-    const defaults = createDefaultScene(project.templateId);
-    const patch = target.type === "canvas"
-      ? defaults.canvas
-      : target.type === "map"
-        ? defaults.map
-        : defaults.cards;
-    patchScene(target, { ...patch } as Record<string, unknown>);
-  };
-
-  const addUserAsset = (asset: UserAsset) => {
-    if (!asset?.src) {
-      setStatusMessage("素材内容为空，未保存");
-      return;
-    }
-    setUserAssets((current) => {
-      if (current.some((item) => item.id === asset.id || item.src === asset.src && item.kind === asset.kind && JSON.stringify(item.provinceIds) === JSON.stringify(asset.provinceIds))) {
-        setStatusMessage(`素材库已有相同素材：${asset.label}`);
-        return current;
-      }
-      const next = [...current, asset];
-      setStatusMessage(`已加入素材库：${asset.label}`);
-      return next;
-    });
-  };
-
-  const replaceUserAsset = (assetId: string, replacement: UserAsset) => {
-    setUserAssets((current) => current.map((asset) => asset.id === assetId ? replacement : asset));
-    commitProject(
-      applyTransaction(project, {
-        id: createId(`tx-asset-replace-${assetId}`),
-        label: `更新素材：${replacement.label}`,
-        source: "manual",
-        apply: (current) => ({
-          ...current,
-          assetElements: current.assetElements.map((element) =>
-            element.assetId === assetId ? { ...element, src: replacement.src, label: replacement.label } : element,
-          ),
-        }),
-      }),
-    );
-    setStatusMessage(`已更新素材：${replacement.label}`);
-  };
-
-  const deleteUserAsset = (assetId: string) => {
-    const asset = userAssets.find((item) => item.id === assetId);
-    setUserAssets((current) => {
-      const next = removeUserAsset(current, assetId);
-      return next;
-    });
-    setStatusMessage(asset ? `已从素材库删除：${asset.label}` : "已从素材库删除素材");
-  };
-
-  const deleteUserFont = (fontId: string) => {
-    const font = userFonts.find((item) => item.id === fontId);
-    setUserFonts((current) => {
-      const next = removeUserFont(current, fontId);
-      return next;
-    });
-    setStatusMessage(font ? `已删除字体：${font.label}` : "已删除字体");
-  };
-
-  const uploadUserFont = (font: UserFont) => {
-    setUserFonts((current) => [...current, font]);
-    setStatusMessage(`已上传字体：${font.label}`);
-  };
-
-  const assetUsageById = useMemo(() => buildAssetUsageMap(project, userAssets), [project, userAssets]);
-
-  const exportResourcePack = () => {
-    if (userAssets.length === 0 && userFonts.length === 0) {
-      setStatusMessage("本地素材库为空，请先上传图片或字体");
-      return;
-    }
-    const pack = createResourcePack({ assets: userAssets, fonts: userFonts });
-    downloadResourcePack(pack);
-    setStatusMessage(`已导出资源包：${userAssets.length} 个素材，${userFonts.length} 个字体`);
-  };
-
-  const importResourcePack = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const { pack, assetCount, fontCount } = parseResourcePack(String(reader.result || ""));
-        const merged = mergeResourcePack({
-          existingAssets: userAssets,
-          existingFonts: userFonts,
-          incoming: pack,
-        });
-        setUserAssets(merged.assets);
-        setUserFonts(merged.fonts);
-        setStatusMessage(`资源包已导入：新增 ${merged.addedAssets}/${assetCount} 素材，${merged.addedFonts}/${fontCount} 字体`);
-      } catch (error) {
-        setStatusMessage(error instanceof Error ? error.message : "资源包导入失败");
-      }
-    };
-    reader.readAsText(file);
-  };
-
+  const {
+    assetUsageById,
+    addUserAsset,
+    replaceUserAsset,
+    deleteUserAsset,
+    deleteUserFont,
+    uploadUserFont,
+    exportResourcePack,
+    importResourcePack,
+  } = useResourceLibrary({ project, userAssets, setUserAssets, userFonts, setUserFonts, commitProject, setStatusMessage });
 
   const handleSceneSelect = (next: SceneSelection) => {
     setSelection(next);
@@ -685,63 +404,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     }));
   };
 
-  const applyProvinceThemes = (themes: Record<string, ImageThemeResult>) => {
-    const entries = Object.entries(themes);
-    if (entries.length === 0) return;
-    const transaction = createProvinceThemeTransaction(themes);
-    commitProjectTransaction({
-      ...transaction,
-      apply: (current) => ({ ...transaction.apply(current), cards: freezeCardPositionsForMapChange(current) }),
-    });
-    setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
-  };
-
-  const moveProvinceTexture = (province: string, offsetX: number, offsetY: number) => {
-    const appearance = project.map.provinceStyles?.[province]?.appearance;
-    if (!appearance || appearance.kind === "manual-color") return;
-    patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
-  };
-
-  const resizeMapImage = (alignment: { x: number; y: number; width: number; height: number; rotation: number }) => {
-    const source = project.map.renderSource;
-    if (source?.kind !== "image" || !source.alignment) return;
-    patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
-  };
-
-  const moveTextElement = (id: string, x: number, y: number) => {
-    const point = maybeSnap(x, y);
-    commitProject(applyTransaction(project, createSceneTransaction({ type: "text", id }, point)));
-  };
-
-  const moveAssetElement = (id: string, x: number, y: number) => {
-    const point = maybeSnap(x, y);
-    const current = project.assetElements.find((asset) => asset.id === id);
-    if (!current || (current.x === point.x && current.y === point.y)) return;
-    commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, point)));
-  };
-
-  const resizeAssetElement = (id: string, x: number, y: number, width: number, height: number) => {
-    const point = maybeSnap(x, y);
-    const current = project.assetElements.find((asset) => asset.id === id);
-    if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
-    commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height })));
-  };
-
-  const moveCardPosition = (id: string, x: number, y: number) => {
-    const point = maybeSnap(x, y);
-    commitProject(applyTransaction(project, {
-      id: createId(`tx-card-position-${id}`),
-      label: "调整数据框位置",
-      source: "manual",
-      apply: (current) => ({ ...current, cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } } }),
-    }));
-  };
-
-  const moveGuestsPanel = (x: number, y: number) => {
-    const point = maybeSnap(x, y);
-    commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, point)));
-  };
-
   const mapStyleAssetPanelProps: StageSlotsContext["assetPanelProps"] = {
     instances: project.assetElements
       .filter((element) => element.kind !== "province-texture")
@@ -802,7 +464,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       inviteTokenInput={collaboration.inviteTokenInput}
       roomRole={collaboration.roomRole}
       members={collaboration.roomMembers}
-      ownClientId={collaborationClientId}
+      ownClientId={collaboration.clientId}
       roomReadonly={collaboration.roomReadonly}
       roomClosed={collaboration.roomClosed}
       invitationToken={collaboration.invitationToken}

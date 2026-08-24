@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, Maximize2, RotateCcw } from "lucide-react";
-import { useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createId } from "../../lib/ids";
 import { autoFitAlignment } from "../../lib/map-alignment";
 import type { MapImageAlignment, MapSettings, MapRenderSource } from "../../lib/scene-document";
@@ -68,6 +68,35 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
   const provinceNames = getProvinceNames();
   const [selectedProvince, setSelectedProvince] = useState("");
   const [isEdgeStylePickerOpen, setIsEdgeStylePickerOpen] = useState(false);
+  const edgeStyleTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const edgeStyleDialRef = useRef<HTMLDivElement | null>(null);
+
+  const closeEdgeStylePicker = () => {
+    // Return focus to the trigger so keyboard users are not dropped when the
+    // dial's options unmount.
+    setIsEdgeStylePickerOpen(false);
+    edgeStyleTriggerRef.current?.focus();
+  };
+
+  const handleEdgeStyleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!isEdgeStylePickerOpen) return;
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      closeEdgeStylePicker();
+      return;
+    }
+    if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const options = Array.from(edgeStyleDialRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    if (options.length === 0) return;
+    event.preventDefault();
+    const current = options.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "Home" ? 0
+      : event.key === "End" ? options.length - 1
+      : event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? (current < 0 ? 0 : (current + 1) % options.length)
+        : (current <= 0 ? options.length - 1 : current - 1);
+    options[next]?.focus();
+  };
   const heatScale = normalizeHeatScale(map.heatScale);
   const heatPreview = heatPreviewSteps(heatScale);
   const patchHeatScale = (patch: Partial<typeof heatScale>) => {
@@ -316,10 +345,11 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
         </label>
         <div className="map-edge-styles" aria-label="省界线纹理">
         <div className="asset-section__heading"><strong>省界线纹理</strong><small>{selectedEdge.description}</small></div>
-        <div className="map-edge-style-control map-edge-style-control--style">
+        <div className="map-edge-style-control map-edge-style-control--style" onKeyDown={handleEdgeStyleKeyDown}>
           <span className="map-edge-style-control__label">边界风格</span>
           <div className="map-edge-style-control__value">
             <button
+              ref={edgeStyleTriggerRef}
               type="button"
               className="map-edge-style-trigger"
               aria-label="打开边界风格选择器"
@@ -332,7 +362,7 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
             </button>
             <span className="map-edge-style-control__name">{selectedEdge.label}</span>
           </div>
-          {isEdgeStylePickerOpen && <div id="map-edge-style-dial" className="map-edge-style-dial" role="listbox" aria-label="边界风格圆盘">
+          {isEdgeStylePickerOpen && <div ref={edgeStyleDialRef} id="map-edge-style-dial" className="map-edge-style-dial" role="listbox" aria-label="边界风格圆盘">
             {EDGE_STYLE_OPTIONS.map((option, index) => (
               <button
                 key={option.id}
@@ -346,7 +376,7 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
                 title={option.description}
                 onClick={() => {
                   onPatch({ edgeStyle: option.id });
-                  setIsEdgeStylePickerOpen(false);
+                  closeEdgeStylePicker();
                 }}
               >
                 <EdgeStylePreview style={option.id} className="map-edge-style-dial__preview" />

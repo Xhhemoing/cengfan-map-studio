@@ -23,6 +23,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+export function positiveByteLimit(value: number | undefined, fallback: number): number {
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : fallback;
+}
+
 export function requestIdFor(request: http.IncomingMessage): string {
   const header = request.headers["x-request-id"];
   return typeof header === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(header)
@@ -96,7 +100,8 @@ export async function readJson(request: http.IncomingMessage, maxBytes: number):
   }
   if (chunks.length === 0) return {};
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+    return JSON.parse(text) as unknown;
   } catch {
     throw new InvalidJsonError();
   }

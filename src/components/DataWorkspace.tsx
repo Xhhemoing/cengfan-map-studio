@@ -1,5 +1,6 @@
-import { Eye, EyeOff, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Eye, EyeOff, FilterX, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   confirmImportCandidates,
   createEmptyStudentDraft,
@@ -10,6 +11,7 @@ import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
 import { ActionGroup, CompactButton, PanelHeader, SegmentedControl } from "./StudioUi";
 import { DataWorkspaceDraftForm } from "./data-workspace-draft-form";
+import { focusStudentRow } from "./data-workspace-fields";
 import { DataWorkspaceImportPanel } from "./data-workspace-import-panel";
 import { useRosterImport } from "./data-workspace-import-state";
 import { DataWorkspaceStudentTable } from "./data-workspace-student-table";
@@ -66,6 +68,7 @@ export function DataWorkspace({
   const [message, setMessage] = useState("");
   const [showImport, setShowImport] = useState(!compactRosterControls);
   const [showNewStudent, setShowNewStudent] = useState(!compactRosterControls);
+  const rosterRef = useRef<HTMLDivElement>(null);
 
   const roster = useRosterImport({
     students,
@@ -94,6 +97,23 @@ export function DataWorkspace({
     () => filteredStudents.filter((student) => student.visibility !== false).length,
     [filteredStudents],
   );
+
+  /**
+   * The record a 定位 action selected exists, but the roster filter is keeping
+   * its row out of the table. Saying so beats a 定位 button that looks broken.
+   */
+  const selectionHiddenByFilter = useMemo(() => {
+    if (!selectedStudentId || !filter.trim()) return null;
+    if (filteredStudents.some((student) => student.id === selectedStudentId)) return null;
+    return students.find((student) => student.id === selectedStudentId) ?? null;
+  }, [filter, filteredStudents, selectedStudentId, students]);
+
+  // The row only exists once the cleared filter is on screen, so the render is
+  // flushed before focus moves onto it.
+  const revealFilteredSelection = (id: string) => {
+    flushSync(() => setFilter(""));
+    focusStudentRow(id, rosterRef.current ?? document);
+  };
 
   const addDraftStudent = () => {
     const result = confirmImportCandidates([
@@ -150,7 +170,7 @@ export function DataWorkspace({
   };
 
   return (
-    <div className={`data-workspace${compactRosterControls ? " data-workspace--roster" : ""}`}>
+    <div className={`data-workspace${compactRosterControls ? " data-workspace--roster" : ""}`} ref={rosterRef}>
       <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />
 
       {!hideDataExpression && (
@@ -250,6 +270,21 @@ export function DataWorkspace({
           )}
         </ActionGroup>
       </div>
+
+      {selectionHiddenByFilter && (
+        <p className="panel-note data-message" role="status" data-filtered-selection={selectionHiddenByFilter.id}>
+          <span>「{selectionHiddenByFilter.name || "未命名学生"}」不在当前筛选「{filter.trim()}」的结果里，名单表没有显示这一行。</span>
+          <CompactButton
+            variant="secondary"
+            icon={<FilterX size={14} aria-hidden />}
+            aria-label={`清空筛选并显示 ${selectionHiddenByFilter.name || "未命名学生"}`}
+            data-reveal-filtered-selection={selectionHiddenByFilter.id}
+            onClick={() => revealFilteredSelection(selectionHiddenByFilter.id)}
+          >
+            清空筛选并显示
+          </CompactButton>
+        </p>
+      )}
 
       <DataWorkspaceStudentTable
         students={filteredStudents}

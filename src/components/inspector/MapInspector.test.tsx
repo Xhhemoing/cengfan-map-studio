@@ -289,4 +289,49 @@ describe("MapInspector", () => {
 
     root.unmount();
   });
+
+  it("drives the edge style dial from the keyboard: arrows cycle, Escape closes and restores focus", () => {
+    const onPatch = vi.fn();
+    const container = document.createElement("div");
+    // Focus assertions need the tree to live in the document.
+    document.body.append(container);
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} />,
+    ));
+    const keydown = (key: string) => flushSync(() => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="打开边界风格选择器"]')!;
+    flushSync(() => trigger.click());
+    const options = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="边界风格圆盘"] button'));
+    expect(options.length).toBeGreaterThan(1);
+
+    options[0]!.focus();
+    keydown("ArrowRight");
+    expect(document.activeElement).toBe(options[1]);
+    keydown("ArrowLeft");
+    expect(document.activeElement).toBe(options[0]);
+    keydown("ArrowLeft"); // wraps backwards
+    expect(document.activeElement).toBe(options[options.length - 1]);
+    keydown("Home");
+    expect(document.activeElement).toBe(options[0]);
+    keydown("End");
+    expect(document.activeElement).toBe(options[options.length - 1]);
+
+    keydown("Escape");
+    expect(container.querySelector('[aria-label="边界风格圆盘"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+
+    // Selecting an option also hands focus back to the trigger instead of dropping it.
+    flushSync(() => trigger.click());
+    const wave = container.querySelector<HTMLButtonElement>('button[aria-label="选择水纹边界风格"]')!;
+    flushSync(() => wave.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onPatch).toHaveBeenCalledWith({ edgeStyle: "wave" });
+    expect(document.activeElement).toBe(trigger);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
 });

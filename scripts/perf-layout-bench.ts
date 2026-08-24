@@ -3,7 +3,7 @@
  *
  * Run: npm run perf:layout
  * Save machine-readable output:
- * npx tsx scripts/perf-layout-bench.ts > .agent_workspace/round2/perf-baseline.json
+ * npx tsx scripts/perf-layout-bench.ts > .agent_workspace/round3/perf-baseline.json
  */
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
@@ -78,8 +78,29 @@ export interface WorkerMessageBenchmarkResult {
 }
 
 export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
+  adversarialFixture: AdversarialLayoutBenchmarkReport;
   workerMessageOverhead: WorkerMessageBenchmarkResult;
 }
+
+export interface DensePolygonBenchmarkFixture {
+  cards: CardLayoutInput[];
+  bounds: CardLayoutBounds;
+}
+
+export interface AdversarialLayoutBenchmarkReport {
+  fixture: "dense-overlap-many-polygons";
+  description: string;
+  seed: number;
+  cardCount: number;
+  polygonCount: number;
+  verticesPerPolygon: number;
+  warmupIterations: number;
+  iterations: number;
+  modes: CardLayoutMode[];
+  results: LayoutBenchmarkResult[];
+}
+
+export type AdversarialLayoutBenchmarkConfig = Omit<LayoutBenchmarkConfig, "counts">;
 
 export function makeLayoutBenchmarkCards(count: number, seed = 7): CardLayoutInput[] {
   const cards: CardLayoutInput[] = [];
@@ -112,6 +133,66 @@ export function makeLayoutBenchmarkBounds(): CardLayoutBounds {
     map: { x: 350, y: 120, width: 800, height: 690 },
     margin: 32,
     gap: 14,
+  };
+}
+
+/**
+ * A deterministic stress fixture kept out of the CI timing matrix. Its cards
+ * share a tiny anchor cluster while 96 polygon obstacles exercise the indexed
+ * vector-map path; neither property is represented by the regular province-
+ * distributed fixture.
+ */
+export function makeDensePolygonBenchmarkFixture(seed = 20260824): DensePolygonBenchmarkFixture {
+  let state = seed >>> 0;
+  const random = () => {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+  const map = { x: 350, y: 120, width: 800, height: 690 };
+  const polygonColumns = 12;
+  const polygonRows = 8;
+  const verticesPerPolygon = 16;
+  const occupiedPolygons = Array.from(
+    { length: polygonColumns * polygonRows },
+    (_, index) => {
+      const column = index % polygonColumns;
+      const row = Math.floor(index / polygonColumns);
+      const cellWidth = map.width / polygonColumns;
+      const cellHeight = map.height / polygonRows;
+      const centerX = map.x + (column + 0.5) * cellWidth;
+      const centerY = map.y + (row + 0.5) * cellHeight;
+      const radiusX = cellWidth * (0.3 + random() * 0.08);
+      const radiusY = cellHeight * (0.3 + random() * 0.08);
+      return {
+        rings: [Array.from({ length: verticesPerPolygon }, (_, vertex) => {
+          const angle = (vertex / verticesPerPolygon) * Math.PI * 2;
+          const ripple = 0.86 + random() * 0.14;
+          return {
+            x: centerX + Math.cos(angle) * radiusX * ripple,
+            y: centerY + Math.sin(angle) * radiusY * ripple,
+          };
+        })],
+      };
+    },
+  );
+  const cards = Array.from({ length: 70 }, (_, index) => ({
+    id: `dense-card-${index}`,
+    anchorX: 750 + (random() - 0.5) * 36,
+    anchorY: 465 + (random() - 0.5) * 36,
+    width: 122 + Math.round(random() * 18),
+    height: 52 + Math.round(random() * 10),
+  }));
+  return {
+    cards,
+    bounds: {
+      width: 1500,
+      height: 1000,
+      map,
+      margin: 32,
+      gap: 14,
+      occupiedAreas: [],
+      occupiedPolygons,
+    },
   };
 }
 
@@ -252,6 +333,40 @@ function positiveInteger(value: number, label: string): number {
   return value;
 }
 
+function runBenchmarkCases(
+  cards: CardLayoutInput[],
+  bounds: CardLayoutBounds,
+  modes: readonly CardLayoutMode[],
+  warmupIterations: number,
+  iterations: number,
+): LayoutBenchmarkResult[] {
+  const results: LayoutBenchmarkResult[] = [];
+  for (const mode of modes) {
+    for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+      solveAndAssert(cards, bounds, mode);
+    }
+
+    const samples: number[] = [];
+    let fallbackRuns = 0;
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+      const startedAt = performance.now();
+      const result = solveAndAssert(cards, bounds, mode);
+      samples.push(performance.now() - startedAt);
+      if (result.status === "fallback") fallbackRuns += 1;
+    }
+    results.push({
+      count: cards.length,
+      mode,
+      p50Ms: rounded(percentile(samples, 0.5)),
+      p95Ms: rounded(percentile(samples, 0.95)),
+      minMs: rounded(Math.min(...samples)),
+      maxMs: rounded(Math.max(...samples)),
+      fallbackRuns,
+    });
+  }
+  return results;
+}
+
 export function runLayoutBenchmark(config: LayoutBenchmarkConfig = {}): LayoutBenchmarkReport {
   const counts = [...(config.counts ?? DEFAULT_LAYOUT_BENCH_COUNTS)]
     .map((count) => positiveInteger(count, "card count"));
@@ -267,29 +382,7 @@ export function runLayoutBenchmark(config: LayoutBenchmarkConfig = {}): LayoutBe
   const results: LayoutBenchmarkResult[] = [];
   for (const count of counts) {
     const cards = makeLayoutBenchmarkCards(count, seed);
-    for (const mode of modes) {
-      for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
-        solveAndAssert(cards, bounds, mode);
-      }
-
-      const samples: number[] = [];
-      let fallbackRuns = 0;
-      for (let iteration = 0; iteration < iterations; iteration += 1) {
-        const startedAt = performance.now();
-        const result = solveAndAssert(cards, bounds, mode);
-        samples.push(performance.now() - startedAt);
-        if (result.status === "fallback") fallbackRuns += 1;
-      }
-      results.push({
-        count,
-        mode,
-        p50Ms: rounded(percentile(samples, 0.5)),
-        p95Ms: rounded(percentile(samples, 0.95)),
-        minMs: rounded(Math.min(...samples)),
-        maxMs: rounded(Math.max(...samples)),
-        fallbackRuns,
-      });
-    }
+    results.push(...runBenchmarkCases(cards, bounds, modes, warmupIterations, iterations));
   }
 
   return {
@@ -315,12 +408,46 @@ export function runLayoutBenchmark(config: LayoutBenchmarkConfig = {}): LayoutBe
   };
 }
 
+export function runDensePolygonBenchmark(
+  config: AdversarialLayoutBenchmarkConfig = {},
+): AdversarialLayoutBenchmarkReport {
+  const modes = [...(config.modes ?? DEFAULT_LAYOUT_BENCH_MODES)];
+  const warmupIterations = positiveInteger(config.warmupIterations ?? 1, "adversarial warmupIterations");
+  const iterations = positiveInteger(config.iterations ?? 6, "adversarial iterations");
+  const seed = config.seed ?? 20260824;
+  if (!Number.isInteger(seed)) throw new Error("adversarial seed must be an integer");
+  if (modes.length === 0) throw new Error("adversarial modes must not be empty");
+  const fixture = makeDensePolygonBenchmarkFixture(seed);
+  const polygonCount = fixture.bounds.occupiedPolygons?.length ?? 0;
+  const verticesPerPolygon = fixture.bounds.occupiedPolygons?.[0]?.rings[0]?.length ?? 0;
+
+  return {
+    fixture: "dense-overlap-many-polygons",
+    description: "70 cards in a 36px anchor cluster against 96 vector-map polygons",
+    seed,
+    cardCount: fixture.cards.length,
+    polygonCount,
+    verticesPerPolygon,
+    warmupIterations,
+    iterations,
+    modes,
+    results: runBenchmarkCases(
+      fixture.cards,
+      fixture.bounds,
+      modes,
+      warmupIterations,
+      iterations,
+    ),
+  };
+}
+
 const isDirectRun = process.argv[1] !== undefined
   && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isDirectRun) {
   const report: LayoutBenchmarkCliReport = {
     ...runLayoutBenchmark(),
+    adversarialFixture: runDensePolygonBenchmark(),
     workerMessageOverhead: await runWorkerMessageBenchmark(),
   };
   console.log(JSON.stringify(report, null, 2));

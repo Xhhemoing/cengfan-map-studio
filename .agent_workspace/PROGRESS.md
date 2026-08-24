@@ -11,7 +11,7 @@
 | --- | --- | --- | --- | --- |
 | Round 1 | complete | 2026-08-24 | 2026-08-24 | 拆 God 组件 / 布局求解 / 导入诚实 / API 4xx / a11y / 性能基线 |
 | Round 2 | complete | 2026-08-24 | 2026-08-24 | App 再拆 −747 行；连接线搜索复活；hidden 卡清零；leave 撤 token |
-| Round 3 | in_progress | 2026-08-24 | — | SOTA 打磨与最终验收 |
+| Round 3 | complete | 2026-08-24 | 2026-08-24 | 协作 hook 化；搜索短路；筛选深链；grid p95 −43%；API 405/路径 |
 
 ## Round 1 结论摘要
 
@@ -43,7 +43,30 @@
 
 详见 [round2/BRIEF.md](round2/BRIEF.md)。集成：**tsc 绿、全量 173×1429 tests 绿**。
 
-## 验证纪律记录（续）
+## Round 3 结论简报
+
+详见 [round3/BRIEF.md](round3/BRIEF.md)。集成：**tsc 绿、174×1484 tests 绿、无 unhandled error**。
+
+## 全局成果（三轮合计）
+
+| 指标 | main 基线 | Round 3 结束 |
+| --- | ---: | ---: |
+| App.tsx 行数 | 2466 | **798** |
+| card-layout 门面 | 1297 | 模块化 + 搜索短路 |
+| DataWorkspace | 705 | 组合器 + 子面板 |
+| server/index | 1076 | **400** |
+| 测试 | （基线已有大量单测） | **1484 passed / 174 files** |
+
+## 回滚
+
+整分支相对 `main` revert 即可；无项目文件 schema 破坏。协作 leave 后旧 token 变 403。
+
+### Round 3
+
+| failure | cause | fix | recheck |
+| --- | --- | --- | --- |
+| 全量 1484 通过但 unhandled `window is not defined` | StudioAssistantRail 测试 remove 容器却不 unmount root，跨文件调度残留 | afterEach `flushSync(unmount)` | 174 files / 1484 passed，无 Errors |
+| 子代理报告并行中 tsc 红 | 共享工作树中间态 | 回收后主调度 tsc app+node 0 error | tsc 复跑 |
 
 ### Round 2
 

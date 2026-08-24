@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
 import type http from "node:http";
 import { extname, join, resolve, sep } from "node:path";
 import { createGzip } from "node:zlib";
@@ -48,6 +48,10 @@ function acceptsGzip(request: http.IncomingMessage): boolean {
   return /\bgzip\b/i.test(value);
 }
 
+function isWithinRoot(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${sep}`);
+}
+
 export function serveStatic(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -68,19 +72,37 @@ export function serveStatic(
   const relativePath = urlPath === "/" ? "index.html" : urlPath.replace(/^\//, "");
   const candidate = resolve(staticDir, relativePath);
   const root = resolve(staticDir);
-  if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) {
+  if (!isWithinRoot(root, candidate)) {
     sendJson(request, response, 403, {
       error: { code: "FORBIDDEN", message: "非法路径" },
     }, corsOrigins, requestId);
     return true;
   }
 
-  let filePath = candidate;
-  if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
-    const fallback = join(staticDir, "index.html");
-    if (!existsSync(fallback)) return false;
-    filePath = fallback;
+  if (!existsSync(root)) return false;
+  const realRoot = realpathSync(root);
+  let filePath: string;
+  if (existsSync(candidate)) {
+    const realCandidate = realpathSync(candidate);
+    if (!isWithinRoot(realRoot, realCandidate)) {
+      sendJson(request, response, 403, {
+        error: { code: "FORBIDDEN", message: "非法路径" },
+      }, corsOrigins, requestId);
+      return true;
+    }
+    filePath = statSync(realCandidate).isDirectory() ? join(root, "index.html") : realCandidate;
+  } else {
+    filePath = join(root, "index.html");
   }
+  if (!existsSync(filePath)) return false;
+  filePath = realpathSync(filePath);
+  if (!isWithinRoot(realRoot, filePath)) {
+    sendJson(request, response, 403, {
+      error: { code: "FORBIDDEN", message: "非法路径" },
+    }, corsOrigins, requestId);
+    return true;
+  }
+  if (!statSync(filePath).isFile()) return false;
 
   const shouldGzip = acceptsGzip(request)
     && /\.(?:html|js|css|json|svg)$/i.test(filePath)

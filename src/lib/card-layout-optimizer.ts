@@ -87,6 +87,26 @@ const REPAIR_COST = 60_000;
 const REPAIR_SHARE = 0.4;
 const MIN_REPAIRS_PER_ORDER = 3;
 
+/**
+ * Insertion orders in a row that may fail to beat the incumbent before the
+ * search gives up on the board.
+ *
+ * The orders are not interchangeable samples — {@link insertionOrders} leads
+ * with the ones that carry nearly all the wins — so a run of misses is evidence
+ * about the board rather than about luck. Measured over the obstacle boards,
+ * two is where the curve turns: at that setting every layout the full eight
+ * orders ever shipped is still found, while the boards the search cannot help
+ * end after two to four orders instead of eight. Stopping at the first miss
+ * costs two of those boards their best layout — one loses a crossing pair, the
+ * other two province crossings — and stopping at three buys nothing back while
+ * putting the vector boards within a few percent of the full sweep again.
+ *
+ * This only ever ends *exploration*. Whatever the caller seeded the search with
+ * is still returned, so an early stop can cost a better layout but never a
+ * legal one, and never a card.
+ */
+const SEARCH_PATIENCE = 2;
+
 function homeSides(
   cards: CardLayoutInput[],
   space: LayoutSpace,
@@ -113,24 +133,41 @@ function angularOrder(cards: CardLayoutInput[], space: LayoutSpace): CardLayoutI
   });
 }
 
-/** Deterministic insertion orders: rotations around the map, plus scarcity. */
+/**
+ * Deterministic insertion orders: rotations around the map, plus scarcity.
+ *
+ * Highest-yield first, because {@link SEARCH_PATIENCE} stops the search after a
+ * run of orders that add nothing and the sequence therefore decides what a
+ * short search gets to see. Measured over the obstacle boards, the wins
+ * concentrate in four: the angular order, the scarcest-first order — the one
+ * that finds the best layout on every board whose obstacle is a single large
+ * rectangle — the next rotation, and the reversed angular order. The remaining
+ * rotations improved on one board out of eight, so they go last, where an early
+ * stop skips them. With this sequence a short search finds every layout the
+ * full sweep found.
+ */
 function insertionOrders(
   cards: CardLayoutInput[],
   space: LayoutSpace,
   candidateCounts: Map<string, number>,
 ): CardLayoutInput[][] {
   const ordered = angularOrder(cards, space);
-  const orders: CardLayoutInput[][] = [];
+  const rotations: CardLayoutInput[][] = [];
   const starts = Math.min(ordered.length, cards.length > DENSE_CARD_COUNT ? 3 : 6);
   for (let index = 0; index < starts; index += 1) {
     const start = Math.floor((index * ordered.length) / starts);
-    orders.push([...ordered.slice(start), ...ordered.slice(0, start)]);
+    rotations.push([...ordered.slice(start), ...ordered.slice(0, start)]);
   }
-  orders.push([...ordered].reverse());
-  orders.push([...cards].sort((left, right) =>
+  const scarcest = [...cards].sort((left, right) =>
     (candidateCounts.get(left.id) ?? 0) - (candidateCounts.get(right.id) ?? 0)
-    || left.id.localeCompare(right.id)));
-  return orders;
+    || left.id.localeCompare(right.id));
+  return [
+    ...rotations.slice(0, 1),
+    scarcest,
+    ...rotations.slice(1, 2),
+    [...ordered].reverse(),
+    ...rotations.slice(2),
+  ];
 }
 
 /** Whole-layout quality, lowest first. Used to pick between complete layouts. */
@@ -221,6 +258,26 @@ interface OrderState {
 /** Deterministic work meter shared by every order of one solve. */
 interface Budget {
   spent: number;
+}
+
+/** Why {@link optimizedLayout} stopped trying insertion orders. */
+export type SearchStop = "no-candidates" | "no-gain" | "budget" | "exhausted";
+
+/**
+ * What one connector-aware search did. Diagnostics only — nothing in the solver
+ * reads it back, and it never affects a placement.
+ */
+export interface ConnectorSearchTrace {
+  /** Shortlisted rectangles across every card. Zero means the search cannot run. */
+  candidates: number;
+  /** Insertion orders executed, including ones that produced nothing legal. */
+  ordersRun: number;
+  /** Orders that produced a complete, legal layout worth scoring. */
+  ordersScored: number;
+  /** Indices, within the tried orders, of those that beat the incumbent. */
+  improvingOrders: number[];
+  stop: SearchStop;
+  budgetSpent: number;
 }
 
 /**
@@ -364,8 +421,9 @@ function runOrder(
 }
 
 /**
- * Best-of-N insertion search. Returns `null` when no order produced a layout
- * that satisfies the hard constraints, letting the caller fall back.
+ * Best-of-N insertion search. `placements` is `null` when no order produced a
+ * layout that satisfies the hard constraints, or when none beat `seed`, letting
+ * the caller keep what it had.
  *
  * `seed` is the layout the caller would otherwise ship — the side-packed one,
  * already known to be legal. Scoring it alongside the insertion orders makes
@@ -379,7 +437,7 @@ export function optimizedLayout(
   mode: "quadrant" | "radial",
   options: CardLayoutOptions,
   seed: readonly CardPlacement[] | null = null,
-): CardPlacement[] | null {
+): { placements: CardPlacement[] | null; trace: ConnectorSearchTrace } {
   const style = options.connectorStyle ?? "curve";
   const clearance = Math.max(0, options.connectorWidth ?? 1.5);
   const assignedSides = homeSides(cards, space, mode, options);
@@ -388,6 +446,21 @@ export function optimizedLayout(
     buildCandidates(card, cards, space, assignedSides.get(card.id) ?? "right", style),
   ]));
   const candidateCounts = new Map([...candidates].map(([id, items]) => [id, items.length]));
+  const trace: ConnectorSearchTrace = {
+    candidates: [...candidateCounts.values()].reduce((sum, count) => sum + count, 0),
+    ordersRun: 0,
+    ordersScored: 0,
+    improvingOrders: [],
+    stop: "exhausted",
+    budgetSpent: 0,
+  };
+  // With no rectangle to move a card to, every order would repair its way to
+  // the same packed answer at scanning prices. Bail before scoring the seed,
+  // which is itself a quadratic pass over the connectors.
+  if (trace.candidates === 0) {
+    trace.stop = "no-candidates";
+    return { placements: null, trace };
+  }
   const clusters = anchorClusters(cards);
 
   let best: CardPlacement[] | null = seed ? [...seed] : null;
@@ -395,24 +468,42 @@ export function optimizedLayout(
   const seeded = best;
   const budget: Budget = { spent: 0 };
   const seenOrders = new Set<string>();
+  let misses = 0;
   for (const order of insertionOrders(cards, space, candidateCounts)) {
     // An order already under way always finishes, so exhaustion costs
     // exploration and never a card's place.
-    if (budget.spent > SEARCH_BUDGET) break;
+    if (budget.spent > SEARCH_BUDGET) {
+      trace.stop = "budget";
+      break;
+    }
     const signature = order.map((card) => card.id).join("\0");
     if (seenOrders.has(signature)) continue;
     seenOrders.add(signature);
 
     const placed = runOrder(order, candidates, clusters, space, style, clearance, budget);
-    if (!placed || placed.length !== cards.length || !validateHard(placed, space)) continue;
-    const score = scoreLayout(placed, assignedSides, style, clearance, space);
-    if (!bestScore || compareScores(score, bestScore) < 0) {
-      best = [...placed];
-      bestScore = score;
+    trace.ordersRun += 1;
+    let improved = false;
+    if (placed && placed.length === cards.length && validateHard(placed, space)) {
+      trace.ordersScored += 1;
+      const score = scoreLayout(placed, assignedSides, style, clearance, space);
+      if (!bestScore || compareScores(score, bestScore) < 0) {
+        trace.improvingOrders.push(trace.ordersRun - 1);
+        best = [...placed];
+        bestScore = score;
+        improved = true;
+      }
+    }
+    misses = improved ? 0 : misses + 1;
+    // The caller already holds a legal layout, so a run of orders that cannot
+    // better it is the search telling us it has nothing to add on this board.
+    if (seed && misses >= SEARCH_PATIENCE) {
+      trace.stop = "no-gain";
+      break;
     }
   }
+  trace.budgetSpent = budget.spent;
   // Nothing beat the layout the caller already had; say so rather than handing
   // back a copy, so the caller keeps its own status and ordering.
-  if (best === seeded) return null;
-  return best ? orderResult(cards, best) : null;
+  if (best === seeded) return { placements: null, trace };
+  return { placements: best ? orderResult(cards, best) : null, trace };
 }

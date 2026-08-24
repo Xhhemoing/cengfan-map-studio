@@ -40,7 +40,11 @@ import {
   stackAtMargin,
   sweepPack,
 } from "./card-layout-pack";
-import { MAX_OPTIMIZED_CARDS, optimizedLayout } from "./card-layout-optimizer";
+import {
+  MAX_OPTIMIZED_CARDS,
+  optimizedLayout,
+  type ConnectorSearchTrace,
+} from "./card-layout-optimizer";
 import { betterLayout, layeredPack, provablyInfeasible } from "./card-layout-saturation";
 import { LayoutSpace, PlacementIndex, validateHard } from "./card-layout-space";
 import {
@@ -50,6 +54,7 @@ import {
   type CardLayoutMode,
   type CardLayoutOptions,
   type CardLayoutResult,
+  type CardLayoutStatus,
   type CardPlacement,
   type CardSide,
 } from "./card-layout-types";
@@ -68,11 +73,61 @@ export type {
   CardSide,
 } from "./card-layout-types";
 export type { Rect } from "./card-layout-geometry";
+export type { ConnectorSearchTrace } from "./card-layout-optimizer";
 export { clampCardPosition } from "./card-layout-manual";
 
 /** Order sides are packed in; earlier sides claim space first. */
 const SIDE_PACK_ORDER: CardSide[] = ["right", "left", "top", "bottom"];
 const MAX_OVERFLOW_ROUNDS = 4;
+
+/**
+ * Why one solve did or did not pay for the connector-aware search.
+ *
+ * Every reason but `"ran"` is a place the search is provably unable to help,
+ * so skipping it costs nothing and saves the whole candidate build.
+ */
+export type ConnectorSearchDecision =
+  | "ran"
+  /** `grid` and `right-stack` place by rule; a connector score cannot move a card. */
+  | "skipped-mode"
+  /** Nothing to route around, so every candidate is as clear as the packed spot. */
+  | "skipped-no-geography"
+  /** Above {@link MAX_OPTIMIZED_CARDS} no order has ever beaten the packed seed. */
+  | "skipped-card-count"
+  /** No legal layout to defend: the search accepts only layouts the ladder failed to find. */
+  | "skipped-no-legal-layout"
+  /** The canvas provably cannot hold the cards. */
+  | "skipped-infeasible"
+  /** No cards at all. */
+  | "skipped-empty";
+
+/** Diagnostics for one solve. See {@link __layoutDebug}. */
+export interface LayoutDebugRecord {
+  mode: CardLayoutMode;
+  status: CardLayoutStatus;
+  cards: number;
+  decision: ConnectorSearchDecision;
+  /** Present only when the search ran. */
+  trace: ConnectorSearchTrace | null;
+  /** `true` when the search shipped a layout the packing ladder had not found. */
+  improved: boolean;
+}
+
+/**
+ * Last solve's diagnostics, for tests only.
+ *
+ * Not part of the public API and not covered by its stability promise: it
+ * exists so a test can assert *which path* a solve took instead of timing it,
+ * which on a shared machine is far too flaky to assert on. Recording it costs
+ * one small object per solve and nothing in the solver ever reads it back.
+ */
+export const __layoutDebug: { last: LayoutDebugRecord | null } = { last: null };
+
+interface SearchDebug {
+  decision: ConnectorSearchDecision;
+  trace: ConnectorSearchTrace | null;
+  improved: boolean;
+}
 
 /** Guarantee finite geometry so a malformed card can never poison the solve. */
 function sanitizeCards(cards: readonly CardLayoutInput[]): CardLayoutInput[] {
@@ -204,16 +259,31 @@ function degrade(
   return contain(cards, space, mode, attempt, swept);
 }
 
+type SearchPlan =
+  | { decision: "ran"; mode: "quadrant" | "radial" }
+  | { decision: Exclude<ConnectorSearchDecision, "ran"> };
+
+/** Whether the search can help at all, and if not, which guard turned it away. */
+function searchPlan(cards: CardLayoutInput[], space: LayoutSpace, mode: CardLayoutMode): SearchPlan {
+  if (mode !== "quadrant" && mode !== "radial") return { decision: "skipped-mode" };
+  if ((space.bounds.occupiedAreas?.length ?? 0) === 0 && space.polygons.length === 0) {
+    return { decision: "skipped-no-geography" };
+  }
+  if (cards.length > MAX_OPTIMIZED_CARDS) return { decision: "skipped-card-count" };
+  return { decision: "ran", mode };
+}
+
 /**
  * Offer a legal layout to the connector-aware search, which either returns
  * something that scores better or nothing at all.
  *
- * The search is skipped unless there is real geography to route around, the
- * board is small enough for its quadratic bookkeeping, and — enforced by the
- * caller — a legal layout already exists. That last condition matters for cost
- * as much as for quality: the search only accepts orders that pass the same
- * hard-constraint check the ladder just failed, so on a saturated canvas it is
- * guaranteed to come back empty after paying full price.
+ * The search is skipped unless the mode routes connectors at all, there is real
+ * geography to route around, the board is small enough for its quadratic
+ * bookkeeping, and — enforced by the caller — a legal layout already exists.
+ * That last condition matters for cost as much as for quality: the search only
+ * accepts orders that pass the same hard-constraint check the ladder just
+ * failed, so on a saturated canvas it is guaranteed to come back empty after
+ * paying full price.
  */
 function refine(
   cards: CardLayoutInput[],
@@ -221,13 +291,16 @@ function refine(
   mode: CardLayoutMode,
   options: CardLayoutOptions,
   legal: CardPlacement[],
+  debug: SearchDebug,
 ): CardLayoutResult {
-  const hasObstacles = (space.bounds.occupiedAreas?.length ?? 0) > 0 || space.polygons.length > 0;
-  if ((mode !== "quadrant" && mode !== "radial") || !hasObstacles || cards.length > MAX_OPTIMIZED_CARDS) {
-    return { status: "solved", placements: legal, mode };
-  }
-  const optimized = optimizedLayout(cards, space, mode, options, legal);
-  return { status: "solved", placements: optimized ?? legal, mode };
+  const plan = searchPlan(cards, space, mode);
+  debug.decision = plan.decision;
+  if (plan.decision !== "ran") return { status: "solved", placements: legal, mode };
+
+  const { placements, trace } = optimizedLayout(cards, space, plan.mode, options, legal);
+  debug.trace = trace;
+  debug.improved = placements !== null;
+  return { status: "solved", placements: placements ?? legal, mode };
 }
 
 /**
@@ -243,18 +316,21 @@ function saturated(cards: CardLayoutInput[], space: LayoutSpace, mode: CardLayou
   };
 }
 
-export function solveCardLayout(
-  cards: CardLayoutInput[],
+function solve(
+  inputs: CardLayoutInput[],
   bounds: CardLayoutBounds,
-  options: CardLayoutOptions = {},
+  mode: CardLayoutMode,
+  options: CardLayoutOptions,
+  debug: SearchDebug,
 ): CardLayoutResult {
-  const mode: CardLayoutMode = options.mode ?? "quadrant";
-  const inputs = sanitizeCards(cards);
-  if (inputs.length === 0) return { status: "solved", placements: [], mode };
   const space = new LayoutSpace(bounds);
-  if (provablyInfeasible(inputs, space)) return saturated(inputs, space, mode);
+  if (provablyInfeasible(inputs, space)) {
+    debug.decision = "skipped-infeasible";
+    return saturated(inputs, space, mode);
+  }
 
   if (mode === "grid") {
+    debug.decision = "skipped-mode";
     const grid = orderResult(inputs, layoutGrid(inputs, space));
     if (validateHard(grid, space)) return { status: "solved", placements: grid, mode };
     return degrade(inputs, space, mode, grid);
@@ -264,10 +340,26 @@ export function solveCardLayout(
   // out is both what the solver ships and what the connector-aware search has
   // to beat, so the search can only ever improve the result.
   const packed = orderResult(inputs, packSides(inputs, space, mode, options));
-  if (validateHard(packed, space)) return refine(inputs, space, mode, options, packed);
+  if (validateHard(packed, space)) return refine(inputs, space, mode, options, packed, debug);
   const { legal, swept } = repairLadder(inputs, space);
-  if (legal) return refine(inputs, space, mode, options, legal);
+  if (legal) return refine(inputs, space, mode, options, legal, debug);
+  debug.decision = "skipped-no-legal-layout";
   return contain(inputs, space, mode, packed, swept);
+}
+
+export function solveCardLayout(
+  cards: CardLayoutInput[],
+  bounds: CardLayoutBounds,
+  options: CardLayoutOptions = {},
+): CardLayoutResult {
+  const mode: CardLayoutMode = options.mode ?? "quadrant";
+  const inputs = sanitizeCards(cards);
+  const debug: SearchDebug = { decision: "skipped-empty", trace: null, improved: false };
+  const result = inputs.length === 0
+    ? { status: "solved" as const, placements: [], mode }
+    : solve(inputs, bounds, mode, options, debug);
+  __layoutDebug.last = { mode, status: result.status, cards: inputs.length, ...debug };
+  return result;
 }
 
 export function layoutCards(

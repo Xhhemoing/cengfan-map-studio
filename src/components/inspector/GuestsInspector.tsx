@@ -141,8 +141,9 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
               <DeferredInput data-guest-note-input={person.id} value={person.note ?? ""} placeholder="祝福语、寄语等自由文本" onCommit={(note) => updatePerson(person.id, { note: note || undefined })} />
             </label>
             <div className="guest-avatar-editor">
-              <span>头像</span>
-              <DeferredInput data-guest-avatar-input={person.id} value={person.avatarSrc ?? ""} placeholder="图片链接（或上传）" onCommit={(avatarSrc) => updatePerson(person.id, { avatarSrc: avatarSrc || undefined })} />
+              {/* “头像” 只是视觉分组标题，不与任何控件关联；链接输入框需要自己的名字。 */}
+              <span aria-hidden="true">头像</span>
+              <DeferredInput data-guest-avatar-input={person.id} aria-label={`${person.name} 的头像图片链接`} value={person.avatarSrc ?? ""} placeholder="图片链接（或上传）" onCommit={(avatarSrc) => updatePerson(person.id, { avatarSrc: avatarSrc || undefined })} />
               <input
                 type="file"
                 accept="image/*"

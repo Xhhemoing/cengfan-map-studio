@@ -19,6 +19,7 @@ import { createRateLimiter } from "./ai/rate-limit";
 import { createAiLogger } from "./ai/ai-observability";
 import { createRoomStore } from "./collaboration";
 import { createCollaborationRouter } from "./collaboration-routes";
+import { handleRequestMethod } from "./route-methods";
 import {
   HTTP_ERROR_CODES,
   InvalidJsonError,
@@ -27,6 +28,7 @@ import {
   corsHeaders,
   createJsonSender,
   isRecord,
+  positiveByteLimit,
   readJson,
   requestIdFor,
 } from "./http-utils";
@@ -160,8 +162,8 @@ export function createAiServer(options: AiServerOptions = {}) {
     maxEntries: options.rateLimitOptions?.rooms?.maxEntries,
   });
   const aiLogger = options.aiLogger ?? createAiLogger();
-  const maxJsonBodyBytes = options.maxJsonBodyBytes ?? DEFAULT_MAX_JSON_BODY_BYTES;
-  const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
+  const maxJsonBodyBytes = positiveByteLimit(options.maxJsonBodyBytes, DEFAULT_MAX_JSON_BODY_BYTES);
+  const maxWorkspaceBytes = positiveByteLimit(options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES), DEFAULT_MAX_WORKSPACE_BYTES);
   const trustProxy = options.trustProxy ?? process.env.TRUST_PROXY === "1";
   const workspaceFile = join(dataDir, "workspace.json");
   const roomStore = createRoomStore({
@@ -205,6 +207,7 @@ export function createAiServer(options: AiServerOptions = {}) {
     const requestId = requestIdFor(request);
     const send = createJsonSender(request, response, corsOrigins, requestId);
     const sendAi = (status: number, body: unknown) => send(status, { ...(isRecord(body) ? body : {}), requestId });
+    if (handleRequestMethod(request, response, pathname, Boolean(staticDir), send)) return;
     const aiPath = pathname.startsWith("/api/ai/");
     const aiRequiresToken = productionConfig.config?.nodeEnv === "production"
       && !productionConfig.config?.aiPublicAccess
@@ -225,11 +228,6 @@ export function createAiServer(options: AiServerOptions = {}) {
       return;
     }
     try {
-      if (request.method === "OPTIONS") {
-        send( 204, {});
-        return;
-      }
-
       if (request.method === "GET" && pathname === "/api/live") {
         send(200, { ok: true });
         return;

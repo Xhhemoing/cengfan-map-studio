@@ -1058,6 +1058,70 @@ describe("DataWorkspace", () => {
     expect(container.querySelector('button[aria-label="编辑 林舟"]')).toBeNull();
   });
 
+  it("announces a selected record the filter is hiding and reveals it on request", () => {
+    const container = render(
+      <DataWorkspace
+        students={[
+          ...students,
+          {
+            id: "student-2",
+            name: "苏禾",
+            university: "浙江大学",
+            city: "杭州市",
+            visibility: true,
+          },
+        ]}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        selectedStudentId="student-1"
+      />,
+    );
+
+    // Nothing to announce while the selected row is on screen.
+    expect(container.querySelector("[data-filtered-selection]")).toBeNull();
+
+    changeInput(getInput(container, "筛选学生"), "浙江");
+
+    const notice = container.querySelector('[data-filtered-selection="student-1"]');
+    expect(container.querySelector('[data-student-row="student-1"]')).toBeNull();
+    expect(notice?.getAttribute("role")).toBe("status");
+    expect(notice?.textContent).toContain("林舟");
+    expect(notice?.textContent).toContain("浙江");
+
+    click(container.querySelector<HTMLButtonElement>('[data-reveal-filtered-selection="student-1"]')!);
+    flushSync(() => {});
+
+    expect(getInput(container, "筛选学生").value).toBe("");
+    const row = container.querySelector('[data-student-row="student-1"]');
+    expect(row).not.toBeNull();
+    expect(document.activeElement).toBe(row);
+    expect(container.querySelector("[data-filtered-selection]")).toBeNull();
+  });
+
+  it("keeps quiet when the filter still shows the selected record", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        selectedStudentId="student-1"
+      />,
+    );
+
+    changeInput(getInput(container, "筛选学生"), "北京");
+
+    expect(container.querySelector('[data-student-row="student-1"]')).not.toBeNull();
+    expect(container.querySelector("[data-filtered-selection]")).toBeNull();
+  });
+
   it("renders editable records in an Excel-style table with resolved province and selects a row", () => {
     const onSelectStudent = vi.fn();
     const container = render(

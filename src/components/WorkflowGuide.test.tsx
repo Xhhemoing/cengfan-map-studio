@@ -309,6 +309,15 @@ describe("WorkflowGuide", () => {
     expect(document.activeElement).toBe(bar);
   });
 
+  it("hides the decorative step icons from the accessibility tree", () => {
+    const { container } = renderGuide();
+    clickBar(container);
+
+    const icons = Array.from(container.querySelectorAll(".workflow-nav__icon"));
+    expect(icons.length).toBe(5);
+    for (const icon of icons) expect(icon.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it("groups the export warning lists and actions with accessible names", () => {
     const { container } = renderGuide({
       activeStep: "export",

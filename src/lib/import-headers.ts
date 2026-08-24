@@ -40,15 +40,30 @@ export const STUDENT_HEADER_ALIASES: Record<StudentColumn, readonly string[]> = 
     "学院",
     "就读学校",
     "就读院校",
+    "工作单位",
+    "就业单位",
+    "单位",
     "university",
     "school",
     "college",
+    "institution",
     "enrolleduniversity",
     "destination",
   ],
-  city: ["城市", "市", "所在城市", "目的地城市", "城市地区", "所在地", "city", "destinationcity", "location", "生源地"],
+  city: ["城市", "市", "所在城市", "所在市", "目的地城市", "城市地区", "所在地", "目的地", "city", "destinationcity", "location", "生源地"],
   province: ["省份", "省", "所在省", "所在省份", "省自治区", "省直辖市", "province", "state"],
-  locationScope: ["去向类型", "地区类型", "国内海外", "是否海外", "destinationtype", "locationscope", "scope"],
+  locationScope: [
+    "去向类型",
+    "地区类型",
+    "国内海外",
+    "国内国外",
+    "境内境外",
+    "是否海外",
+    "是否出国",
+    "destinationtype",
+    "locationscope",
+    "scope",
+  ],
 };
 
 export const REQUIRED_COLUMN_LABELS: Record<RequiredStudentColumn, string> = {
@@ -71,11 +86,15 @@ export function isBlankImportCell(value: unknown): boolean {
   return trimImportCell(value) === "";
 }
 
-/** Strips BOM, whitespace, separators and decoration so header aliases stay short. */
+/**
+ * Strips BOM, whitespace, separators and decoration so header aliases stay
+ * short. Slashes and enumeration marks go too, which is what turns the very
+ * common "省/直辖市" and "国内/海外" headers into plain aliases.
+ */
 export function normalizeHeaderCell(value: string): string {
   return trimImportCell(value)
     .toLocaleLowerCase("zh-CN")
-    .replace(/[\s_\-()（）[\]【】*＊]/g, "")
+    .replace(/[\s_\-()（）[\]【】*＊/／\\、·.]/g, "")
     .replace(/[:：]$/, "")
     .replace(/(必填|选填|可选)$/, "");
 }
@@ -89,6 +108,13 @@ const NORMALIZED_HEADER_ALIASES = new Map<StudentColumn, Map<string, number>>(
 );
 
 /**
+ * Aliases naming something wider than the column itself: "单位所在城市" is a
+ * city column, not a 单位 one. They only count when the whole header cell
+ * equals them, otherwise they would claim a neighbouring column.
+ */
+const EXACT_ONLY_ALIASES = new Set(["单位", "工作单位", "就业单位", "目的地"].map(normalizeHeaderCell));
+
+/**
  * Aliases that may be matched as a substring. Latin aliases are excluded on
  * purpose ("university name" contains "name"), and single characters like
  * "市" / "省" would match almost anything.
@@ -96,7 +122,9 @@ const NORMALIZED_HEADER_ALIASES = new Map<StudentColumn, Map<string, number>>(
 const FUZZY_HEADER_ALIASES = new Map<StudentColumn, Array<[string, number]>>(
   STUDENT_COLUMN_ORDER.map((column) => [
     column,
-    [...NORMALIZED_HEADER_ALIASES.get(column)!].filter(([alias]) => alias.length >= 2 && /[\u4e00-\u9fff]/.test(alias)),
+    [...NORMALIZED_HEADER_ALIASES.get(column)!].filter(
+      ([alias]) => alias.length >= 2 && /[\u4e00-\u9fff]/.test(alias) && !EXACT_ONLY_ALIASES.has(alias),
+    ),
   ]),
 );
 

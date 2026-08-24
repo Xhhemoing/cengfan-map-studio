@@ -60,7 +60,9 @@ function splitLines(text: string): string[] {
   return text
     .replace(/\uFEFF/g, "")
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    // A leading tab is an empty leading column: trimming it would shift every
+    // later cell of a sparse spreadsheet row, so only spaces are stripped.
+    .map((line) => line.replace(/^[^\S\t]+|\s+$/g, ""))
     .filter((line) => line.length > 0);
 }
 

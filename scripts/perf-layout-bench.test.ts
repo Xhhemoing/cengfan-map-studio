@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_LAYOUT_BENCH_MODES,
+  makeDensePolygonBenchmarkFixture,
   makeLayoutBenchmarkCards,
   runLayoutBenchmark,
 } from "./perf-layout-bench";
@@ -13,6 +14,17 @@ describe("layout performance benchmark", () => {
   it("uses a reproducible card fixture", () => {
     expect(makeLayoutBenchmarkCards(3, 42)).toEqual(makeLayoutBenchmarkCards(3, 42));
     expect(makeLayoutBenchmarkCards(3, 42)).not.toEqual(makeLayoutBenchmarkCards(3, 43));
+  });
+
+  it("keeps the adversarial fixture deterministic without timing it in CI", () => {
+    const fixture = makeDensePolygonBenchmarkFixture();
+    expect(fixture).toEqual(makeDensePolygonBenchmarkFixture());
+    expect(fixture.cards).toHaveLength(70);
+    expect(fixture.bounds.occupiedPolygons).toHaveLength(96);
+    expect(Math.max(...fixture.cards.map(({ anchorX }) => anchorX))
+      - Math.min(...fixture.cards.map(({ anchorX }) => anchorX))).toBeLessThanOrEqual(36);
+    expect(Math.max(...fixture.cards.map(({ anchorY }) => anchorY))
+      - Math.min(...fixture.cards.map(({ anchorY }) => anchorY))).toBeLessThanOrEqual(36);
   });
 
   it("keeps the small layout matrix below the pathological-regression budget", () => {

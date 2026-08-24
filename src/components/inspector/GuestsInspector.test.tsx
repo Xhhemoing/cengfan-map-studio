@@ -67,6 +67,25 @@ describe("GuestsInspector", () => {
     flushSync(() => root.unmount());
   });
 
+  it("gives every per-person control an accessible name, including the avatar link input", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.guests = {
+      ...project.guests,
+      people: [{ id: "g1", name: "王老师", visibility: true }],
+    };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={project.guests} onPatch={vi.fn()} />));
+
+    // The visible “头像” span is a visual caption only; the URL input needs its own name.
+    const avatarLink = container.querySelector('[data-guest-avatar-input="g1"]');
+    expect(avatarLink?.getAttribute("aria-label")).toBe("王老师 的头像图片链接");
+    const avatarUpload = container.querySelector('[data-guest-avatar-upload="g1"]');
+    expect(avatarUpload?.getAttribute("aria-label")).toBe("上传 王老师 的头像");
+
+    flushSync(() => root.unmount());
+  });
+
   it("commits per-person custom note and avatar url, and clears the avatar", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     project.guests = {

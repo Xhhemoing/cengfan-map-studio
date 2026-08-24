@@ -1,5 +1,9 @@
 import type { UserAsset } from "./assets";
 import { applyDataViewChange, findAssetUsage, isAssetInUse, type STYLE_LAYER_TARGETS } from "./catalog-usage";
+import type { CollaborationRole } from "./collaboration-client";
+import { diffCollaborationDocument, type CollaborationOperation } from "./collaboration-operations";
+import type { WorkspaceSession } from "./workspace-session";
+import type { WorkflowStageId } from "./workflow-stages";
 import type { CustomTemplateRecord } from "./template-store";
 import { createCustomTemplateFromProject, type TemplateSaveScope } from "./template-store";
 import { checkLayoutHealth } from "./layout-health";
@@ -39,6 +43,33 @@ export function freezeCardPositions(
 export function buildCollaborationPackage(latest: WorkspaceStateSnapshot, exportedAt: string): ProjectPackage {
   const pack = createProjectPackageEnvelope(latest);
   return { ...pack, exportedAt, project: { ...pack.project, history: { past: [], future: [] } } };
+}
+
+/** 增量上传的房间侧门槛字段（useCollaborationRoom 结果的子集）。 */
+export interface CollaborationSendGate {
+  roomId: string | null;
+  roomAccessToken: string | null;
+  roomRole: CollaborationRole | null;
+  roomReadonly: boolean;
+  roomClosed: boolean;
+}
+
+/** 查看者、只读、已关闭、缺少房间凭证或缺少基线时一律不上传本地修改。 */
+export function canSendCollaborationUpdate(room: CollaborationSendGate, hasBaseline: boolean): boolean {
+  return Boolean(room.roomId)
+    && Boolean(room.roomAccessToken)
+    && room.roomRole !== "viewer"
+    && !room.roomReadonly
+    && !room.roomClosed
+    && hasBaseline;
+}
+
+/**
+ * 以基线的 exportedAt 打包当前工作区并与基线做差分，得到待上传的增量操作。
+ * exportedAt 固定为基线值，避免每次打包时间戳都产生一条伪增量。
+ */
+export function planCollaborationSend(baseline: ProjectPackage, latest: WorkspaceStateSnapshot): CollaborationOperation[] {
+  return diffCollaborationDocument(baseline, buildCollaborationPackage(latest, baseline.exportedAt));
 }
 
 export function buildResolvedTemplate(renderProject: ProjectDocument): TemplateDocument {
@@ -82,6 +113,15 @@ export function buildAssetUsageMap(project: ProjectDocument, userAssets: UserAss
     map[asset.id] = parts.length ? `使用中 · ${parts.join(" · ")}` : "使用中";
   }
   return map;
+}
+
+/** 素材去重入库：重复素材返回原数组引用；message 供调用方提示用户。 */
+export function addAssetToLibrary(current: UserAsset[], asset: UserAsset): { assets: UserAsset[]; message: string } {
+  const duplicate = current.some((item) =>
+    item.id === asset.id
+    || item.src === asset.src && item.kind === asset.kind && JSON.stringify(item.provinceIds) === JSON.stringify(asset.provinceIds));
+  if (duplicate) return { assets: current, message: `素材库已有相同素材：${asset.label}` };
+  return { assets: [...current, asset], message: `已加入素材库：${asset.label}` };
 }
 
 export function listContentLayoutIssues(project: ProjectDocument) {
@@ -133,6 +173,59 @@ export function resolveLayoutIssueSelection(project: ProjectDocument, issueId: s
   if (project.textElements.some((text) => text.id === target)) return { type: "text", id: target };
   if (project.assetElements.some((asset) => asset.id === target)) return { type: "asset", id: target };
   return null;
+}
+
+/** 从上次会话恢复画布选中对象；无记录时选中默认标题文本。 */
+export function deriveSessionSelection(session: WorkspaceSession): SceneSelection {
+  if (session.selectedProvince) return { type: "province", province: session.selectedProvince };
+  if (session.selectedObject === "cards") return { type: "cards" };
+  if (session.selectedObject === "guests") return { type: "guests" };
+  if (session.selectedObject) return { type: "asset", id: session.selectedObject };
+  return { type: "text", id: "text-note" };
+}
+
+/** 由当前阶段与画布选中对象生成要落盘的会话快照；旧的选中记录被替换而非叠加。 */
+export function buildWorkspaceSessionUpdate(
+  session: WorkspaceSession,
+  stage: WorkflowStageId,
+  selection: SceneSelection,
+  savedAt: string,
+): WorkspaceSession {
+  const selectedProvince = selection.type === "province" ? selection.province : undefined;
+  const selectedObject = selection.type === "asset"
+    ? selection.id
+    : selection.type === "cards" || selection.type === "guests" ? selection.type : undefined;
+  const { selectedProvince: _savedProvince, selectedObject: _savedObject, ...sessionBase } = session;
+  return {
+    ...sessionBase,
+    stage,
+    ...(selectedProvince ? { selectedProvince } : {}),
+    ...(selectedObject ? { selectedObject } : {}),
+    savedAt,
+  };
+}
+
+export interface ProjectHistorySummary {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel: string;
+  redoLabel: string;
+}
+
+/** 撤销/重做按钮的可用状态与提示文案。 */
+export function describeProjectHistory(history: ProjectDocument["history"]): ProjectHistorySummary {
+  const canUndo = history.past.length > 0;
+  const canRedo = history.future.length > 0;
+  return {
+    canUndo,
+    canRedo,
+    undoLabel: canUndo
+      ? `撤销：${history.past[history.past.length - 1]?.label ?? "上一步"}`
+      : "暂无可撤销操作",
+    redoLabel: canRedo
+      ? `重做：${history.future[0]?.label ?? "下一步"}`
+      : "暂无可重做操作",
+  };
 }
 
 export function createApplySystemTemplateTransaction(templateId: MapTemplateId): ProjectTransaction {

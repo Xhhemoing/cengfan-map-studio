@@ -215,6 +215,26 @@ describe("binary import adapters", () => {
     expect(expandMergedCells([["浙江省"]])).toEqual([["浙江省"]]);
   });
 
+  it("keeps the first of two identically named columns on a very wide sheet", () => {
+    const headers = Array.from({ length: 120 }, (_, index) => `扩展字段${index + 1}`);
+    headers[0] = "学生姓名";
+    headers[1] = "录取院校";
+    headers[2] = "城市";
+    // A second 城市 column (an export artefact) must not take over the mapping.
+    headers[60] = "城市";
+    const row = headers.map(() => "");
+    row[0] = "苏禾";
+    row[1] = "浙江大学";
+    row[2] = "杭州市";
+    row[60] = "宁波市";
+
+    const result = parseExcelWorkbookRows([headers, row]);
+
+    expect(result.columnMappings.find((mapping) => mapping.field === "city")?.columnIndex).toBe(2);
+    expect(result.candidates).toEqual([expect.objectContaining({ name: "苏禾", city: "杭州市" })]);
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("falls back to free-text parsing when the sheet has no recognizable header", () => {
     const result = parseExcelWorkbookRows([
       ["林舟", "北京大学", "北京"],

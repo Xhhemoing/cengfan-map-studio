@@ -1,0 +1,352 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-24T16:29:43.285Z",
+  "runtime": {
+    "node": "v22.14.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "seed": 7,
+  "warmupIterations": 2,
+  "iterations": 12,
+  "counts": [
+    16,
+    24,
+    36,
+    60,
+    100,
+    200,
+    400
+  ],
+  "modes": [
+    "quadrant",
+    "radial",
+    "right-stack",
+    "grid"
+  ],
+  "invariantChecks": {
+    "finiteNumbers": true,
+    "canvasBounds": true,
+    "placementCount": true,
+    "overlaps": "solved-results"
+  },
+  "results": [
+    {
+      "count": 16,
+      "mode": "quadrant",
+      "p50Ms": 1.487,
+      "p95Ms": 2.366,
+      "minMs": 1.361,
+      "maxMs": 2.366,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 16,
+      "mode": "radial",
+      "p50Ms": 1.088,
+      "p95Ms": 1.495,
+      "minMs": 1.067,
+      "maxMs": 1.495,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 16,
+      "mode": "right-stack",
+      "p50Ms": 4.069,
+      "p95Ms": 4.286,
+      "minMs": 3.901,
+      "maxMs": 4.286,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 16,
+      "mode": "grid",
+      "p50Ms": 5.491,
+      "p95Ms": 6.074,
+      "minMs": 5.321,
+      "maxMs": 6.074,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 24,
+      "mode": "quadrant",
+      "p50Ms": 13.143,
+      "p95Ms": 14.401,
+      "minMs": 12.884,
+      "maxMs": 14.401,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 24,
+      "mode": "radial",
+      "p50Ms": 10.507,
+      "p95Ms": 10.958,
+      "minMs": 10.264,
+      "maxMs": 10.958,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 24,
+      "mode": "right-stack",
+      "p50Ms": 13.817,
+      "p95Ms": 14.348,
+      "minMs": 13.56,
+      "maxMs": 14.348,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 24,
+      "mode": "grid",
+      "p50Ms": 8.351,
+      "p95Ms": 8.8,
+      "minMs": 8.028,
+      "maxMs": 8.8,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "quadrant",
+      "p50Ms": 14.256,
+      "p95Ms": 14.669,
+      "minMs": 14.072,
+      "maxMs": 14.669,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "radial",
+      "p50Ms": 14.305,
+      "p95Ms": 14.806,
+      "minMs": 14.004,
+      "maxMs": 14.806,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "right-stack",
+      "p50Ms": 14.62,
+      "p95Ms": 14.882,
+      "minMs": 14.174,
+      "maxMs": 14.882,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "grid",
+      "p50Ms": 9.219,
+      "p95Ms": 9.425,
+      "minMs": 9.069,
+      "maxMs": 9.425,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "quadrant",
+      "p50Ms": 0.455,
+      "p95Ms": 1.374,
+      "minMs": 0.352,
+      "maxMs": 1.374,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "radial",
+      "p50Ms": 0.36,
+      "p95Ms": 0.548,
+      "minMs": 0.343,
+      "maxMs": 0.548,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "right-stack",
+      "p50Ms": 0.337,
+      "p95Ms": 0.549,
+      "minMs": 0.319,
+      "maxMs": 0.549,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "grid",
+      "p50Ms": 0.348,
+      "p95Ms": 1.03,
+      "minMs": 0.305,
+      "maxMs": 1.03,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "quadrant",
+      "p50Ms": 1.446,
+      "p95Ms": 1.667,
+      "minMs": 1.341,
+      "maxMs": 1.667,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "radial",
+      "p50Ms": 1.587,
+      "p95Ms": 3.406,
+      "minMs": 1.328,
+      "maxMs": 3.406,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "right-stack",
+      "p50Ms": 1.348,
+      "p95Ms": 1.618,
+      "minMs": 1.278,
+      "maxMs": 1.618,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "grid",
+      "p50Ms": 1.421,
+      "p95Ms": 1.552,
+      "minMs": 1.29,
+      "maxMs": 1.552,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "quadrant",
+      "p50Ms": 7.504,
+      "p95Ms": 7.746,
+      "minMs": 7.312,
+      "maxMs": 7.746,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "radial",
+      "p50Ms": 7.244,
+      "p95Ms": 7.719,
+      "minMs": 7.102,
+      "maxMs": 7.719,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "right-stack",
+      "p50Ms": 7.272,
+      "p95Ms": 8.152,
+      "minMs": 7.047,
+      "maxMs": 8.152,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "grid",
+      "p50Ms": 7.486,
+      "p95Ms": 8.625,
+      "minMs": 7.17,
+      "maxMs": 8.625,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "quadrant",
+      "p50Ms": 47.395,
+      "p95Ms": 68.193,
+      "minMs": 36.748,
+      "maxMs": 68.193,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "radial",
+      "p50Ms": 37.809,
+      "p95Ms": 56.33,
+      "minMs": 36.508,
+      "maxMs": 56.33,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "right-stack",
+      "p50Ms": 37.38,
+      "p95Ms": 58.605,
+      "minMs": 36.116,
+      "maxMs": 58.605,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "grid",
+      "p50Ms": 41.904,
+      "p95Ms": 55.376,
+      "minMs": 36.407,
+      "maxMs": 55.376,
+      "fallbackRuns": 12
+    }
+  ],
+  "adversarialFixture": {
+    "fixture": "dense-overlap-many-polygons",
+    "description": "70 cards in a 36px anchor cluster against 96 vector-map polygons",
+    "seed": 20260824,
+    "cardCount": 70,
+    "polygonCount": 96,
+    "verticesPerPolygon": 16,
+    "warmupIterations": 1,
+    "iterations": 6,
+    "modes": [
+      "quadrant",
+      "radial",
+      "right-stack",
+      "grid"
+    ],
+    "results": [
+      {
+        "count": 70,
+        "mode": "quadrant",
+        "p50Ms": 192.634,
+        "p95Ms": 238.683,
+        "minMs": 163.451,
+        "maxMs": 238.683,
+        "fallbackRuns": 6
+      },
+      {
+        "count": 70,
+        "mode": "radial",
+        "p50Ms": 163.207,
+        "p95Ms": 163.393,
+        "minMs": 162.272,
+        "maxMs": 163.393,
+        "fallbackRuns": 6
+      },
+      {
+        "count": 70,
+        "mode": "right-stack",
+        "p50Ms": 161.688,
+        "p95Ms": 162.364,
+        "minMs": 160.604,
+        "maxMs": 162.364,
+        "fallbackRuns": 6
+      },
+      {
+        "count": 70,
+        "mode": "grid",
+        "p50Ms": 99.561,
+        "p95Ms": 100.92,
+        "minMs": 98.968,
+        "maxMs": 100.92,
+        "fallbackRuns": 6
+      }
+    ]
+  },
+  "workerMessageOverhead": {
+    "methodology": "worker_threads request and placement-shaped response; solver excluded",
+    "count": 24,
+    "startupIterations": 7,
+    "warmupIterations": 2,
+    "iterations": 30,
+    "startupP50Ms": 21.276,
+    "startupP95Ms": 23.575,
+    "warmP50Ms": 0.061,
+    "warmP95Ms": 0.38
+  }
+}

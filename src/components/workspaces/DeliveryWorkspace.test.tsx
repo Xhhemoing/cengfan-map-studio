@@ -82,6 +82,8 @@ describe("DeliveryWorkspace", () => {
     expect(container.querySelector('section[aria-label="导出设置"]')).not.toBeNull();
     expect(container.textContent).toContain("1500 × 1000 px");
     expect(container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')?.value).toBe("2");
+    // WCAG 2.5.3 Label in Name：可见文字必须与 aria-label 完全一致。
+    expect(container.querySelector('label[for="delivery-png-scale"]')?.textContent).toContain("PNG 导出倍率");
     expect(container.querySelector<HTMLInputElement>('input[aria-label="透明背景"]')?.checked).toBe(true);
     expect(container.querySelector<HTMLInputElement>('input[aria-label="工程包包含资源"]')?.checked).toBe(true);
     expect(container.querySelector<HTMLInputElement>('input[aria-label="透明背景"]')?.closest("label")?.classList).toContain("boolean-control");

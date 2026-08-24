@@ -67,20 +67,44 @@ interface Slot {
   stepY: number;
 }
 
-function slotSpan(members: readonly CardLayoutInput[], cascade: number): { width: number; height: number } {
+/**
+ * A slot while the packing is still being searched: the cards it would hold,
+ * named as a range over the grouping's card order rather than copied out.
+ *
+ * {@link spreadSlots} tries every slot count from one-card-per-slot downwards
+ * and all but the last of those attempts is thrown away, so materializing the
+ * groups — a slice and, for the compact grouping, a sort per group — was the
+ * whole cost of the search. A range answers the only question the packing asks
+ * of a group, how large it is, without building it.
+ */
+interface SlotPlan {
+  x: number;
+  y: number;
+  start: number;
+  end: number;
+  stepX: number;
+  stepY: number;
+}
+
+function rangeSpan(
+  order: readonly CardLayoutInput[],
+  start: number,
+  end: number,
+  cascade: number,
+): { width: number; height: number } {
   let width = 0;
   let height = 0;
-  for (const member of members) {
-    width = Math.max(width, member.width);
-    height = Math.max(height, member.height);
+  for (let index = start; index < end; index += 1) {
+    width = Math.max(width, order[index]!.width);
+    height = Math.max(height, order[index]!.height);
   }
-  const spread = cascade * (members.length - 1);
+  const spread = cascade * (end - start - 1);
   return { width: width + spread, height: height + spread };
 }
 
 /**
- * Split `cards` into `count` consecutive groups whose sizes differ by at most
- * one.
+ * Where the `index`-th of `count` consecutive groups starts, for groups whose
+ * sizes differ by at most one.
  *
  * Overlap grows with the square of a group's size, so the pairs a slotting
  * forces are minimized by making the groups as even as possible. Cutting the
@@ -88,17 +112,10 @@ function slotSpan(members: readonly CardLayoutInput[], cascade: number): { width
  * leaves whole slots unused whenever the canvas holds more of them than
  * `ceil(cards / size)`, paying for overlap the canvas had room to avoid.
  */
-function balancedGroups(cards: readonly CardLayoutInput[], count: number): CardLayoutInput[][] {
-  const groups: CardLayoutInput[][] = [];
-  const base = Math.floor(cards.length / count);
-  const remainder = cards.length % count;
-  let start = 0;
-  for (let index = 0; index < count; index += 1) {
-    const size = base + (index < remainder ? 1 : 0);
-    groups.push(cards.slice(start, start + size));
-    start += size;
-  }
-  return groups;
+function groupStart(total: number, count: number, index: number): number {
+  const base = Math.floor(total / count);
+  const remainder = total % count;
+  return index * base + Math.min(index, remainder);
 }
 
 /**
@@ -115,28 +132,41 @@ type Grouping = "geographic" | "compact";
 
 const GROUPINGS: Grouping[] = ["geographic", "compact"];
 
-function slotGroups(
-  cards: readonly CardLayoutInput[],
-  slots: number,
-  grouping: Grouping,
-): CardLayoutInput[][] {
-  if (grouping === "geographic") return balancedGroups(readingOrder(cards), slots);
-  const byHeight = [...cards].sort((left, right) =>
+/** The card order a grouping slices its slots out of. */
+function groupingOrder(cards: readonly CardLayoutInput[], grouping: Grouping): CardLayoutInput[] {
+  if (grouping === "geographic") return readingOrder(cards);
+  return [...cards].sort((left, right) =>
     right.height - left.height || right.width - left.width || left.id.localeCompare(right.id));
-  return balancedGroups(byHeight, slots).map(readingOrder);
 }
 
-/** Shelf-pack the slots; `null` when they do not all fit inside the margin. */
-function packSlots(groups: readonly CardLayoutInput[][], space: LayoutSpace, cascade: number): Slot[] | null {
+/** Fill in the cards a planned slot holds, in the order they will be stacked. */
+function fillSlots(plans: readonly SlotPlan[], order: readonly CardLayoutInput[], grouping: Grouping): Slot[] {
+  return plans.map((plan) => {
+    const members = order.slice(plan.start, plan.end);
+    // The compact grouping picks its slot-mates by height, so the poster still
+    // reads north-west to south-east only if each slot is re-sorted.
+    return { ...plan, members: grouping === "compact" ? readingOrder(members) : members };
+  });
+}
+
+/** Shelf-pack `count` slots; `null` when they do not all fit inside the margin. */
+function packSlots(
+  order: readonly CardLayoutInput[],
+  count: number,
+  space: LayoutSpace,
+  cascade: number,
+): SlotPlan[] | null {
   const left = space.margin;
   const right = space.width - space.margin;
   const bottom = space.height - space.margin;
-  const slots: Slot[] = [];
+  const slots: SlotPlan[] = [];
   let x = left;
   let y = space.margin;
   let rowHeight = 0;
-  for (const members of groups) {
-    const { width, height } = slotSpan(members, cascade);
+  for (let index = 0; index < count; index += 1) {
+    const start = groupStart(order.length, count, index);
+    const end = groupStart(order.length, count, index + 1);
+    const { width, height } = rangeSpan(order, start, end, cascade);
     if (width > right - left + EPSILON) return null;
     if (x > left && x + width > right + EPSILON) {
       x = left;
@@ -144,7 +174,7 @@ function packSlots(groups: readonly CardLayoutInput[][], space: LayoutSpace, cas
       rowHeight = 0;
     }
     if (y + height > bottom + EPSILON) return null;
-    slots.push({ x, y, members, stepX: cascade, stepY: cascade });
+    slots.push({ x, y, start, end, stepX: cascade, stepY: cascade });
     x += width + space.gap;
     rowHeight = Math.max(rowHeight, height);
   }
@@ -152,15 +182,27 @@ function packSlots(groups: readonly CardLayoutInput[][], space: LayoutSpace, cas
 }
 
 /**
+ * Smallest fan worth applying when the gap cannot pay for a real one.
+ *
+ * Two cards at identical coordinates read as one card, and the one underneath
+ * cannot be clicked; a hundredth of a pixel apart they are still two objects
+ * the editor can tell apart and the renderer draws separately.
+ */
+const HAIRLINE_STEP = 0.01;
+
+/**
  * Fan for a slot that could not afford any of {@link CASCADE_STEPS}.
  *
- * The whole fan is kept inside the slot's own footprint plus the gap that
- * separates it from the next one — space that is empty by construction, so
- * spreading into it cannot collide with another slot's cards. On a badly
- * over-full canvas that leaves a sub-pixel step, which is still worth having:
- * cards at identical coordinates are indistinguishable and the one underneath
- * cannot be picked up, while a fraction of a pixel apart they remain separate
- * objects.
+ * The fan is kept inside the slot's own footprint plus the gap that separates
+ * it from the next one — space that is empty by construction, so spreading into
+ * it cannot collide with another slot's cards. On a badly over-full canvas that
+ * leaves a sub-pixel step, which is still worth having.
+ *
+ * A canvas with `gap: 0` budgets nothing at all that way, and the cards would
+ * go back to sharing coordinates — the one outcome the saturation policy ranks
+ * below overlapping. Such a slot falls back to a {@link HAIRLINE_STEP} taken
+ * out of the slack it has to the canvas edge, which keeps every card inside the
+ * margin and distinguishable.
  */
 function affordableCascade(slot: Slot, space: LayoutSpace, preferred: number): Slot {
   const layers = slot.members.length - 1;
@@ -171,7 +213,11 @@ function affordableCascade(slot: Slot, space: LayoutSpace, preferred: number): S
     width = Math.max(width, member.width);
     height = Math.max(height, member.height);
   }
-  const fit = (slack: number) => Math.max(0, Math.min(preferred, Math.min(space.gap, slack) / layers));
+  const fit = (slack: number) => {
+    const affordable = Math.min(preferred, Math.min(space.gap, slack) / layers);
+    if (affordable > 0) return affordable;
+    return Math.max(0, Math.min(HAIRLINE_STEP, slack / layers));
+  };
   return {
     ...slot,
     stepX: fit(space.maxX(width) - slot.x),
@@ -195,23 +241,23 @@ function spreadSlots(
   space: LayoutSpace,
   grouping: Grouping,
 ): Slot[] {
+  const order = groupingOrder(cards, grouping);
+  const smallest = CASCADE_STEPS[CASCADE_STEPS.length - 1]!;
   for (let slots = cards.length; slots >= 1; slots -= 1) {
-    const groups = slotGroups(cards, slots, grouping);
-    const plain = packSlots(groups, space, 0);
+    const plain = packSlots(order, slots, space, 0);
     if (!plain) continue;
     // Cards in a slot overlap no matter what, so buy every one of them a
     // visible edge — preferring an offset the slot can actually afford.
     for (const cascade of CASCADE_STEPS) {
-      const spread = packSlots(groups, space, cascade);
-      if (spread) return spread;
+      const spread = packSlots(order, slots, space, cascade);
+      if (spread) return fillSlots(spread, order, grouping);
     }
-    const smallest = CASCADE_STEPS[CASCADE_STEPS.length - 1]!;
-    return plain.map((slot) => affordableCascade(slot, space, smallest));
+    return fillSlots(plain, order, grouping).map((slot) => affordableCascade(slot, space, smallest));
   }
   return [affordableCascade(
     { x: space.margin, y: space.margin, members: readingOrder(cards), stepX: 0, stepY: 0 },
     space,
-    CASCADE_STEPS[CASCADE_STEPS.length - 1]!,
+    smallest,
   )];
 }
 

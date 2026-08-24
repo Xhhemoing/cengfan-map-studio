@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { StudioAssistantRail, type StudioAssistantRailProps } from "./StudioAssistantRail";
 import { AssistantConversationProvider } from "./AgentAssistant";
@@ -11,12 +11,14 @@ function click(element: Element | null): void {
 }
 
 const containers: HTMLDivElement[] = [];
+const roots: Root[] = [];
 
 function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
   const container = document.createElement("div");
   document.body.append(container);
   containers.push(container);
   const root = createRoot(container);
+  roots.push(root);
   const props: StudioAssistantRailProps = {
     project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
     assets: [],
@@ -52,6 +54,9 @@ function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
 }
 
 afterEach(() => {
+  roots.splice(0).forEach((root) => {
+    flushSync(() => root.unmount());
+  });
   containers.splice(0).forEach((container) => container.remove());
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

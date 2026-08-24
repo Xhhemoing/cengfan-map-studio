@@ -49,4 +49,17 @@ describe("WorkflowPrototype", () => {
     expect(container.querySelector(".prototype-inspector h2")?.textContent).toBe("浙江省");
     expect(container.textContent).toContain("使用浙江贴图");
   });
+
+  it("hides every decorative icon while all buttons keep an accessible name", () => {
+    const container = renderPrototype();
+
+    const icons = Array.from(container.querySelectorAll("svg"));
+    expect(icons.length).toBeGreaterThan(0);
+    for (const icon of icons) expect(icon.getAttribute("aria-hidden")).toBe("true");
+
+    for (const button of Array.from(container.querySelectorAll("button"))) {
+      const name = button.getAttribute("aria-label") ?? button.textContent?.trim();
+      expect(name, "every prototype button must expose a name").toBeTruthy();
+    }
+  });
 });

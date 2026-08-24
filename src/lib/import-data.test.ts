@@ -242,6 +242,20 @@ describe("import data robustness", () => {
     expect(result.unparsed).toHaveLength(1);
   });
 
+  it("keeps an empty leading column of a tab-separated row aligned", () => {
+    // Dropping the leading tab would shift every cell left by one, which reads
+    // the university as the student's name instead of failing loudly.
+    const result = parseStudentText([
+      "学号\t姓名\t院校\t城市\t省份",
+      "\t林舟\t北京大学\t北京市\t北京市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市", province: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("still parses a header-less paste positionally", () => {
     expect(parseDelimitedTable("林舟,北京大学,北京")).toEqual([
       { name: "林舟", university: "北京大学", city: "北京", sourceLine: 1, rawLine: "林舟,北京大学,北京" },
@@ -299,6 +313,43 @@ describe("import header aliases and fuzzy matching", () => {
     expect(detectHeaderColumns(["姓名", "录取院校名称", "院校", "城市"])).toMatchObject({ university: 2 });
   });
 
+  it("reads slash-separated headers because the slash is dropped like other decoration", () => {
+    expect(normalizeHeaderCell("省 / 直辖市")).toBe("省直辖市");
+    expect(detectHeaderColumns(["姓名", "院校", "城市", "省/直辖市", "国内/海外"])).toEqual({
+      name: 0,
+      university: 1,
+      city: 2,
+      province: 3,
+      locationScope: 4,
+    });
+  });
+
+  it("maps an employer destination without letting 单位 claim a city column", () => {
+    expect(detectHeaderColumns(["姓名", "工作单位", "城市"])).toEqual({ name: 0, university: 1, city: 2 });
+    expect(detectHeaderColumns(["姓名", "单位", "所在市"])).toEqual({ name: 0, university: 1, city: 2 });
+    // 单位 counts as a whole header only: this sheet has a city column, not a 单位 one.
+    expect(detectHeaderColumns(["姓名", "录取院校", "单位所在城市"])).toEqual({ name: 0, university: 1, city: 2 });
+    expect(detectHeaderColumns(["姓名", "录取院校", "目的地城市"])).toEqual({ name: 0, university: 1, city: 2 });
+    // A sheet carrying both keeps the school column and leaves 工作单位 unused.
+    expect(detectHeaderColumns(["姓名", "工作单位", "录取院校", "城市"])).toEqual({ name: 0, university: 2, city: 3 });
+  });
+
+  it("recognizes the overseas-or-not wordings and keeps the province optional there", () => {
+    expect(detectHeaderColumns(["姓名", "院校", "城市", "是否出国"]).locationScope).toBe(3);
+    expect(detectHeaderColumns(["姓名", "院校", "城市", "境内境外"]).locationScope).toBe(3);
+
+    const result = parseStudentText([
+      "姓名,院校,城市,省份,是否出国",
+      "周晴,哈佛大学,波士顿,马萨诸塞州,出国",
+      "苏禾,浙江大学,杭州市,浙江省,境内",
+    ].join("\n"));
+
+    expect(result.candidates[0]).toEqual(expect.objectContaining({ name: "周晴", locationScope: "international" }));
+    expect(result.candidates[0]).not.toHaveProperty("province");
+    expect(result.candidates[1]).toEqual(expect.objectContaining({ name: "苏禾", province: "浙江省" }));
+    expect(result.candidates[1]).not.toHaveProperty("locationScope");
+  });
+
   it("never reads a data row as a header just because its values contain alias words", () => {
     expect(looksLikeStudentHeader(["姓名：林舟", "就读院校：北京大学", "城市：北京"])).toBe(false);
     expect(looksLikeStudentHeader(["林舟", "北京大学", "北京市"])).toBe(false);
@@ -306,6 +357,38 @@ describe("import header aliases and fuzzy matching", () => {
     expect(looksLikeStudentHeader(["新同学", "北京大学", "北京"])).toBe(false);
     expect(parseStudentText("新同学 北京大学 北京").candidates).toEqual([
       expect.objectContaining({ name: "新同学", university: "北京大学", city: "北京" }),
+    ]);
+  });
+});
+
+describe("wide and repetitive headers", () => {
+  it("gives a repeated header name to the first column that claims it", () => {
+    expect(detectHeaderColumns(["姓名", "姓名", "院校", "城市"])).toEqual({ name: 0, university: 2, city: 3 });
+
+    const result = parseStudentText([
+      "姓名,姓名,院校,城市",
+      "林舟,曾用名,北京大学,北京市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([expect.objectContaining({ name: "林舟", city: "北京市" })]);
+  });
+
+  it("maps a very wide sheet by header instead of by position", () => {
+    const headers = Array.from({ length: 200 }, (_, index) => `扩展字段${index + 1}`);
+    headers[3] = "学生姓名";
+    headers[97] = "录取院校";
+    headers[150] = "所在城市";
+    headers[151] = "省份";
+
+    expect(detectHeaderColumns(headers)).toEqual({ name: 3, university: 97, city: 150, province: 151 });
+
+    const row = headers.map(() => "");
+    row[3] = "苏禾";
+    row[97] = "浙江大学";
+    row[150] = "杭州市";
+    row[151] = "浙江省";
+    expect(parseStudentText([headers.join("\t"), row.join("\t")].join("\n")).candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市", province: "浙江省" }),
     ]);
   });
 });

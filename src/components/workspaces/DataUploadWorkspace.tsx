@@ -8,6 +8,7 @@ import { resolveStudentLocation } from "../../lib/student-data";
 import { AssetPanel } from "../AssetPanel";
 import { DataQualityPanel } from "../DataQualityPanel";
 import { DataWorkspace } from "../DataWorkspace";
+import { focusStudentRow } from "../data-workspace-fields";
 import { SearchCombobox } from "../SearchCombobox";
 import { CompactButton, PanelHeader } from "../StudioUi";
 
@@ -74,19 +75,11 @@ function MappingIssueRow({
 }
 
 /**
- * Brings the roster row for a student into view and moves focus onto it, so a
- * 定位 action from the quality rail lands on the record instead of only
- * scrolling near it. The row lives in a sibling component, hence the DOM lookup
- * by its existing `data-student-row` id rather than a new routing layer.
+ * A 定位 action from the quality rail lands on the roster row itself instead of
+ * only scrolling near it. When the row is not rendered (the roster filter hides
+ * it) the selection is still reported: the roster panel owns the filter and
+ * announces the hidden record with a way to reveal it.
  */
-function focusStudentRow(id: string): boolean {
-  const row = Array.from(document.querySelectorAll<HTMLElement>("[data-student-row]")).find((item) => item.dataset.studentRow === id);
-  if (!row) return false;
-  if (typeof row.scrollIntoView === "function") row.scrollIntoView({ block: "center" });
-  if (typeof row.focus === "function") row.focus({ preventScroll: true });
-  return true;
-}
-
 function selectStudentRow(id: string, onSelectStudent: (studentId: string) => void, delegate?: (studentId: string) => void) {
   delegate?.(id);
   onSelectStudent(id);

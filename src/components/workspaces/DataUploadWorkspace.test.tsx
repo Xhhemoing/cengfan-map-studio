@@ -1,9 +1,10 @@
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import { DataUploadRail, DataUploadWorkspace } from "./DataUploadWorkspace";
 import { createProjectDocument } from "../../lib/project-document";
+import type { DataIssue } from "../../lib/data-health";
 import type { Student } from "../../lib/project-data";
 import type { DataWorkspace } from "../DataWorkspace";
 
@@ -73,6 +74,68 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
     </div>,
   ));
   return { container, root, project };
+}
+
+const rosterWithTwo: Student[] = [
+  students[0]!,
+  { id: "student-2", name: "苏禾", university: "浙江大学", city: "杭州市", visibility: true },
+];
+
+const locateIssues: DataIssue[] = [{
+  id: "unresolved-location:student-1",
+  studentId: "student-1",
+  studentName: "林舟",
+  kind: "unresolved-location",
+  detail: "无法定位城市：火星市",
+  severity: "warning",
+}];
+
+/**
+ * The DATA stage keeps the selected record in the app shell, so 定位 only
+ * reaches the roster table through a state round-trip. This harness stands in
+ * for that shell.
+ */
+function LocateHarness() {
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const project = createProjectDocument({ students: rosterWithTwo, templateId: "original", dataView: "province" });
+  const summary = { total: 2, visible: 2, hidden: 0, international: 0, unresolved: 1, missingRequired: 0, duplicate: 0 };
+  const dataWorkspaceProps: ComponentProps<typeof DataWorkspace> = {
+    ...defaultDataWorkspaceProps(),
+    students: rosterWithTwo,
+    selectedStudentId,
+  };
+  const assetPanelProps = { onApplyBackground: vi.fn() };
+  return (
+    <div className="data-upload-test-suite">
+      <DataUploadWorkspace
+        project={project}
+        summary={summary}
+        issues={locateIssues}
+        dataWorkspaceProps={dataWorkspaceProps}
+        assetPanelProps={assetPanelProps}
+        onCreateDecoration={vi.fn()}
+        onSelectStudent={setSelectedStudentId}
+      />
+      <DataUploadRail
+        project={project}
+        summary={summary}
+        issues={locateIssues}
+        dataWorkspaceProps={dataWorkspaceProps}
+        assetPanelProps={assetPanelProps}
+        onCreateDecoration={vi.fn()}
+        onSelectStudent={setSelectedStudentId}
+      />
+    </div>
+  );
+}
+
+function renderLocateHarness() {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push({ root, container });
+  flushSync(() => root.render(<LocateHarness />));
+  return { container, root };
 }
 
 describe("DataUploadWorkspace", () => {
@@ -210,6 +273,33 @@ describe("DataUploadWorkspace", () => {
 
     expect(outerSelect).toHaveBeenCalledWith("student-404");
     expect(document.activeElement).toBe(active);
+  });
+
+  it("says the located row is hidden by the roster filter and brings it back", () => {
+    const { container } = renderLocateHarness();
+    const filterInput = container.querySelector<HTMLInputElement>('input[aria-label="筛选学生"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    flushSync(() => {
+      setter?.call(filterInput, "浙江");
+      filterInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelector('[data-student-row="student-1"]')).toBeNull();
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-locate-issue="unresolved-location:student-1"]')!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    // The row cannot be focused, so the roster panel says why instead.
+    const notice = container.querySelector('[data-filtered-selection="student-1"]');
+    expect(notice?.textContent).toContain("林舟");
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-reveal-filtered-selection="student-1"]')!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    flushSync(() => {});
+
+    const row = container.querySelector('[data-student-row="student-1"]');
+    expect(row).not.toBeNull();
+    expect(document.activeElement).toBe(row);
+    expect(container.querySelector("[data-filtered-selection]")).toBeNull();
   });
 
   it("shows an empty state when all locations and provinces are resolved", () => {

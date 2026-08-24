@@ -3,11 +3,15 @@ import {
   clampCardPosition,
   layoutCards,
   solveCardLayout,
+  __layoutDebug,
   type CardLayoutBounds,
   type CardLayoutInput,
   type CardLayoutMode,
   type CardPlacement,
+  type ConnectorSearchDecision,
 } from "./card-layout";
+import { optimizedLayout } from "./card-layout-optimizer";
+import { LayoutSpace } from "./card-layout-space";
 import { buildConnectorGeometry, connectorGeometriesIntersect } from "./connector-geometry";
 
 const bounds: CardLayoutBounds = {
@@ -680,6 +684,10 @@ describe("card layout", () => {
       [{ width: 1500, height: 1000, map: { x: 350, y: 120, width: 800, height: 690 }, margin: 40, gap: 8 }, 150, 70, 400],
       [{ width: 420, height: 260, map: { x: 100, y: 60, width: 220, height: 140 }, margin: 0, gap: 8 }, 220, 110, 150],
       [{ width: 800, height: 500, map: { x: 200, y: 100, width: 400, height: 300 }, margin: 8, gap: 4 }, 90, 40, 400],
+      // A canvas with no gap budgets nothing for the fan that keeps stacked
+      // cards apart, and put 23 of these 59 cards at another card's exact
+      // coordinates until the fan learned to take a hairline out of its slack.
+      [{ width: 1078, height: 460, map: { x: 215, y: 69, width: 593, height: 299 }, margin: 32, gap: 0 }, 155, 65, 59],
     ];
     for (const [canvas, width, height, count] of shapes) {
       const input = Array.from({ length: count }, (_, index) => cardInput({
@@ -901,5 +909,126 @@ describe("card layout", () => {
       card.y + card.height / 2 - card.anchorY,
     ), 0);
     expect(totalDistance).toBeLessThan(2400);
+  });
+});
+
+/**
+ * The search is the most expensive thing a solve can do, so what these assert
+ * is *which path was taken*, read off {@link __layoutDebug}. Wall-clock
+ * assertions would say the same thing far less reliably on a shared machine.
+ */
+describe("connector search cost control", () => {
+  const provinces = Array.from({ length: 34 }, (_, index) => ({
+    rings: [Array.from({ length: 24 }, (_, step) => {
+      const angle = (step / 24) * Math.PI * 2;
+      const radius = 30 + (index % 5) * 8;
+      return {
+        x: 400 + ((index * 137) % 700) + Math.cos(angle) * radius,
+        y: 150 + ((index * 89) % 560) + Math.sin(angle) * radius,
+      };
+    })],
+  }));
+  const vectorBoard: CardLayoutBounds = { ...bounds, occupiedAreas: [], occupiedPolygons: provinces };
+  const searchOptions = { connectorStyle: "curve" as const, connectorWidth: 1.5 };
+
+  function roster(count: number, width = 130, height = 56): CardLayoutInput[] {
+    return Array.from({ length: count }, (_, index) => cardInput({
+      id: `s-${index}`,
+      anchorX: 400 + ((index * 137) % 700),
+      anchorY: 150 + ((index * 89) % 560),
+      width,
+      height,
+    }));
+  }
+
+  it.each<[CardLayoutMode, ConnectorSearchDecision]>([
+    ["quadrant", "ran"],
+    ["radial", "ran"],
+    ["grid", "skipped-mode"],
+    ["right-stack", "skipped-mode"],
+  ])("only pays for the connector search in a mode that can act on it: %s", (mode, decision) => {
+    const input = roster(24);
+    const result = solveCardLayout(input, vectorBoard, { ...searchOptions, mode });
+    const debug = __layoutDebug.last!;
+
+    expect({ decision: debug.decision, searched: debug.trace !== null })
+      .toEqual({ decision, searched: decision === "ran" });
+    // Skipping has to leave the placements alone, not just the timings.
+    expect(solveCardLayout(input, vectorBoard, { ...searchOptions, mode })).toEqual(result);
+    expect(result.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
+  });
+
+  it.each<[string, CardLayoutBounds, CardLayoutInput[], ConnectorSearchDecision]>([
+    ["no geography to route around", bounds, roster(24), "skipped-no-geography"],
+    ["more cards than the search has ever helped", vectorBoard, roster(81, 90, 40), "skipped-card-count"],
+    ["a canvas that cannot hold the cards", { ...vectorBoard, width: 500, height: 400 }, roster(60), "skipped-infeasible"],
+    ["an empty roster", vectorBoard, [], "skipped-empty"],
+  ])("skips the search on %s", (_label, canvas, input, decision) => {
+    solveCardLayout(input, canvas, { ...searchOptions, mode: "quadrant" });
+    expect(__layoutDebug.last!.decision).toBe(decision);
+  });
+
+  it("stops exploring insertion orders once they stop paying off", () => {
+    // Rotating the insertion order cannot help every board, and on the ones it
+    // cannot the full sweep used to cost several times the packing ladder it
+    // was trying to beat.
+    for (const canvas of [
+      vectorBoard,
+      { ...bounds, occupiedAreas: [bounds.map] },
+      { ...bounds, occupiedAreas: [{ x: 360, y: 130, width: 360, height: 300 }, { x: 760, y: 130, width: 380, height: 300 }] },
+    ]) {
+      for (const count of [16, 34]) {
+        solveCardLayout(roster(count), canvas, { ...searchOptions, mode: "quadrant" });
+        const trace = __layoutDebug.last!.trace!;
+        const lastImprovement = trace.improvingOrders.at(-1) ?? -1;
+        // The rule, stated as an invariant rather than a magic number: no order
+        // runs more than the patience past the last one that improved.
+        expect({ stop: trace.stop, wasted: trace.ordersRun - 1 - lastImprovement })
+          .toEqual({ stop: "no-gain", wasted: 2 });
+      }
+    }
+  });
+
+  it("gives up before scoring anything when no card has a candidate rectangle", () => {
+    // Every rail lands on the obstacle, so each shortlist comes back empty and
+    // the seed's own quadratic scoring pass would be paid for nothing.
+    const walled = new LayoutSpace({ ...bounds, occupiedAreas: [{ x: 0, y: 0, width: 1500, height: 1000 }] });
+    const input = roster(8);
+    const seed = input.map((card) => ({ ...card, x: card.anchorX, y: card.anchorY, side: "right" as const }));
+
+    const { placements, trace } = optimizedLayout(input, walled, "quadrant", searchOptions, seed);
+
+    expect(placements).toBeNull();
+    expect(trace).toEqual({
+      candidates: 0,
+      ordersRun: 0,
+      ordersScored: 0,
+      improvingOrders: [],
+      stop: "no-candidates",
+      budgetSpent: 0,
+    });
+  });
+
+  it("hands back the packed layout untouched when it stops without a win", () => {
+    // The two canvases protect the same rectangle and so pose the identical
+    // problem, but only the explicit `occupiedAreas` form counts as geography
+    // worth searching. Whatever the search decides, the other one is exactly
+    // what the solve would have shipped without it.
+    const searched: CardLayoutBounds = { ...bounds, occupiedAreas: [bounds.map] };
+    const packedOnly: CardLayoutBounds = { ...bounds };
+
+    for (const count of [8, 16, 34, 55]) {
+      const input = roster(count);
+      const withSearch = solveCardLayout(input, searched, { ...searchOptions, mode: "quadrant" });
+      const debug = __layoutDebug.last!;
+      const withoutSearch = solveCardLayout(input, packedOnly, { ...searchOptions, mode: "quadrant" });
+
+      expect(debug.decision).toBe("ran");
+      if (debug.improved) {
+        expect(countCrossings(withSearch.placements)).toBeLessThanOrEqual(countCrossings(withoutSearch.placements));
+      } else {
+        expect(withSearch.placements).toEqual(withoutSearch.placements);
+      }
+    }
   });
 });
