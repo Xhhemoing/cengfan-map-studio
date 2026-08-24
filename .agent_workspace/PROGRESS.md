@@ -48,7 +48,13 @@
   - opus-fast-B → `bc-fadea826-74a2-5368-9667-5431fcf9b1c7`
   - gpt-sol-A → `bc-b425589d-0230-58c2-94b8-fd136cbe474b`
   - gpt-sol-B → `bc-d2683e3c-52ea-50e8-b527-85e5fd822ff8`
-- [ ] Cycle 2 Round 1 — 文本排版与卡片层拆分（派发中）
+- [ ] Cycle 2 Round 1 — 文本排版与卡片层拆分（进行中，6 子代理并发）
+  - fable-A → `bc-34ecb457-b92f-5d9f-9221-2ff2423e45b2`
+  - fable-B → `bc-ebb983fe-da5f-5b77-9935-f50c2d6ac9d9`
+  - opus-fast-A → `bc-ea47ec65-a3c7-503d-85c2-744d057a26ce`
+  - opus-fast-B → `bc-398927a7-b6e9-5f44-8e86-ad251dd54bc9`
+  - gpt-sol-A → `bc-06159e11-c8f6-5bba-ba71-c2b50e05f3e3`
+  - gpt-sol-B → `bc-33c43960-3655-5ee6-959b-ebbc50f075f4`
 - [ ] Cycle 2 Round 2
 - [ ] Cycle 2 Round 3
 - [ ] Cycle 3 Round 1
