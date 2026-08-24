@@ -126,6 +126,15 @@ function clickConfirmDialogButton(container: HTMLElement, label: string): void {
   click(Array.from(dialog.querySelectorAll("button")).find((button) => button.textContent?.trim() === label)!);
 }
 
+/** 「导出工程」按钮藏在项目菜单的弹层里，两套布局分支都只有这一个入口。 */
+function clickExportProject(container: HTMLElement): void {
+  click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("导出工程"))!);
+}
+
+function exportProjectDialog(container: HTMLElement): HTMLElement | null {
+  return container.querySelector<HTMLElement>('.export-project-dialog[role="dialog"]');
+}
+
 function openGlobalData(container: HTMLElement): void {
   click(workflowStage(container, "数据与素材"));
 }
@@ -833,14 +842,54 @@ describe("App student editing", () => {
   it("asks whether to include the resource pack before exporting a project", () => {
     const container = renderApp();
 
-    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("导出工程"))!);
+    clickExportProject(container);
 
-    const dialog = container.querySelector<HTMLElement>('[role="dialog"][aria-label="导出工程确认"]');
+    const dialog = exportProjectDialog(container);
     expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain("确认导出工程");
     expect(dialog?.textContent).toContain("包含资源包");
     expect(dialog?.textContent).toContain("地图背景、地图贴图、素材和字体");
     expect(dialog?.querySelector<HTMLInputElement>('input[aria-label="导出时包含资源包"]')?.checked).toBe(true);
     expect(dialog?.querySelector<HTMLButtonElement>('button[aria-label="确认导出工程"]')).not.toBeNull();
+  });
+
+  // 确认框曾经只挂在旧编辑器分支上，默认的五阶段编辑器点「导出工程」静默无效。
+  it("opens the export confirmation on the default staged editor too", () => {
+    const container = renderPublicApp();
+
+    clickExportProject(container);
+
+    const dialog = exportProjectDialog(container);
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain("确认导出工程");
+    expect(dialog?.querySelector<HTMLInputElement>('input[aria-label="导出时包含资源包"]')?.checked).toBe(true);
+
+    click(dialog!.querySelector<HTMLButtonElement>('button[aria-label="确认导出工程"]')!);
+    expect(exportProjectDialog(container)).toBeNull();
+    expect(container.textContent).toContain("完整工程包已导出");
+  });
+
+  it("keeps the export confirmation focus trapped and returns focus on Esc", () => {
+    const container = renderPublicApp();
+    const trigger = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("导出工程"))!;
+    trigger.focus();
+
+    click(trigger);
+    const dialog = exportProjectDialog(container)!;
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    const confirmButton = dialog.querySelector<HTMLButtonElement>('button[aria-label="确认导出工程"]')!;
+    confirmButton.focus();
+    flushSync(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    flushSync(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(exportProjectDialog(container)).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 
   it("immediately applies imported backgrounds, province textures and resource catalog", () => {

@@ -1,0 +1,15 @@
+/* 外壳（遮罩、面板、提示、按钮行）复用 WorkbenchDialog.css，这里只留导出工程特有的部分。 */
+.export-project-dialog .workbench-dialog__panel {
+  width: min(92vw, 460px);
+}
+
+.export-project-dialog .export-resource-warning {
+  margin: 0;
+  padding: 9px 10px;
+  color: #98503e;
+  background: #fdf3ef;
+  border: 1px solid #e9c9bd;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+}
