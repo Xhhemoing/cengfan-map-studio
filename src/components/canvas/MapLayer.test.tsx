@@ -1,10 +1,30 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { geoMercator, geoPath } from "d3-geo";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { MapLayer } from "./MapLayer";
 import type { MapFeature } from "../../lib/map-data";
 import type { MapSettings } from "../../lib/scene-document";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted for
+  // the rest of the run, racing React's scheduler against jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 const feature: MapFeature = {
   type: "Feature",
@@ -24,8 +44,7 @@ const baseMapSettings: Pick<MapSettings, "edgeStyle" | "edgeWidth" | "provinceSt
 
 describe("MapLayer", () => {
   it("renders the selected province label font over the map-wide font", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapLayer
@@ -43,12 +62,10 @@ describe("MapLayer", () => {
     ));
 
     expect(container.querySelector('[data-province-label="1"]')?.getAttribute("font-family")).toContain("KaiTi");
-    flushSync(() => root.unmount());
   });
 
   it("uses scene frame and scale and reports map selection", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const onSelect = vi.fn();
     flushSync(() => root.render(
       <MapLayer
@@ -65,13 +82,10 @@ describe("MapLayer", () => {
     expect(group.getAttribute("data-scale")).toBe("1.2");
     flushSync(() => group.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onSelect).toHaveBeenCalledWith({ type: "map" });
-    root.unmount();
-    container.remove();
   });
 
   it("applies map opacity to the rendered map content without hiding the frame", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapLayer
@@ -96,8 +110,6 @@ describe("MapLayer", () => {
 
     expect(container.querySelector("[data-map-content]")?.getAttribute("opacity")).toBe("0.45");
     expect(container.querySelector("[data-map-frame]")).not.toBeNull();
-    root.unmount();
-    container.remove();
   });
 
   it("renders map data from supplied counts and hides its editor overlay for export", () => {
@@ -118,10 +130,8 @@ describe("MapLayer", () => {
       ...baseMapSettings,
     };
 
-    const editorContainer = document.createElement("div");
-    const exportContainer = document.createElement("div");
-    const editorRoot = createRoot(editorContainer);
-    const exportRoot = createRoot(exportContainer);
+    const { container: editorContainer, root: editorRoot } = trackedRoot();
+    const { container: exportContainer, root: exportRoot } = trackedRoot();
 
     flushSync(() => editorRoot.render(
       <svg>
@@ -158,16 +168,10 @@ describe("MapLayer", () => {
     expect(editorContainer.querySelector('[data-province-label="1"]')?.textContent).toBe("北京*");
     expect(editorContainer.querySelector("[data-map-selection-overlay]")).not.toBeNull();
     expect(exportContainer.querySelector("[data-map-selection-overlay]")).toBeNull();
-
-    editorRoot.unmount();
-    exportRoot.unmount();
-    editorContainer.remove();
-    exportContainer.remove();
   });
 
   it("positions province labels at the projected administrative center", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapLayer
@@ -182,8 +186,6 @@ describe("MapLayer", () => {
     expect(Number(label.getAttribute("y"))).toBeGreaterThan(0);
     expect(label.getAttribute("data-label-anchor")).toBe("administrative-center");
     expect(label.textContent).toBe("北京");
-    root.unmount();
-    container.remove();
   });
 
   it("centers province textures on the geometry centroid instead of the administrative center", () => {
@@ -220,8 +222,7 @@ describe("MapLayer", () => {
     const administrativeCenter = projection(asymmetricFeature.center)!;
     expect(Math.hypot(expected[0] - administrativeCenter[0], expected[1] - administrativeCenter[1])).toBeGreaterThan(10);
 
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapLayer settings={settings} features={[asymmetricFeature]} counts={new Map()} />
@@ -233,8 +234,6 @@ describe("MapLayer", () => {
     expect(Number(texture.getAttribute("data-texture-cx"))).toBeCloseTo(expected[0], 4);
     expect(Number(texture.getAttribute("data-texture-cy"))).toBeCloseTo(expected[1], 4);
     expect(label.getAttribute("data-label-anchor")).toBe("administrative-center");
-    root.unmount();
-    container.remove();
   });
 
   it("selects and previews a province texture drag before committing once on pointer up", async () => {
@@ -254,8 +253,7 @@ describe("MapLayer", () => {
     };
     const onSelectProvince = vi.fn();
     const onMoveProvinceTexture = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapLayer
@@ -302,13 +300,10 @@ describe("MapLayer", () => {
     })));
     expect(onMoveProvinceTexture).toHaveBeenCalledTimes(1);
     expect(onMoveProvinceTexture).toHaveBeenCalledWith("北京市", 30, 20);
-    root.unmount();
-    container.remove();
   });
 
   it("renders one labeled pin per visible student in the pins view", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapLayer
@@ -328,13 +323,10 @@ describe("MapLayer", () => {
     expect(container.textContent).toContain("林舟");
     expect(container.textContent).toContain("陈宁");
 
-    root.unmount();
-    container.remove();
   });
 
   it("renders a compact unlabeled marker for a selected student outside the pins view", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapLayer
@@ -354,13 +346,10 @@ describe("MapLayer", () => {
     expect(pin.querySelector("circle")?.getAttribute("r")).toBe("4");
     expect(pin.querySelector("text")).toBeNull();
 
-    root.unmount();
-    container.remove();
   });
 
   it("renders an uploaded map image while preserving province selection through the SVG hit area", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const onSelectProvince = vi.fn();
     flushSync(() => root.render(
       <svg>
@@ -385,13 +374,10 @@ describe("MapLayer", () => {
     flushSync(() => province.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onSelectProvince).toHaveBeenCalledWith("北京市");
 
-    root.unmount();
-    container.remove();
   });
 
   it("places aligned overlay images with rotation and keeps vector fills in overlay mode", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapLayer
@@ -437,13 +423,10 @@ describe("MapLayer", () => {
     expect(container.querySelector('[data-province-id="1"]')?.getAttribute("fill")).not.toBe("none");
     expect(container.querySelector('[data-province-id="1"]')?.getAttribute("fill")).not.toBeNull();
 
-    root.unmount();
-    container.remove();
   });
 
   it("keeps province texture images above a replace-mode uploaded map", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const texturedFeature: MapFeature = {
       ...feature,
       geometry: {
@@ -493,13 +476,10 @@ describe("MapLayer", () => {
     expect(provinceImage?.getAttribute("data-province-overflow")).toBe("1");
     expect(mapImage?.compareDocumentPosition(provinceImage!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
-    root.unmount();
-    container.remove();
   });
 
   it("hides vector fills in replace mode without alignment (legacy fit)", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapLayer
@@ -529,13 +509,10 @@ describe("MapLayer", () => {
     // borders still render in second pass; fill pass should not paint land colors when replace
     expect(fills.some((node) => node.getAttribute("fill") === "#eee" || node.getAttribute("fill") === "#123")).toBe(false);
 
-    root.unmount();
-    container.remove();
   });
 
   it("orders an uploaded overlay below borders by default", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const base: MapSettings = {
       x: 0, y: 0, width: 800, height: 690, scale: 1,
       landColor: "#eee", activeColor: "#123", edgeColor: "#456", showProvinceLabels: false,
@@ -576,13 +553,10 @@ describe("MapLayer", () => {
     expect(borders).not.toBeNull();
     expect(mapImage?.compareDocumentPosition(borders!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
-    root.unmount();
-    container.remove();
   });
 
   it("orders an uploaded overlay above borders when zIndex >= 50", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const base: MapSettings = {
       x: 0, y: 0, width: 800, height: 690, scale: 1,
       landColor: "#eee", activeColor: "#123", edgeColor: "#456", showProvinceLabels: false,
@@ -624,12 +598,9 @@ describe("MapLayer", () => {
     expect(borders).not.toBeNull();
     expect(borders?.compareDocumentPosition(mapImage!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
-    root.unmount();
-    container.remove();
   });
   it("renders resize handles for an overlay image when the map is selected", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const base: MapSettings = {
       x: 0, y: 0, width: 800, height: 690, scale: 1,
       landColor: "#eee", activeColor: "#123", edgeColor: "#456", showProvinceLabels: false,
@@ -672,7 +643,5 @@ describe("MapLayer", () => {
     const se = handles[0]!.querySelector("[data-resize-handle='se']");
     expect(se).not.toBeNull();
 
-    root.unmount();
-    container.remove();
   });
 });
