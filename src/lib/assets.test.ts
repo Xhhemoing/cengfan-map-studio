@@ -2,10 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createUserAsset,
   listSystemAssets,
-  saveUserAssets,
   loadUserAssets,
   type UserAsset,
 } from "./assets";
+
+const USER_ASSETS_KEY = "cengfan-map-studio:user-assets";
+
+function adapterWith(records: unknown[]) {
+  const storage = new Map<string, string>([[USER_ASSETS_KEY, JSON.stringify(records)]]);
+  return {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+  };
+}
 
 describe("asset library", () => {
   it("lists system assets with canonical application kinds", () => {
@@ -26,14 +35,7 @@ describe("asset library", () => {
     expect(asset.provinceIds).toEqual([]);
   });
 
-  it("persists and reloads user assets from storage", () => {
-    const storage = new Map<string, string>();
-    const adapter = {
-      getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => {
-        storage.set(key, value);
-      },
-    };
+  it("reloads previously persisted user assets from storage", () => {
     const assets: UserAsset[] = [
       createUserAsset({
         label: "自定义背景",
@@ -41,16 +43,11 @@ describe("asset library", () => {
         kind: "background",
       }),
     ];
-    saveUserAssets(assets, adapter);
-    expect(loadUserAssets(adapter)).toEqual(assets);
+
+    expect(loadUserAssets(adapterWith(assets))).toEqual(assets);
   });
 
-  it("persists the one-time matting marker for processed user images", () => {
-    const storage = new Map<string, string>();
-    const adapter = {
-      getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => storage.set(key, value),
-    };
+  it("reloads the one-time matting marker for processed user images", () => {
     const asset = createUserAsset({
       label: "校徽",
       src: "data:image/png;base64,cutout",
@@ -58,8 +55,9 @@ describe("asset library", () => {
       mattingApplied: true,
     });
 
-    saveUserAssets([asset], adapter);
-    expect(loadUserAssets(adapter)).toEqual([expect.objectContaining({ id: asset.id, mattingApplied: true })]);
+    expect(loadUserAssets(adapterWith([asset]))).toEqual([
+      expect.objectContaining({ id: asset.id, mattingApplied: true }),
+    ]);
   });
 
   it("normalizes legacy scenery uploads to decorations without losing usable image data", () => {

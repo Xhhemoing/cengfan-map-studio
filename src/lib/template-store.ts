@@ -249,16 +249,6 @@ export function createCustomTemplateFromProject(input: {
   };
 }
 
-export function saveCustomTemplates(
-  templates: CustomTemplateRecord[],
-  storage: StorageAdapter = localStorage,
-): void {
-  const sanitized = templates
-    .map((template) => sanitizeCustomTemplateRecord(template))
-    .filter((template): template is CustomTemplateRecord => template !== null);
-  storage.setItem(CUSTOM_TEMPLATES_KEY, JSON.stringify(sanitized));
-}
-
 export function loadCustomTemplates(
   storage: StorageAdapter = localStorage,
 ): CustomTemplateRecord[] {

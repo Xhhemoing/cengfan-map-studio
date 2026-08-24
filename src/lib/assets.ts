@@ -260,13 +260,6 @@ export function createUserAsset(input: {
   };
 }
 
-export function saveUserAssets(
-  assets: UserAsset[],
-  storage: StorageAdapter = localStorage,
-): void {
-  storage.setItem(USER_ASSETS_KEY, JSON.stringify(assets));
-}
-
 export function loadUserAssets(
   storage: StorageAdapter = localStorage,
 ): UserAsset[] {

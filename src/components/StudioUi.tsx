@@ -1,13 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
 
-type NavigationItem<Id extends string> = {
-  id: Id;
-  label: string;
-  description?: string;
-  icon?: LucideIcon;
-};
-
 export function ToolbarGroup({
   label,
   children,
@@ -230,46 +223,4 @@ export function SegmentedControl<Id extends string>({
       ))}
     </div>
   );
-}
-
-export function WorkspaceNav<Id extends string>({
-  activeId,
-  items,
-  onChange,
-}: {
-  activeId: Id;
-  items: Array<NavigationItem<Id>>;
-  onChange: (id: Id) => void;
-}) {
-  return (
-    <nav className="workspace-nav" aria-label="工作区">
-      {items.map(({ id, label, description, icon: Icon }) => (
-        <button
-          key={id}
-          type="button"
-          aria-label={description ? `${label}：${description}` : label}
-          aria-selected={activeId === id}
-          className={activeId === id ? "is-active" : undefined}
-          onClick={() => onChange(id)}
-        >
-          {Icon && <Icon size={17} />}
-          <span><strong>{label}</strong>{description && <small>{description}</small>}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-export function SegmentedNav<Id extends string>({
-  label,
-  activeId,
-  items,
-  onChange,
-}: {
-  label: string;
-  activeId: Id;
-  items: Array<NavigationItem<Id>>;
-  onChange: (id: Id) => void;
-}) {
-  return <SegmentedControl label={label} activeId={activeId} items={items} onChange={onChange} className="segmented-nav" />;
 }

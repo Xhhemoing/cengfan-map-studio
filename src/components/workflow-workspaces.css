@@ -104,8 +104,5 @@
   .delivery-workspace__preview { padding: 10px; overflow: hidden; }
   .delivery-workspace__canvas { justify-content: start; overflow-x: auto; }
   .delivery-workspace__canvas .poster { width: 760px; max-width: none; }
-  .workspace-nav { display: flex; gap: 3px; overflow-x: auto; padding: 7px; }
-  .workspace-nav button { grid-template-columns: 22px; grid-template-rows: 22px auto; width: 74px; min-width: 74px; min-height: 52px; justify-items: center; gap: 1px; padding: 4px; text-align: center; }
-  .workspace-nav button small { display: none; }.workspace-nav button strong { font-size: 10px; }.workspace-nav button.is-active { box-shadow: inset 0 -3px #2e7d6b; }
   .workflow-panel--roster .data-list { max-height: none; }
 }

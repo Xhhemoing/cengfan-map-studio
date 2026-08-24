@@ -6,8 +6,17 @@ import {
   applyCustomTemplateToProject,
   createCustomTemplateFromProject,
   loadCustomTemplates,
-  saveCustomTemplates,
 } from "./template-store";
+
+const CUSTOM_TEMPLATES_KEY = "cengfan-map-studio:custom-templates";
+
+function adapterWith(records: unknown[]) {
+  const storage = new Map<string, string>([[CUSTOM_TEMPLATES_KEY, JSON.stringify(records)]]);
+  return {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+  };
+}
 
 describe("template store", () => {
   it("saves visual style without student data", () => {
@@ -54,14 +63,7 @@ describe("template store", () => {
     expect(custom.document.map.scale).toBe(1.1);
   });
 
-  it("persists custom templates in storage", () => {
-    const storage = new Map<string, string>();
-    const adapter = {
-      getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => {
-        storage.set(key, value);
-      },
-    };
+  it("reads previously persisted custom templates from storage", () => {
     const base = createSystemTemplate("q");
     const custom = createCustomTemplateFromProject({
       name: "Q 版班级模板",
@@ -76,8 +78,8 @@ describe("template store", () => {
       },
       students: [],
     });
-    saveCustomTemplates([custom], adapter);
-    expect(loadCustomTemplates(adapter)).toEqual([custom]);
+
+    expect(loadCustomTemplates(adapterWith([custom]))).toEqual([custom]);
   });
 
   it("loads legacy template records without importing student data", () => {
@@ -107,12 +109,7 @@ describe("template store", () => {
     expect(JSON.stringify(loaded)).not.toContain("不应出现");
   });
 
-  it("does not persist legacy student data when saving templates", () => {
-    const storage = new Map<string, string>();
-    const adapter = {
-      getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => storage.set(key, value),
-    };
+  it("drops legacy student data when loading templates", () => {
     const custom = createCustomTemplateFromProject({
       name: "可复用模板",
       baseTemplateId: "original",
@@ -129,11 +126,11 @@ describe("template store", () => {
       },
     } as unknown as typeof custom;
 
-    saveCustomTemplates([legacyRecord], adapter);
+    const loaded = loadCustomTemplates(adapterWith([legacyRecord]));
 
-    expect(storage.get("cengfan-map-studio:custom-templates")).not.toContain("不应保存");
-    expect(storage.get("cengfan-map-studio:custom-templates")).not.toContain("嵌套人员");
-    expect(loadCustomTemplates(adapter)[0]?.document).toEqual(custom.document);
+    expect(JSON.stringify(loaded)).not.toContain("不应保存");
+    expect(JSON.stringify(loaded)).not.toContain("嵌套人员");
+    expect(loaded[0]?.document).toEqual(custom.document);
   });
 
   it("captures canonical scene elements without students", () => {
@@ -227,7 +224,7 @@ describe("template store", () => {
     expect(next.map.renderSource).toEqual(scene.map.renderSource);
   });
 
-  it("preserves display frame variants when saving and applying a scene template", () => {
+  it("preserves display frame variants when loading and applying a scene template", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const frame = createDefaultDisplayFrame();
     frame.mode = "flow";
@@ -244,10 +241,7 @@ describe("template store", () => {
       scene: project,
       students: [],
     });
-    const storage = new Map<string, string>();
-    const adapter = { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) };
-    saveCustomTemplates([custom], adapter);
-    const loaded = loadCustomTemplates(adapter);
+    const loaded = loadCustomTemplates(adapterWith([custom]));
     const applied = applyCustomTemplateToProject(createProjectDocument({ students: [], templateId: "q", dataView: "province" }), loaded[0]!);
 
     expect(loaded[0]?.scene?.cards.displayFrame?.mode).toBe("flow");
