@@ -3501,7 +3501,8 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   border-radius: 5px;
   white-space: nowrap;
 }
-/* 存储降级提示是状态播报,不是可点卡片:不复用 .workbench-resume 的 hover 高亮与按压缩放。 */
+/* 存储降级提示是状态播报,不是可点卡片:工作台与编辑器两条路由共用 StorageNotice,
+ * 都只挂这套专用类,不复用 .workbench-resume 的 hover 高亮与按压缩放。 */
 .workbench-storage-notice {
   display: flex;
   align-items: flex-start;
@@ -3539,7 +3540,13 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   padding: 0;
   list-style: none;
 }
-/* 每个按钮只导出一个工程:一次用户手势一次下载,见 ProjectWorkbench 中的说明。 */
+.workbench-storage-notice-error {
+  flex: 1 0 100%;
+  color: var(--editor-danger, #b3261e);
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* 每个按钮只导出一个工程:一次用户手势一次下载,见 StorageNotice 中的说明。 */
 .workbench-storage-notice-export {
   max-width: 100%;
   padding: 6px 11px;

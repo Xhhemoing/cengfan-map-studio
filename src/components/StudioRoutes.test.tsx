@@ -10,6 +10,8 @@ import {
   type ProjectStoreHealth,
 } from "../lib/project-store";
 
+const QUOTA_MESSAGE = "本机存储空间不足，请清理浏览器数据或删除不再需要的项目后重试。";
+
 // 编辑器画布本身不在测试范围内,只关心降级提示是否包在它外面。
 vi.mock("../App", () => ({
   App: ({ projectId }: { projectId: string }) => <main data-editor-canvas={projectId}>编辑器画布</main>,
@@ -72,6 +74,27 @@ function controllableChannel(initial: ProjectStoreHealth) {
   };
 }
 
+/** 记录程序化下载的文件名:Chromium 每个手势只放行一份,所以要看清落了几个文件。 */
+let restoreDownloads: (() => void) | null = null;
+function stubDownloads() {
+  const target = URL as unknown as Record<string, unknown>;
+  const original = { create: target.createObjectURL, revoke: target.revokeObjectURL };
+  const files: string[] = [];
+  target.createObjectURL = () => "blob:mock";
+  target.revokeObjectURL = () => undefined;
+  const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
+  link.click = () => { files.push(link.download); };
+  const createElement = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation(
+    (tag: string) => (tag === "a" ? link : createElement(tag)) as HTMLElement,
+  );
+  restoreDownloads = () => {
+    target.createObjectURL = original.create;
+    target.revokeObjectURL = original.revoke;
+  };
+  return files;
+}
+
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
 function render(view: React.ReactElement) {
   const container = document.createElement("div");
@@ -88,6 +111,8 @@ function storageNotice(container: HTMLElement): HTMLElement | null {
 afterEach(() => {
   roots.forEach(({ root }) => root.unmount());
   roots = [];
+  restoreDownloads?.();
+  restoreDownloads = null;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -132,6 +157,49 @@ describe("ProjectRoute", () => {
     expect(storageNotice(container)?.textContent).toContain("本机存储空间不足");
   });
 
+  it("keeps the editor notice inert: no clickable-card classes on a status banner", () => {
+    const { channel } = controllableChannel("memory");
+    const container = render(<ProjectRoute projectId="proj-1" healthChannel={channel} />);
+
+    const notice = storageNotice(container)!;
+    expect(notice.classList.contains("workbench-storage-notice")).toBe(true);
+    // .workbench-resume 带 hover 高亮与 :active { transform: scale(.985) },警告横幅不该有按钮动效。
+    expect(notice.classList.contains("workbench-resume")).toBe(false);
+    expect(notice.querySelector(".workbench-resume-icon")).toBeNull();
+    expect(notice.querySelector(".workbench-resume-body")).toBeNull();
+    expect(notice.querySelector(".workbench-resume-cta")).toBeNull();
+  });
+
+  it("exports the current project from the editor notice, one file per gesture", async () => {
+    const store = createMemoryProjectStore();
+    await store.put({ ...createSampleProject(), id: "proj-1", name: "一班", updatedAt: "2026-08-24T02:00:00.000Z" });
+    const { channel } = controllableChannel("memory");
+    const container = render(<ProjectRoute projectId="proj-1" store={store} healthChannel={channel} />);
+    const files = stubDownloads();
+
+    // 催用户"及时导出"却不给出口,用户只能猜要先回工作台。
+    const button = storageNotice(container)!.querySelector<HTMLButtonElement>('button[data-export-project-id="proj-1"]')!;
+    expect(button.getAttribute("aria-label")).toBe("导出当前项目");
+    button.click();
+
+    await vi.waitFor(() => expect(files).toEqual(["一班-2026-08-24.json"]));
+    await Promise.resolve();
+    expect(files).toEqual(["一班-2026-08-24.json"]);
+  });
+
+  it("keeps a failed export visible instead of a dead button", async () => {
+    const { channel } = controllableChannel("memory");
+    const container = render(
+      <ProjectRoute projectId="proj-missing" store={createMemoryProjectStore()} healthChannel={channel} />,
+    );
+    stubDownloads();
+
+    storageNotice(container)!.querySelector<HTMLButtonElement>("button[data-export-project-id]")!.click();
+
+    await vi.waitFor(() => expect(storageNotice(container)?.querySelector('[role="alert"]')?.textContent)
+      .toContain("导出失败"));
+  });
+
   it("renders no notice while storage is persistent", () => {
     const { channel } = controllableChannel("persistent");
     const container = render(<ProjectRoute projectId="proj-1" healthChannel={channel} />);
@@ -150,5 +218,16 @@ describe("WorkbenchRoute", () => {
     push("memory");
 
     expect(storageNotice(container)?.textContent).toContain("本次编辑不会保存到本机，请及时导出工程备份");
+  });
+
+  it("shows the same write-back failure the editor route shows", async () => {
+    const { channel, push } = controllableChannel("memory");
+    const container = render(<WorkbenchRoute store={createMemoryProjectStore()} healthChannel={channel} />);
+    await vi.waitFor(() => expect(storageNotice(container)).not.toBeNull());
+
+    push("memory", new ProjectStoreError("quota-exceeded", QUOTA_MESSAGE));
+
+    // 配额耗尽是用户能动手解决的那条信息,不该只有编辑器路由说得出来。
+    expect(storageNotice(container)?.textContent).toContain("本机存储空间不足");
   });
 });

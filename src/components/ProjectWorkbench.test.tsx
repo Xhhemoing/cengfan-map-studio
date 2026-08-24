@@ -418,6 +418,25 @@ describe("ProjectWorkbench degraded storage", () => {
     expect(notice.querySelector(".workbench-resume-cta")).toBeNull();
   });
 
+  it("shows the write-back failure passed down by the route inside the notice", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push({ root, container });
+    flushSync(() => root.render(
+      <ProjectWorkbench
+        store={store}
+        navigate={vi.fn()}
+        health="memory"
+        recoverError={new ProjectStoreError("quota-exceeded", QUOTA_MESSAGE)}
+      />,
+    ));
+
+    await vi.waitFor(() => expect(storageNotice(container)).not.toBeNull());
+    expect(storageNotice(container)?.textContent).toContain("本机存储空间不足");
+  });
+
   it("shows the typed quota message instead of a generic creation wrapper", async () => {
     const store = createMemoryProjectStore();
     await store.put(createSampleProject());
