@@ -39,7 +39,8 @@
 | 16 | 已完成 | 混编 ×5 | 限流键、parse-data 告知、SSE 重订阅、rail listbox、剩余复查 |
 | 17 | 已完成 | 混编 ×5 | 图片降采样、PNG 面积防护、工作台对话框、房间过期广播、复查 |
 | 18 | 已完成 | 混编 ×5 | 项目库 CAS、字体上限、删 editor-commands、复查 |
-| 19 | 进行中 | opus ×5 | SSE ping/watchdog、tablist 键盘、右栏单挂载、导入体积与对话框、删死 UI |
+| 19 | 已完成 | opus ×5 | SSE ping/watchdog、tablist 键盘、右栏单挂载、导入体积与对话框、删死 UI |
+| 20 | 进行中 | 混编 ×5 | 工作区镜像 CAS、工程包资源预算、Combobox/滑条 a11y、复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -77,6 +78,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 19 轮 SSE ping、tablist、右栏单挂载、导入上限与对话框、死 UI 已合入；启动第 20 轮。
 - 2026-08-24：第 18 轮 CAS / 字体上限 / 删 editor-commands 已合入；启动第 19 轮落地。
 - 2026-08-24：创建专属分支；启动第 1 轮 5 个只读调研子代理。
 - 2026-08-24：第 1 轮 5 份审计齐；启动第 2 轮 5 个落地子代理。
@@ -219,6 +221,23 @@
 | 删死 UI 与死写路径 | 删除 `WorkflowGuide.tsx`/`HistoryControls.tsx`/`GlobalSettingsDrawer.tsx` 及测试；`StudioUi.tsx` 去掉未用 nav；`template-store.ts` / `assets.ts` 去掉死写函数及测试 |
 
 本轮不改 P2 视觉核对、不计费、不把 `/api/ai/agent` 改成多模态。工程包图片/字体预算复用可在导入切片用第 18 轮已合入的常量，但不要改 `fonts.ts`。
+
+## 第 19 轮已合入
+
+- 协作：SSE 心跳改为 `event: ping`；客户端 40s watchdog 换 ticket 重建；退避耗尽后 20s 长间隔继续；文案改为「正在自动重连」。
+- a11y：数据导航与设置页 tablist 支持方向键与 Home/End；右栏按 760px 只挂载 aside 或 Drawer 一份。
+- 导入：表格 12MB、工程包 24MB 硬上限；工程包/删素材/删学生/刷新框/新建项目改自绘 `ConfirmDialog`。
+- 删除 WorkflowGuide、HistoryControls、GlobalSettingsDrawer、WorkspaceNav/SegmentedNav，以及 `saveCustomTemplates` / `saveUserAssets` 死写路径。
+
+## 第 20 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 工作区镜像 CAS | `src/lib/browser-workspace-store.ts`、`src/lib/local-workspace-entry.ts` 及测试。对齐第 18 轮项目库 `expectedUpdatedAt`，避免多标签镜像互覆盖。不要改 `project-store.ts` / `App.tsx`。 |
+| 工程包资源预算 | `src/lib/project-package.ts` 及测试。解析时丢掉超 `MAX_USER_FONT_BYTES` 的字体、过大素材；复用已有常量，不改 `fonts.ts`。 |
+| SearchCombobox a11y | `src/components/SearchCombobox.tsx` 及测试。`aria-expanded` 必须与是否渲染 listbox 一致（现在用 `options` 而显示用 `displayOptions`）。 |
+| RangeNumberControl 提交 | `src/components/RangeNumberControl.tsx` 及测试。滑条键盘/拖动应提交，不能只靠 blur。 |
+| 剩余复查 | 只读。避开本轮落地文件与 `App.tsx` / `collaboration-client.ts` / `fonts.ts`。 |
 
 ## 第 2 轮已合入
 
