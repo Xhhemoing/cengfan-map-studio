@@ -26,7 +26,23 @@ import {
 import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent } from "./collaboration";
 
 export const DEFAULT_PORT = 8787;
-export type AiServer = http.Server & { flushAiState?: () => Promise<void>; lifecycle?: ReturnType<typeof createServerLifecycle> };
+
+/** SSE 背压观测量：字节数是进程内实际持有的未刷出数据，可直接作为内存上界的证据。 */
+export interface RoomStreamStats {
+  openStreams: number;
+  bufferedBytes: number;
+  peakBufferedBytes: number;
+  peakStreamBufferedBytes: number;
+  laggardDisconnects: number;
+  droppedEvents: number;
+  oversizedEvents: number;
+}
+
+export type AiServer = http.Server & {
+  flushAiState?: () => Promise<void>;
+  lifecycle?: ReturnType<typeof createServerLifecycle>;
+  roomStreamStats?: () => RoomStreamStats;
+};
 
 export function resolvePort(value: string | undefined = process.env.PORT): number {
   const parsed = Number(value);
@@ -68,6 +84,8 @@ export interface AiServerOptions {
   roomInvitationTtlMs?: number;
   roomEventsTicketTtlMs?: number;
   roomHeartbeatIntervalMs?: number;
+  maxRoomEventBytes?: number;
+  maxRoomStreamBufferedBytes?: number;
   trustProxy?: boolean;
   budgetReceiptSecret?: string;
   budgetReceiptLedger?: BudgetReceiptLedger;
@@ -92,6 +110,15 @@ const DEFAULT_ROOM_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_ROOM_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ROOM_EVENTS_TICKET_TTL_MS = 60 * 1000;
 const DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS = 20 * 1000;
+// 单个 SSE 事件的负载上限：超过就不再往管道里塞，改由客户端断线重连后走 HTTP 重新拉取。
+const DEFAULT_MAX_ROOM_EVENT_BYTES = 1024 * 1024;
+// 单个订阅者允许积压的字节数上限：超过即判定为慢订阅者并断开，丢弃已排队数据。
+const DEFAULT_MAX_ROOM_STREAM_BUFFERED_BYTES = 2 * 1024 * 1024;
+
+function positiveBytes(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -414,6 +441,25 @@ export function createAiServer(options: AiServerOptions = {}) {
   });
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
+  const maxRoomEventBytes = positiveBytes(
+    options.maxRoomEventBytes ?? process.env.MAX_ROOM_EVENT_BYTES,
+    DEFAULT_MAX_ROOM_EVENT_BYTES,
+  );
+  const maxRoomStreamBufferedBytes = positiveBytes(
+    options.maxRoomStreamBufferedBytes ?? process.env.MAX_ROOM_STREAM_BUFFERED_BYTES,
+    DEFAULT_MAX_ROOM_STREAM_BUFFERED_BYTES,
+  );
+  // 软阈值：积压过半就暂停推送可丢弃事件（心跳、增量/元数据快照），客户端靠版本连续性门控补齐。
+  const pauseRoomStreamBufferedBytes = Math.max(1, Math.floor(maxRoomStreamBufferedBytes / 2));
+  const roomStreamMetrics: RoomStreamStats = {
+    openStreams: 0,
+    bufferedBytes: 0,
+    peakBufferedBytes: 0,
+    peakStreamBufferedBytes: 0,
+    laggardDisconnects: 0,
+    droppedEvents: 0,
+    oversizedEvents: 0,
+  };
   // 一次广播会同步回调每个订阅者，且房间监听器给每个订阅者一份浅拷贝，
   // 所以按 (房间, 版本, 更新时间, 事务, 是否携带快照) 记忆化，并在当前微任务结束后清空。
   // 每个事件因此最多序列化两次（带快照 / 不带快照），与订阅者数量无关。
@@ -850,11 +896,22 @@ export function createAiServer(options: AiServerOptions = {}) {
         let unsubscribeLifecycle: (() => void) | undefined;
         let heartbeat: ReturnType<typeof setInterval> | undefined;
         let streamTornDown = false;
+        let streamCounted = false;
+        // 已经交给 response.write、但内核/进程侧还没刷出的字节数。write 的完成回调
+        // 是唯一可靠的释放信号：只看 write 的返回值无法知道积压什么时候消失。
+        let streamBufferedBytes = 0;
+        const pendingWrites = new Set<() => void>();
         const teardownStream = () => {
           if (streamTornDown) return;
           streamTornDown = true;
           if (heartbeat) clearInterval(heartbeat);
           heartbeat = undefined;
+          for (const settle of [...pendingWrites]) settle();
+          pendingWrites.clear();
+          if (streamCounted) {
+            streamCounted = false;
+            roomStreamMetrics.openStreams -= 1;
+          }
           const releaseRoom = unsubscribe;
           const releaseLifecycle = unsubscribeLifecycle;
           unsubscribe = undefined;
@@ -862,14 +919,75 @@ export function createAiServer(options: AiServerOptions = {}) {
           releaseRoom?.();
           releaseLifecycle?.();
         };
-        const writeStream = (chunk: string): boolean => {
+        const dropLaggard = (reason: "buffer" | "oversize") => {
+          if (streamTornDown) return;
+          if (reason === "oversize") roomStreamMetrics.oversizedEvents += 1;
+          roomStreamMetrics.laggardDisconnects += 1;
+          const queued = streamBufferedBytes > 0;
+          try {
+            if (!response.writableEnded && !response.destroyed) response.end();
+          } catch {
+            // 对端已经销毁连接，交给 teardown 收尾即可。
+          }
+          // 优雅 end 不会丢弃已排队的数据；只有销毁连接才能立刻归还这部分内存。
+          if (queued && typeof response.destroy === "function" && !response.destroyed) {
+            try {
+              response.destroy();
+            } catch {
+              // 同上：销毁失败说明连接已经没了。
+            }
+          }
+          teardownStream();
+        };
+        /**
+         * `droppable` 事件在积压时直接跳过：客户端的版本连续性门控会在下一个事件上
+         * 发现跳变并补齐区间。`maxBytes` 命中的事件不降级为 lite 后照发——lite 负载
+         * 会让客户端把本地版本推到它从未收到的内容上，从此永久分叉；断流让它重连并
+         * 走 HTTP 重新拉取才是安全的收敛路径。
+         */
+        const writeStream = (chunk: string, limits: { droppable?: boolean; maxBytes?: number } = {}): boolean => {
           // 房间事件可能在响应结束之后到达（例如房主关闭房间后有成员退出）。
           if (streamTornDown || response.writableEnded || response.destroyed) return false;
+          const bytes = Buffer.byteLength(chunk, "utf8");
+          if (streamBufferedBytes > maxRoomStreamBufferedBytes) {
+            dropLaggard("buffer");
+            return false;
+          }
+          if (limits.droppable && streamBufferedBytes >= pauseRoomStreamBufferedBytes) {
+            roomStreamMetrics.droppedEvents += 1;
+            return true;
+          }
+          if (limits.maxBytes !== undefined && bytes > limits.maxBytes) {
+            dropLaggard("oversize");
+            return false;
+          }
+          if (streamBufferedBytes > 0 && streamBufferedBytes + bytes > maxRoomStreamBufferedBytes) {
+            dropLaggard("buffer");
+            return false;
+          }
+          let settled = false;
+          const settle = () => {
+            if (settled) return;
+            settled = true;
+            pendingWrites.delete(settle);
+            streamBufferedBytes -= bytes;
+            roomStreamMetrics.bufferedBytes -= bytes;
+          };
+          streamBufferedBytes += bytes;
+          roomStreamMetrics.bufferedBytes += bytes;
+          pendingWrites.add(settle);
+          if (streamBufferedBytes > roomStreamMetrics.peakStreamBufferedBytes) {
+            roomStreamMetrics.peakStreamBufferedBytes = streamBufferedBytes;
+          }
+          if (roomStreamMetrics.bufferedBytes > roomStreamMetrics.peakBufferedBytes) {
+            roomStreamMetrics.peakBufferedBytes = roomStreamMetrics.bufferedBytes;
+          }
           try {
-            // 背压时 write 返回 false，这里只关心是否抛错，不把 false 当成失败。
-            response.write(chunk);
+            // write 返回 false 只代表要暂停推送，真正的释放时机由完成回调给出。
+            response.write(chunk, settle);
             return true;
           } catch {
+            settle();
             teardownStream();
             return false;
           }
@@ -892,7 +1010,8 @@ export function createAiServer(options: AiServerOptions = {}) {
           unsubscribe = roomStore.subscribe(eventsMatch[1]!, ticketRecord.accessToken, (next) => {
             const withoutSnapshot = Boolean(next.operations) || next.updatedBy === participant.id;
             const data = serializeRoomEvent(next, withoutSnapshot);
-            writeStream(`event: snapshot\ndata: ${data}\n\n`);
+            // 不带快照的事件（增量或自己刚提交的那笔）丢掉不会让客户端漏内容，可以在积压时跳过。
+            writeStream(`event: snapshot\ndata: ${data}\n\n`, { droppable: withoutSnapshot, maxBytes: maxRoomEventBytes });
           });
           unsubscribeLifecycle = roomStore.subscribeLifecycle(eventsMatch[1]!, ticketRecord.accessToken, (event) => {
             if (event.kind === "closed") {
@@ -903,11 +1022,11 @@ export function createAiServer(options: AiServerOptions = {}) {
             }
             if (event.kind === "access") {
               const data = serializeLifecycleEvent(event, () => ({ ...event.room, snapshot: undefined }));
-              writeStream(`event: snapshot\ndata: ${data}\n\n`);
+              writeStream(`event: snapshot\ndata: ${data}\n\n`, { maxBytes: maxRoomEventBytes });
               return;
             }
             const data = serializeLifecycleEvent(event, () => event.members);
-            writeStream(`event: members\ndata: ${data}\n\n`);
+            writeStream(`event: members\ndata: ${data}\n\n`, { droppable: true, maxBytes: maxRoomEventBytes });
           });
           response.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
@@ -916,7 +1035,11 @@ export function createAiServer(options: AiServerOptions = {}) {
             ...corsHeaders(request, corsOrigins),
           });
           response.flushHeaders();
+          roomStreamMetrics.openStreams += 1;
+          streamCounted = true;
           if (!Number.isInteger(knownVersion) || knownVersion < room.version) {
+            // 首帧是这条连接唯一的引导快照，不受单事件上限约束（否则大房间会陷入重连循环）；
+            // 它仍计入积压统计，客户端排不掉就会在下一个事件上被判为慢订阅者。
             writeStream(`event: snapshot\ndata: ${JSON.stringify(room)}\n\n`);
           }
         } catch (error) {
@@ -925,9 +1048,15 @@ export function createAiServer(options: AiServerOptions = {}) {
           else throw error;
           return;
         }
+        // 引导帧写失败已经拆过流，此时再挂心跳会留下一个永不清理的定时器。
+        if (streamTornDown) {
+          endStream();
+          return;
+        }
         heartbeat = setInterval(() => {
           // 心跳只保活 TCP 连接，不刷新房间 TTL（房间活跃度由已授权的读写操作决定）。
-          if (!writeStream(": heartbeat\n\n")) teardownStream();
+          // 同时兼任回收器：不再有事件推送时，靠它把已经积压超限的连接清掉。
+          if (!writeStream(": heartbeat\n\n", { droppable: true })) teardownStream();
         }, roomHeartbeatIntervalMs);
         request.on("close", teardownStream);
         response.on("close", teardownStream);
@@ -1144,6 +1273,7 @@ export function createAiServer(options: AiServerOptions = {}) {
     }
   });
   Object.defineProperty(server, "flushAiState", { value: flushAiState });
+  Object.defineProperty(server, "roomStreamStats", { value: (): RoomStreamStats => ({ ...roomStreamMetrics }) });
   return server as AiServer;
 }
 
