@@ -40,7 +40,8 @@
 | 17 | 已完成 | 混编 ×5 | 图片降采样、PNG 面积防护、工作台对话框、房间过期广播、复查 |
 | 18 | 已完成 | 混编 ×5 | 项目库 CAS、字体上限、删 editor-commands、复查 |
 | 19 | 已完成 | opus ×5 | SSE ping/watchdog、tablist 键盘、右栏单挂载、导入体积与对话框、删死 UI |
-| 20 | 进行中 | 混编 ×5 | 工作区镜像 CAS、工程包资源预算、Combobox/滑条 a11y、复查 |
+| 20 | 已完成 | 混编 ×5 | 工作区镜像 CAS、工程包资源预算、Combobox/滑条 a11y、复查 |
+| 21 | 进行中 | opus ×5 | 续聊瞬时失败、对话框焦点圈闭、Excel 多表、工作区 CAS 接线、删死封装 |
 
 ### 第 1 轮工作流（只读）
 
@@ -78,6 +79,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 20 轮工作区 CAS API、工程包资源预算、Combobox/滑条已合入；启动第 21 轮。
 - 2026-08-24：第 19 轮 SSE ping、tablist、右栏单挂载、导入上限与对话框、死 UI 已合入；启动第 20 轮。
 - 2026-08-24：第 18 轮 CAS / 字体上限 / 删 editor-commands 已合入；启动第 19 轮落地。
 - 2026-08-24：创建专属分支；启动第 1 轮 5 个只读调研子代理。
@@ -238,6 +240,30 @@
 | SearchCombobox a11y | `src/components/SearchCombobox.tsx` 及测试。`aria-expanded` 必须与是否渲染 listbox 一致（现在用 `options` 而显示用 `displayOptions`）。 |
 | RangeNumberControl 提交 | `src/components/RangeNumberControl.tsx` 及测试。滑条键盘/拖动应提交，不能只靠 blur。 |
 | 剩余复查 | 只读。避开本轮落地文件与 `App.tsx` / `collaboration-client.ts` / `fonts.ts`。 |
+
+## 第 20 轮已合入
+
+- 工作区：`saveBrowserWorkspaceSnapshot` 支持 `expectedExportedAt` CAS；更旧包不覆盖更新镜像。
+- 工程包水化：超 5MB 字体 / 5MiB 素材剥离并 `warnings`，场景引用修复。
+- SearchCombobox：`aria-expanded` 与是否渲染 listbox 一致。
+- RangeNumberControl：滑条 input 即提交，数字框仍 blur/Enter。
+
+## 第 20 轮复查结论
+
+1. **AI 续聊**：一次瞬时失败后 UI 把 `failed` 一律新开会话，丢掉历史与回执；会话对象其实仍 `canContinue`。应复用原会话并弹出失败轮的悬空 user 消息。
+2. **自绘对话框**：`WorkbenchDialog` 无焦点圈闭与归还；`DataImportConsent` 无初始焦点/Esc。
+3. **Excel 多表**：只读 `SheetNames[0]`，封面表在前时静默丢名单。
+4. 另：`workspace-persistence.ts` 客户端封装生产零引用；App 保存工作区尚未传入 `expectedExportedAt`。
+
+## 第 21 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 续聊瞬时失败 | `src/lib/agent-session.ts`、`src/components/AgentAssistant.tsx` 及测试 |
+| 对话框焦点圈闭 | `workbench/WorkbenchDialog.tsx`、`ConfirmDialog`/`Rename`/`Delete`、`SaveTemplateDialog.tsx`、`DataImportConsent.tsx` 及测试。不改 `App.tsx` 内联导出对话框。 |
+| Excel 多工作表 | `src/lib/binary-import.ts`、`DataImportPanel.tsx` 及测试 |
+| 工作区 CAS 接线 | `src/App.tsx`（仅 `saveLocal` / workspace snapshot）、对应 `App.test.tsx` 用例。不改 confirm/CAS 项目库其它逻辑。 |
+| 删 workspace-persistence | 仅 `src/lib/workspace-persistence.ts` 与其测试；生产零引用则删。 |
 
 ## 第 2 轮已合入
 
