@@ -141,6 +141,22 @@ export interface AgentSessionReplayStep {
   lostManualLayout?: boolean;
 }
 
+export interface AgentReplayFailure {
+  stepId: string;
+  name: string;
+  content: string;
+}
+
+export class AgentReplayError extends Error {
+  readonly failure: AgentReplayFailure;
+
+  constructor(failure: AgentReplayFailure) {
+    super("Agent 会话步骤无法在当前项目上重放");
+    this.name = "AgentReplayError";
+    this.failure = failure;
+  }
+}
+
 export interface AgentSessionSnapshot {
   schemaVersion: 2;
   conversation: Array<{ role: "user" | "assistant"; content: string }>;
@@ -262,6 +278,13 @@ function patchForTool(name: string, args: Record<string, unknown>): { domain: Sc
   return { domain: target.type, patch: patch as Record<string, unknown> };
 }
 
+/** Id-addressed scene targets vanish when the element is deleted; patching them would be a silent no-op. */
+function sceneTargetExists(project: ProjectDocument, target: SceneSelection): boolean {
+  if (target.type === "text") return project.textElements.some((element) => element.id === target.id);
+  if (target.type === "asset") return project.assetElements.some((element) => element.id === target.id);
+  return true;
+}
+
 function findStudent(project: ProjectDocument, args: Record<string, unknown>): Student | undefined {
   const studentId = typeof args.studentId === "string" ? args.studentId : "";
   const name = typeof args.name === "string" ? args.name.trim() : "";
@@ -331,6 +354,7 @@ export class AgentSession {
   private budget = { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: 20 };
   private taskId: string | undefined;
   private budgetReceipt: string | undefined;
+  private _lastReplayFailure: AgentReplayFailure | null = null;
   private _metrics = { rounds: 0, usedTokens: 0, route: undefined as "primary" | "fallback" | "local" | undefined, provider: undefined as string | undefined, fallbackReason: undefined as string | undefined };
 
   constructor(project: ProjectDocument, options: AgentSessionOptions) {
@@ -344,7 +368,7 @@ export class AgentSession {
     session.conversation.push(...structuredClone(snapshot.conversation));
     for (const replayStep of snapshot.steps) {
       const result = session.execute({ id: replayStep.id, name: replayStep.name, arguments: structuredClone(replayStep.arguments) });
-      if (!result.ok) throw new Error("Agent 会话步骤无法在当前项目上重放");
+      if (!result.ok) throw new AgentReplayError({ stepId: replayStep.id, name: replayStep.name, content: result.content });
       session._steps.push({ ...structuredClone(replayStep), result });
     }
     session._metrics = structuredClone(snapshot.metrics);
@@ -385,6 +409,11 @@ export class AgentSession {
 
   get metrics() {
     return { ...this._metrics };
+  }
+
+  /** Set when the last `transactionForSteps` apply refused to land because a step no longer replays. */
+  get lastReplayFailure(): AgentReplayFailure | null {
+    return this._lastReplayFailure ? { ...this._lastReplayFailure } : null;
   }
 
   get canContinue(): boolean {
@@ -472,6 +501,9 @@ export class AgentSession {
       }
       const target = sceneTargetForTool(call.name, args);
       if (target) {
+        if (!sceneTargetExists(this.shadow, target)) {
+          return { id: call.id, ok: false, content: JSON.stringify({ ok: false, code: "SCENE_TARGET_MISSING", target }) };
+        }
         const patch = patchForTool(call.name, args)?.patch ?? {};
         this.shadow = { ...this.shadow, ...scenePatch(this.shadow, target, patch) };
         return { id: call.id, ok: true, content: JSON.stringify({ ok: true, target }) };
@@ -645,9 +677,15 @@ export class AgentSession {
       label: `AI 助手：${selectedSteps.length} 项改动`,
       source: "ai",
       apply: (current) => {
+        this._lastReplayFailure = null;
         const replay = new AgentSession(current, { ...this.options, onProgress: undefined });
         for (const step of selectedSteps) {
-          replay.execute({ id: step.id, name: step.name, arguments: structuredClone(step.arguments) });
+          const result = replay.execute({ id: step.id, name: step.name, arguments: structuredClone(step.arguments) });
+          // All-or-nothing: a step that no longer applies to the live document must not land partially.
+          if (!result.ok) {
+            this._lastReplayFailure = { stepId: step.id, name: step.name, content: result.content };
+            return current;
+          }
         }
         const finalSnapshot = cloneProject(replay.shadowProject);
         return { ...finalSnapshot, history: current.history, version: current.version };

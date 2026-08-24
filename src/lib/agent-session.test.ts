@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "./project-document";
-import { AgentSession, compactAgentToolResult, truncateUtf8, type AgentSessionSnapshot } from "./agent-session";
+import { AgentReplayError, AgentSession, compactAgentToolResult, truncateUtf8, type AgentSessionSnapshot } from "./agent-session";
 
 function response(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
@@ -371,6 +371,134 @@ describe("AgentSession", () => {
     release();
     await first;
     expect((await session.continue("继续")).kind).toBe("finish");
+  });
+
+  it("lands nothing and records the failure when a selected step no longer replays on the live document", async () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "A", name: "甲", university: "大学", city: "广州", province: "广东", visibility: true },
+        { id: "B", name: "乙", university: "大学", city: "北京", province: "北京", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "call-map", name: "update_map", arguments: { patch: { scale: 0.9 } } },
+        { id: "call-fact", name: "manage_students", arguments: { action: "update_fact", studentId: "A", fields: { city: "深圳" } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("缩小地图并把甲同学改到深圳");
+
+    const live = { ...project, students: project.students.filter((student) => student.id !== "A") };
+    const transaction = session.transactionForSteps(new Set(["call-map", "call-fact"]));
+    const applied = transaction!.apply(live);
+
+    expect(applied).toBe(live);
+    expect(applied.map.scale).toBe(project.map.scale);
+    expect(applied.students).toHaveLength(1);
+    expect(session.lastReplayFailure).toMatchObject({ stepId: "call-fact", name: "manage_students" });
+    expect(session.lastReplayFailure?.content).toContain("找不到指定学生");
+    expect(session.shadowProject.map.scale).toBe(0.9);
+
+    const partial = session.transactionForSteps(new Set(["call-map"]));
+    expect(partial!.apply(live).map.scale).toBe(0.9);
+    expect(session.lastReplayFailure).toBeNull();
+  });
+
+  it("lands nothing when a selected step targets a text element removed from the live document", async () => {
+    const project = createProjectDocument({
+      students: [],
+      templateId: "original",
+      dataView: "province",
+      textElements: [{ id: "note-1", content: "备注", x: 40, y: 40, fontSize: 24, color: "#111111" }],
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "call-map", name: "update_map", arguments: { patch: { scale: 0.75 } } },
+        { id: "call-text", name: "update_text", arguments: { id: "note-1", patch: { fontSize: 40 } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("放大备注");
+    expect(session.shadowProject.textElements.find((element) => element.id === "note-1")?.fontSize).toBe(40);
+
+    const live = { ...project, textElements: project.textElements.filter((element) => element.id !== "note-1") };
+    const applied = session.transactionForSteps(new Set(["call-map", "call-text"]))!.apply(live);
+
+    expect(applied).toBe(live);
+    expect(applied.map.scale).toBe(project.map.scale);
+    expect(session.lastReplayFailure).toMatchObject({ stepId: "call-text", name: "update_text" });
+    expect(session.lastReplayFailure?.content).toContain("SCENE_TARGET_MISSING");
+  });
+
+  it("keeps shadow and live state consistent across exportSnapshot and restore after a rejected apply", async () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "A", name: "甲", university: "大学", city: "广州", province: "广东", visibility: true },
+        { id: "B", name: "乙", university: "大学", city: "北京", province: "北京", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "call-fact", name: "manage_students", arguments: { action: "update_fact", studentId: "A", fields: { city: "深圳" } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("把甲同学改到深圳");
+
+    const live = { ...project, students: project.students.filter((student) => student.id !== "A") };
+    expect(session.transactionForSteps(new Set(["call-fact"]))!.apply(live)).toBe(live);
+    expect(session.lastReplayFailure).not.toBeNull();
+
+    const snapshot = session.exportSnapshot();
+    expect(snapshot.steps.map((step) => step.id)).toEqual(["call-fact"]);
+    expect(session.shadowProject.students.find((student) => student.id === "A")?.city).toBe("深圳");
+    expect(project.students.find((student) => student.id === "A")?.city).toBe("广州");
+
+    const restored = AgentSession.restore(project, snapshot, { mode: "conservative" });
+    expect(restored.shadowProject.students.find((student) => student.id === "A")?.city).toBe("深圳");
+    expect(restored.lastReplayFailure).toBeNull();
+
+    const failure = (() => {
+      try {
+        AgentSession.restore(live, snapshot, { mode: "conservative" });
+        return null;
+      } catch (cause) {
+        return cause;
+      }
+    })();
+    expect(failure).toBeInstanceOf(AgentReplayError);
+    expect((failure as AgentReplayError).failure).toMatchObject({ stepId: "call-fact", name: "manage_students" });
+    expect(live.students).toHaveLength(1);
+  });
+
+  it("still rejects a concurrent run after a rejected landing apply", async () => {
+    const project = createProjectDocument({
+      students: [{ id: "A", name: "甲", university: "大学", city: "广州", province: "广东", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "call-fact", name: "manage_students", arguments: { action: "update_fact", studentId: "A", fields: { city: "深圳" } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("把甲同学改到深圳");
+
+    const live = { ...project, students: [] };
+    expect(session.transactionForSteps(new Set(["call-fact"]))!.apply(live)).toBe(live);
+
+    vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))))));
+    const running = session.continue("再试一次");
+    await expect(session.run("并发")).rejects.toThrow(/进行中/);
+    session.cancel();
+    expect((await running).kind).toBe("cancelled");
   });
 
   it("truncates on UTF-8 sequence boundaries without emitting replacement characters", () => {
