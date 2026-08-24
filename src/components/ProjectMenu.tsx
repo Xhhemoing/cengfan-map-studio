@@ -27,6 +27,11 @@ export interface ProjectMenuProps {
   roomExpired?: boolean;
   /** 传输层不可达:重试仍在继续,本地修改不会丢。 */
   collaborationOffline?: boolean;
+  /**
+   * 服务端上一次落盘没能完整写下这个房间:同步一切正常,但服务端一重启房间就没了。
+   * 可选是为了让接线方按自己的节奏传入,缺省视为服务端没有给出说法。
+   */
+  roomPersistenceDegraded?: boolean;
   invitationToken: string | null;
   hasStoredRoomAccess: boolean;
   collaborationStatus: CollaborationStatus;
@@ -65,6 +70,7 @@ export function ProjectMenu({
   roomClosed,
   roomExpired = false,
   collaborationOffline = false,
+  roomPersistenceDegraded = false,
   invitationToken,
   hasStoredRoomAccess,
   collaborationStatus,
@@ -93,6 +99,9 @@ export function ProjectMenu({
   // 终局与离线是互斥的两种处境:终局房间不会再重连,离线只是等网络回来,提示语不能混用。
   const terminalKind = roomClosed ? "closed" : roomExpired ? "expired" : undefined;
   const isOffline = collaborationOffline && terminalKind === undefined;
+  // 持久化降级排在最后:房间已经死了的时候"及时导出备份"无从执行,断线的时候连接本身更急。
+  // 只有一间正在正常同步的房间才需要被告知它活不过服务端重启。
+  const showPersistenceNote = roomPersistenceDegraded && Boolean(roomId) && terminalKind === undefined && !isOffline;
   return (
     <details className="project-menu">
       <summary className="secondary-button" aria-label="打开项目菜单">
@@ -174,6 +183,11 @@ export function ProjectMenu({
                     {isOffline && (
                       <p className="collaboration-offline" role="status" data-collaboration-offline="true">
                         网络已断开，正在自动重连；本地修改会保留，恢复后自动续传。
+                      </p>
+                    )}
+                    {showPersistenceNote && (
+                      <p className="collaboration-persist-degraded" role="status" data-collaboration-persist="degraded">
+                        该房间体量超过服务器持久化上限，服务器重启后将无法恢复，请及时导出备份
                       </p>
                     )}
                     <small data-collaboration-status={collaborationStatus} data-collaboration-terminal={terminalKind}>{collaborationMessage}</small>

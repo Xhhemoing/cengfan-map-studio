@@ -117,7 +117,23 @@ interface ServerScript {
   room?: () => Response | Promise<Response>;
   /** 第几次申请 events ticket(从 0 起)。房间被清理后 ticket 会开始报终局码。 */
   ticket?: (attempt: number) => Response | Promise<Response>;
+  /** `POST /api/rooms`:R6-2 起 201 的 body 里带 `persistedAtLastFlush` 兄弟字段。 */
+  create?: () => Response | Promise<Response>;
+  /** `POST /api/rooms/:id/join`:同上,200 的 body 里带同一个兄弟字段。 */
+  join?: () => Response | Promise<Response>;
 }
+
+const createdRoomBody = (extra: Record<string, unknown> = {}) => ({
+  room: { id: ROOM_ID, version: 0, ready: true },
+  access: { id: "p-owner", participantId: "p-owner", displayName: "创建者", role: "owner", accessToken: ROOM_TOKEN },
+  ...extra,
+});
+
+const joinedRoomBody = (extra: Record<string, unknown> = {}) => ({
+  room: { id: ROOM_ID, version: 0, ready: true },
+  access: { id: "p-member", participantId: "p-member", displayName: "成员", role: "editor", accessToken: ROOM_TOKEN },
+  ...extra,
+});
 
 function installFetch(script: ServerScript): MockInstance {
   let ticketAttempts = 0;
@@ -129,6 +145,15 @@ function installFetch(script: ServerScript): MockInstance {
       ticketAttempts += 1;
       if (script.ticket) return script.ticket(attempt);
       return json({ ticket: `ticket-${FakeEventSource.instances.length}` }, 201);
+    }
+    if (url.endsWith("/api/rooms")) {
+      return script.create?.() ?? json(createdRoomBody(), 201);
+    }
+    if (url.endsWith(`/api/rooms/${ROOM_ID}/join`)) {
+      return script.join?.() ?? json(joinedRoomBody());
+    }
+    if (url.endsWith(`/api/rooms/${ROOM_ID}/transactions`)) {
+      return json({ id: ROOM_ID, version: script.snapshotVersion, ready: true, updatedBy: "c-local", lastTxId: "tx-init" });
     }
     if (url.includes(`/api/rooms/${ROOM_ID}/operations`)) {
       const afterVersion = Number(new URLSearchParams(url.split("?")[1] ?? "").get("afterVersion"));
@@ -152,6 +177,16 @@ const neverSettles = (): Promise<Response> => new Promise<Response>(() => {});
 async function joinRoom(harness: Harness): Promise<void> {
   window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`, ROOM_TOKEN);
   flushSync(() => harness.controller().setRoomInput(ROOM_ID));
+  harness.controller().joinRoom();
+  await vi.waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(0));
+}
+
+/** 邀请凭证路径:本机没有存过凭证,所以握手真的会走一次 `POST /api/rooms/:id/join`。 */
+async function joinRoomWithInvite(harness: Harness): Promise<void> {
+  flushSync(() => {
+    harness.controller().setRoomInput(ROOM_ID);
+    harness.controller().setInviteTokenInput("invite-token");
+  });
   harness.controller().joinRoom();
   await vi.waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(0));
 }
@@ -678,6 +713,119 @@ describe("useCollaborationRoom", () => {
       expect(harness.controller().roomExpired).toBe(false);
       expect(harness.controller().roomClosed).toBe(false);
       expect(harness.controller().collaborationStatus).toBe("connected");
+      harness.unmount();
+    });
+  });
+
+  /**
+   * 房间是否能挺过一次服务端重启,只有服务端知道(R6-2 的 `persistedAtLastFlush`)。房里的人
+   * 是唯一会因此丢数据的人,所以这个判断必须变成一份能渲染的状态。它是纯展示态:不碰重连、
+   * 补齐、离线与终局的任何判据。
+   */
+  describe("roomPersistenceDegraded", () => {
+    it("marks the room degraded when the join handshake reports it was skipped at the last flush", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({ persistedAtLastFlush: false })),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoomWithInvite(harness);
+      await vi.waitFor(() => expect(harness.refs.versionRef.current).toBe(1));
+
+      expect(harness.controller().roomPersistenceDegraded).toBe(true);
+      // 纯展示态:既不是离线,也不是终局,连接照常。
+      expect(harness.controller().collaborationOffline).toBe(false);
+      expect(harness.controller().roomExpired).toBe(false);
+      expect(harness.controller().collaborationStatus).toBe("connected");
+      harness.unmount();
+    });
+
+    it("lets the newer snapshot overrule a healthy join handshake", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({ persistedAtLastFlush: true })),
+        // 握手与快照之间又落了一次盘,这一次房间被裁掉了:后到的说法才是当前的处境。
+        room: () => json({ id: ROOM_ID, version: 1, ready: true, snapshot: samplePackage(), role: "editor", members: [], persistedAtLastFlush: false }),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoomWithInvite(harness);
+
+      await vi.waitFor(() => expect(harness.controller().roomPersistenceDegraded).toBe(true));
+      harness.unmount();
+    });
+
+    it("stays quiet for a healthy room and for a server that never reports the flag", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({ persistedAtLastFlush: true })),
+        room: () => json({ id: ROOM_ID, version: 1, ready: true, snapshot: samplePackage(), role: "editor", members: [], persistedAtLastFlush: true }),
+      });
+      const healthy = mountHook(samplePackage());
+      await joinRoomWithInvite(healthy);
+      await vi.waitFor(() => expect(healthy.refs.versionRef.current).toBe(1));
+      expect(healthy.controller().roomPersistenceDegraded).toBe(false);
+      healthy.unmount();
+
+      FakeEventSource.instances = [];
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+      });
+      const silent = mountHook(samplePackage());
+      await joinRoomWithInvite(silent);
+      await vi.waitFor(() => expect(silent.refs.versionRef.current).toBe(1));
+      // 旧服务端没有说法:不能替它宣布房间活不过重启。
+      expect(silent.controller().roomPersistenceDegraded).toBe(false);
+      silent.unmount();
+    });
+
+    it("marks a freshly created room degraded from the create response", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        create: () => json(createdRoomBody({ persistedAtLastFlush: false }), 201),
+      });
+      const harness = mountHook(samplePackage());
+      harness.controller().startRoom();
+
+      await vi.waitFor(() => expect(harness.controller().roomPersistenceDegraded).toBe(true));
+      expect(harness.controller().collaborationStatus).toBe("connected");
+      harness.unmount();
+    });
+
+    it("never lets a degraded room stain the next room or the disconnected panel", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({ persistedAtLastFlush: false })),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoomWithInvite(harness);
+      await vi.waitFor(() => expect(harness.controller().roomPersistenceDegraded).toBe(true));
+
+      flushSync(() => harness.controller().leaveRoom());
+      expect(harness.controller().roomPersistenceDegraded).toBe(false);
+
+      // 下一间房是健康的:上一间的降级不能跟过来。
+      FakeEventSource.instances = [];
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        create: () => json(createdRoomBody({ persistedAtLastFlush: true }), 201),
+      });
+      harness.controller().startRoom();
+      await vi.waitFor(() => expect(harness.controller().roomId).toBe(ROOM_ID));
+      expect(harness.controller().roomPersistenceDegraded).toBe(false);
       harness.unmount();
     });
   });

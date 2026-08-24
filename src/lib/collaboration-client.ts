@@ -47,11 +47,19 @@ export interface CollaborationRoom<T = unknown> {
   readonly?: boolean;
   closed?: boolean;
   members?: RoomMember[];
+  /**
+   * 上一次成功落盘是否完整写下了这个房间(R6-2 附加字段,在房间快照上与 `role`/`participants` 同级)。
+   * `false` 表示房间被跳过或被裁掉历史,服务端重启后不会回来;字段缺失表示服务端没有给出说法
+   * (旧版本服务端),不能当成降级。
+   */
+  persistedAtLastFlush?: boolean;
 }
 
 export interface CreatedRoom<T = unknown> {
   room: CollaborationRoom<T>;
   access: RoomAccess;
+  /** 同上,但在 create/join 的响应里它是 `room`/`access` 的兄弟字段,不在 `room` 里面。 */
+  persistedAtLastFlush?: boolean;
 }
 
 export interface CollaborationTransaction<T = unknown> {
@@ -291,10 +299,38 @@ async function jsonRequest<T>(
   }
 }
 
+/**
+ * `persistedAtLastFlush` 只有在服务端给出 JSON 布尔时才算数。响应 body 是直通给调用方的,
+ * 非布尔值(旧服务端的字段缺失、网关塞进来的字符串、null)一旦被当成"有说法",协作面板就会
+ * 凭响应形状而不是服务端的判断去宣布房间活不过重启。缺失必须是"没有说法":键整个不出现,
+ * 调用方才能把它和明确的 `true`/`false` 区分开。
+ */
+function persistenceFlagOf(value: unknown): { persistedAtLastFlush?: boolean } {
+  return typeof value === "boolean" ? { persistedAtLastFlush: value } : {};
+}
+
+/** 快照响应把标志位放在房间对象上,与 `role`/`participants` 同级。 */
+function parseRoomSnapshot<T>(room: CollaborationRoom<T>): CollaborationRoom<T> {
+  if (!room || typeof room !== "object") return room;
+  const { persistedAtLastFlush, ...rest } = room as CollaborationRoom<T> & { persistedAtLastFlush?: unknown };
+  return { ...(rest as CollaborationRoom<T>), ...persistenceFlagOf(persistedAtLastFlush) };
+}
+
+/** create/join 把标志位放在 `room`/`access` 的兄弟位置;房间对象上的同名字段用同一把尺子量。 */
+function parseCreatedRoom<T>(created: CreatedRoom<T>): CreatedRoom<T> {
+  const { persistedAtLastFlush, ...rest } = created as CreatedRoom<T> & { persistedAtLastFlush?: unknown };
+  const base = rest as CreatedRoom<T>;
+  return {
+    ...base,
+    ...(base.room ? { room: parseRoomSnapshot(base.room) } : {}),
+    ...persistenceFlagOf(persistedAtLastFlush),
+  };
+}
+
 export function createRoom<T>(
   input: { clientId: string; displayName: string; snapshot?: T } & CollaborationRequestOptions,
 ): Promise<CreatedRoom<T>> {
-  return jsonRequest(`/api/rooms`, {
+  return jsonRequest<CreatedRoom<T>>(`/api/rooms`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -302,23 +338,23 @@ export function createRoom<T>(
       displayName: input.displayName,
       ...(input.snapshot === undefined ? {} : { snapshot: input.snapshot }),
     }),
-  }, input, { idempotent: false });
+  }, input, { idempotent: false }).then(parseCreatedRoom);
 }
 
 export function fetchRoom<T>(roomId: string, accessToken: string, input: CollaborationRequestInput = {}): Promise<CollaborationRoom<T>> {
-  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}`, {
+  return jsonRequest<CollaborationRoom<T>>(`/api/rooms/${normalizedRoomId(roomId)}`, {
     headers: roomTokenHeaders(accessToken),
-  }, input, { idempotent: true });
+  }, input, { idempotent: true }).then(parseRoomSnapshot);
 }
 
 export function joinRoom<T>(
   input: { roomId: string; inviteToken: string; clientId: string; displayName: string } & CollaborationRequestOptions,
 ): Promise<CreatedRoom<T>> {
-  return jsonRequest(`/api/rooms/${normalizedRoomId(input.roomId)}/join`, {
+  return jsonRequest<CreatedRoom<T>>(`/api/rooms/${normalizedRoomId(input.roomId)}/join`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ inviteToken: input.inviteToken, clientId: input.clientId, displayName: input.displayName }),
-  }, input, { idempotent: false });
+  }, input, { idempotent: false }).then(parseCreatedRoom);
 }
 
 export function createRoomInvitation(
