@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -8,11 +8,10 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import type { AddressInfo } from "node:net";
 import type http from "node:http";
-import { randomBytes } from "node:crypto";
 import { createAiLogger } from "./ai/ai-observability";
 import { createRateLimiter } from "./ai/rate-limit";
-import { attachServerLifecycle, createAiServer, createReadyAiServer, DEFAULT_PORT, resolvePort, type RoomStoreFactoryOptions } from "./index";
-import { createRoomStore, type CreatedRoom, type RoomCreator, type RoomStore } from "./collaboration";
+import { attachServerLifecycle, createAiServer, createReadyAiServer, DEFAULT_PORT, resolvePort } from "./index";
+import { createRoomStore } from "./collaboration";
 
 const fsHooks = vi.hoisted(() => ({ createReadStream: null as null | ((filePath: string) => unknown) }));
 
@@ -242,56 +241,6 @@ async function rawPost(origin: string, path: string, body: unknown, headers: Rec
   });
 }
 
-interface PersistedRoomRecord {
-  id: string;
-  accessToken: string;
-  snapshot: unknown;
-  clientId: string;
-  displayName: string;
-}
-
-/**
- * R3-4 的持久化房间存储尚未落地，这里用一个可快照/可重放的替身占位：
- * `restore` 里的房间按原 id 与原 access token 重新建出来，`flush()` 把当前
- * 房间交给注入的 `persist`。它只覆盖 R3-5 负责的接线面（工厂入参、flush 调用、
- * 启动恢复），房间快照本身的字段与密钥哈希由 R3-4 定义。
- */
-function createReplayRoomStore(options: RoomStoreFactoryOptions): RoomStore & { flush: () => Promise<void> } {
-  const records = new Map<string, PersistedRoomRecord>();
-  let replaying: PersistedRoomRecord | undefined;
-  const inner = createRoomStore({
-    ...options,
-    generateId: () => replaying?.id ?? randomBytes(6).toString("hex").toUpperCase(),
-    generateSecret: () => replaying?.accessToken ?? randomBytes(24).toString("base64url"),
-  });
-  const create = ((snapshot: unknown, creator: RoomCreator | string) => {
-    const result = (inner.create as (value: unknown, owner: RoomCreator | string) => CreatedRoom)(snapshot, creator);
-    if (typeof creator !== "string" && result.access) {
-      records.set(result.room.id, {
-        id: result.room.id,
-        accessToken: result.access.accessToken,
-        snapshot,
-        clientId: creator.clientId,
-        displayName: creator.displayName,
-      });
-    }
-    return result;
-  }) as RoomStore["create"];
-  for (const record of Array.isArray(options.restore) ? options.restore as PersistedRoomRecord[] : []) {
-    replaying = record;
-    try {
-      create(record.snapshot, { clientId: record.clientId, displayName: record.displayName });
-    } finally {
-      replaying = undefined;
-    }
-  }
-  return {
-    ...inner,
-    create,
-    flush: async () => { await options.persist?.([...records.values()]); },
-  };
-}
-
 function workspaceRequestInit(token = "workspace-test-token"): RequestInit {
   return {
     headers: {
@@ -307,6 +256,7 @@ describe("unified application server", () => {
 
   afterEach(async () => {
     fsHooks.createReadStream = null;
+    vi.restoreAllMocks();
     await Promise.all(
       servers.map(
         (server) =>
@@ -1796,8 +1746,9 @@ describe("unified application server", () => {
     const server = createAiServer({
       roomHeartbeatIntervalMs: 60_000,
       persistRooms: (snapshot) => { persisted.push(snapshot); },
+      // 真实房间存储 + flush 探针：只观测关停是否落了一次快照，不改写快照语义。
       roomStoreFactory: (storeOptions) => {
-        const store = createReplayRoomStore(storeOptions);
+        const store = createRoomStore(storeOptions);
         return { ...store, flush: async () => { flushes.push("rooms"); await store.flush(); } };
       },
     });
@@ -1878,7 +1829,6 @@ describe("unified application server", () => {
     let snapshot: unknown;
     const first = createAiServer({
       persistRooms: (value) => { snapshot = value; },
-      roomStoreFactory: createReplayRoomStore,
     });
     servers.push(first);
     const firstOrigin = await startServer(first);
@@ -1886,7 +1836,7 @@ describe("unified application server", () => {
     await attachServerLifecycle(first, { timeoutMs: 2_000 }).shutdown("SIGTERM");
     expect(snapshot).toBeDefined();
 
-    const restored = createAiServer({ roomSnapshot: snapshot, roomStoreFactory: createReplayRoomStore });
+    const restored = createAiServer({ roomSnapshot: snapshot });
     servers.push(restored);
     const restoredOrigin = await startServer(restored);
     const response = await fetch(`${restoredOrigin}/api/rooms/${created.room.id}`, {
@@ -1900,13 +1850,13 @@ describe("unified application server", () => {
   it("writes the room snapshot into the data directory and reloads it on the next boot", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-"));
     directories.push(dataDir);
-    const first = await createReadyAiServer({ dataDir, roomStoreFactory: createReplayRoomStore });
+    const first = await createReadyAiServer({ dataDir });
     servers.push(first);
     const firstOrigin = await startServer(first);
     const created = await createCollaborationRoom(firstOrigin, { title: "落盘" });
     await attachServerLifecycle(first, { timeoutMs: 2_000 }).shutdown("SIGTERM");
 
-    const restarted = await createReadyAiServer({ dataDir, roomStoreFactory: createReplayRoomStore });
+    const restarted = await createReadyAiServer({ dataDir });
     servers.push(restarted);
     const restartedOrigin = await startServer(restarted);
     const response = await fetch(`${restartedOrigin}/api/rooms/${created.room.id}`, {
@@ -1915,6 +1865,81 @@ describe("unified application server", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ id: created.room.id, snapshot: { title: "落盘" } });
+  });
+
+  it("quarantines a corrupt room snapshot and keeps the sidecar across the next flush", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-corrupt-"));
+    directories.push(dataDir);
+    const snapshotFile = join(dataDir, "collaboration-rooms.json");
+    // 半截 JSON：进程在落盘途中被杀掉时磁盘上就是这种内容。
+    const corrupt = "{\"version\":1,\"rooms\":[{\"room\":";
+    await writeFile(snapshotFile, corrupt, "utf8");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const server = await createReadyAiServer({ dataDir });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    // 坏文件必须离开正常路径，否则下一次成功落盘会把事故现场覆盖掉。
+    await expect(readFile(snapshotFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(`${snapshotFile}.bad`, "utf8")).resolves.toBe(corrupt);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`${snapshotFile}.bad`));
+    expect((await fetch(`${origin}/api/live`)).status).toBe(200);
+
+    const created = await createCollaborationRoom(origin, { title: "坏快照之后" });
+    await attachServerLifecycle(server, { timeoutMs: 2_000 }).shutdown("SIGTERM");
+
+    const rewritten = JSON.parse(await readFile(snapshotFile, "utf8")) as { version: number; rooms: Array<{ room: { id: string } }> };
+    expect(rewritten.version).toBe(1);
+    expect(rewritten.rooms.map((entry) => entry.room.id)).toEqual([created.room.id]);
+    await expect(readFile(`${snapshotFile}.bad`, "utf8")).resolves.toBe(corrupt);
+  });
+
+  it("keeps the earlier sidecar by timestamping a second corrupt boot", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-corrupt-twice-"));
+    directories.push(dataDir);
+    const snapshotFile = join(dataDir, "collaboration-rooms.json");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await writeFile(snapshotFile, "first-corrupt", "utf8");
+    servers.push(await createReadyAiServer({ dataDir }));
+    await writeFile(snapshotFile, "second-corrupt", "utf8");
+    servers.push(await createReadyAiServer({ dataDir }));
+
+    await expect(readFile(snapshotFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    // 第一次隔离出来的证据不能被第二次坏启动顶掉。
+    await expect(readFile(`${snapshotFile}.bad`, "utf8")).resolves.toBe("first-corrupt");
+    const sidecars = (await readdir(dataDir)).filter((name) => name.endsWith(".bad"));
+    expect(sidecars).toHaveLength(2);
+    const timestamped = sidecars.find((name) => name !== "collaboration-rooms.json.bad")!;
+    expect(timestamped).toMatch(/^collaboration-rooms\.json\.\d+(?:\.\d+)?\.bad$/);
+    await expect(readFile(join(dataDir, timestamped), "utf8")).resolves.toBe("second-corrupt");
+  });
+
+  it("reports how many rooms the boot snapshot handed back", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    let snapshot: unknown;
+    const first = createAiServer({ persistRooms: (value) => { snapshot = value; } });
+    servers.push(first);
+    const origin = await startServer(first);
+    await createCollaborationRoom(origin, { title: "计数" });
+    await attachServerLifecycle(first, { timeoutMs: 2_000 }).shutdown("SIGTERM");
+
+    info.mockClear();
+    const restored = createAiServer({ roomSnapshot: snapshot });
+    servers.push(restored);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 1 collaboration room(s)"));
+
+    info.mockClear();
+    const cold = createAiServer();
+    servers.push(cold);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 0 collaboration room(s)"));
+
+    // 形状不对的快照同样按 0 计：房间存储会整份丢弃它。
+    info.mockClear();
+    const bogus = createAiServer({ roomSnapshot: { version: 2, rooms: "nope" } });
+    servers.push(bogus);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 0 collaboration room(s)"));
   });
 
   it("keeps AI endpoints open without a token in development", async () => {
