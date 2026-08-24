@@ -159,6 +159,28 @@ describe("tryLocalPreroute", () => {
     expect(tryLocalPreroute({ userMessage: "多少人", digest, messages })).toBeNull();
   });
 
+  it("上一段任务的工具往返不挡住新提问", () => {
+    const messages = [
+      { role: "user" as const, content: "把地图调小一点" },
+      { role: "assistant" as const, content: null, tool_calls: [{ id: "t1", type: "function" as const, function: { name: "update_map", arguments: "{}" } }] },
+      { role: "tool" as const, tool_call_id: "t1", content: "{\"ok\":true}" },
+      { role: "assistant" as const, content: "地图已调小。" },
+      { role: "user" as const, content: "一共多少人" },
+    ];
+    expect(tryLocalPreroute({ userMessage: "一共多少人", digest, messages })?.intent).toBe("student-total");
+  });
+
+  it("任务中途本轮消息之后已有工具往返时仍不预路由", () => {
+    const messages = [
+      { role: "user" as const, content: "多少人" },
+      { role: "assistant" as const, content: null, tool_calls: [{ id: "t1", type: "function" as const, function: { name: "inspect_project", arguments: "{}" } }] },
+      { role: "tool" as const, tool_call_id: "t1", content: "{}" },
+      // parseAgentRequest 会把本轮 userMessage 补写到末尾，边界必须取第一条而不是最后一条。
+      { role: "user" as const, content: "多少人" },
+    ];
+    expect(tryLocalPreroute({ userMessage: "多少人", digest, messages })).toBeNull();
+  });
+
   it("此前只有纯文本往返时仍可预路由", () => {
     const messages = [
       { role: "user" as const, content: "你好" },

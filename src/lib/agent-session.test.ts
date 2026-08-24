@@ -64,7 +64,7 @@ describe("AgentSession", () => {
     expect(snapshot.schemaVersion).toBe(3);
     expect(snapshot.taskId).toBe("task-snapshot");
     expect(snapshot.budgetReceipt).toBe("v1.receipt.snapshot");
-    expect(snapshot.conversation).toEqual([{ role: "user", content: "调整地图" }]);
+    expect(snapshot.conversation).toEqual([{ role: "user", content: "调整地图" }, { role: "assistant", content: "完成" }]);
     expect(snapshot.steps[0]?.arguments).toEqual({ patch: { width: 640 } });
     expect(snapshot.steps[0]).not.toHaveProperty("result");
     expect(restored.shadowProject.map.width).toBe(640);
@@ -93,6 +93,52 @@ describe("AgentSession", () => {
     // 预算由服务端回执决定，客户端镜像已经从请求体里去掉。
     expect(continuationBody).not.toHaveProperty("budget");
     expect(restored.exportSnapshot().budgetReceipt).toBe("v1.receipt.third");
+  });
+
+  it("keeps the finish summary in the conversation and replays it after a restore", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-summary", budgetReceipt: "v1.receipt.first", summary: "地图已缩小到 0.85" }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-summary", budgetReceipt: "v1.receipt.second", summary: "继续完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("地图小一点");
+
+    const snapshot = session.exportSnapshot();
+    expect(snapshot.conversation).toEqual([
+      { role: "user", content: "地图小一点" },
+      { role: "assistant", content: "地图已缩小到 0.85" },
+    ]);
+
+    const restored = AgentSession.restore(project, snapshot, { mode: "conservative" });
+    await restored.continue("再小一点");
+    const continuation = JSON.parse(String(((fetchMock.mock.calls.at(-1) as unknown[])[1] as RequestInit).body)) as { messages: Array<{ role: string; content?: string }> };
+    // 模型必须看得到自己上一轮答过什么，否则续聊窗口只剩一串用户提问。
+    expect(continuation.messages).toEqual([
+      { role: "user", content: "地图小一点" },
+      { role: "assistant", content: "地图已缩小到 0.85" },
+      { role: "user", content: "再小一点" },
+    ]);
+  });
+
+  it("keeps the snapshot exportable after many continuations add finish summaries", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn().mockImplementation(async () => response({
+      kind: "finish",
+      taskId: "task-many",
+      budgetReceipt: `v1.receipt.${fetchMock.mock.calls.length}`,
+      summary: `第 ${fetchMock.mock.calls.length} 轮完成`,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("第 1 次");
+    for (let index = 2; index <= 30; index += 1) await session.continue(`第 ${index} 次`);
+
+    const snapshot = session.exportSnapshot();
+    expect(() => session.exportSnapshot()).not.toThrow();
+    expect(snapshot.conversation.length).toBeLessThanOrEqual(24);
+    expect(snapshot.conversation.filter((message) => message.role === "assistant").length).toBeGreaterThan(0);
+    expect(snapshot.conversation.at(-1)).toEqual({ role: "assistant", content: "第 30 轮完成" });
   });
 
   it("restores a v2 snapshot read-only and refuses to continue it without a receipt", async () => {

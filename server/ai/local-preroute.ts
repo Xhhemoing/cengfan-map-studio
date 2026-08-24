@@ -218,14 +218,25 @@ function answerFor(intent: LocalStatIntent, stats: StudentStats): string | null 
   return `${wanted}目前没有同学${hiddenNote(stats)}。`;
 }
 
-/** agent 循环进行中（已有工具往返）时不预路由，避免打断多步任务。 */
-function isFreshQuestion(messages: ChatMessage[] | undefined): boolean {
+function hasToolRoundTrip(messages: ChatMessage[]): boolean {
+  return messages.some((message) => message.role === "tool" || (message.role === "assistant" && (message.tool_calls?.length ?? 0) > 0));
+}
+
+/**
+ * 只有「当前这条用户消息之后」已经有工具往返，才算 agent 循环进行中，此时不预路由以免打断多步任务。
+ * 边界取第一条内容等于 userMessage 的 user 消息：parseAgentRequest 会把 userMessage 补写到末尾，
+ * 取最后一条会把本轮之前的历史也算进当前段，导致做过一次工具任务的会话再也用不上预路由。
+ * 找不到边界（本轮消息尚未进历史，说明还在同一段任务的内部轮次里）就保持保守的全局口径。
+ * 回滚：去掉 userMessage 参数、改回对整段 messages 判断即可。
+ */
+function isFreshQuestion(messages: ChatMessage[] | undefined, userMessage: string): boolean {
   if (!messages?.length) return true;
-  return !messages.some((message) => message.role === "tool" || (message.role === "assistant" && (message.tool_calls?.length ?? 0) > 0));
+  const boundary = messages.findIndex((message) => message.role === "user" && message.content === userMessage);
+  return !hasToolRoundTrip(boundary < 0 ? messages : messages.slice(boundary + 1));
 }
 
 export function tryLocalPreroute(input: LocalPrerouteInput): LocalPrerouteAnswer | null {
-  if (!isFreshQuestion(input.messages)) return null;
+  if (!isFreshQuestion(input.messages, input.userMessage)) return null;
   const intent = matchLocalStatIntent(input.userMessage);
   if (!intent) return null;
   const stats = readStudentStats(input.digest ?? {});

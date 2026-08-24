@@ -107,8 +107,24 @@ function readOnlyStreak(messages: ChatMessage[]): number {
   return streak;
 }
 
-function rejectedCount(messages: ChatMessage[]): number {
-  return messages.filter((message) => message.role === "tool" && message.content?.includes("unknownProps")).length;
+/**
+ * 当前任务段的起点：messages 中第一条内容等于本轮 userMessage 的 user 消息。
+ * 不能取最后一条 user——parseAgentRequest 会把 userMessage 补写到 messages 末尾，
+ * 取最后一条会把整段历史都算成「上一段」。找不到边界（历史被压缩掉了本轮消息）时返回 0，
+ * 退回全局口径，宁可早停也不放任无限重试。
+ */
+function currentTaskStart(messages: ChatMessage[], userMessage: string): number {
+  const index = messages.findIndex((message) => message.role === "user" && message.content === userMessage);
+  return index < 0 ? 0 : index;
+}
+
+/**
+ * 拒绝次数只算当前任务段内的：上一段任务里被拒过两次的补丁不该让「继续对话」的第一轮
+ * 不调模型就直接 finish。段内计数仍然是硬闸，模型在同一段里连错两次照样停。
+ * 回滚：把 from 参数删掉、改回 messages.filter 全量统计即可。
+ */
+function rejectedCount(messages: ChatMessage[], from: number): number {
+  return messages.slice(from).filter((message) => message.role === "tool" && message.content?.includes("unknownProps")).length;
 }
 
 function parseArguments(name: string, raw: string): Record<string, unknown> {
@@ -291,7 +307,7 @@ export async function runAgentTurn(
   if (readOnlyStreak(request.messages) >= MAX_READ_ONLY_STREAK) {
     return { kind: "finish", summary: "连续多轮只读未动手，任务无进展，已交回当前结论。" };
   }
-  if (rejectedCount(request.messages) >= MAX_TOOL_REJECTIONS) {
+  if (rejectedCount(request.messages, currentTaskStart(request.messages, request.userMessage)) >= MAX_TOOL_REJECTIONS) {
     return { kind: "finish", summary: "工具参数多次校验失败，已停止继续尝试。" };
   }
 

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildSystemMessage, digestFingerprint, runAgentTurn, runLocalAgentTurn, MAX_READ_ONLY_STREAK, MAX_TURNS } from "./agent-loop";
+import { buildSystemMessage, digestFingerprint, runAgentTurn, runLocalAgentTurn, MAX_READ_ONLY_STREAK, MAX_TOOL_REJECTIONS, MAX_TURNS } from "./agent-loop";
 import type { AiConfig } from "./llm-client";
 import type { AgentBudgetState, ChatMessage } from "./agent-types";
 
@@ -409,6 +409,37 @@ describe("runAgentTurn", () => {
     });
     expect(outcome.kind).toBe("finish");
     if (outcome.kind === "finish") expect(outcome.budget).toMatchObject({ usedTokens: 877, lastPromptTokens: 1_000 });
+  });
+
+  it("still calls the model when the rejections belong to an earlier task in the same conversation", async () => {
+    stubReply(calls(["update_map", { patch: { scale: 0.85 } }]));
+    const rejection = JSON.stringify({ code: "PATCH_REJECTED", domain: "map", unknownProps: ["fontSize"], availableProps: ["scale"] });
+    const messages: ChatMessage[] = [
+      { role: "user", content: "上一个需求" },
+      calls(["update_map", { patch: { fontSize: 60 } }]),
+      { role: "tool", tool_call_id: "call-0", content: rejection },
+      calls(["update_map", { patch: { fontSize: 60 } }]),
+      { role: "tool", tool_call_id: "call-0", content: rejection },
+      { role: "assistant", content: "参数多次校验失败，已停止继续尝试。" },
+      { role: "user", content: "地图小一点" },
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "地图小一点", digest: {}, messages });
+    expect(outcome.kind).toBe("tool-call");
+  });
+
+  it("still stops after MAX_TOOL_REJECTIONS rejections inside the current task segment", async () => {
+    stubReply(calls(["update_map", { patch: { scale: 0.85 } }]));
+    const rejection = JSON.stringify({ code: "PATCH_REJECTED", domain: "map", unknownProps: ["fontSize"], availableProps: ["scale"] });
+    const messages: ChatMessage[] = [
+      { role: "user", content: "地图小一点" },
+      ...Array.from({ length: MAX_TOOL_REJECTIONS }, () => [
+        calls(["update_map", { patch: { fontSize: 60 } }]),
+        { role: "tool" as const, tool_call_id: "call-0", content: rejection },
+      ]).flat(),
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "地图小一点", digest: {}, messages });
+    expect(outcome.kind).toBe("finish");
+    if (outcome.kind === "finish") expect(outcome.summary).toContain("多次校验失败");
   });
 
   it("stops at the turn limit", async () => {

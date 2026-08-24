@@ -540,6 +540,15 @@ export class AgentSession {
     });
   }
 
+  /**
+   * 收尾总结压入会话后立即再压缩一次：压缩只发生在每轮开头，而总结是在那之后追加的，
+   * 不补这一次的话「一问一答」型续聊会以 25 条收尾，exportSnapshot 直接判快照无效。
+   */
+  private pushFinishSummary(summary: string): void {
+    this.conversation.push({ role: "assistant", content: summary });
+    this.compactConversation();
+  }
+
   private execute(call: AgentToolCall): AgentToolResult {
     const rejected = this.validateClientCall(call);
     if (rejected) return { id: call.id, ok: false, content: rejected };
@@ -665,8 +674,10 @@ export class AgentSession {
       this.budgetReceipt = undefined;
       this.continuable = true;
     }
-    // 首轮（新任务或历史为空）发 full 建立上下文；续聊时明细已在历史里，只发 core（统计+几何），
-    // 模型要明细可随时用 inspect_project 现取。必须在压入本轮用户消息之前判断，否则历史永远非空。
+    // 首轮（新任务或历史为空）发 full 建立上下文；续聊只发 core（统计+几何）。
+    // 明细并不在历史里——digest 消息从不回写 conversation——续聊敢裁掉它们，靠的是 core 层保留了
+    // 各 *Count：计数大于 0 而明细为空，模型据此判断「被裁了」而不是「没有」，再用 inspect_project
+    // 现取（它固定读 full 层）。必须在压入本轮用户消息之前判断，否则历史永远非空。
     // 回滚：删掉本行与请求体里的 layer 参数、以及 inspect_project 处的 { layer: "full" }，两处都回到无参 buildProjectDigest(this.shadow)。
     const digestLayer: ProjectDigestLayer = options.continue && this.conversation.length > 0 ? "core" : "full";
     this.conversation.push({ role: "user", content: message });
@@ -741,7 +752,14 @@ export class AgentSession {
             this._metrics = { ...this._metrics, route: outcome.meta.route, provider: outcome.meta.provider ?? outcome.meta.model, fallbackReason: outcome.meta.fallbackReason };
           }
           if (outcome.kind === "failed") return { kind: "failed" as const, error: outcome.error ?? "Agent 失败" };
-          if (outcome.kind === "finish") { this.completed = true; return { kind: "finish" as const, summary: outcome.summary ?? "已完成。" }; }
+          if (outcome.kind === "finish") {
+            this.completed = true;
+            const summary = outcome.summary ?? "已完成。";
+            // 总结必须留在会话里：不写回的话续聊窗口只剩一串用户提问，模型看不到自己上一轮答过什么，
+            // 快照恢复出来的历史也是半截对话。
+            this.pushFinishSummary(summary);
+            return { kind: "finish" as const, summary };
+          }
           if (outcome.kind === "tool-rejected") {
             const assistantToolCalls = Array.isArray(outcome.assistantMessage?.tool_calls) ? outcome.assistantMessage.tool_calls as Array<{ id?: unknown }> : [];
             if (assistantToolCalls.length > 0) {
@@ -769,7 +787,9 @@ export class AgentSession {
           }
         }
         this.completed = true;
-        return { kind: "finish" as const, summary: "已达到 20 轮上限，已交付当前完成的修改。" };
+        const summary = "已达到 20 轮上限，已交付当前完成的修改。";
+        this.pushFinishSummary(summary);
+        return { kind: "finish" as const, summary };
       } catch (cause) {
         if (controller.signal.aborted || cause instanceof DOMException && cause.name === "AbortError") return { kind: "cancelled" as const };
         return { kind: "failed" as const, error: cause instanceof Error ? cause.message : "AI 会话失败" };
