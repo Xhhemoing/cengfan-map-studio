@@ -45,6 +45,12 @@ function findButton(container: HTMLElement, text: string) {
   return Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((candidate) => candidate.textContent?.includes(text));
 }
 
+/** 失败可续跑时用户只应看到一个续跑入口，多一个就是让人二选一的歧义。 */
+function resumeAffordances(container: HTMLElement) {
+  return Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+    .filter((candidate) => /继续对话|网络恢复后重试/.test(candidate.textContent ?? ""));
+}
+
 function clickText(container: HTMLElement, text: string) {
   const button = findButton(container, text);
   if (!button) throw new Error(`button missing: ${text}; text=${container.textContent}`);
@@ -112,6 +118,56 @@ describe("AgentAssistant transport failures", () => {
     expect(container.textContent).not.toContain("网络连接中断");
     expect(findButton(container, "网络恢复后重试")).toBeUndefined();
     expect(onCommit).not.toHaveBeenCalled();
+    root.unmount();
+  });
+
+  it("keeps exactly one resume affordance and swaps it when the user rewrites the request", async () => {
+    const document_ = project();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({
+        kind: "tool-call",
+        taskId: "task-1",
+        budgetReceipt: "receipt-1",
+        calls: [{ id: "first-step", name: "update_map", arguments: { patch: { scale: 0.9 } } }],
+        assistantMessage: { role: "assistant", content: "先缩小地图" },
+        budget: { usedTokens: 1_200, maxTokens: 60_000, rounds: 1, maxRounds: 20 },
+      }))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "改写后已完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, root } = renderAssistant(document_);
+    openAssistant(container);
+    setMessage(container, "缩小地图并放大卡片");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("网络连接中断"));
+
+    // 默认只给“重发原需求”，输入框里残留的原文不算改写。
+    const [defaultAction, ...extraDefault] = resumeAffordances(container);
+    expect(extraDefault).toHaveLength(0);
+    expect(defaultAction?.textContent).toContain("网络恢复后重试");
+    expect(defaultAction?.disabled).toBe(false);
+
+    setMessage(container, "");
+    expect(resumeAffordances(container)).toHaveLength(1);
+    expect(findButton(container, "网络恢复后重试")).toBeDefined();
+
+    // 改写需求后入口整体切成“继续对话”，重试按钮必须消失。
+    setMessage(container, "改成只放大卡片");
+    const [rewrittenAction, ...extraRewritten] = resumeAffordances(container);
+    expect(extraRewritten).toHaveLength(0);
+    expect(rewrittenAction?.textContent).toContain("继续对话");
+    expect(findButton(container, "网络恢复后重试")).toBeUndefined();
+
+    clickText(container, "继续对话");
+    await vi.waitFor(() => expect(container.textContent).toContain("改写后已完成"));
+
+    // 改写后的续跑仍走 session.continue：历史与 taskId 都保留。
+    const resumed = requestBody(fetchMock, 2);
+    expect(resumed.messages.length).toBeGreaterThan(1);
+    expect(resumed.messages.some((entry) => entry.content === "缩小地图并放大卡片")).toBe(true);
+    expect(resumed.messages.some((entry) => entry.content === "改成只放大卡片")).toBe(true);
+    expect(resumed.taskId).toBe("task-1");
+    expect(resumed.budget).toMatchObject({ usedTokens: 1_200, rounds: 1 });
     root.unmount();
   });
 
