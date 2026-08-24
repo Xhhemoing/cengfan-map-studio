@@ -23,7 +23,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
 | 6 | CLOSED | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn; fable 6 ACCEPT + 4 NITS; no blocker. |
-| 7 | IN_PROGRESS | R7-1, R7-2, R7-4–R7-7, R7-9 | — | Awaiting R7-3 copy split and R7-8 trim journey. |
+| 7 | IN_PROGRESS | R7-1–R7-7, R7-9 | — | Awaiting R7-3b App wiring, R7-8 trim journey. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -120,6 +120,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R7-5 (`89dcb33` / `91f54bb`): `projectStoreRecoveryProbe` test seam; crash-disaster drops `setInterval` hijack. Rollback = revert the merge.
 - R7-7 (`38a632a` / `b32ddc7`): unmount tracked roots in UniversityEmblem + local-workspace-entry. Rollback = revert the merge. R8 leftover: 36 files unmount only inline in `it`.
 - R7-9 (`70c8cb6` / `ff5ad03`+`ac1b1e1`): App.tsx 2322→1988 (−334) into six `src/lib` seams. Rollback = revert the merge. Owned tests 230/230 across the merged trio; tsc app 0.
+- R7-3 (`8d5f046` / `e30b30a`+`637f8d9`): client/hook/menu split skip vs trim copy. App still needs `roomPersistenceKind` wired (R7-3b; App.tsx was R7-9-owned at dispatch). Rollback = revert the merge. Owned tests 84/84; tsc app 0.
 
 ## Round Briefings
 
