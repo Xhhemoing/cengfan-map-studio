@@ -17,8 +17,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | CLOSED | T1–T10 + R2-0 | — | Full suite 1388; DataCloneError hotfix merged (51 tests) |
-| 2 | DISPATCHING | — | — | 10 disjoint tasks from round-1-briefing.md |
+| 1 | CLOSED | T1–T10 + R2-0 | — | Hotfix-after full suite 1391 pass / 1 skip |
+| 2 | IMPLEMENTING | R2-9 | — | cache-key −83.2%; remaining R2 tasks isolated |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -35,6 +35,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 ## Round 1 closeout
 
 - Full suite on merged tree: **166 files, 1388 passed / 1 skipped** (`npm test`, 57.6s).
+- After R2-0 hotfix: **1391 passed / 1 skipped** (59.7s).
 - Fable review: `.agent_workspace/round-1-review.md`. PR stays draft until R2-0 DataCloneError hotfix.
 - Round 2 briefing: `.agent_workspace/round-1-briefing.md`.
 
