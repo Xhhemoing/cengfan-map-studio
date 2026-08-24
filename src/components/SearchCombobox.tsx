@@ -36,9 +36,13 @@ export function SearchCombobox({
     return [{ value, label: value, detail: "使用自定义" }, ...options];
   }, [options, value, allowFreeInput]);
 
+  const listOpen = isOpen && displayOptions.length > 0;
+  // portal 分支要等 portalStyle 算出来才有真实节点,aria-expanded 必须跟着这个节点走。
+  const listRendered = listOpen && (!portal || portalStyle !== null);
+
   const updatePortalPosition = useCallback(() => {
     const input = inputRef.current;
-    if (!portal || !isOpen || displayOptions.length === 0 || !input) return;
+    if (!portal || !listOpen || !input) return;
     const rect = input.getBoundingClientRect();
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
     const spaceBelow = Math.max(0, viewportHeight - rect.bottom - 8);
@@ -53,10 +57,10 @@ export function SearchCombobox({
       top,
       width: rect.width,
     });
-  }, [displayOptions.length, isOpen, portal]);
+  }, [listOpen, portal]);
 
   useLayoutEffect(() => {
-    if (!portal || !isOpen || displayOptions.length === 0) {
+    if (!portal || !listOpen) {
       return;
     }
     updatePortalPosition();
@@ -67,7 +71,7 @@ export function SearchCombobox({
       window.removeEventListener("resize", handleViewportChange);
       window.removeEventListener("scroll", handleViewportChange, true);
     };
-  }, [displayOptions.length, isOpen, portal, updatePortalPosition]);
+  }, [listOpen, portal, updatePortalPosition]);
 
 
   const selectOption = (option: SearchComboboxOption) => {
@@ -145,7 +149,7 @@ export function SearchCombobox({
         aria-label={label}
         aria-autocomplete="list"
         aria-controls={listId}
-        aria-expanded={isOpen && options.length > 0}
+        aria-expanded={listRendered}
         aria-activedescendant={activeIndex >= 0 ? `${listId}-option-${activeIndex}` : undefined}
         role="combobox"
         value={value}
@@ -161,7 +165,7 @@ export function SearchCombobox({
         }}
         onKeyDown={handleKeyDown}
       />
-      {isOpen && displayOptions.length > 0 && (portal ? portalStyle ? createPortal(listbox, document.body) : null : listbox)}
+      {listRendered && (portal ? createPortal(listbox, document.body) : listbox)}
     </div>
   );
 }

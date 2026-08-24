@@ -60,14 +60,20 @@ function cityOptions(query: string): SearchComboboxOption[] {
   }));
 }
 
+function noOptions(): SearchComboboxOption[] {
+  return [];
+}
+
 function ComboboxHarness({
   label,
   options,
   portal = false,
+  allowFreeInput = false,
 }: {
   label: string;
   options: (query: string) => SearchComboboxOption[];
   portal?: boolean;
+  allowFreeInput?: boolean;
 }) {
   const [value, setValue] = useState("");
   return (
@@ -78,6 +84,7 @@ function ComboboxHarness({
         placeholder={label}
         searchOptions={options}
         portal={portal}
+        allowFreeInput={allowFreeInput}
         onChange={setValue}
       />
       <output data-testid="selected-value">{value}</output>
@@ -136,6 +143,42 @@ describe("SearchCombobox", () => {
     expect(list).not.toBeNull();
     expect(container.contains(list)).toBe(false);
     expect(list?.getAttribute("role")).toBe("listbox");
+  });
+
+  it("reports expanded while the free-input suggestion is the only listbox row", async () => {
+    const container = render(<ComboboxHarness label="录取院校" options={noOptions} allowFreeInput />);
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="录取院校"]')!;
+
+    await changeInput(input, "自定义学院");
+
+    const list = container.querySelector('[role="listbox"]');
+    expect(list).not.toBeNull();
+    expect(list?.querySelectorAll('[role="option"]')).toHaveLength(1);
+    expect(container.textContent).toContain("使用自定义");
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("reports collapsed when no suggestion is rendered", async () => {
+    const container = render(<ComboboxHarness label="录取院校" options={noOptions} />);
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="录取院校"]')!;
+
+    await changeInput(input, "无法匹配的学校");
+
+    expect(container.querySelector('[role="listbox"]')).toBeNull();
+    expect(input.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps aria-expanded in step with the portal listbox node", async () => {
+    const container = render(<ComboboxHarness label="城市" options={cityOptions} portal />);
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="城市"]')!;
+
+    await changeInput(input, "杭州");
+    expect(document.body.querySelector(".search-combobox__list--portal")).not.toBeNull();
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+
+    await pressKey(input, "Escape");
+    expect(document.body.querySelector(".search-combobox__list--portal")).toBeNull();
+    expect(input.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("caps portal height to the available viewport space", async () => {
