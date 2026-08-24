@@ -11,11 +11,45 @@ export interface StoredProject {
   pack: ProjectPackage;
 }
 
+export interface ProjectPutOptions {
+  /** 上次读到的 updatedAt。传入则以它做 CAS，不传保持后写覆盖（LWW）。 */
+  expectedUpdatedAt?: string;
+}
+
+/** CAS 失败：记录已被其他标签页（或其他写入方）改写，调用方不应继续覆盖。 */
+export class ProjectStoreConflictError extends Error {
+  readonly projectId: string;
+  readonly expectedUpdatedAt: string;
+  readonly storedUpdatedAt: string | null;
+
+  constructor(projectId: string, expectedUpdatedAt: string, storedUpdatedAt: string | null) {
+    super("项目已被其他标签页修改");
+    this.name = "ProjectStoreConflictError";
+    this.projectId = projectId;
+    this.expectedUpdatedAt = expectedUpdatedAt;
+    this.storedUpdatedAt = storedUpdatedAt;
+  }
+}
+
 export interface ProjectStore {
   list(): Promise<StoredProject[]>;
   get(id: string): Promise<StoredProject | null>;
-  put(project: StoredProject): Promise<void>;
+  put(project: StoredProject, options?: ProjectPutOptions): Promise<void>;
   remove(id: string): Promise<void>;
+}
+
+function readUpdatedAt(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const updatedAt = (value as Record<string, unknown>).updatedAt;
+  return typeof updatedAt === "string" ? updatedAt : null;
+}
+
+/** 记录不存在（首存）视为通过；只有已存在且时间戳不同才算冲突。 */
+function conflictFor(project: StoredProject, expectedUpdatedAt: string | undefined, stored: unknown): ProjectStoreConflictError | null {
+  if (expectedUpdatedAt === undefined || stored === undefined || stored === null) return null;
+  const storedUpdatedAt = readUpdatedAt(stored);
+  if (storedUpdatedAt === null || storedUpdatedAt === expectedUpdatedAt) return null;
+  return new ProjectStoreConflictError(project.id, expectedUpdatedAt, storedUpdatedAt);
 }
 
 const SAMPLE_PROJECT_NAME = "示例：2026届毕业去向";
@@ -72,7 +106,9 @@ export function createMemoryProjectStore(): ProjectStore {
       const record = records.get(id);
       return record ? structuredClone(record) : null;
     },
-    async put(project) {
+    async put(project, options) {
+      const conflict = conflictFor(project, options?.expectedUpdatedAt, records.get(project.id));
+      if (conflict) throw conflict;
       records.set(project.id, structuredClone(project));
     },
     async remove(id) {
@@ -231,13 +267,31 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
         request.onerror = () => resolve(null);
       });
     },
-    async put(project) {
+    async put(project, options) {
       const db = await ensure();
+      const expectedUpdatedAt = options?.expectedUpdatedAt;
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, "readwrite");
-        tx.objectStore(STORE_NAME).put(structuredClone(project), project.id);
+        const store = tx.objectStore(STORE_NAME);
+        let conflict: ProjectStoreConflictError | null = null;
+        const fail = () => reject(conflict ?? tx.error ?? new Error("IndexedDB 写入失败"));
+        if (expectedUpdatedAt === undefined) {
+          store.put(structuredClone(project), project.id);
+        } else {
+          // 读改写必须在同一个 readwrite 事务里完成，否则两个标签页仍可能交错。
+          const existing = store.get(project.id);
+          existing.onsuccess = () => {
+            conflict = conflictFor(project, expectedUpdatedAt, existing.result);
+            if (conflict) {
+              tx.abort();
+              return;
+            }
+            store.put(structuredClone(project), project.id);
+          };
+        }
         tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 写入失败"));
+        tx.onerror = fail;
+        tx.onabort = fail;
       });
     },
     async remove(id) {

@@ -42,6 +42,7 @@ import {
 } from "./lib/project-data";
 import { createId } from "./lib/ids";
 import { editorProjectStore } from "./lib/editor-project-store";
+import { ProjectStoreConflictError } from "./lib/project-store";
 
 import { AssistantConversationProvider, useAssistantProjectSync } from "./components/AgentAssistant";
 import { ProjectMenu } from "./components/ProjectMenu";
@@ -181,6 +182,8 @@ import {
 } from "./lib/collaboration-operations";
 import { useCollaborationRoom } from "./lib/useCollaborationRoom";
 
+const PROJECT_CONFLICT_MESSAGE = "项目已被其他标签页修改，已停止覆盖以免丢失对方的改动，请重新加载页面后再编辑";
+
 function StudioApp({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
   const [initialWorkspace] = useState(() => loadBrowserWorkspaceMirror(browserStores.mirror));
@@ -242,6 +245,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const projectIdRef = useRef<string | null>(projectId ?? null);
   const projectNameRef = useRef<string | null>(null);
   const projectCreatedAtRef = useRef<string>(new Date(0).toISOString());
+  // 最近一次读到/写出的 updatedAt，作为项目记录写入的 CAS 期望值；冲突后停止覆盖直到重新加载。
+  const projectUpdatedAtRef = useRef<string | null>(null);
+  const projectConflictRef = useRef(false);
   const projectRecordSaveErrorRef = useRef<string | null>(null);
   const backNavigatingRef = useRef(false);
   const hasLocalWorkspaceEditsRef = useRef(false);
@@ -262,17 +268,26 @@ function StudioApp({ projectId }: { projectId?: string }) {
         throw new Error("浏览器本地存储不可写");
       }
       if (projectIdRef.current) {
+        if (projectConflictRef.current) {
+          projectRecordSaveErrorRef.current = PROJECT_CONFLICT_MESSAGE;
+          throw new Error("项目记录写入失败", { cause: new Error(PROJECT_CONFLICT_MESSAGE) });
+        }
+        const updatedAt = new Date().toISOString();
         try {
           await editorProjectStore.put({
             id: projectIdRef.current,
             name: projectNameRef.current ?? "未命名项目",
             createdAt: projectCreatedAtRef.current,
-            updatedAt: new Date().toISOString(),
+            updatedAt,
             pack,
-          });
+          }, { expectedUpdatedAt: projectUpdatedAtRef.current ?? undefined });
+          projectUpdatedAtRef.current = updatedAt;
           projectRecordSaveErrorRef.current = null;
         } catch (error) {
-          projectRecordSaveErrorRef.current = error instanceof Error ? error.message : String(error);
+          if (error instanceof ProjectStoreConflictError) projectConflictRef.current = true;
+          projectRecordSaveErrorRef.current = error instanceof ProjectStoreConflictError
+            ? PROJECT_CONFLICT_MESSAGE
+            : error instanceof Error ? error.message : String(error);
           throw new Error("项目记录写入失败", { cause: error });
         }
       }
@@ -453,6 +468,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
       const restored = restoreProjectPackage(record.pack);
       projectNameRef.current = record.name;
       projectCreatedAtRef.current = record.createdAt;
+      projectUpdatedAtRef.current = record.updatedAt;
+      projectConflictRef.current = false;
       workspaceHydratedRef.current = true;
       skipNextWorkspacePendingRef.current = true;
       setProject(restored.project);

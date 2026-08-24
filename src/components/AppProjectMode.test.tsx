@@ -68,6 +68,32 @@ function changeInput(input: HTMLInputElement | HTMLTextAreaElement, value: strin
   });
 }
 
+// 模拟另一个标签页在本页加载之后写入同一条项目记录（不带 CAS，即旧的后写覆盖行为）。
+async function writeFromAnotherTab(): Promise<StoredProject> {
+  const current = (await editorProjectStore.get(sample.id))!;
+  const otherTab: StoredProject = {
+    ...current,
+    name: "其他标签页改名",
+    updatedAt: new Date(Date.parse(current.updatedAt) + 60_000).toISOString(),
+    pack: {
+      ...current.pack,
+      project: {
+        ...current.pack.project,
+        students: current.pack.project.students.map((student, index) =>
+          index === 0 ? { ...student, name: "其他标签页学生" } : student),
+      },
+    },
+  };
+  await editorProjectStore.put(otherTab);
+  return otherTab;
+}
+
+function renameFirstStudent(container: HTMLElement, from: string, to: string): void {
+  click(container.querySelector<HTMLButtonElement>(`button[aria-label="编辑 ${from}"]`)!);
+  changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, to);
+  click(container.querySelector<HTMLButtonElement>(`button[aria-label="保存 ${from}"]`)!);
+}
+
 beforeEach(async () => {
   window.localStorage.clear();
   window.location.hash = "";
@@ -245,6 +271,75 @@ describe("App in project mode", () => {
       expect(record?.pack.customTemplates[0]?.name).toBe("毕业海报");
       expect(record?.pack.fonts).toHaveLength(1);
       expect(record?.pack.renderSettings.mode).toBe("low");
+    });
+  });
+
+  it("keeps another tab's record instead of overwriting it and reports the conflict", async () => {
+    const container = mountApp(sample.id);
+    await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
+
+    const otherTab = await writeFromAnotherTab();
+
+    await openPeopleDataAwaiting(container);
+    renameFirstStudent(container, "林舟", "林舟舟");
+    closeGlobalSettings(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+
+    await vi.waitFor(() => expect(container.textContent).toContain("项目已被其他标签页修改"));
+    expect(container.querySelector('[data-sync-status="failed"]')).not.toBeNull();
+    const record = await editorProjectStore.get(sample.id);
+    expect(record?.updatedAt).toBe(otherTab.updatedAt);
+    expect(record?.name).toBe("其他标签页改名");
+    expect(record?.pack.project.students[0]?.name).toBe("其他标签页学生");
+    expect(record?.pack.project.students.some((student) => student.name === "林舟舟")).toBe(false);
+  });
+
+  it("stops writing the project record after a conflict until the page reloads", async () => {
+    const container = mountApp(sample.id);
+    await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
+
+    const otherTab = await writeFromAnotherTab();
+
+    await openPeopleDataAwaiting(container);
+    renameFirstStudent(container, "林舟", "林舟舟");
+    closeGlobalSettings(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+    await vi.waitFor(() => expect(container.textContent).toContain("项目已被其他标签页修改"));
+
+    await openPeopleDataAwaiting(container);
+    renameFirstStudent(container, "林舟舟", "林舟舟舟");
+    closeGlobalSettings(container);
+    window.dispatchEvent(new Event("pagehide"));
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+    await vi.waitFor(() => expect(container.textContent).toContain("项目已被其他标签页修改"));
+
+    const record = await editorProjectStore.get(sample.id);
+    expect(record?.updatedAt).toBe(otherTab.updatedAt);
+    expect(record?.pack.project.students[0]?.name).toBe("其他标签页学生");
+  });
+
+  it("writes normally again after reopening the project record", async () => {
+    const container = mountApp(sample.id);
+    await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
+
+    await writeFromAnotherTab();
+    await openPeopleDataAwaiting(container);
+    renameFirstStudent(container, "林舟", "林舟舟");
+    closeGlobalSettings(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+    await vi.waitFor(() => expect(container.textContent).toContain("项目已被其他标签页修改"));
+
+    // 重新加载项目（重新挂载）会重读 updatedAt，本页可以在对方版本之上继续保存。
+    const reloaded = mountApp(sample.id);
+    await vi.waitFor(() => expect(reloaded.textContent).toContain("已打开项目"));
+    await openPeopleDataAwaiting(reloaded);
+    renameFirstStudent(reloaded, "其他标签页学生", "重载后学生");
+    closeGlobalSettings(reloaded);
+    click(reloaded.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+
+    await vi.waitFor(async () => {
+      const record = await editorProjectStore.get(sample.id);
+      expect(record?.pack.project.students[0]?.name).toBe("重载后学生");
     });
   });
 
