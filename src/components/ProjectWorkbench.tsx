@@ -156,6 +156,9 @@ export function ProjectWorkbench({ store, health, recoverError, navigate }: Proj
     try {
       const project = createEmptyProject();
       await store.put(project);
+      // 和重命名/删除一样先刷新再跳转:导航被拦下时工作台会留在原地(测试注入 navigate、
+      // R6-7 的崩溃返回不再整页重载),不刷新的话降级横幅就少一个刚建项目的导出入口。
+      await refresh();
       openProject(project.id);
     } catch (reason) {
       reportFailure(reason, "创建项目失败");

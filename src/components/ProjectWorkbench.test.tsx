@@ -403,6 +403,29 @@ describe("ProjectWorkbench degraded storage", () => {
     await vi.waitFor(() => expect(files).toEqual(["备份项目-2026-08-24.json", "第二个项目-2026-08-23.json"]));
   });
 
+  it("lists a just-created project among the notice export actions while the workbench stays mounted", async () => {
+    const store = createMemoryProjectStore();
+    await store.put({ ...createSampleProject(), name: "已有项目", updatedAt: "2026-08-24T02:00:00.000Z" });
+    // 注入 navigate 就不会真的跳走:R6-7 的崩溃返回不再整页重载,"工作台留在原地"是常态。
+    const navigate = vi.fn();
+    const { container } = renderWorkbench(store, navigate);
+    await vi.waitFor(() => expect(
+      storageNotice(container)?.querySelectorAll("button[data-export-project-id]"),
+    ).toHaveLength(1));
+
+    container.querySelector<HTMLButtonElement>('[aria-label="新建项目"]')?.click();
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalled());
+
+    const stored = await store.list();
+    expect(stored).toHaveLength(2);
+    // 横幅是内存期唯一的备份出口:漏掉一个项目就等于这份数据没有导出入口。
+    await vi.waitFor(() => {
+      const exported = Array.from(storageNotice(container)!.querySelectorAll("button[data-export-project-id]"))
+        .map((button) => button.getAttribute("data-export-project-id"));
+      expect([...exported].sort()).toEqual(stored.map((project) => project.id).sort());
+    });
+  });
+
   it("keeps the notice inert: no clickable-card classes on a status banner", async () => {
     const store = createMemoryProjectStore();
     await store.put(createSampleProject());
