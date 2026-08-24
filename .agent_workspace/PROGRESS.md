@@ -20,7 +20,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 1 | CLOSED | T1–T10 + R2-0 | — | Hotfix-after full suite 1391 pass / 1 skip |
 | 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
-| 4 | IN_PROGRESS | R4-1 | — | R4-1 merged: `tsc -p tsconfig.{node,app}.json --noEmit` exit 0; index tests 65 pass. R4-2–R4-10 next. |
+| 4 | IN_PROGRESS | R4-1, R4-6 | — | R4-1 tsc green. R4-6 ack-lost proof 2/2 pass (test-only). R4-2–5,7–10 in flight. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -59,6 +59,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 - Merge gate this round includes `npx tsc -p tsconfig.node.json --noEmit` and `npx tsc -p tsconfig.app.json --noEmit` at every merge (R4-9 will make `npm run typecheck` permanent).
 - R4-1 (`bb92a69`): inherit `RoomStoreSnapshot`; corrupt `collaboration-rooms.json` → `.bad` sidecar; boot logs restored-room count. Do not revert R3-5 runtime.
+- R4-6 (`b50d55a`): ack-lost submit converges (2/2). Test imports server store from `src/`; excluded from `tsconfig.app.json` so app `noUnusedParameters` does not fail on pre-existing unused `setAccess` `clientId` (R4-4 owns that file).
 
 ## Round Briefings
 
