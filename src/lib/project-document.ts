@@ -213,7 +213,7 @@ export function createProjectDocument(input: {
 
 function cloneProjectForTransaction(project: ProjectDocument): ProjectDocument {
   return {
-    ...structuredClone(snapshotView(project)),
+    ...cloneSnapshot(project),
     // Transactions can inspect history, but writes must not corrupt snapshots
     // structurally shared by earlier ProjectDocument values.
     history: readonlyView(project.history),
