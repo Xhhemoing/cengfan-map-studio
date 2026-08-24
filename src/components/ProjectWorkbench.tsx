@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle } from "lucide-react";
 import {
   createEmptyProject,
   createSampleProject,
@@ -17,24 +16,21 @@ import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
 import { ContinueEditingCard } from "./workbench/ContinueEditingCard";
+import { StorageNotice, StorageNoticeExportAction, projectPackageFileName } from "./StorageNotice";
 
 interface ProjectWorkbenchProps {
   store: ProjectStore;
   /** 路由层订阅到的存储健康度；不传时只能依赖挂载与每次刷新后读到的 `store.health`。 */
   health?: ProjectStoreHealth;
+  /** 路由层订阅到的最近一次写回失败；配额耗尽的处置建议要和编辑器路由一样出现在横幅里。 */
+  recoverError?: ProjectStoreError | null;
   navigate?: (hash: string) => void;
 }
-
-const MEMORY_MODE_NOTICE = "本次编辑不会保存到本机，请及时导出工程备份";
 
 /** 存储层已把失败翻译成可直接展示的中文，再套一层通用前缀只会盖掉真正的处置建议。 */
 function storeFailureMessage(reason: unknown, fallback: string): string {
   if (reason instanceof ProjectStoreError) return reason.message;
   return reason instanceof Error ? `${fallback}：${reason.message}` : fallback;
-}
-
-function packageFileName(project: Pick<ProjectListItem, "name" | "updatedAt">): string {
-  return `${project.name}-${project.updatedAt.slice(0, 10)}.json`;
 }
 
 function formatUpdatedAt(value: string): string {
@@ -48,7 +44,7 @@ function formatUpdatedAt(value: string): string {
     : new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 }
 
-export function ProjectWorkbench({ store, health, navigate }: ProjectWorkbenchProps) {
+export function ProjectWorkbench({ store, health, recoverError, navigate }: ProjectWorkbenchProps) {
   const go = navigate ?? ((hash: string) => { window.location.hash = hash; });
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -208,7 +204,7 @@ export function ProjectWorkbench({ store, health, navigate }: ProjectWorkbenchPr
     try {
       const stored = await store.get(project.id);
       if (!stored) throw new Error("项目不存在");
-      downloadProjectPackage(stored.pack, packageFileName(project));
+      downloadProjectPackage(stored.pack, projectPackageFileName(project));
       setOpenMenuId(null);
     } catch (reason) {
       reportFailure(reason, "导出项目失败");
@@ -246,34 +242,21 @@ export function ProjectWorkbench({ store, health, navigate }: ProjectWorkbenchPr
       <WorkbenchHeader importInputRef={importInputRef} onCreateProject={() => void createProject()} onImportProject={(file) => void importProject(file)} />
 
       {/* 降级提示不可关闭:内存模式持续期间用户随时可能关闭标签页,提示消失就等于数据静默丢失。
-        * 这里刻意不提供"一键导出全部":Chromium 每个用户手势只放行一次程序化下载,
-        * 循环里第 2 份起会被静默拦截,用户以为备份完整、实际只拿到第一个文件。
-        * 因此沿用崩溃屏的做法,逐个项目各给一个按钮 —— 一次点击一份工程包。 */}
+        * 这里刻意不提供"一键导出全部",逐个项目各给一个按钮 —— 一次点击一份工程包,原因见 StorageNotice。 */}
       {storeHealth === "memory" && (
-        <section className="workbench-storage-notice" role="status" data-store-health="memory">
-          <span className="workbench-storage-notice-icon" aria-hidden="true"><AlertTriangle size={22} /></span>
-          <div className="workbench-storage-notice-body">
-            <strong>{MEMORY_MODE_NOTICE}</strong>
-            <small>浏览器本机存储不可用，项目只保留在当前标签页内存中。</small>
-            {sorted.length > 0 && (
-              <ul className="workbench-storage-notice-list" aria-label="逐个导出工程备份">
-                {sorted.map((project) => (
-                  <li key={project.id}>
-                    <button
-                      type="button"
-                      className="workbench-storage-notice-export"
-                      data-export-project-id={project.id}
-                      aria-label={`导出「${project.name}」`}
-                      onClick={() => void exportProject(project)}
-                    >
-                      {project.name}（{project.studentCount} 人）
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
+        <StorageNotice
+          recoverError={recoverError}
+          exportActions={sorted.length === 0 ? null : sorted.map((project) => (
+            <StorageNoticeExportAction
+              key={project.id}
+              projectId={project.id}
+              ariaLabel={`导出「${project.name}」`}
+              onExport={() => void exportProject(project)}
+            >
+              {project.name}（{project.studentCount} 人）
+            </StorageNoticeExportAction>
+          ))}
+        />
       )}
 
       {error && <section className="workbench-error" role="alert">{error}</section>}
