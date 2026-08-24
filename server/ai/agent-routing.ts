@@ -10,6 +10,7 @@ import {
 } from "./agent-loop";
 import type { AgentBudgetState, AiRoute } from "./agent-types";
 import { AiCallError } from "./ai-errors";
+import { tryLocalPreroute } from "./local-preroute";
 
 export const DEFAULT_AGENT_MODEL = "deepseek-v4-flash";
 export const FALLBACK_AGENT_MODEL = "gpt-5.6-luna";
@@ -174,6 +175,11 @@ export function createAgentLoopBackend(config: AgentRuntimeConfig | AiConfig): A
       const boundedRequest = applyRuntimeBudget(request, runtime);
       if (boundedRequest.signal?.aborted) throw new AiCallError("AI_ABORTED", "AI 调用已取消");
       const budget = boundedRequest.budget!;
+      // 高置信只读统计问题在进主模型前就地回答：只会 finish，不会带出任何工具调用。
+      const preroute = tryLocalPreroute(boundedRequest);
+      if (preroute) {
+        return withRoute({ kind: "finish", summary: preroute.summary, budget }, "local", `preroute:${preroute.intent}`, request.requestId);
+      }
       const budgetExhausted = exceedsBudget(budget);
       if (!runtime.primary || budgetExhausted) {
         return withRoute(

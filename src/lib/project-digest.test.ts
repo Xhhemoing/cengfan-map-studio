@@ -49,6 +49,51 @@ describe("buildProjectDigest", () => {
     expect(digest.cards).toMatchObject({ hasManualPositions: true, manualPositionCount: 1 });
   });
 
+  it("projects the card settings the layout tools can write", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const digest = buildProjectDigest({
+      ...project,
+      cards: { ...project.cards, x: 48, y: 96, maxWidth: 260, columns: 3 },
+    });
+    expect(digest.cards).toMatchObject({ x: 48, y: 96, maxWidth: 260, columns: 3 });
+  });
+
+  it("projects the rendered map box and one card block per top province", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const digest = buildProjectDigest({
+      ...project,
+      students: [
+        { id: "s1", name: "甲", university: "北大", city: "北京", province: "北京市", visibility: true },
+        { id: "s2", name: "乙", university: "清华", city: "北京", province: "北京市", visibility: true },
+        { id: "s3", name: "丙", university: "浙大", city: "杭州", province: "浙江省", visibility: true },
+      ],
+    });
+
+    expect(Object.values(digest.layout.mapContentBounds).every(Number.isInteger)).toBe(true);
+    expect(digest.layout.mapContentBounds.width).toBeGreaterThan(0);
+    expect(digest.layout.cardBlocks.map((block) => block.province)).toEqual(digest.students.topProvinces.map((entry) => entry.province));
+    for (const block of digest.layout.cardBlocks) {
+      expect(block.id).toBe(block.province);
+      expect([block.x, block.y, block.w, block.h].every(Number.isInteger)).toBe(true);
+      expect(block.h).toBeGreaterThan(0);
+      expect(["left", "right", "top", "bottom"]).toContain(block.side);
+    }
+  });
+
+  it("reports the manual card position instead of the solved one", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const students = [{ id: "s1", name: "甲", university: "北大", city: "北京", province: "北京市", visibility: true }];
+    const solved = buildProjectDigest({ ...project, students });
+    const moved = buildProjectDigest({
+      ...project,
+      students,
+      cards: { ...project.cards, positions: { 北京市: { x: 12, y: 34 } } },
+    });
+
+    expect(solved.layout.cardBlocks[0]).toMatchObject({ province: "北京市" });
+    expect(moved.layout.cardBlocks[0]).toMatchObject({ province: "北京市", x: 12, y: 34 });
+  });
+
   it("invalidates the project fingerprint for executable fields omitted from the model digest", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const fingerprint = buildProjectFingerprint(project);
@@ -128,6 +173,61 @@ describe("buildProjectDigest", () => {
     expect(digestByteLength(digest)).toBeLessThan(8 * 1024);
   });
 
+  it("keeps the whole projection within budget when a full layout competes with element samples", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const provinces = ["北京市", "浙江省", "广东省", "江苏省", "四川省", "湖北省", "山东省", "河南省", "陕西省", "福建省", "湖南省", "辽宁省"];
+    const digest = buildProjectDigest({
+      ...project,
+      students: provinces.flatMap((province, provinceIndex) => Array.from({ length: 12 - provinceIndex }, (_, index) => ({
+        id: `s-${province}-${index}`,
+        name: `同学${index}`,
+        university: `${province}大学第${index}分校`,
+        city: `${province}城市${index}`,
+        province,
+        visibility: true,
+      }))),
+      textElements: Array.from({ length: 200 }, (_, index) => ({
+        id: `text-${index}`,
+        role: "custom" as const,
+        content: `第 ${index} 段很长的说明文字，用于撑满投影预算`,
+        x: index,
+        y: index,
+        fontSize: 16,
+        color: "#000000",
+        fontWeight: 400,
+        textAlign: "left" as const,
+        maxWidth: 320,
+        visibility: true,
+      })),
+    });
+
+    expect(digest.students.topProvinces).toHaveLength(10);
+    expect(digest.layout.cardBlocks).toHaveLength(10);
+    expect(digestByteLength(digest)).toBeLessThanOrEqual(DIGEST_MAX_BYTES);
+    expect(digest.layout.mapContentBounds.width).toBeGreaterThan(0);
+  });
+
+  it("drops card blocks before the provinces they align with when the projection cannot fit the budget", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const digest = buildProjectDigest({
+      ...project,
+      students: Array.from({ length: 10 }, (_, index) => ({
+        id: `s${index}`,
+        name: `同学${index}`,
+        university: "某大学",
+        city: "某市",
+        province: `超长省名${index}${"啊".repeat(400)}`,
+        visibility: true,
+      })),
+    });
+
+    expect(digest.students.total).toBe(10);
+    expect(digest.layout.cardBlocks).toEqual([]);
+    expect(digest.students.topProvinces.length).toBeLessThan(10);
+    expect(digest.layout.mapContentBounds.width).toBeGreaterThan(0);
+    expect(digestByteLength(digest)).toBeLessThanOrEqual(DIGEST_MAX_BYTES);
+  });
+
   it("caps element samples and keeps the real totals when a canvas has hundreds of elements", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const digest = buildProjectDigest({
@@ -168,5 +268,6 @@ describe("buildProjectDigest", () => {
     expect(digest.assetElements.length).toBeLessThanOrEqual(DIGEST_ELEMENT_LIMIT);
     expect(digestByteLength(digest)).toBeLessThanOrEqual(DIGEST_MAX_BYTES);
     expect(digest.students.total).toBe(0);
+    expect(digest.layout.cardBlocks).toEqual([]);
   });
 });

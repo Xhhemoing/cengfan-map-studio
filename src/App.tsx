@@ -159,6 +159,7 @@ import {
   type PanelSide,
 } from "./lib/editor-layout";
 import { checkLayoutHealth } from "./lib/layout-health";
+import { buildHealthInput } from "./lib/render-health";
 import { listResourceHealthIssues } from "./lib/resource-health";
 
 import {
@@ -977,27 +978,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setActivePanel(location.stage === "frame" ? "layout" : location.stage === "map" ? "map" : "content");
   };
 
-  const contentLayoutIssues = useMemo(() => checkLayoutHealth({
-    canvas: { width: project.canvas.width, height: project.canvas.height, safeMargin: project.canvas.safeMargin },
-    cardsPositions: project.cards.positions,
-    objects: [
-      { id: "map", kind: "map", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
-      ...Object.keys(project.cards.positions ?? {}).map((id) => ({ id, kind: "card" as const, positionKey: id, zIndex: project.cards.zIndex, bounds: { x: 0, y: 0, width: project.cards.maxWidth, height: 180 } })),
-      ...(Object.keys(project.cards.positions ?? {}).length === 0 ? [{ id: "cards", kind: "card" as const, zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } }] : []),
-      ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
-      ...project.textElements.map((text) => ({
-        id: text.id,
-        kind: "text" as const,
-        zIndex: 40,
-        bounds: { x: text.textAlign === "right" ? text.x - text.maxWidth : text.textAlign === "center" ? text.x - text.maxWidth / 2 : text.x, y: text.y - text.fontSize, width: text.maxWidth, height: text.fontSize * 1.3 },
-        visible: text.visibility,
-        content: text.content,
-        textColor: text.color,
-        backgroundColor: project.canvas.backgroundColor,
-      })),
-      ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
-    ],
-  }), [project]);
+  // 与影子 Agent 的 check_health 同源：真值来自 buildHealthInput（真实卡高、真实嘉宾面板、
+  // 与画布同一份排版求解结果），而不是估算的 180px 卡高与左上角 width*scale 地图框。
+  const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildHealthInput(project)), [project]);
 
   const handleLegacySceneSelect = (next: SceneSelection) => {
     handleSceneSelect(next);
@@ -1653,7 +1636,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               project={project}
               summary={dataHealth}
               issues={dataIssues}
-              dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
+              dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true }}
               assetPanelProps={mapStyleAssetPanelProps}
               onCreateDecoration={handleCreateDecoration}
               onSelectStudent={setSelectedStudentId}

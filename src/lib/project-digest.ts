@@ -1,6 +1,8 @@
+import type { CardSide } from "./card-layout";
 import { duplicateStudentIds, findDuplicateStudentGroups } from "./data-duplicate";
 import type { ProjectDocument } from "./project-document";
 import { buildProvinceSummary } from "./project-data";
+import { buildRenderFacts, effectiveCardPlacement } from "./render-facts";
 
 export const DIGEST_MAX_BYTES = 8 * 1024;
 export const DIGEST_TEXT_LIMIT = 40;
@@ -28,10 +30,19 @@ export interface ProjectDigest {
     grouping: string;
     layoutMode?: string;
     visibleFields: string[];
+    x: number;
+    y: number;
+    maxWidth: number;
+    columns: number | "auto";
     fontSize: number;
     gap: number;
     hasManualPositions: boolean;
     manualPositionCount: number;
+  };
+  /** 渲染真值的投影：与画布同一次求解得到的地图内容框与卡片实际方位。 */
+  layout: {
+    mapContentBounds: DigestRect;
+    cardBlocks: DigestCardBlock[];
   };
   guests: {
     title: string;
@@ -68,6 +79,24 @@ export interface ProjectDigest {
   };
 }
 
+export interface DigestRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 单张目的地卡片在画布上的实际方位；与 students.topProvinces 逐条对齐。 */
+export interface DigestCardBlock {
+  province: string;
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  side: CardSide;
+}
+
 function shortText(value: string, limit = DIGEST_TEXT_LIMIT): string {
   return value.length > limit ? `${value.slice(0, limit)}…` : value;
 }
@@ -78,12 +107,58 @@ function assetRef(id: string, src: string): string {
   return `<asset:${id}>`;
 }
 
+function roundRect(rect: { x: number; y: number; width: number; height: number }): DigestRect {
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+}
+
+const layoutSectionCache = new WeakMap<ProjectDocument, ProjectDigest["layout"]>();
+
+/**
+ * 版面真值的投影：地图内容框与卡片方位都取自画布同一份 `buildRenderFacts`，
+ * 模型看到的方位与用户看到的一致（手工位置优先）。每个 topProvince 至多一块，
+ * 分组不是省份时按卡片首个学生的省份对齐。
+ */
+function buildLayoutSection(
+  project: ProjectDocument,
+  topProvinces: readonly { province: string }[],
+): ProjectDigest["layout"] {
+  const cached = layoutSectionCache.get(project);
+  if (cached) return cached;
+  const facts = buildRenderFacts(project);
+  const placements = new Map(facts.placements.map((placement) => [placement.id, effectiveCardPlacement(project, placement)]));
+  const layout: ProjectDigest["layout"] = {
+    mapContentBounds: roundRect(facts.geometry.mapContentBounds),
+    cardBlocks: topProvinces.flatMap(({ province }): DigestCardBlock[] => {
+      const fact = facts.cards.find((card) => !card.isInternational && (card.province || "未知") === province);
+      const placement = fact ? placements.get(fact.group.key) : undefined;
+      if (!fact || !placement) return [];
+      return [{
+        province,
+        id: shortText(fact.group.key),
+        x: Math.round(placement.x),
+        y: Math.round(placement.y),
+        w: Math.round(placement.width),
+        h: Math.round(placement.height),
+        side: placement.side,
+      }];
+    }),
+  };
+  layoutSectionCache.set(project, layout);
+  return layout;
+}
+
 /**
  * Build the only project representation sent to the model. Binary/data URLs
  * are replaced by stable references and student rows are reduced to counts.
  */
 export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
   const provinceSummary = buildProvinceSummary(project.students);
+  const topProvinces = provinceSummary.slice(0, 10).map(({ province, count }) => ({ province, count }));
   const duplicateGroups = findDuplicateStudentGroups(project.students);
   const duplicateStudentCount = duplicateStudentIds(project.students).size;
   return shrinkToBudget({
@@ -107,11 +182,16 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
       grouping: project.cards.grouping,
       layoutMode: project.cards.layoutMode,
       visibleFields: [...project.cards.visibleFields],
+      x: project.cards.x,
+      y: project.cards.y,
+      maxWidth: project.cards.maxWidth,
+      columns: project.cards.columns,
       fontSize: project.cards.fontSize,
       gap: project.cards.gap,
       hasManualPositions: Object.keys(project.cards.positions ?? {}).length > 0,
       manualPositionCount: Object.keys(project.cards.positions ?? {}).length,
     },
+    layout: buildLayoutSection(project, topProvinces),
     guests: {
       title: shortText(project.guests.title),
       visibility: project.guests.visibility,
@@ -141,7 +221,7 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
     students: {
       total: project.students.length,
       hidden: project.students.filter((student) => student.visibility === false).length,
-      topProvinces: provinceSummary.slice(0, 10).map(({ province, count }) => ({ province, count })),
+      topProvinces,
       duplicateGroups: duplicateGroups.length,
       duplicateStudentCount,
     },
@@ -150,13 +230,27 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
 
 /**
  * Keep the projection inside the network budget even for huge canvases: element
- * samples are dropped one by one while the totals stay intact.
+ * samples go first, then card blocks, then the province tail. Card blocks are
+ * dropped before the provinces they align with, and every total plus the map
+ * content box survives.
  */
 function shrinkToBudget(digest: ProjectDigest): ProjectDigest {
-  const current = { ...digest, textElements: [...digest.textElements], assetElements: [...digest.assetElements] };
+  const current = {
+    ...digest,
+    textElements: [...digest.textElements],
+    assetElements: [...digest.assetElements],
+    layout: { ...digest.layout, cardBlocks: [...digest.layout.cardBlocks] },
+    students: { ...digest.students, topProvinces: [...digest.students.topProvinces] },
+  };
   while (digestByteLength(current) > DIGEST_MAX_BYTES && (current.textElements.length > 0 || current.assetElements.length > 0)) {
     if (current.assetElements.length >= current.textElements.length) current.assetElements.pop();
     else current.textElements.pop();
+  }
+  while (digestByteLength(current) > DIGEST_MAX_BYTES && current.layout.cardBlocks.length > 0) {
+    current.layout.cardBlocks.pop();
+  }
+  while (digestByteLength(current) > DIGEST_MAX_BYTES && current.students.topProvinces.length > 0) {
+    current.students.topProvinces.pop();
   }
   return current;
 }

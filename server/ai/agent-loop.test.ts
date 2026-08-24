@@ -183,6 +183,12 @@ describe("runAgentTurn", () => {
     expect(prompt).toContain("inspect_project");
   });
 
+  it("tells the model the digest already carries the rendered layout", () => {
+    const prompt = String(buildSystemMessage().content);
+    expect(prompt).toContain("layout.mapContentBounds");
+    expect(prompt).toContain("layout.cardBlocks");
+  });
+
   it("injects the exact user message when the client sends an empty history", async () => {
     let sent: Array<{ role: string; content?: string | null }> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {

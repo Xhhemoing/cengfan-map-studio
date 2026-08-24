@@ -1,60 +1,32 @@
-import { Check, Download, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, Eye, EyeOff, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   applyUniversityAutoLocation,
   confirmImportCandidates,
   createEmptyStudentDraft,
   updateStudentDraft,
-  type ImportReviewRow,
   type StudentDraft,
 } from "../lib/data-workspace";
-import { parseStudentText } from "../lib/import-data";
-import {
-  createImportTemplateSheets,
-  parseExcelWorkbookRows,
-  parseOcrLikeText,
-  type ExcelImportResult,
-  type StudentColumn,
-} from "../lib/binary-import";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
-import { findDuplicateStudentGroups } from "../lib/data-duplicate";
 import { searchCities, searchProvinces, searchUniversities } from "../lib/search-catalog";
 import { SearchCombobox, type SearchComboboxOption } from "./SearchCombobox";
-import { FileDropzone } from "./FileDropzone";
+import { DataImportPanel } from "./DataImportPanel";
 import { UniversityEmblem } from "./UniversityEmblem";
 import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, SegmentedControl } from "./StudioUi";
 
 function universityOptions(query: string): SearchComboboxOption[] {
-  return searchUniversities(query).map((university) => ({
-    value: university.name,
-    label: university.name,
-    detail: university.city,
-  }));
+  return searchUniversities(query).map(({ name, city }) => ({ value: name, label: name, detail: city }));
 }
 
 function cityOptions(query: string): SearchComboboxOption[] {
-  return searchCities(query).map((city) => ({
-    value: city.name,
-    label: city.name,
-    detail: city.province,
-  }));
+  return searchCities(query).map(({ name, province }) => ({ value: name, label: name, detail: province }));
 }
 
 function provinceOptions(query: string): SearchComboboxOption[] {
-  return searchProvinces(query).map((province) => ({
-    value: province,
-    label: province,
-  }));
+  return searchProvinces(query).map((province) => ({ value: province, label: province }));
 }
-
-const studentColumnLabels: Record<StudentColumn, string> = {
-  name: "学生姓名",
-  university: "录取院校",
-  city: "城市",
-  locationScope: "去向类型",
-};
 
 export function DataWorkspace({
   students,
@@ -99,13 +71,7 @@ export function DataWorkspace({
   const [provinceEditingId, setProvinceEditingId] = useState<string | null>(null);
   const [provinceDraft, setProvinceDraft] = useState("");
   const [filter, setFilter] = useState("");
-  const [importText, setImportText] = useState("");
-  const [reviewRows, setReviewRows] = useState<ImportReviewRow[]>([]);
-  const [excelRecognition, setExcelRecognition] = useState<Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> | null>(null);
   const [message, setMessage] = useState("");
-  const [isAiParsing, setIsAiParsing] = useState(false);
-  const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
-  const [unparsedCount, setUnparsedCount] = useState(0);
 
   const filteredStudents = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
@@ -125,56 +91,7 @@ export function DataWorkspace({
     () => filteredStudents.filter((student) => student.visibility !== false).length,
     [filteredStudents],
   );
-  const candidateSummary = useMemo(() => {
-    const duplicateIds = new Set(findDuplicateStudentGroups(reviewRows.map((row, index) => ({
-      id: `${row.sourceLine}-${index}`,
-      name: row.name,
-      university: row.university,
-      city: row.city,
-      locationScope: row.locationScope,
-    }))).flatMap((group) => group.studentIds));
-    const valid = reviewRows.filter((row) => row.name.trim() && row.university.trim() && row.city.trim());
-    return {
-      valid: valid.length,
-      missing: reviewRows.length - valid.length,
-      duplicate: reviewRows.filter((_, index) => duplicateIds.has(`${reviewRows[index]!.sourceLine}-${index}`)).length,
-    };
-  }, [reviewRows]);
-
-
-  const [showImport, setShowImport] = useState(!compactRosterControls);
   const [showNewStudent, setShowNewStudent] = useState(!compactRosterControls);
-
-  const setCandidates = (
-    candidates: Array<{
-      name: string;
-      university: string;
-      city: string;
-      locationScope?: "china" | "international";
-      sourceLine: number;
-      rawLine: string;
-    }>,
-    unparsedCount: number,
-    sourceLabel: string,
-    recognition?: Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields">,
-  ) => {
-    setExcelRecognition(recognition?.headerRowIndex !== undefined ? recognition : null);
-    setUnparsedCount(unparsedCount);
-    if (candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入数据`);
-      setReviewRows([]);
-      return;
-    }
-    setReviewRows(
-      candidates.map((candidate) => ({
-        ...candidate,
-        accepted: true,
-      })),
-    );
-    setMessage(
-      `从${sourceLabel}识别到 ${candidates.length} 条候选${unparsedCount ? `，另有 ${unparsedCount} 行未识别` : ""}`,
-    );
-  };
 
   const addDraftStudent = () => {
     const result = confirmImportCandidates([
@@ -228,130 +145,6 @@ export function DataWorkspace({
     setEditingStudentId(null);
     setEditingDraft(createEmptyStudentDraft());
     setMessage(`已更新 ${next.name}`);
-  };
-
-  const prepareImport = () => {
-    const parsed = parseStudentText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "文本");
-  };
-
-  const downloadImportTemplate = async () => {
-    try {
-      const XLSX = await import("xlsx");
-      const template = createImportTemplateSheets();
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(template.data), "学生数据");
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(template.guide), "填写说明");
-      XLSX.writeFile(workbook, "蹭饭图-学生数据导入模板.xlsx");
-      setMessage("已下载学生数据导入模板");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "模板下载失败");
-    }
-  };
-
-  const prepareOcrImport = () => {
-    const parsed = parseOcrLikeText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "OCR 文本");
-  };
-
-  const prepareAiImport = async () => {
-    if (!importText.trim()) {
-      setMessage("请先粘贴需要智能识别的名单");
-      return;
-    }
-    setIsAiParsing(true);
-    try {
-      const parsed = await requestAiParse({ text: importText, source: "paste" });
-      setCandidates(parsed.candidates, parsed.unparsed.length, `智能识别（${parsed.provider}）`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "智能识别失败");
-    } finally {
-      setIsAiParsing(false);
-    }
-  };
-
-  const handleExcelFile = async (file: File | null) => {
-    if (!file) return;
-    setExcelRecognition(null);
-    try {
-      const XLSX = await import("xlsx");
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) {
-        setMessage("Excel 中没有工作表");
-        return;
-      }
-      const sheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, {
-        header: 1,
-        defval: "",
-      });
-      const matrix = rows.map((row) =>
-        (Array.isArray(row) ? row : []).map((cell) => String(cell ?? "").trim()),
-      );
-      const parsed = parseExcelWorkbookRows(matrix);
-      setCandidates(parsed.candidates, parsed.unparsed.length, `Excel（${file.name}）`, parsed);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Excel 解析失败");
-    }
-  };
-
-  const applyImport = (mode: "append" | "replace") => {
-    const result = confirmImportCandidates(reviewRows);
-    const next = result.students;
-    if (next.length === 0) {
-      setMessage(`没有可导入的有效记录，${result.issues.length} 条校验问题`);
-      return;
-    }
-    if (mode === "replace") {
-      const confirmation = { currentCount: students.length, nextCount: next.length };
-      setReplaceConfirmation(confirmation);
-      if (!confirmReplace(confirmation)) return;
-    } else onAppendStudents(next);
-    if (mode === "replace") onReplaceStudents(next);
-    setReviewRows([]);
-    setExcelRecognition(null);
-    setUnparsedCount(0);
-    setImportText("");
-    setMessage(`已${mode === "replace" ? "替换" : "追加"} ${next.length} 条学生数据`);
-  };
-
-  const importDirectly = async () => {
-    if (!importText.trim()) {
-      setMessage("请先粘贴名单");
-      return;
-    }
-    setExcelRecognition(null);
-    // 本地能整段解析时不必调用智能识别，省一次上游请求。
-    const local = parseStudentText(importText);
-    let parsed: { candidates: typeof local.candidates; unparsed: typeof local.unparsed } = local;
-    let sourceLabel = "本地文本识别";
-    if (local.unparsed.length > 0) {
-      setIsAiParsing(true);
-      try {
-        const aiParsed = await requestAiParse({ text: importText, source: "paste" });
-        parsed = { candidates: aiParsed.candidates, unparsed: aiParsed.unparsed };
-        sourceLabel = `智能识别（${aiParsed.provider}）`;
-      } catch {
-        parsed = local;
-      } finally {
-        setIsAiParsing(false);
-      }
-    }
-    if (parsed.candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入的学生记录`);
-      return;
-    }
-    const result = confirmImportCandidates(parsed.candidates.map((c) => ({ ...c, accepted: true })));
-    if (result.students.length === 0) {
-      setMessage("识别结果无法转换为有效记录");
-      return;
-    }
-    onAppendStudents(result.students);
-    setReviewRows([]);
-    setImportText("");
-    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录`);
   };
 
   return (
@@ -465,119 +258,17 @@ export function DataWorkspace({
         </div>}
       </section>
 
-      <div className="import-box">
-        <button
-          type="button"
-          className="wide-button secondary import-toggle"
-          aria-label={showImport ? "收起导入名单" : "展开导入名单"}
-          aria-expanded={showImport}
-          onClick={() => setShowImport((current) => !current)}
-        >
-          {showImport ? "收起导入" : "展开导入 / OCR / Excel"}
-        </button>
-        {showImport && (
-          <>
-            <PanelHeader title="导入文本" meta="可粘贴 OCR 识别文字；学生姓名 · 就读院校 · 城市 · 去向类型（可选：海外）" />
-            <textarea
-              value={importText}
-              onChange={(event) => setImportText(event.target.value)}
-              placeholder={"林舟 北京大学 北京\n周晴，哈佛大学，美国·波士顿，海外"}
-              rows={5}
-            />
-            <ActionGroup label="导入处理" className="review-actions">
-              <CompactButton icon={<FileUp size={14} aria-hidden />} onClick={prepareImport}>识别文本</CompactButton>
-              <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing}>
-                {isAiParsing ? "智能识别中..." : "智能识别名单"}
-              </CompactButton>
-              <CompactButton variant="secondary" onClick={prepareOcrImport}>识别 OCR 文本</CompactButton>
-              <ActionButton onClick={importDirectly} disabled={isAiParsing}>
-                {isAiParsing ? "识别并导入中..." : "一键识别并导入"}
-              </ActionButton>
-            </ActionGroup>
-            <div className="file-import-row">
-              <FileDropzone
-                id="data-excel-upload"
-                label="导入 Excel"
-                hint="XLSX / CSV · 点击或拖拽"
-                accept=".xlsx,.xls,.csv"
-                variant="secondary"
-                icon={<FileUp size={16} aria-hidden />}
-                onFile={(file) => { void handleExcelFile(file); }}
-              />
-              {!hideTemplateDownload && <CompactButton
-                variant="secondary"
-                aria-label="下载学生数据 XLSX 模板"
-                icon={<Download size={16} aria-hidden />}
-                onClick={() => { void downloadImportTemplate(); }}
-              >
-                下载 XLSX 模板
-              </CompactButton>}
-            </div>
-          </>
-        )}
-      </div>
+      <DataImportPanel
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={onReplaceStudents}
+        onMessage={setMessage}
+        requestAiParse={requestAiParse}
+        confirmReplace={confirmReplace}
+        hideTemplateDownload={hideTemplateDownload}
+        defaultExpanded={!compactRosterControls}
+      />
 
-      {excelRecognition?.headerRowIndex !== undefined && (
-        <section className="import-recognition" aria-label="Excel 表头识别结果">
-          <PanelHeader title="表头识别" meta={`第 ${excelRecognition.headerRowIndex + 1} 行`} />
-          <div className="import-recognition__grid">
-            {excelRecognition.columnMappings.map((mapping) => (
-              <div key={mapping.field} className="import-recognition__row">
-                <span>{mapping.sourceHeader}</span>
-                <strong>{studentColumnLabels[mapping.field]}</strong>
-                <small>{mapping.samples.length > 0 ? mapping.samples.join("、") : "暂无代表数据"}</small>
-              </div>
-            ))}
-          </div>
-          {excelRecognition.unmappedHeaders.length > 0 && (
-            <p className="import-recognition__note">未使用：{excelRecognition.unmappedHeaders.join("、")}</p>
-          )}
-          {excelRecognition.missingRequiredFields.length > 0 && (
-            <p className="import-recognition__warning">缺少必填列：{excelRecognition.missingRequiredFields.map((field) => studentColumnLabels[field]).join("、")}</p>
-          )}
-        </section>
-      )}
-
-      {reviewRows.length > 0 && (
-        <div className="import-review">
-          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedCount} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}`} />
-          <div className="review-list">
-            {reviewRows.map((row, index) => (
-              <label key={`${row.sourceLine}-${index}`} className="review-row">
-                <input
-                  type="checkbox"
-                  checked={row.accepted}
-                  onChange={(event) => {
-                    setReviewRows((current) =>
-                      current.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? { ...item, accepted: event.target.checked }
-                          : item,
-                      ),
-                    );
-                  }}
-                />
-                <span>
-                  <strong>{row.name}</strong>
-                  <small>
-                    {row.university} · {row.city}
-                  </small>
-                </span>
-              </label>
-            ))}
-          </div>
-          <ActionGroup label="确认导入" className="review-actions">
-            <ActionButton onClick={() => applyImport("append")}>
-              追加导入
-            </ActionButton>
-            <CompactButton variant="secondary" onClick={() => applyImport("replace")}>
-              替换全部
-            </CompactButton>
-          </ActionGroup>
-        </div>
-      )}
-
-      {replaceConfirmation && <p className="panel-note data-message">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</p>}
       {message && <p className="panel-note data-message">{message}</p>}
 
       <div className="student-actions">

@@ -98,6 +98,191 @@ describe("DataWorkspace", () => {
     expect(container.textContent).toContain("已下载学生数据导入模板");
   });
 
+  it("exports the roster as an XLSX built from the import template header", async () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    const exportButton = container.querySelector<HTMLButtonElement>('button[aria-label="导出学生名单 XLSX"]');
+    expect(exportButton).not.toBeNull();
+    click(exportButton!);
+    await vi.waitFor(() => {
+      flushSync(() => {});
+      expect(container.textContent).toContain("已导出 1 条学生名单");
+    });
+  });
+
+  it("refuses to export an empty roster", async () => {
+    const container = render(
+      <DataWorkspace
+        students={[]}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="导出学生名单 XLSX"]')!);
+    await vi.waitFor(() => {
+      flushSync(() => {});
+      expect(container.textContent).toContain("当前名单为空，没有可导出的学生数据");
+    });
+  });
+
+  it("reports success and skip counts with per-row detail after applying a review", async () => {
+    const onAppendStudents = vi.fn();
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
+      provider: "local-fallback",
+      candidates: [
+        { name: "温言", university: "南京大学", city: "南京市", sourceLine: 1, rawLine: "温言 南京大学 南京市" },
+        { name: "陆见川", university: "四川大学", city: "成都市", sourceLine: 2, rawLine: "陆见川 四川大学 成都市" },
+        { name: "缺校同学", university: "", city: "西安市", sourceLine: 3, rawLine: "缺校同学 西安市" },
+      ],
+      unparsed: [{ sourceLine: 4, rawLine: "还没定", reason: "无法识别学生名称、录取院校和城市" }],
+    }));
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "四行名单");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    const checkboxes = container.querySelectorAll<HTMLInputElement>(".review-row input[type=checkbox]");
+    click(checkboxes[1]!);
+    expect(checkboxes[1]!.checked).toBe(false);
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "温言" })]);
+    expect(container.textContent).toContain("成功 1 · 跳过 3");
+    const outcome = container.querySelector<HTMLElement>(".import-outcome")!;
+    expect(outcome.textContent).toContain("第 2 行");
+    expect(outcome.textContent).toContain("陆见川 四川大学 成都市");
+    expect(outcome.textContent).toContain("未勾选，未导入");
+    expect(outcome.textContent).toContain("第 3 行");
+    expect(outcome.textContent).toContain("录取院校不能为空");
+    expect(outcome.textContent).toContain("第 4 行");
+    expect(outcome.textContent).toContain("还没定");
+    expect(outcome.textContent).toContain("无法识别学生名称、录取院校和城市");
+  });
+
+  it("keeps rejecting invalid candidates instead of importing them", async () => {
+    const onAppendStudents = vi.fn();
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
+      provider: "local-fallback",
+      candidates: [{ name: "", university: "", city: "", sourceLine: 1, rawLine: "空行" }],
+      unparsed: [],
+    }));
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "空行");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    expect(onAppendStudents).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("成功 0 · 跳过 1");
+    expect(container.querySelector(".import-outcome")?.textContent).toContain("学生名称不能为空");
+  });
+
+  it("reports skipped lines of a one-click import that falls back to local parsing", async () => {
+    const onAppendStudents = vi.fn();
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => {
+      throw new Error("上游不可用");
+    });
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "温言 南京大学 南京市\n陆见川 四川大学 成都市\n还没定");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("一键识别并导入"))!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    expect(onAppendStudents).toHaveBeenCalledWith([
+      expect.objectContaining({ name: "温言" }),
+      expect.objectContaining({ name: "陆见川" }),
+    ]);
+    expect(container.textContent).toContain("成功 2 · 跳过 1");
+    const outcome = container.querySelector<HTMLElement>(".import-outcome")!;
+    expect(outcome.textContent).toContain("第 3 行");
+    expect(outcome.textContent).toContain("还没定");
+    expect(outcome.textContent).toContain("无法识别学生名称、录取院校和城市");
+  });
+
+  it("lists unresolved-city warnings next to a successful import", async () => {
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
+      provider: "local-fallback",
+      candidates: [{ name: "沈砚", university: "火星学院", city: "自定义火星城", sourceLine: 1, rawLine: "沈砚 火星学院 自定义火星城" }],
+      unparsed: [],
+    }));
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "沈砚 火星学院 自定义火星城");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    const outcome = container.querySelector<HTMLElement>(".import-outcome")!;
+    expect(outcome.textContent).toContain("成功 1 · 跳过 0");
+    expect(outcome.textContent).toContain("没有被跳过的行");
+    expect(outcome.textContent).toContain("无法定位城市：自定义火星城");
+  });
+
   it("shows Excel header mappings and representative values before review", async () => {
     const container = render(
       <DataWorkspace

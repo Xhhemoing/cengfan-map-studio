@@ -138,6 +138,57 @@ describe("resolveAgentConfig", () => {
     expect(outcome).toMatchObject({ kind: "finish", budget: { usedTokens: 5_600, lastPromptTokens: 4_500 } });
   });
 
+  it("answers a high-confidence read-only stat question locally without calling the model", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({ AI_API_KEY: "key" }));
+    const outcome = await backend.runTurn({
+      userMessage: "广东有几人",
+      digest: { students: { total: 5, hidden: 0, duplicateGroups: 0, duplicateStudentCount: 0, topProvinces: [{ province: "广东省", count: 3 }] } },
+      messages: [],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ kind: "finish", meta: { route: "local", provider: "local-fallback", fallbackReason: "preroute:province-count" } });
+    if (outcome.kind === "finish") expect(outcome.summary).toContain("3 名同学");
+  });
+
+  it("sends a write request such as 把城市字号调大 to the model instead of prerouting it", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "已调整" } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({ AI_API_KEY: "key" }));
+    const outcome = await backend.runTurn({
+      userMessage: "把城市字号调大",
+      digest: { students: { total: 5, hidden: 0, duplicateGroups: 0, duplicateStudentCount: 0, topProvinces: [] } },
+      messages: [],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(outcome).toMatchObject({ kind: "finish", meta: { route: "primary" } });
+  });
+
+  it("never emits tool calls from the preroute so a misread can only be a wrong number", async () => {
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({}));
+    const digest = { students: { total: 4, hidden: 1, duplicateGroups: 2, duplicateStudentCount: 4, topProvinces: [{ province: "浙江省", count: 3 }] } };
+    for (const userMessage of ["多少人", "有没有重复", "哪个省最多", "隐藏了多少人"]) {
+      const outcome = await backend.runTurn({ userMessage, digest, messages: [] });
+      expect(outcome.kind).toBe("finish");
+      expect(outcome).not.toHaveProperty("calls");
+    }
+  });
+
+  it("leaves the budget untouched when the preroute answers", async () => {
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({ AI_API_KEY: "key" }));
+    const outcome = await backend.runTurn({
+      userMessage: "有没有重复",
+      digest: { students: { total: 9, hidden: 0, duplicateGroups: 0, duplicateStudentCount: 0, topProvinces: [] } },
+      messages: [],
+      budget: { usedTokens: 1_200, maxTokens: 60_000, rounds: 2, maxRounds: 20 },
+    });
+    expect(outcome).toMatchObject({ kind: "finish", budget: { usedTokens: 1_200, rounds: 2 } });
+  });
+
   it("does not start a remote turn when the runtime budget cannot cover one agent call", async () => {
     const runtime = resolveAgentRuntimeConfig({ AI_API_KEY: "key", AI_AGENT_TOKEN_BUDGET: "3000" });
     const fetchMock = vi.fn();
