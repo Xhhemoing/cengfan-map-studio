@@ -79,10 +79,10 @@ export function ProjectCard({ project, updatedAtLabel, menuOpen, onOpen, onToggl
   menuOpen: boolean;
   onOpen: () => void;
   onToggleMenu: () => void;
-  onRename: () => void;
+  onRename: (restoreFocus: () => void) => void;
   onDuplicate: () => void;
   onExport: () => void;
-  onDelete: () => void;
+  onDelete: (restoreFocus: () => void) => void;
 }) {
   const studentCount = project.pack.project.students.length;
   // 一屏会渲染多张卡片，静态 id 会在文档里重复，用 useId 保证 aria-controls 唯一。
@@ -91,17 +91,21 @@ export function ProjectCard({ project, updatedAtLabel, menuOpen, onOpen, onToggl
   const triggerId = `${instanceId}-trigger`;
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
+  // 菜单里打开对话框的项，把「焦点还给菜单按钮」的能力一并交给工作台：
+  // 对话框关掉(提交或取消)时由它调用，键盘用户不会被丢回文档开头。
+  const restoreFocus = () => { triggerRef.current?.focus(); };
+
   const items: MenuItem[] = [
-    { key: "rename", label: "重命名", icon: <Pencil size={14} />, onSelect: onRename },
+    { key: "rename", label: "重命名", icon: <Pencil size={14} />, onSelect: () => onRename(restoreFocus) },
     { key: "duplicate", label: "复制", icon: <Copy size={14} />, onSelect: onDuplicate },
     { key: "export", label: "导出工程包", icon: <FolderOpen size={14} />, onSelect: onExport },
-    { key: "delete", label: "删除", icon: <Trash2 size={14} />, onSelect: onDelete },
+    { key: "delete", label: "删除", icon: <Trash2 size={14} />, onSelect: () => onDelete(restoreFocus) },
   ];
 
   // Esc 关闭时把焦点还给触发按钮；外点关闭不抢焦点，交给用户点到的那个元素。
   const closeAndRestoreFocus = () => {
     onToggleMenu();
-    triggerRef.current?.focus();
+    restoreFocus();
   };
 
   return (

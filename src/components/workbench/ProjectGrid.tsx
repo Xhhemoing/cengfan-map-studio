@@ -10,10 +10,10 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
   formatUpdatedAt: (value: string) => string;
   onOpen: (id: string) => void;
   onToggleMenu: (id: string) => void;
-  onRename: (project: StoredProject) => void;
+  onRename: (project: StoredProject, restoreFocus: () => void) => void;
   onDuplicate: (project: StoredProject) => void;
   onExport: (project: StoredProject) => void;
-  onDelete: (project: StoredProject) => void;
+  onDelete: (project: StoredProject, restoreFocus: () => void) => void;
 }) {
   return <section className="workbench-grid" aria-label="项目列表">
     {loading && projects.length === 0 ? (
@@ -36,10 +36,10 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
         menuOpen={openMenuId === project.id}
         onOpen={() => onOpen(project.id)}
         onToggleMenu={() => onToggleMenu(project.id)}
-        onRename={() => onRename(project)}
+        onRename={(restoreFocus) => onRename(project, restoreFocus)}
         onDuplicate={() => onDuplicate(project)}
         onExport={() => onExport(project)}
-        onDelete={() => onDelete(project)}
+        onDelete={(restoreFocus) => onDelete(project, restoreFocus)}
       />
     ))}
   </section>;

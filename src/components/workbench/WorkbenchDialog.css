@@ -1,0 +1,83 @@
+.workbench-dialog {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  inset: 0;
+}
+
+.workbench-dialog__backdrop {
+  position: absolute;
+  background: rgb(16 24 32 / 42%);
+  inset: 0;
+}
+
+.workbench-dialog__panel {
+  position: relative;
+  display: flex;
+  width: min(92vw, 400px);
+  flex-direction: column;
+  padding: 18px;
+  gap: 14px;
+  color: var(--editor-ink, #23303a);
+  background: var(--editor-surface-raised, #fff);
+  border: 1px solid var(--editor-line, #ccd7dd);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgb(20 30 40 / 22%);
+}
+
+.workbench-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.workbench-dialog__field input {
+  padding: 7px 10px;
+  color: inherit;
+  font-size: 13px;
+  background: var(--editor-surface, #fff);
+  border: 1px solid var(--editor-line, #ccd7dd);
+  border-radius: 8px;
+}
+
+.workbench-dialog__hint {
+  margin: 0;
+  color: var(--editor-ink-muted, #8fa1ad);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.workbench-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workbench-dialog__actions button {
+  padding: 6px 16px;
+  color: inherit;
+  font-size: 13px;
+  background: var(--editor-surface, #fff);
+  border: 1px solid var(--editor-line, #ccd7dd);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.workbench-dialog__actions .primary-button {
+  color: #fff;
+  background: var(--editor-accent, #2f6f8f);
+  border-color: transparent;
+}
+
+.workbench-dialog__actions .danger-button {
+  color: #fff;
+  background: var(--editor-danger, #b4453c);
+  border-color: transparent;
+}
+
+.workbench-dialog__actions button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}

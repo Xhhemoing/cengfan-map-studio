@@ -7,10 +7,18 @@ import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
 import { ContinueEditingCard } from "./workbench/ContinueEditingCard";
+import { RenameProjectDialog } from "./workbench/RenameProjectDialog";
+import { DeleteProjectDialog } from "./workbench/DeleteProjectDialog";
 
 interface ProjectWorkbenchProps {
   store: ProjectStore;
   navigate?: (hash: string) => void;
+}
+
+/** 由卡片菜单发起的对话框请求：带上把焦点还回菜单按钮的回调。 */
+interface DialogRequest {
+  project: StoredProject;
+  restoreFocus: () => void;
 }
 
 function formatUpdatedAt(value: string): string {
@@ -30,6 +38,8 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [renameRequest, setRenameRequest] = useState<DialogRequest | null>(null);
+  const [deleteRequest, setDeleteRequest] = useState<DialogRequest | null>(null);
   const [localEntry, setLocalEntry] = useState<LocalWorkspaceEntry | null>(null);
   const [skin] = useState(() => loadStudioSkin());
   const [themeMode] = useState(() => loadThemeMode());
@@ -139,12 +149,23 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
     }
   };
 
-  const renameProject = async (project: StoredProject) => {
-    const name = window.prompt("请输入新项目名称", project.name);
-    if (name === null || !name.trim()) return;
+  // 菜单项只负责开对话框：对话框挂载后菜单收起，避免两层浮层争焦点。
+  const requestRename = (project: StoredProject, restoreFocus: () => void) => {
+    setOpenMenuId(null);
+    setRenameRequest({ project, restoreFocus });
+  };
+
+  const closeRenameDialog = () => {
+    renameRequest?.restoreFocus();
+    setRenameRequest(null);
+  };
+
+  const renameProject = async (name: string) => {
+    const request = renameRequest;
+    if (!request) return;
+    closeRenameDialog();
     try {
-      await store.put({ ...project, name: name.trim(), updatedAt: new Date().toISOString() });
-      setOpenMenuId(null);
+      await store.put({ ...request.project, name, updatedAt: new Date().toISOString() });
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? `重命名项目失败：${reason.message}` : "重命名项目失败");
@@ -162,14 +183,27 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
     }
   };
 
-  const deleteProject = async (project: StoredProject) => {
-    if (!window.confirm(`删除项目「${project.name}」？此操作不可恢复。`)) return;
+  const requestDelete = (project: StoredProject, restoreFocus: () => void) => {
+    setOpenMenuId(null);
+    setDeleteRequest({ project, restoreFocus });
+  };
+
+  const closeDeleteDialog = () => {
+    deleteRequest?.restoreFocus();
+    setDeleteRequest(null);
+  };
+
+  const deleteProject = async () => {
+    const request = deleteRequest;
+    if (!request) return;
+    // 卡片随删除一起卸载，焦点还给已移除的按钮没有意义，这里只收起对话框。
+    setDeleteRequest(null);
     try {
-      await store.remove(project.id);
-      setOpenMenuId(null);
+      await store.remove(request.project.id);
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? `删除项目失败：${reason.message}` : "删除项目失败");
+      request.restoreFocus();
     }
   };
 
@@ -212,7 +246,25 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
 
       {localEntry && <ContinueEditingCard entry={localEntry} onResume={() => void continueEditing()} />}
 
-      <ProjectGrid projects={sorted} loading={loading} hasError={Boolean(error)} openMenuId={openMenuId} formatUpdatedAt={formatUpdatedAt} onOpen={openProject} onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)} onRename={(project) => void renameProject(project)} onDuplicate={(project) => void duplicateProject(project)} onExport={exportProject} onDelete={(project) => void deleteProject(project)} />
+      <ProjectGrid projects={sorted} loading={loading} hasError={Boolean(error)} openMenuId={openMenuId} formatUpdatedAt={formatUpdatedAt} onOpen={openProject} onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)} onRename={requestRename} onDuplicate={(project) => void duplicateProject(project)} onExport={exportProject} onDelete={requestDelete} />
+
+      {renameRequest && (
+        <RenameProjectDialog
+          key={renameRequest.project.id}
+          currentName={renameRequest.project.name}
+          onCancel={closeRenameDialog}
+          onSubmit={(name) => void renameProject(name)}
+        />
+      )}
+
+      {deleteRequest && (
+        <DeleteProjectDialog
+          key={deleteRequest.project.id}
+          projectName={deleteRequest.project.name}
+          onCancel={closeDeleteDialog}
+          onConfirm={() => void deleteProject()}
+        />
+      )}
     </main>
   );
 }

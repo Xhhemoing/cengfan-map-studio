@@ -16,6 +16,21 @@ function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, nav
   return { container, navigate };
 }
 
+function click(element: Element): void {
+  flushSync(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+function changeInput(input: HTMLInputElement, value: string): void {
+  flushSync(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function buttonByLabel(scope: ParentNode, label: string): HTMLButtonElement {
+  return Array.from(scope.querySelectorAll("button")).find((button) => button.textContent?.trim() === label)!;
+}
+
 afterEach(() => {
   roots.forEach(({ root, container }) => {
     root.unmount();
@@ -75,31 +90,6 @@ describe("ProjectWorkbench", () => {
     expect(projects.some((p) => p.pack.project.students.length === 0)).toBe(true);
   });
 
-  it("renames a project via the card menu", async () => {
-    const store = createMemoryProjectStore();
-    await store.put(createSampleProject());
-    const { container } = renderWorkbench(store);
-    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
-    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
-    await vi.waitFor(() => expect(container.textContent).toContain("重命名"));
-    vi.stubGlobal("prompt", vi.fn(() => "高三3班"));
-    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("重命名"))?.click();
-    await vi.waitFor(() => expect(container.textContent).toContain("高三3班"));
-  });
-
-  it("deletes a project after confirmation", async () => {
-    const store = createMemoryProjectStore();
-    const sample = createSampleProject();
-    await store.put(sample);
-    const { container } = renderWorkbench(store);
-    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
-    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
-    await vi.waitFor(() => expect(container.textContent).toContain("删除"));
-    vi.stubGlobal("confirm", vi.fn(() => true));
-    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("删除"))?.click();
-    await vi.waitFor(async () => expect((await store.list())).toHaveLength(0));
-  });
-
   it("duplicates a project", async () => {
     const store = createMemoryProjectStore();
     await store.put(createSampleProject());
@@ -147,40 +137,6 @@ describe("ProjectWorkbench", () => {
       expect(projects).toHaveLength(2);
       expect(projects.some((p) => p.name === "project")).toBe(true);
     });
-  });
-
-  it("keeps a project when deletion is cancelled", async () => {
-    const store = createMemoryProjectStore();
-    const sample = createSampleProject();
-    await store.put(sample);
-    const { container } = renderWorkbench(store);
-    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
-    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
-    await vi.waitFor(() => expect(container.textContent).toContain("删除"));
-    const confirm = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirm);
-    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("删除"))?.click();
-    await vi.waitFor(() => expect(confirm).toHaveBeenCalled());
-    const projects = await store.list();
-    expect(projects).toHaveLength(1);
-    expect(projects[0].id).toBe(sample.id);
-  });
-
-  it("keeps the name when rename is cancelled", async () => {
-    const store = createMemoryProjectStore();
-    const sample = createSampleProject();
-    await store.put(sample);
-    const { container } = renderWorkbench(store);
-    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
-    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
-    await vi.waitFor(() => expect(container.textContent).toContain("重命名"));
-    const prompt = vi.fn(() => null);
-    vi.stubGlobal("prompt", prompt);
-    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("重命名"))?.click();
-    await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
-    const projects = await store.list();
-    expect(projects).toHaveLength(1);
-    expect(projects[0].name).toBe(sample.name);
   });
 
   it("shows an error banner for an invalid project package", async () => {
@@ -284,6 +240,137 @@ describe("ProjectWorkbench", () => {
       menu.click();
       await Promise.resolve();
       expect(container.querySelector('[role="menu"]')).not.toBeNull();
+    });
+  });
+
+  describe("重命名与删除对话框", () => {
+    async function openMenuItem(item: "重命名" | "删除") {
+      const store = createMemoryProjectStore();
+      const sample = createSampleProject();
+      await store.put(sample);
+      const { container } = renderWorkbench(store);
+      await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+      const trigger = container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')!;
+      click(trigger);
+      await vi.waitFor(() => expect(container.querySelector('[role="menu"]')).not.toBeNull());
+      click(buttonByLabel(container.querySelector('[role="menu"]')!, item));
+      const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
+      expect(dialog).not.toBeNull();
+      // 对话框接管交互后卡片菜单收起，两层浮层不会同时抢焦点。
+      expect(container.querySelector('[role="menu"]')).toBeNull();
+      return { container, store, sample, trigger, dialog };
+    }
+
+    function pressEscape(target: Element) {
+      flushSync(() => target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    }
+
+    it("不再依赖 window.prompt / window.confirm", async () => {
+      const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      await openMenuItem("重命名");
+      await openMenuItem("删除");
+      expect(prompt).not.toHaveBeenCalled();
+      expect(confirm).not.toHaveBeenCalled();
+    });
+
+    it("预填原项目名并全选，提交后写回新名称", async () => {
+      const { container, store, sample, trigger, dialog } = await openMenuItem("重命名");
+      const input = dialog.querySelector<HTMLInputElement>('input[aria-label="项目名称"]')!;
+      expect(input.value).toBe(sample.name);
+      expect(document.activeElement).toBe(input);
+      expect(input.selectionStart).toBe(0);
+      expect(input.selectionEnd).toBe(sample.name.length);
+
+      changeInput(input, "高三3班");
+      click(buttonByLabel(dialog, "保存"));
+
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      // 对话框关闭后焦点回到菜单按钮，键盘用户能接着操作同一张卡片。
+      expect(document.activeElement).toBe(trigger);
+      await vi.waitFor(() => expect(container.textContent).toContain("高三3班"));
+      const projects = await store.list();
+      expect(projects).toHaveLength(1);
+      expect(projects[0].name).toBe("高三3班");
+    });
+
+    it("名称为空时禁用保存并拒绝提交", async () => {
+      const { store, sample, dialog } = await openMenuItem("重命名");
+      const input = dialog.querySelector<HTMLInputElement>('input[aria-label="项目名称"]')!;
+      const submit = buttonByLabel(dialog, "保存");
+      expect(submit.disabled).toBe(false);
+
+      changeInput(input, "   ");
+      expect(submit.disabled).toBe(true);
+      click(submit);
+      expect(dialog.isConnected).toBe(true);
+
+      changeInput(input, "高三3班");
+      expect(submit.disabled).toBe(false);
+      expect((await store.list())[0].name).toBe(sample.name);
+    });
+
+    it("取消重命名保留原名并把焦点还给菜单按钮", async () => {
+      const { container, store, sample, trigger, dialog } = await openMenuItem("重命名");
+      changeInput(dialog.querySelector<HTMLInputElement>('input[aria-label="项目名称"]')!, "不该保存");
+      click(buttonByLabel(dialog, "取消"));
+
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      const projects = await store.list();
+      expect(projects).toHaveLength(1);
+      expect(projects[0].name).toBe(sample.name);
+    });
+
+    it("Esc 关闭重命名对话框并把焦点还给菜单按钮", async () => {
+      const { container, store, sample, trigger } = await openMenuItem("重命名");
+      pressEscape(document.activeElement!);
+
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      expect((await store.list())[0].name).toBe(sample.name);
+    });
+
+    it("点击遮罩关闭重命名对话框", async () => {
+      const { container, store, sample, trigger, dialog } = await openMenuItem("重命名");
+      click(dialog.querySelector(".workbench-dialog__backdrop")!);
+
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      expect((await store.list())[0].name).toBe(sample.name);
+    });
+
+    it("删除确认框明示不可恢复，确认后移除项目", async () => {
+      const { container, store, sample, dialog } = await openMenuItem("删除");
+      expect(dialog.textContent).toContain(sample.name);
+      const hint = document.getElementById(dialog.getAttribute("aria-describedby")!);
+      expect(hint?.textContent).toContain("删除后不可恢复");
+      // 默认焦点落在「取消」，回车不会误删。
+      expect(document.activeElement).toBe(buttonByLabel(dialog, "取消"));
+
+      click(buttonByLabel(dialog, "删除"));
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      await vi.waitFor(async () => expect(await store.list()).toHaveLength(0));
+    });
+
+    it("取消删除保留项目并把焦点还给菜单按钮", async () => {
+      const { container, store, sample, trigger, dialog } = await openMenuItem("删除");
+      click(buttonByLabel(dialog, "取消"));
+
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      const projects = await store.list();
+      expect(projects).toHaveLength(1);
+      expect(projects[0].id).toBe(sample.id);
+    });
+
+    it("Esc 关闭删除确认框并把焦点还给菜单按钮", async () => {
+      const { container, store, trigger } = await openMenuItem("删除");
+      pressEscape(document.activeElement!);
+
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      expect(await store.list()).toHaveLength(1);
     });
   });
 
