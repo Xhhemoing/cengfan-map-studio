@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_USER_FONT_BYTES } from "./fonts";
+import { MAX_RESOURCE_PACK_BYTES } from "./import-file-limits";
 import {
+  checkResourcePackExportSize,
   createResourcePack,
   downloadResourcePack,
+  estimateResourcePackBytes,
   mergeResourcePack,
   parseResourcePack,
   serializeResourcePack,
@@ -11,6 +14,22 @@ import {
 /** Build a font data URL whose decoded payload is at least `bytes` long. */
 function fontDataUrlOfBytes(bytes: number, fill = "A"): string {
   return `data:font/ttf;base64,${fill.repeat(Math.ceil(bytes / 3) * 4)}`;
+}
+
+/** 一份序列化后必然越过 24MB 导入闸门的资源包。 */
+function oversizedPack() {
+  return createResourcePack({
+    assets: [{
+      id: "asset-huge",
+      label: "全班合影原图",
+      src: `data:image/png;base64,${"A".repeat(MAX_RESOURCE_PACK_BYTES)}`,
+      kind: "decoration",
+      provinceIds: [],
+      source: "user",
+    }],
+    fonts: [],
+    now: new Date("2026-07-26T00:00:00.000Z"),
+  });
 }
 
 describe("resource-pack", () => {
@@ -167,6 +186,49 @@ describe("resource-pack", () => {
     expect(merged.fontIdRemap).toEqual({ "font-user-renamed": "font-user-1" });
   });
 
+  describe("导出体积", () => {
+    it("stays quiet under the import ceiling and explains itself above it", () => {
+      expect(checkResourcePackExportSize(MAX_RESOURCE_PACK_BYTES)).toBeNull();
+
+      const message = checkResourcePackExportSize(MAX_RESOURCE_PACK_BYTES + 1);
+      expect(message).toContain("超过导入上限 24.0 MB");
+      expect(message).toContain("导出后无法再导入回来");
+      expect(message).toContain("删掉素材库里用不到的图片与字体");
+    });
+
+    it("estimates the pack size from its assets and fonts", () => {
+      const pack = createResourcePack({
+        assets: [{
+          id: "asset-1",
+          label: "北京贴图",
+          src: `data:image/png;base64,${"A".repeat(1024 * 1024)}`,
+          kind: "province-texture",
+          provinceIds: ["北京市"],
+          source: "user",
+        }],
+        fonts: [{
+          id: "font-1",
+          label: "手写体",
+          family: "font-1",
+          src: fontDataUrlOfBytes(512 * 1024),
+          format: "truetype",
+          source: "user",
+        }],
+      });
+
+      const estimated = estimateResourcePackBytes(pack);
+      const actual = new Blob([serializeResourcePack(pack)]).size;
+      // 估算允许偏差，但不能低估到让超限的包溜过闸门。
+      expect(estimated).toBeGreaterThanOrEqual(actual);
+      expect(estimated - actual).toBeLessThan(1024);
+      expect(checkResourcePackExportSize(estimated)).toBeNull();
+    });
+
+    it("estimates an oversized pack above the ceiling before anything is downloaded", () => {
+      expect(checkResourcePackExportSize(estimateResourcePackBytes(oversizedPack()))).toContain("超过导入上限");
+    });
+  });
+
   describe("downloadResourcePack", () => {
     afterEach(() => {
       vi.restoreAllMocks();
@@ -224,6 +286,15 @@ describe("resource-pack", () => {
 
       expect(() => downloadResourcePack(createResourcePack({ assets: [], fonts: [] }))).toThrow("下载被拦截");
       expect(revokeObjectURL).toHaveBeenCalledWith("blob:resource-pack");
+    });
+
+    it("refuses a pack the import gate would reject, before creating an object url", () => {
+      const createObjectURL = vi.fn(() => "blob:resource-pack");
+      const revokeObjectURL = vi.fn();
+      vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+
+      expect(() => downloadResourcePack(oversizedPack())).toThrow("超过导入上限 24.0 MB");
+      expect(createObjectURL).not.toHaveBeenCalled();
     });
   });
 });

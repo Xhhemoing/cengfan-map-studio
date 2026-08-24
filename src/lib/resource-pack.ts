@@ -1,5 +1,8 @@
 import type { UserAsset } from "./assets";
 import { downloadBlob } from "./export-poster";
+import { estimateExportSize, exportSizeBytes } from "./export-size-estimate";
+import { formatByteSize } from "./image-downscale";
+import { MAX_RESOURCE_PACK_BYTES, RESOURCE_PACK_IMPORT_LIMIT } from "./import-file-limits";
 import {
   estimateFontBytes,
   findExistingFont,
@@ -235,8 +238,30 @@ export function mergeResourcePack(input: {
   return { assets: nextAssets, fonts: nextFonts, addedAssets, addedFonts, skippedFonts, duplicateFonts, fontIdRemap };
 }
 
+/** 导出前估算资源包体积，供对话框和按钮在真正下载之前给出提示。 */
+export function estimateResourcePackBytes(pack: ResourcePack): number {
+  const estimate = estimateExportSize({
+    rest: { ...pack, assets: [], fonts: [] },
+    assets: pack.assets,
+    fonts: pack.fonts,
+    limitBytes: MAX_RESOURCE_PACK_BYTES,
+  });
+  return exportSizeBytes(estimate, true);
+}
+
+/** 超过导入闸门时返回中文说明，未超限返回 `null`。 */
+export function checkResourcePackExportSize(bytes: number): string | null {
+  if (bytes <= MAX_RESOURCE_PACK_BYTES) return null;
+  return `资源包约 ${formatByteSize(bytes)}，超过导入上限 ${formatByteSize(MAX_RESOURCE_PACK_BYTES)}，导出后无法再导入回来；${RESOURCE_PACK_IMPORT_LIMIT.advice}`;
+}
+
 export function downloadResourcePack(pack: ResourcePack, filename = `cengfan-resource-pack-${pack.exportedAt.slice(0, 10)}.json`): void {
   // 资源包内嵌素材与字体的 data URL，体积大到下载不会立刻开始，
   // 同步 revoke 会让浏览器取消它，交给 downloadBlob 延迟回收。
-  downloadBlob(new Blob([serializeResourcePack(pack)], { type: "application/json;charset=utf-8" }), filename);
+  const blob = new Blob([serializeResourcePack(pack)], { type: "application/json;charset=utf-8" });
+  // 导入侧 24MB 就拒收，导出侧不拦等于发给用户一份永远收不回来的备份。
+  // 这里量的是即将落盘的 blob 本身，不是估算值。
+  const oversized = checkResourcePackExportSize(blob.size);
+  if (oversized) throw new Error(oversized);
+  downloadBlob(blob, filename);
 }

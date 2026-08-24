@@ -3,6 +3,26 @@
   width: min(92vw, 460px);
 }
 
+.export-project-dialog .export-size-estimate {
+  margin: 0;
+  color: #6b6257;
+  font-size: 12px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 超限说明比「缺素材」提示更严重：这份文件导出后就再也导不回来。 */
+.export-project-dialog .export-size-warning {
+  margin: 0;
+  padding: 9px 10px;
+  color: #8f2f22;
+  background: #fdecea;
+  border: 1px solid #e3a99c;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .export-project-dialog .export-resource-warning {
   margin: 0;
   padding: 9px 10px;

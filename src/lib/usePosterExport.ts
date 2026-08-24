@@ -7,6 +7,7 @@
 import { useRef, useState, type RefObject } from "react";
 import { availablePngScales, describePngScaleLimit, downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
+import { describeExportSizeWarning, estimateExportSize, type ExportSizeEstimate } from "./export-size-estimate";
 import { PROJECT_PACKAGE_IMPORT_LIMIT, checkImportFileSize } from "./import-file-limits";
 import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
 import { hasExternalSvgImages, inlineSvgImages } from "./svg-image-inline";
@@ -56,6 +57,8 @@ export interface UsePosterExportResult {
   transparentExport: boolean;
   showProjectExportDialog: boolean;
   includeResourcesInProjectExport: boolean;
+  /** 打开导出对话框那一刻量出的体积，供对话框对照 24MB 导入闸门；未打开时为 `null`。 */
+  projectExportSizeEstimate: ExportSizeEstimate | null;
   setPngScale: (scale: number) => void;
   setTransparentExport: (checked: boolean) => void;
   setShowProjectExportDialog: (open: boolean) => void;
@@ -82,7 +85,23 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const [transparentExport, setTransparentExport] = useState(false);
   const [showProjectExportDialog, setShowProjectExportDialog] = useState(false);
   const [includeResourcesInProjectExport, setIncludeResourcesInProjectExport] = useState(true);
+  const [projectExportSizeEstimate, setProjectExportSizeEstimate] = useState<ExportSizeEstimate | null>(null);
   const [pendingProjectImport, setPendingProjectImport] = useState<{ pack: ProjectPackage; fileName: string } | null>(null);
+
+  /**
+   * 量的是 `createProjectPackage` 真正会写出去的形状：撤销栈在导出时被剥掉，
+   * 把它算进去会凭空多出几 MB，让没超限的工程也被警告。
+   */
+  const measureProjectExportSize = (): ExportSizeEstimate => estimateExportSize({
+    rest: {
+      kind: "cengfan-project-package",
+      project: { ...project, history: { past: [], future: [] } },
+      customTemplates,
+      renderSettings,
+    },
+    assets: userAssets,
+    fonts: userFonts,
+  });
 
   const exportSvg = async () => {
     lastExportRef.current = "svg";
@@ -108,6 +127,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
 
   const openProjectExportDialog = () => {
     setIncludeResourcesInProjectExport(true);
+    // 打开时量一次就够：勾选框只在两个已知的和之间切换，不必每次渲染重新遍历素材。
+    setProjectExportSizeEstimate(measureProjectExportSize());
     setShowProjectExportDialog(true);
   };
 
@@ -127,9 +148,16 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       }));
       setShowProjectExportDialog(false);
       setExportState("success");
-      reportStatus(includeResourcesInProjectExport
+      // 超限的包已经落盘了，用户至少要在状态栏看到「这份备份导不回来」，
+      // 而不是把它当成可用存档搁半年。
+      const oversized = describeExportSizeWarning(
+        projectExportSizeEstimate ?? measureProjectExportSize(),
+        includeResourcesInProjectExport,
+      );
+      const summary = includeResourcesInProjectExport
         ? `完整工程包已导出：${project.students.length} 条名单、${exportedAssets.length} 个素材、${exportedFonts.length} 个字体、${customTemplates.length} 个模板`
-        : `工程已导出（未包含资源包）：${project.students.length} 条名单、${customTemplates.length} 个模板`);
+        : `工程已导出（未包含资源包）：${project.students.length} 条名单、${customTemplates.length} 个模板`;
+      reportStatus(oversized ? `${summary}。${oversized}` : summary);
     } catch (error) {
       const message = error instanceof Error ? error.message : "工程包导出失败";
       setExportState("error");
@@ -233,6 +261,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     transparentExport,
     showProjectExportDialog,
     includeResourcesInProjectExport,
+    projectExportSizeEstimate,
     setPngScale,
     setTransparentExport,
     setShowProjectExportDialog,

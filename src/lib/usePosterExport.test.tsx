@@ -2,7 +2,9 @@ import { act, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_PROJECT_PACKAGE_BYTES } from "./import-file-limits";
-import { createProjectDocument, type ProjectDocument } from "./project-document";
+import type { UserAsset } from "./assets";
+import { exportSizeBytes } from "./export-size-estimate";
+import { createProjectDocument, type ProjectDocument, type ProjectHistoryEntry } from "./project-document";
 import { createProjectPackage, serializeProjectPackage, type ProjectPackage } from "./project-package";
 import { DEFAULT_RENDER_SETTINGS } from "./render-settings";
 import { usePosterExport, type UsePosterExportResult } from "./usePosterExport";
@@ -46,16 +48,18 @@ function Harness({
   project,
   applyImportedPackage,
   onRender,
+  userAssets = [],
 }: {
   project: ProjectDocument;
   applyImportedPackage: (pack: ProjectPackage) => void;
   onRender: (result: UsePosterExportResult) => void;
+  userAssets?: UserAsset[];
 }) {
   const posterRef = useRef<SVGSVGElement | null>(null);
   const result = usePosterExport({
     posterRef,
     project,
-    userAssets: [],
+    userAssets,
     userFonts: [],
     customTemplates: [],
     renderSettings: DEFAULT_RENDER_SETTINGS,
@@ -71,6 +75,7 @@ function Harness({
 async function mountExport(
   project: ProjectDocument,
   applyImportedPackage: (pack: ProjectPackage) => void = vi.fn(),
+  userAssets: UserAsset[] = [],
 ): Promise<() => UsePosterExportResult> {
   let latest: UsePosterExportResult | null = null;
   const container = document.createElement("div");
@@ -78,9 +83,28 @@ async function mountExport(
   const root = createRoot(container);
   roots.push({ root, container });
   await act(async () => {
-    root.render(<Harness project={project} applyImportedPackage={applyImportedPackage} onRender={(result) => { latest = result; }} />);
+    root.render(
+      <Harness
+        project={project}
+        applyImportedPackage={applyImportedPackage}
+        userAssets={userAssets}
+        onRender={(result) => { latest = result; }}
+      />,
+    );
   });
   return () => latest!;
+}
+
+/** 单张就撑爆 24MB 的素材，用来验证导出侧的体积预警。 */
+function oversizedAsset(): UserAsset {
+  return {
+    id: "asset-huge",
+    label: "全班合影原图",
+    src: `data:image/png;base64,${"A".repeat(MAX_PROJECT_PACKAGE_BYTES)}`,
+    kind: "decoration",
+    provinceIds: [],
+    source: "user",
+  };
 }
 
 afterEach(() => {
@@ -180,6 +204,69 @@ describe("usePosterExport 校徽内联", () => {
     expect(mocks.inlineSvgImages).not.toHaveBeenCalled();
     expect(mocks.downloadText).toHaveBeenCalledWith(expect.stringContaining("<svg"), "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
     expect(result().exportState).toBe("success");
+  });
+});
+
+describe("usePosterExport 导出体积", () => {
+  it("measures the workspace when the export dialog opens", async () => {
+    const result = await mountExport(projectWithCanvas(1200, 800), vi.fn(), [{
+      id: "asset-1",
+      label: "贴图",
+      src: `data:image/png;base64,${"A".repeat(2 * 1024 * 1024)}`,
+      kind: "decoration",
+      provinceIds: [],
+      source: "user",
+    }]);
+
+    expect(result().projectExportSizeEstimate).toBeNull();
+
+    await act(async () => { result().openProjectExportDialog(); });
+
+    const estimate = result().projectExportSizeEstimate!;
+    expect(estimate.limitBytes).toBe(MAX_PROJECT_PACKAGE_BYTES);
+    expect(estimate.resourceBytes).toBeGreaterThan(2 * 1024 * 1024);
+    expect(exportSizeBytes(estimate, false)).toBeLessThan(1024 * 1024);
+  });
+
+  it("leaves the undo stack out of the estimate the way the exporter does", async () => {
+    const base = projectWithCanvas(1200, 800);
+    const entry = (id: string): ProjectHistoryEntry => ({ id, label: "编辑", source: "manual", snapshot: base });
+    const bulky: ProjectDocument = {
+      ...base,
+      history: { past: [entry("past-1"), entry("past-2")], future: [entry("future-1")] },
+    };
+
+    const clean = await mountExport(base);
+    const stacked = await mountExport(bulky);
+    await act(async () => {
+      clean().openProjectExportDialog();
+      stacked().openProjectExportDialog();
+    });
+
+    // 撤销栈在 createProjectPackage 里被剥掉，算进来会让没超限的工程被误警。
+    expect(stacked().projectExportSizeEstimate!.baseBytes).toBe(clean().projectExportSizeEstimate!.baseBytes);
+  });
+
+  it("tells the user an over-budget export can never be imported back", async () => {
+    const result = await mountExport(projectWithCanvas(1200, 800), vi.fn(), [oversizedAsset()]);
+
+    await act(async () => { result().openProjectExportDialog(); });
+    await act(async () => { result().exportProjectPackage(); });
+
+    expect(result().exportState).toBe("success");
+    expect(statusMessages.at(-1)).toContain("完整工程包已导出");
+    expect(statusMessages.at(-1)).toContain("超过导入上限 24.0 MB");
+    expect(statusMessages.at(-1)).toContain("取消勾选「包含资源包」");
+  });
+
+  it("says nothing about size once the resources are left out", async () => {
+    const result = await mountExport(projectWithCanvas(1200, 800), vi.fn(), [oversizedAsset()]);
+
+    await act(async () => { result().openProjectExportDialog(); });
+    await act(async () => { result().setIncludeResourcesInProjectExport(false); });
+    await act(async () => { result().exportProjectPackage(); });
+
+    expect(statusMessages.at(-1)).toBe("工程已导出（未包含资源包）：0 条名单、0 个模板");
   });
 });
 
