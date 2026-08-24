@@ -10,10 +10,14 @@ export interface AiProposal {
 
 export interface ParseDataResult {
   provider: string;
+  // 与服务端 /api/ai/parse-data 的 ImportCandidate 对齐：本地回退与 LLM
+  // 解析都可能带回去向类型与可读提示（I-10-01 一键导入路径会读取 warnings）。
   candidates: Array<{
     name: string;
     university: string;
     city: string;
+    locationScope?: "china" | "international";
+    warnings?: string[];
     sourceLine: number;
     rawLine: string;
   }>;
