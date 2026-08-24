@@ -35,6 +35,24 @@ function seedLegacyWorkspaceDatabase(factory: IDBFactory, pack = workspacePack()
   });
 }
 
+function seedProjectDatabaseWithoutMetadata(factory: IDBFactory): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = factory.open("cengfan-map-studio", 2);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains("projects")) request.result.createObjectStore("projects");
+      if (!request.result.objectStoreNames.contains("workspace")) request.result.createObjectStore("workspace");
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      const tx = db.transaction("projects", "readwrite");
+      tx.objectStore("projects").put(storedProject("proj-pre-metadata"), "proj-pre-metadata");
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onabort = () => { db.close(); reject(tx.error); };
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
 function readWorkspaceKey(factory: IDBFactory, key: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const request = factory.open("cengfan-map-studio");
@@ -86,6 +104,22 @@ describe("project store IndexedDB version upgrade", () => {
     const factory = new IDBFactory();
     const store = createIndexedDbProjectStore(factory);
     expect(await store.list()).toEqual([]);
+  });
+
+  it("projects existing records into the metadata store during schema upgrade", async () => {
+    const factory = new IDBFactory();
+    await seedProjectDatabaseWithoutMetadata(factory);
+
+    const store = createIndexedDbProjectStore(factory);
+    const projects = await store.list();
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toMatchObject({
+      id: "proj-pre-metadata",
+      studentCount: 1,
+      assetCount: 0,
+    });
+    expect((await store.get("proj-pre-metadata"))?.pack.project.students[0]?.name).toBe("旧工作区学生");
   });
 
   it("does not re-migrate after the legacy key was consumed", async () => {

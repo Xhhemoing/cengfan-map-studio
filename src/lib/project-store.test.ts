@@ -9,7 +9,7 @@ import {
   type StoredProject,
 } from "./project-store";
 import { createProjectDocument } from "./project-document";
-import { createProjectPackage } from "./project-package";
+import { createProjectPackage, createProjectPackageEnvelope } from "./project-package";
 
 type TransactionHook = (tx: IDBTransaction, db: IDBDatabase) => void;
 
@@ -133,11 +133,12 @@ describe("project store", () => {
     await store.put(sample);
     const listed = await store.list();
     listed[0]!.name = "被修改的名字";
-    listed[0]!.pack.project.students[0]!.name = "被修改的学生";
+    listed[0]!.studentCount = 0;
     const relisted = await store.list();
     expect(relisted[0]!.name).toBe("示例：2026届毕业去向");
-    expect(relisted[0]!.pack.project.students[0]!.name).toBe("林舟");
+    expect(relisted[0]!.studentCount).toBe(12);
     expect((await store.get(sample.id))?.name).toBe("示例：2026届毕业去向");
+    expect((await store.get(sample.id))?.pack.project.students[0]!.name).toBe("林舟");
   });
 
   it("throws when the IndexedDB factory is unavailable", async () => {
@@ -150,6 +151,65 @@ describe("project store", () => {
 });
 
 describe("IndexedDB project store lifecycle", () => {
+  it("lists only projected metadata while get returns the complete package", async () => {
+    const real = new IDBFactory();
+    let armed = false;
+    const transactionStores: string[][] = [];
+    const store = createIndexedDbProjectStore(hookedFactory(real, (tx) => {
+      if (armed) transactionStores.push(Array.from(tx.objectStoreNames));
+    }));
+    const project = storedProject("proj-metadata", "元数据项目");
+    project.pack.project.students.push({
+      id: "student-1",
+      name: "测试学生",
+      university: "测试大学",
+      city: "杭州市",
+      visibility: true,
+    });
+    project.pack.assets.push({
+      id: "asset-1",
+      label: "测试素材",
+      kind: "background",
+      src: "data:image/png;base64,AAAA",
+      provinceIds: [],
+      source: "user",
+    });
+    await store.put(project);
+
+    armed = true;
+    const [listed] = await store.list();
+    armed = false;
+
+    expect(transactionStores).toEqual([["project-metadata"]]);
+    expect(listed).toMatchObject({
+      id: "proj-metadata",
+      name: "元数据项目",
+      studentCount: 1,
+      assetCount: 1,
+      fontCount: 0,
+      customTemplateCount: 0,
+    });
+    expect(listed?.pack).not.toHaveProperty("assets");
+    expect((await store.get("proj-metadata"))?.pack.assets[0]?.id).toBe("asset-1");
+  });
+
+  it("persists the package and its metadata in one write transaction", async () => {
+    const real = new IDBFactory();
+    let armed = false;
+    let writeStores: string[] = [];
+    const store = createIndexedDbProjectStore(hookedFactory(real, (tx) => {
+      if (armed && tx.mode === "readwrite") writeStores = Array.from(tx.objectStoreNames);
+    }));
+    await store.list();
+
+    armed = true;
+    await store.put(storedProject("proj-atomic"));
+
+    expect(writeStores.sort()).toEqual(["project-metadata", "projects"]);
+    expect((await store.list()).map((project) => project.id)).toEqual(["proj-atomic"]);
+    expect(await store.get("proj-atomic")).not.toBeNull();
+  });
+
   it("rejects put when the write transaction aborts after the request succeeded", async () => {
     const real = new IDBFactory();
     let armed = false;
@@ -220,4 +280,50 @@ describe("IndexedDB project store lifecycle", () => {
     const store = createIndexedDbProjectStore(new IDBFactory());
     await expect(store.remove("missing-project")).resolves.toBeUndefined();
   });
+});
+
+describe.skipIf(process.env.PROJECT_LIST_BENCH !== "1")("project list benchmark", () => {
+  it("reports five-run list medians for 5 MiB project packs", async () => {
+    const count = Number(process.env.PROJECT_LIST_BENCH_COUNT ?? "10");
+    const payload = "A".repeat(5 * 1024 * 1024);
+    const store = createIndexedDbProjectStore(new IDBFactory());
+    for (let index = 0; index < count; index += 1) {
+      const timestamp = new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString();
+      await store.put({
+        id: `bench-${index}`,
+        name: `Benchmark ${index}`,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        pack: createProjectPackageEnvelope({
+          project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
+          assets: [{
+            id: `asset-${index}`,
+            label: "5 MiB benchmark asset",
+            kind: "background",
+            src: `data:application/octet-stream;base64,${payload}`,
+            provinceIds: [],
+            source: "user",
+          }],
+          fonts: [],
+          customTemplates: [],
+          renderSettings: { mode: "normal", fixedFps: 20 },
+          now: new Date(timestamp),
+        }),
+      });
+    }
+
+    await store.list();
+    const runs: number[] = [];
+    for (let run = 0; run < 5; run += 1) {
+      const started = performance.now();
+      expect(await store.list()).toHaveLength(count);
+      runs.push(performance.now() - started);
+    }
+    const sorted = [...runs].sort((a, b) => a - b);
+    console.info("PROJECT_LIST_BENCH", JSON.stringify({
+      count,
+      runsMs: runs.map((value) => Number(value.toFixed(3))),
+      medianMs: Number(sorted[2]!.toFixed(3)),
+    }));
+  }, 120_000);
 });

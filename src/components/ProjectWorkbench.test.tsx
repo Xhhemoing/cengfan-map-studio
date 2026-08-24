@@ -72,7 +72,9 @@ describe("ProjectWorkbench", () => {
 
   it("renames a project via the card menu", async () => {
     const store = createMemoryProjectStore();
-    await store.put(createSampleProject());
+    const sample = createSampleProject();
+    await store.put(sample);
+    const getSpy = vi.spyOn(store, "get");
     const { container } = renderWorkbench(store);
     await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
     container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
@@ -80,6 +82,8 @@ describe("ProjectWorkbench", () => {
     vi.stubGlobal("prompt", vi.fn(() => "高三3班"));
     Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("重命名"))?.click();
     await vi.waitFor(() => expect(container.textContent).toContain("高三3班"));
+    expect(getSpy).toHaveBeenCalledWith(sample.id);
+    expect((await store.get(sample.id))?.pack.project.students).toHaveLength(12);
   });
 
   it("deletes a project after confirmation", async () => {
@@ -97,7 +101,9 @@ describe("ProjectWorkbench", () => {
 
   it("duplicates a project", async () => {
     const store = createMemoryProjectStore();
-    await store.put(createSampleProject());
+    const sample = createSampleProject();
+    await store.put(sample);
+    const getSpy = vi.spyOn(store, "get");
     const { container } = renderWorkbench(store);
     await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
     container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
@@ -107,6 +113,7 @@ describe("ProjectWorkbench", () => {
       const projects = await store.list();
       expect(projects.some((p) => p.name.includes("副本"))).toBe(true);
     });
+    expect(getSpy).toHaveBeenCalledWith(sample.id);
   });
 
   it("imports a cengfan sample package and keeps the display name", async () => {
