@@ -1,10 +1,15 @@
 import { type ReactElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DataWorkspace } from "./DataWorkspace";
 import type { Student } from "../lib/project-data";
 import type { ParseDataResult } from "../lib/ai-client";
+import {
+  parseWorkbookImport,
+  type WorkbookImportRequest,
+  type WorkbookImportResponse,
+} from "../workers/workbook-import.worker";
 
 const students: Student[] = [
   {
@@ -18,11 +23,93 @@ const students: Student[] = [
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
+class FakeWorkbookWorker {
+  static instances: FakeWorkbookWorker[] = [];
+
+  onmessage: ((event: MessageEvent<WorkbookImportResponse>) => void) | null = null;
+  onerror: ((event: ErrorEvent) => void) | null = null;
+  onmessageerror: ((event: MessageEvent) => void) | null = null;
+  messages: WorkbookImportRequest[] = [];
+  transfers: Array<Transferable[] | undefined> = [];
+  terminated = false;
+
+  constructor() {
+    FakeWorkbookWorker.instances.push(this);
+  }
+
+  postMessage(message: WorkbookImportRequest, transfer?: Transferable[]): void {
+    this.messages.push(message);
+    this.transfers.push(transfer);
+    queueMicrotask(() => {
+      if (this.terminated) return;
+      try {
+        this.onmessage?.({
+          data: {
+            type: "result",
+            requestId: message.requestId,
+            ...parseWorkbookImport(message),
+          },
+        } as MessageEvent<WorkbookImportResponse>);
+      } catch (error) {
+        this.onmessage?.({
+          data: {
+            type: "error",
+            requestId: message.requestId,
+            message: error instanceof Error ? error.message : "工作簿后台解析失败",
+          },
+        } as MessageEvent<WorkbookImportResponse>);
+      }
+    });
+  }
+
+  terminate(): void {
+    this.terminated = true;
+  }
+}
+
+class DeferredWorkbookWorker {
+  static instances: DeferredWorkbookWorker[] = [];
+
+  onmessage: ((event: MessageEvent<WorkbookImportResponse>) => void) | null = null;
+  onerror: ((event: ErrorEvent) => void) | null = null;
+  onmessageerror: ((event: MessageEvent) => void) | null = null;
+  messages: WorkbookImportRequest[] = [];
+  transfers: Array<Transferable[] | undefined> = [];
+  terminated = false;
+
+  constructor() {
+    DeferredWorkbookWorker.instances.push(this);
+  }
+
+  postMessage(message: WorkbookImportRequest, transfer?: Transferable[]): void {
+    this.messages.push(message);
+    this.transfers.push(transfer);
+  }
+
+  terminate(): void {
+    this.terminated = true;
+  }
+
+  emit(response: WorkbookImportResponse): void {
+    this.onmessage?.({ data: response } as MessageEvent<WorkbookImportResponse>);
+  }
+}
+
+const globalWithWorker = globalThis as unknown as { Worker?: unknown };
+const originalWorker = globalWithWorker.Worker;
+
+beforeEach(() => {
+  FakeWorkbookWorker.instances = [];
+  DeferredWorkbookWorker.instances = [];
+  globalWithWorker.Worker = FakeWorkbookWorker;
+});
+
 afterEach(() => {
   roots.splice(0).forEach(({ root, container }) => {
     flushSync(() => root.unmount());
     container.remove();
   });
+  globalWithWorker.Worker = originalWorker;
 });
 
 function render(element: ReactElement): HTMLDivElement {
@@ -949,6 +1036,77 @@ async function workbookBytes(sheets: Array<{ name: string; rows: unknown[][] }>)
 }
 
 describe("DataWorkspace import fidelity", () => {
+  it("rejects an oversized workbook before reading any bytes", async () => {
+    const read = vi.fn(async () => new ArrayBuffer(0));
+    const file = new File([], "oversized.xlsx");
+    Object.defineProperty(file, "size", { value: 26 * 1024 * 1024 });
+    Object.defineProperty(file, "arrayBuffer", { value: read });
+    const container = renderWorkspace();
+
+    dropFile(container, file);
+    await settle();
+
+    expect(container.textContent).toContain("最大支持 25 MB");
+    expect(read).not.toHaveBeenCalled();
+    expect(FakeWorkbookWorker.instances).toHaveLength(0);
+  });
+
+  it("keeps main-thread task chunks moving while a 10k-row workbook waits in the worker", async () => {
+    const rows = [
+      ["学生姓名", "录取院校", "城市"],
+      ...Array.from({ length: 10_000 }, (_, index) => [`学生${index}`, "浙江大学", "杭州市"]),
+    ];
+    const bytes = await workbookBytes([{ name: "学生数据", rows }]) as ArrayBuffer;
+    globalWithWorker.Worker = DeferredWorkbookWorker;
+    const container = renderWorkspace();
+
+    const startedAt = performance.now();
+    dropFile(container, fileWithBytes("10k.xlsx", async () => bytes));
+    const dispatchBlockingMs = performance.now() - startedAt;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const worker = DeferredWorkbookWorker.instances[0]!;
+    expect(worker.messages).toHaveLength(1);
+    expect(worker.messages[0]?.buffer.byteLength).toBe(bytes.byteLength);
+    expect(worker.transfers[0]).toEqual([bytes]);
+    // Untouched baseline median was 107.36 ms; posting to the worker must clear the ≥5% gate.
+    expect(dispatchBlockingMs).toBeLessThan(107.36 * 0.95);
+
+    let taskChunks = 0;
+    await new Promise<void>((resolve) => window.setTimeout(() => {
+      taskChunks += 1;
+      resolve();
+    }, 0));
+    expect(taskChunks).toBe(1);
+    expect(container.querySelector(".import-review")).toBeNull();
+
+    worker.emit({
+      type: "result",
+      requestId: worker.messages[0]!.requestId,
+      encoding: null,
+      parsed: {
+        candidates: [{
+          name: "完成同学",
+          university: "浙江大学",
+          city: "杭州市",
+          sourceLine: 2,
+          rawLine: "完成同学\t浙江大学\t杭州市",
+        }],
+        unparsed: [],
+        headerRowIndex: 0,
+        columnMappings: [],
+        unmappedHeaders: [],
+        missingRequiredFields: [],
+        sheetName: "学生数据",
+        skippedSheetNames: [],
+      },
+    });
+    await settle();
+
+    expect(container.querySelector(".import-review")?.textContent).toContain("完成同学");
+  });
+
   it("reports every dropped row with its sheet line and reason instead of skipping silently", async () => {
     const container = renderWorkspace();
     dropFile(container, fileWithBytes("roster.xlsx", () => workbookBytes([{
