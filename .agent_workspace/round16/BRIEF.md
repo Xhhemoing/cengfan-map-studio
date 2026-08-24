@@ -1,24 +1,34 @@
-# Round 16 任务简报（进行中）
+# Round 16 结论简报
 
-- **前置**: Round 15 已验证：tsc 绿、206 files / 1796 tests
-- **分支**: `cursor/agent-sota-polish-cbcd`（禁止 commit/stash/新分支）
+- **时间**: 2026-08-24
+- **前置**: Round 15 BRIEF（206 files / 1796 tests）
 - **模型**: 2× claude-fable-5-thinking-xhigh · 2× claude-opus-5-thinking-high-fast · 2× gpt-5.6-sol-xhigh-fast
+- **集成**: `tsc` app+node 0 error；全量 vitest **208 files / 1808 tests passed**（73.43s）
 
-## 真实缺口
+## 相对 Round 15
 
-1. `stackAtMargin` 对 `placed.items` 单趟插入序扫描：先被跳过的卡在 y 被推下来后不会重看，饱和末路能造出逐像素重合（与自身 docstring 矛盾）。修：循环到稳定，或按 y 排序再扫。不要把「重心漂到邻象限」当 bug。
-2. `LegacyEditorChrome.tsx` 旧皮顶栏撤销/重做没有 live region（R15 只修了 StudioTopbarActions）。
-3. `binary-import.ts` 约 168 行仍可能 `row.filter(Boolean)` 用于会再解析的文本；核对是否静默错列。
-4. `card-layout-optimizer.ts` 在 containFree 外包了 `sideOf`，R15 之后冗余但无害；可清理或不管。
-5. 禁止 Playwright、支付、CMYK、拆 china-universities。不要把 flock 假装成多机锁。
+| 代理 | Round 15 | Round 16 |
+| --- | --- | --- |
+| R16-fable-arch | containFree 外包冗余 sideOf | `repairPlacement` 直接返回 containFree；等价测试钉住三出口 |
+| R16-fable-sota | 仅新皮顶栏撤销播报 | 经典皮 `LegacyEditorChrome` 礼貌 live region（窄屏组外） |
+| R16-opus-layout | leftover sideOf；插入序漏扫 | `stackAtMargin` 按 y 升序扫列；像素重合归零（未 clamp 时） |
+| R16-opus-data | 文本路径保留空列 | workbook `rawLine` 走 `rowToTabLine`，不再 `filter(Boolean)` 左移列 |
+| R16-gpt-perf | 钉扎+健康 bench 已有 | 无产品阈值变更（诚实跳过；重合是正确性不变量） |
+| R16-gpt-server | CI tsc+vitest | concurrency cancel-in-progress；`gzip;q=0` 不压缩 |
 
-## 路径隔离
+## 验证链
 
-| 代理 | 允许 |
-| --- | --- |
-| R16-fable-arch | `src/lib/card-layout-optimizer.ts`、对应测试。去掉 containFree 外重复的 sideOf 若确认等价；或拆超 400 的优化器文件。禁止改 pack.ts。 |
-| R16-fable-sota | `src/components/studio-editor/LegacyEditorChrome.tsx`、其测试、`USER_GUIDE.md`（≤1 句）。旧皮撤销 live region。禁止 StudioTopbarActions / MapStyle / Delivery / DataUpload。 |
-| R16-opus-layout | `src/lib/card-layout-pack.ts`、`src/lib/card-layout-pack.test.ts`、必要时 `card-layout-modes.ts`。修 stackAtMargin 漏扫重合。禁止 cache。 |
-| R16-opus-data | `src/lib/binary-import.ts`、测试。若 168 行 filter(Boolean) 仍喂给解析器则修空列；否则找另一处静默错并修。禁止 html-table-parse / import-data（除非测试要 import）。 |
-| R16-gpt-perf | `scripts/perf-layout-bench.ts`、测试、`src/lib/layout-perf.ts`。opt-in 形状。无 CI 时限。 |
-| R16-gpt-server | `server/**` 或 `.github/workflows/ci.yml`。CI 加 concurrency cancel-in-progress；或修一个真实 server 洞。index.ts ≤400。 |
+| failure | cause | fix | recheck |
+| --- | --- | --- | --- |
+| 饱和棋盘 51% 未 clamp 却压卡 | 插入序单趟漏看已跳过的下方卡 | 列内按 y 升序再扫 | pack 套件 10/10；全量 208×1808 |
+| `rawLine` 期望 `浙江大学\t杭州市` | 测试固化了吞前导空列的旧行为 | 期望改为 `\t浙江大学\t杭州市` | binary-import + 相关导入 91 绿 |
+| `gzip;q=0` 仍带 Content-Encoding | 只匹配 token 不解析 q | 正质量才接受 gzip | security.test 34 绿 |
+| 无集成失败（tsc） | — | — | `tsc -p tsconfig.app.json` / `tsconfig.node.json` 0 error |
+
+## 仍未达印刷级 SOTA
+
+- 无真浏览器 E2E；协作 flock 只保证单机。
+- 饱和溢出仍堆在 `y = maxY`；`stackAtMargin` 纵向命中不含 gap（可贴得比 gap 更近）。
+- `layeredPack` 缺槽回落仍写死 `side: "right"`。
+- 全局设置页 / 闲置 `HistoryControls` 撤销无 live region。
+- CI 未跑 eslint。浏览器 PNG 仍为 sRGB。
