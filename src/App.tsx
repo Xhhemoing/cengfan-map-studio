@@ -588,40 +588,47 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   /**
    * 分区愈合信号。送出 effect 只在工作区或房间身份变化时重新武装,所以分区期间失败的
-   * 增量要等用户下一次编辑才会重投——用户不动就永远不上传。离线态被摘掉,或房间版本
+   * 增量要等用户下一次编辑才会重投——用户不动就永远不上传。连接从离线恢复,或房间版本
    * 前进(流上收到事件本身就证明连接回来了),都算连接已愈合,必须重新武装一次送出。
+   *
+   * 恢复次数(而不是离线标记本身)才是愈合判据:送出侧自己的传输层失败也会置位离线,
+   * 拿标记跳变当信号的话,"进入离线"这一跳同样会重新武装送出,分区期间每失败一次就
+   * 再发一笔注定失败的事务。恢复次数只在真正的「离线 → 在线」跳变时前进;房间进终局时
+   * 离线位被清掉但计数不动,过期房间因此不会被误判成愈合。
    *
    * 只置位标记、不额外触发渲染:这两个信号同时也是送出 effect 的依赖,而 effect 按声明
    * 顺序执行,标记在同一次 commit 里先于送出 effect 就绪。
    */
   const collaborationHealRoomRef = useRef<string | null>(null);
-  const collaborationHealOfflineRef = useRef(false);
+  const collaborationHealCountRef = useRef(0);
   const collaborationHealVersionRef = useRef(0);
   const collaborationHealPendingRef = useRef(false);
   useEffect(() => {
-    const { collaborationOffline, roomId, roomVersion } = collaboration;
+    const { connectionHealCount, roomId, roomVersion } = collaboration;
     // 换房间只是重新立水位线:新房间的版本号与上一间毫无关系,不能当成一次愈合。
     if (collaborationHealRoomRef.current !== roomId) {
       collaborationHealRoomRef.current = roomId;
-      collaborationHealOfflineRef.current = collaborationOffline;
+      collaborationHealCountRef.current = connectionHealCount;
       collaborationHealVersionRef.current = roomVersion;
       collaborationHealPendingRef.current = false;
       return;
     }
-    const healed = collaborationHealOfflineRef.current && !collaborationOffline;
+    const healed = connectionHealCount > collaborationHealCountRef.current;
     const advanced = roomVersion > collaborationHealVersionRef.current;
-    collaborationHealOfflineRef.current = collaborationOffline;
+    collaborationHealCountRef.current = connectionHealCount;
     collaborationHealVersionRef.current = Math.max(collaborationHealVersionRef.current, roomVersion);
     if (healed || advanced) collaborationHealPendingRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collaboration.collaborationOffline, collaboration.roomId, collaboration.roomVersion]);
+  }, [collaboration.connectionHealCount, collaboration.roomId, collaboration.roomVersion]);
 
   useEffect(() => {
     // 每次送出都消费掉愈合标记:重投是一次性的补投,不是自带重试的循环。
     const healResend = collaborationHealPendingRef.current;
     collaborationHealPendingRef.current = false;
-    const { roomId, roomAccessToken, roomRole, roomReadonly, roomClosed } = collaboration;
-    if (!roomId || !roomAccessToken || roomRole === "viewer" || roomReadonly || roomClosed || !collaborationBaselineRef.current) return;
+    const { roomId, roomAccessToken, roomRole, roomReadonly, roomClosed, roomExpired } = collaboration;
+    // 过期房间与关闭房间一样是终局:这一笔事务不可能落地,失败回执还会把终局提示盖成
+    // "网络异常",让用户以为等网络回来就能续上。愈合标记在上面已经消费掉,不会攒到下一次。
+    if (!roomId || !roomAccessToken || roomRole === "viewer" || roomReadonly || roomClosed || roomExpired || !collaborationBaselineRef.current) return;
     if (suppressCollaborationSendRef.current) {
       suppressCollaborationSendRef.current = false;
       // 愈合往往正是被远端事件带回来的,而远端事件会置位抑制标记。照常吞掉这一次,
@@ -727,12 +734,16 @@ function StudioApp({ projectId }: { projectId?: string }) {
       } catch (error) {
         if (outdated()) return;
         if (!(error instanceof CollaborationClientError) || error.code !== "VERSION_CONFLICT") {
-          collaboration.setCollaborationStatus("error");
           // 传输层失败和服务端拒绝是两回事:本地修改仍然有效,连接一回来这批增量就会被
-          // 愈合信号重新投出去,面板要照实说,别让用户以为改动已经丢了。
-          // TODO(R3-3): hook 还没导出 collaborationOffline 的 setter,送出侧只能改文案;
-          // setter 落地后这里应直接置位离线态,与断流路径共用同一套说法。
-          collaboration.setCollaborationMessage(isCollaborationTransportError(error)
+          // 愈合信号重新投出去,面板要照实说,别让用户以为改动已经丢了。上传方向单独断掉
+          // (流还活着)时也必须置位离线态,否则这种半边分区既没有离线提示,恢复时也
+          // 探测不到愈合——恢复计数只会在离线过之后才前进。服务端拒绝(冲突、无权限)
+          // 不属于离线:那种处境里网络好得很,重试也不会变好。
+          const partitioned = isCollaborationTransportError(error);
+          if (partitioned) collaboration.setCollaborationOffline(true);
+          collaboration.setCollaborationStatus("error");
+          // 离线态自带一句通用文案,这里覆盖成送出侧的说法:失败的是上传,不是整条连接。
+          collaboration.setCollaborationMessage(partitioned
             ? "网络异常，本地修改已保留，恢复后会自动续传"
             : error instanceof Error ? error.message : "增量同步失败");
           return;
@@ -769,10 +780,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
     return () => window.clearTimeout(timer);
     // Depend on the individual room fields rather than the whole controller
     // object so the debounce only re-arms when the room or workspace changes.
-    // collaborationOffline/roomVersion are the heal signals: without them a diff
-    // stranded by a partition waits for the next user edit.
+    // connectionHealCount/roomVersion are the heal signals: without them a diff
+    // stranded by a partition waits for the next user edit. The offline flag
+    // itself is deliberately not a dependency — this effect now raises it, and
+    // re-arming on the raise would retry a doomed upload during the partition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collaborationClientId, customTemplates, project, renderSettings, collaboration.collaborationOffline, collaboration.roomAccessToken, collaboration.roomId, collaboration.roomRole, collaboration.roomReadonly, collaboration.roomClosed, collaboration.roomVersion, userAssets, userFonts]);
+  }, [collaborationClientId, customTemplates, project, renderSettings, collaboration.connectionHealCount, collaboration.roomAccessToken, collaboration.roomId, collaboration.roomRole, collaboration.roomReadonly, collaboration.roomClosed, collaboration.roomExpired, collaboration.roomVersion, userAssets, userFonts]);
 
   const commitProject = (next: ProjectDocument) => {
     if (!collaboration.canEdit) {
@@ -1582,6 +1595,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
       ownClientId={collaborationClientId}
       roomReadonly={collaboration.roomReadonly}
       roomClosed={collaboration.roomClosed}
+      roomExpired={collaboration.roomExpired}
+      collaborationOffline={collaboration.collaborationOffline}
       invitationToken={collaboration.invitationToken}
       hasStoredRoomAccess={collaboration.hasStoredRoomAccess}
       collaborationStatus={collaboration.collaborationStatus}
