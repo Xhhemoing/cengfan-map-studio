@@ -75,6 +75,44 @@ describe("collaboration room store", () => {
     expect(store.leave("MEM004", owner.access.accessToken, "editor").members.map((member) => member.clientId)).toEqual(["owner"]);
   });
 
+  it("revokes the access token of a member the owner removes", () => {
+    const secrets = ["owner-access", "editor-invite", "editor-access", "viewer-invite", "viewer-access"];
+    const store = createRoomStore({ generateId: () => "MEM006", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const editorInvite = store.createInvitation("MEM006", owner.access.accessToken, "editor");
+    const editor = store.join("MEM006", { inviteToken: editorInvite.token, clientId: "editor", displayName: "编辑同学" });
+    const viewerInvite = store.createInvitation("MEM006", owner.access.accessToken, "viewer");
+    const viewer = store.join("MEM006", { inviteToken: viewerInvite.token, clientId: "viewer", displayName: "查看同学" });
+
+    expect(store.leave("MEM006", owner.access.accessToken, "editor").members.map((member) => member.clientId)).toEqual(["owner", "viewer"]);
+
+    const forbidden = expect.objectContaining({ code: "ROOM_FORBIDDEN" });
+    expect(() => store.authorize("MEM006", editor.access.accessToken, "read")).toThrowError(forbidden);
+    expect(() => store.refreshMember("MEM006", editor.access.accessToken, "editor")).toThrowError(forbidden);
+    expect(() => store.apply("MEM006", editor.access.accessToken, { txId: "kicked-1", clientId: "editor", baseVersion: 0, snapshot: { title: "越权" } }))
+      .toThrowError(forbidden);
+    expect(() => store.subscribe("MEM006", editor.access.accessToken, () => undefined)).toThrowError(forbidden);
+    expect(store.get("MEM006")!.members.map((member) => member.clientId)).toEqual(["owner", "viewer"]);
+    expect(store.listParticipants("MEM006", owner.access.accessToken).map((participant) => participant.id)).toEqual(["owner", "viewer"]);
+
+    // 只撤销被踢者的凭证,其他成员不受影响。
+    expect(store.refreshMember("MEM006", viewer.access.accessToken, "viewer").members.map((member) => member.clientId))
+      .toEqual(["owner", "viewer"]);
+  });
+
+  it("keeps a self-leaving member's token usable so they can come back", () => {
+    const secrets = ["owner-access", "editor-invite", "editor-access"];
+    const store = createRoomStore({ generateId: () => "MEM007", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const editorInvite = store.createInvitation("MEM007", owner.access.accessToken, "editor");
+    const editor = store.join("MEM007", { inviteToken: editorInvite.token, clientId: "editor", displayName: "编辑同学" });
+
+    expect(store.leave("MEM007", editor.access.accessToken, "editor").members.map((member) => member.clientId)).toEqual(["owner"]);
+    expect(store.authorize("MEM007", editor.access.accessToken, "write")).toMatchObject({ id: "editor", role: "editor" });
+    expect(store.refreshMember("MEM007", editor.access.accessToken, "editor").members.map((member) => member.clientId))
+      .toEqual(["owner", "editor"]);
+  });
+
   it("refreshes only the caller's own membership", () => {
     let tick = 1_000;
     const secrets = ["owner-access", "viewer-invite", "viewer-access"];

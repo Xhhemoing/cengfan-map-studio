@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { getProvinceNames, toShortProvinceName } from "../../src/lib/map-data";
+import { resolveProvinceName } from "../../src/lib/search-catalog";
 import { matchLocalStatIntent, tryLocalPreroute } from "./local-preroute";
 
 const digest = {
@@ -47,8 +49,28 @@ describe("matchLocalStatIntent 命中", () => {
     ["北京多少个同学", "北京市"],
     ["内蒙古的人数是多少", "内蒙古自治区"],
     ["新疆有多少名学生", "新疆维吾尔自治区"],
+    // 城市目录里直辖市/特区自带的别名，旧的本地词表没有这些写法。
+    ["帝都有几人", "北京市"],
+    ["魔都有多少人", "上海市"],
+    ["渝有多少人", "重庆市"],
   ])("把「%s」解析成省份 %s", (message, province) => {
     expect(matchLocalStatIntent(message)).toEqual({ kind: "province-count", province });
+  });
+
+  /**
+   * 预路由在服务端跑，不能 import 带 geojson 的 search-catalog（见实现里的注释），
+   * 但测试跑在 Vite 下可以。用这条把两侧钉死：地图省名或目录改名时这里先红，
+   * 而不是等到线上答错省份。
+   */
+  it("每个省的全名与短名都与 search-catalog 的权威解析一致", () => {
+    const provinces = getProvinceNames();
+    expect(provinces).toHaveLength(34);
+    for (const name of provinces) {
+      for (const variant of new Set([name, toShortProvinceName(name)])) {
+        expect(matchLocalStatIntent(`${variant}有几人`))
+          .toEqual({ kind: "province-count", province: resolveProvinceName(variant) });
+      }
+    }
   });
 });
 

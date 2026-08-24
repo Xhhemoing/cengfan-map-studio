@@ -428,6 +428,25 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     return { id: room.id, version: nextRoom.version, members: membersOf(nextRoom) };
   };
 
+  /**
+   * 撤销某个成员在房间里的全部访问凭证。同一 clientId 多次加入会拿到多个 token,
+   * 因此必须遍历整张表,不能只删一条。
+   */
+  const revokeParticipantAccess = (key: string, clientId: string) => {
+    const records = accessRecords.get(key);
+    if (!records) return;
+    for (const [tokenHash, participant] of records) {
+      if (participant.id === clientId) records.delete(tokenHash);
+    }
+  };
+
+  /**
+   * 离开房间有两种语义,按调用者与被移除者是否同一人区分:
+   * - 自离:只从成员列表移除,保留 accessRecords 中的 token,沿用“凭已保存的访问凭证可重进”的现有语义;
+   * - 房主踢人:同时撤销被踢者的全部 token,否则 authorize 仍会放行其读写,
+   *   并且被踢者的 refreshMember 心跳会把自己重新加回成员列表。
+   * 回滚:删除下面的 revokeParticipantAccess 调用即可恢复“只删成员、不撤凭证”的旧行为。
+   */
   const leave = (id: string, accessToken: string, clientId: string): { id: string; version: number; members: RoomMember[] } => {
     const participant = authorize(id, accessToken, "read");
     const key = id.toUpperCase();
@@ -437,6 +456,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     if (leavingClientId !== participant.id && participant.role !== "owner") {
       throw new CollaborationError("ROOM_FORBIDDEN", "只有房间创建者可以移除其他成员");
     }
+    if (leavingClientId !== participant.id) revokeParticipantAccess(key, leavingClientId);
     const nextRoom = { ...room, members: room.members.filter((member) => member.clientId !== leavingClientId) };
     rooms.set(key, nextRoom);
     touch(key);

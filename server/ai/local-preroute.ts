@@ -1,3 +1,4 @@
+import { chinaCities, chinaProvinces } from "../../src/data/china-locations";
 import { isRecord, type ChatMessage } from "./agent-types";
 
 /**
@@ -28,36 +29,71 @@ export interface LocalPrerouteInput {
   messages?: ChatMessage[];
 }
 
-const PROVINCE_NAMES = [
-  "北京市", "天津市", "河北省", "山西省", "内蒙古自治区", "辽宁省", "吉林省", "黑龙江省",
-  "上海市", "江苏省", "浙江省", "安徽省", "福建省", "江西省", "山东省", "河南省",
-  "湖北省", "湖南省", "广东省", "广西壮族自治区", "海南省", "重庆市", "四川省", "贵州省",
-  "云南省", "西藏自治区", "陕西省", "甘肃省", "青海省", "宁夏回族自治区", "新疆维吾尔自治区",
-  "香港特别行政区", "澳门特别行政区", "台湾省",
-];
+/**
+ * 省名词表来自共享目录 `src/data/china-locations`，本文件不再自带 34 省硬编码列表。
+ *
+ * 为什么不直接调用 `src/lib/search-catalog` 的 `resolveProvinceName`：那条依赖链是
+ * `search-catalog → map-data → ../assets/china.geojson?raw`，`?raw` 是 Vite 专有导入。
+ * 服务端由 tsx 直接运行（`npm run dev:ai` / `npm start`），import 阶段就会抛
+ * ERR_UNKNOWN_FILE_EXTENSION 而让整个 API 起不来（vitest 走 Vite 转换，反而看不出来）。
+ * 目录数据与 GeoJSON 的 34 个省名逐字一致，因此这里用同一份目录数据兜住权威性，
+ * 并在 local-preroute.test.ts 里逐项对齐 `resolveProvinceName`，任一侧改名都会红。
+ *
+ * 回滚：删掉本段与目录 import，恢复本地 PROVINCE_NAMES 词表 + provinceKey 后缀剥离即可，
+ * 其余匹配逻辑不依赖目录。
+ */
+const PROVINCE_NAMES = chinaProvinces.map((province) => province.name);
 
-function provinceKey(name: string): string {
-  return name
-    .replace(/(?:特别行政区|自治区|省|市)$/u, "")
-    .replace(/(?:壮族|回族|维吾尔族|维吾尔)$/u, "");
+/**
+ * 与 `src/lib/map-data.ts` 的 `toShortProvinceName` 同一套后缀；该模块因 geojson 导入
+ * 无法在服务端加载，故此处保留一份最小拷贝，由测试逐项对齐权威短名。
+ */
+const PROVINCE_SUFFIXES = ["特别行政区", "维吾尔自治区", "壮族自治区", "回族自治区", "自治区", "省", "市"];
+
+function toShortProvinceName(name: string): string {
+  return PROVINCE_SUFFIXES.reduce((shortName, suffix) => shortName.replace(suffix, ""), name);
 }
 
-const PROVINCE_BY_KEY = new Map(PROVINCE_NAMES.map((name) => [provinceKey(name), name]));
-const PROVINCE_ALIASES = new Map([["内蒙", "内蒙古自治区"]]);
+/** 直辖市与特区在城市目录里既是市又是省，取它们的中文别名（帝都、魔都、津、渝……）。 */
+function catalogProvinceAliases(): Array<[string, string]> {
+  return chinaCities
+    .filter((city) => city.name === city.province)
+    .flatMap((city) => (city.aliases ?? [])
+      // 英文缩写（HK / Macao）在整串锚定的中文句式里没有用武之地，还要额外考虑大小写，直接跳过。
+      .filter((alias) => /^[\u4e00-\u9fa5]+$/u.test(alias))
+      .map((alias): [string, string] => [alias, city.province]));
+}
 
+/** 目录里没有的口语缩写，只补这一条；其余一律以目录为准。 */
+const COLLOQUIAL_ALIASES: Array<[string, string]> = [["内蒙", "内蒙古自治区"]];
+
+const PROVINCE_BY_TOKEN = ((): Map<string, string> => {
+  const index = new Map<string, string>();
+  const add = (token: string, province: string) => {
+    if (token && !index.has(token)) index.set(token, province);
+  };
+  for (const name of PROVINCE_NAMES) {
+    add(name, name);
+    add(toShortProvinceName(name), name);
+  }
+  for (const [alias, province] of [...catalogProvinceAliases(), ...COLLOQUIAL_ALIASES]) {
+    add(alias, province);
+  }
+  return index;
+})();
+
+/** 只认词表内的写法；认不出返回 null，交给主模型，绝不把原样输入当成省名。 */
 function resolveProvince(raw: string): string | null {
-  return PROVINCE_BY_KEY.get(provinceKey(raw)) ?? PROVINCE_ALIASES.get(raw) ?? null;
+  return PROVINCE_BY_TOKEN.get(raw.trim()) ?? null;
 }
 
 /**
  * 省份必须由名称枚举本身匹配。用通配汉字捕获会被回溯挑走「广东有」这类错误切分，
  * 长名优先才能让「广东省」不被「广东」截断。
  */
-const PROVINCE_ALTERNATION = [...new Set([
-  ...PROVINCE_NAMES,
-  ...PROVINCE_NAMES.map(provinceKey),
-  ...PROVINCE_ALIASES.keys(),
-])].sort((left, right) => right.length - left.length).join("|");
+const PROVINCE_ALTERNATION = [...PROVINCE_BY_TOKEN.keys()]
+  .sort((left, right) => right.length - left.length)
+  .join("|");
 
 /**
  * 任何带动作的措辞都直接放弃预路由，交给主模型。这里只是第二道闸：

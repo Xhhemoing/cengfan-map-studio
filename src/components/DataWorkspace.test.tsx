@@ -645,6 +645,11 @@ describe("DataWorkspace", () => {
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     flushSync(() => {});
 
+    // 逐行的名字之外，整组也要有名字和条数，读屏才知道自己进的是哪张待确认表。
+    const group = container.querySelector<HTMLElement>(".review-list")!;
+    expect(group.getAttribute("role")).toBe("group");
+    expect(group.getAttribute("aria-label")).toBe("待确认导入 3 条");
+
     const checkboxes = Array.from(container.querySelectorAll<HTMLInputElement>(".review-row input[type=checkbox]"));
     // 同名候选靠源行号区分；姓名缺失的候选也要念得出来，不能只剩分隔符。
     expect(checkboxes.map((box) => box.getAttribute("aria-label"))).toEqual([

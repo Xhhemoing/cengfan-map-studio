@@ -141,12 +141,69 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
 
   const optionsRef = useRef(options);
   const receiveRoomUpdateRef = useRef<(room: CollaborationRoom<ProjectPackage>) => void>(() => undefined);
+  const receiveRoomMembersRef = useRef<(members: RoomMember[]) => boolean>(() => true);
   useEffect(() => {
     optionsRef.current = options;
   });
 
+  const storedRoomAccess = (id: string): string | null => loadBrowserValue(
+    () => window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`),
+    null,
+  );
+
+  const persistRoomAccess = (id: string, accessToken: string) => {
+    try {
+      window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`, accessToken);
+    } catch {
+      // The active connection remains usable when browser storage is unavailable.
+    }
+  };
+
+  const forgetRoomAccess = (id: string) => {
+    try {
+      window.localStorage.removeItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`);
+    } catch {
+      // Local project data is intentionally untouched when credentials cannot be cleared.
+    }
+  };
+
+  /** 清空本地房间状态(不通知服务端):主动离开与被移出后收尾共用。 */
+  const resetCollaborationRoomState = (message: string) => {
+    if (roomId) forgetRoomAccess(roomId);
+    setRoomId(null);
+    setRoomAccessToken(null);
+    setRoomRole(null);
+    setRoomParticipants([]);
+    setRoomMembers([]);
+    setRoomReadonly(false);
+    setRoomClosed(false);
+    setInvitationToken(null);
+    roomRef.current = null;
+    accessTokenRef.current = null;
+    baselineRef.current = null;
+    versionRef.current = 0;
+    setRoomVersion(0);
+    setCollaborationStatus("idle");
+    setCollaborationMessage(message);
+  };
+
+  /**
+   * 成员列表事件的统一入口。房主移除成员时服务端会一并撤销其访问凭证,
+   * 被移除端再同步只会一直拿到 403,所以一旦发现自己不在成员列表里就直接收尾本地房间状态。
+   * 返回 false 表示本端已退出,调用方不应再套用这次房间数据。
+   * 回滚:让本函数只执行 setRoomMembers(members) 并恒返回 true。
+   */
+  const receiveRoomMembers = (members: RoomMember[]): boolean => {
+    if (members.some((member) => member.clientId === clientId)) {
+      setRoomMembers(members);
+      return true;
+    }
+    resetCollaborationRoomState("已被移出房间；本地工程保留，不会再同步");
+    return false;
+  };
+
   const receiveRoomUpdate = (room: CollaborationRoom<ProjectPackage>) => {
-    if (room.members) setRoomMembers(room.members);
+    if (room.members && !receiveRoomMembers(room.members)) return;
     if (room.readonly !== undefined) setRoomReadonly(room.readonly);
     if (room.closed) {
       setRoomClosed(true);
@@ -177,6 +234,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
 
   useEffect(() => {
     receiveRoomUpdateRef.current = receiveRoomUpdate;
+    receiveRoomMembersRef.current = receiveRoomMembers;
   });
 
   const failedBackfill = (): CollaborationBackfillOutcome => ({
@@ -261,7 +319,9 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       void backfillCollaborationGap();
     }, {
       version: versionRef.current,
-      onMembers: (members) => setRoomMembers(members),
+      onMembers: (members) => {
+        receiveRoomMembersRef.current(members);
+      },
       onClosed: () => {
         setRoomClosed(true);
         setRoomReadonly(true);
@@ -274,27 +334,6 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     // so the stream only depends on room identity/token.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomAccessToken, roomId]);
-
-  const storedRoomAccess = (id: string): string | null => loadBrowserValue(
-    () => window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`),
-    null,
-  );
-
-  const persistRoomAccess = (id: string, accessToken: string) => {
-    try {
-      window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`, accessToken);
-    } catch {
-      // The active connection remains usable when browser storage is unavailable.
-    }
-  };
-
-  const forgetRoomAccess = (id: string) => {
-    try {
-      window.localStorage.removeItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`);
-    } catch {
-      // Local project data is intentionally untouched when credentials cannot be cleared.
-    }
-  };
 
   const startCollaborationRoom = async () => {
     setCollaborationStatus("connecting");
@@ -397,22 +436,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
         // Leaving is best-effort; local state is cleared regardless.
       });
     }
-    if (roomId) forgetRoomAccess(roomId);
-    setRoomId(null);
-    setRoomAccessToken(null);
-    setRoomRole(null);
-    setRoomParticipants([]);
-    setRoomMembers([]);
-    setRoomReadonly(false);
-    setRoomClosed(false);
-    setInvitationToken(null);
-    roomRef.current = null;
-    accessTokenRef.current = null;
-    baselineRef.current = null;
-    versionRef.current = 0;
-    setRoomVersion(0);
-    setCollaborationStatus("idle");
-    setCollaborationMessage("已断开；未连接时不会上传或覆盖工程");
+    resetCollaborationRoomState("已断开；未连接时不会上传或覆盖工程");
   };
 
   const setCollaborationRoomAccess = async (action: RoomAccessAction) => {

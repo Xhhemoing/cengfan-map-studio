@@ -1098,6 +1098,68 @@ describe("unified application server", () => {
     await expect(ownerKick.json()).resolves.toMatchObject({ members: [{ clientId: "client-a", role: "owner" }] });
   });
 
+  it("revokes the room token of a kicked member but keeps it after a self-leave", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const invite = async (): Promise<string> => {
+      const response = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, {
+        method: "POST",
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ role: "editor" }),
+      });
+      return (await response.json() as { token: string }).token;
+    };
+    const join = async (inviteToken: string, clientId: string): Promise<string> => {
+      const response = await fetch(`${origin}/api/rooms/${created.room.id}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inviteToken, clientId, displayName: clientId }),
+      });
+      return (await response.json() as { access: { accessToken: string } }).access.accessToken;
+    };
+    const kickedToken = await join(await invite(), "kicked");
+    const leaverToken = await join(await invite(), "leaver");
+
+    const kick = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "kicked" }),
+    });
+    expect(kick.status).toBe(200);
+
+    const readAfterKick = await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(kickedToken) });
+    expect(readAfterKick.status).toBe(403);
+    const heartbeatAfterKick = await fetch(`${origin}/api/rooms/${created.room.id}/members`, {
+      method: "POST",
+      headers: roomHeaders(kickedToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "kicked" }),
+    });
+    expect(heartbeatAfterKick.status).toBe(403);
+    const writeAfterKick = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
+      method: "POST",
+      headers: roomHeaders(kickedToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ txId: "kicked-1", clientId: "kicked", baseVersion: 0, snapshot: { title: "越权" } }),
+    });
+    expect(writeAfterKick.status).toBe(403);
+
+    const selfLeave = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+      method: "POST",
+      headers: roomHeaders(leaverToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "leaver" }),
+    });
+    expect(selfLeave.status).toBe(200);
+    const rejoinHeartbeat = await fetch(`${origin}/api/rooms/${created.room.id}/members`, {
+      method: "POST",
+      headers: roomHeaders(leaverToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "leaver" }),
+    });
+    expect(rejoinHeartbeat.status).toBe(200);
+    const rejoined = await rejoinHeartbeat.json() as { members: Array<{ clientId: string }> };
+    expect(rejoined.members.map((member) => member.clientId)).toEqual(["client-a", "leaver"]);
+  });
+
   it("validates member bodies and rejects heartbeat on closed rooms", async () => {
     const server = createAiServer();
     servers.push(server);

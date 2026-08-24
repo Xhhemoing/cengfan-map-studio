@@ -18,7 +18,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
 } from "react";
 import { createNoteElement, createTextElement } from "./lib/canvas-data";
 import {
@@ -143,22 +142,7 @@ import {
 import { usePosterExport } from "./lib/usePosterExport";
 import { applyTypographyFont, type TypographyTarget } from "./lib/typography";
 import type { ImageThemeResult } from "./lib/image-color";
-import {
-  loadStudioSkin,
-  loadThemeMode,
-  resolveTheme,
-  saveStudioSkin,
-  saveThemeMode,
-  type ThemeMode,
-} from "./lib/theme";
-import {
-  getPanelWidthBounds,
-  normalizeEditorPanelLayout,
-  readEditorPanelLayout,
-  writeEditorPanelLayout,
-  type EditorPanelLayout,
-  type PanelSide,
-} from "./lib/editor-layout";
+import { useStudioPreferences } from "./lib/use-studio-preferences";
 import { layoutHealthIssues } from "./lib/layout-health-cache";
 import { listResourceHealthIssues } from "./lib/resource-health";
 
@@ -314,11 +298,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => typeof window === "undefined" ? "system" : loadThemeMode());
-  const [skin, setSkin] = useState(() => typeof window === "undefined" ? "atelier" : loadStudioSkin());
-  const [prefersDark, setPrefersDark] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true);
-  const [panelLayout, setPanelLayout] = useState<EditorPanelLayout>(() => readEditorPanelLayout());
-  const [resizingPanel, setResizingPanel] = useState<PanelSide | null>(null);
 
   const resolvedRenderInterval = renderIntervalMs(renderSettings);
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
@@ -344,60 +323,20 @@ function StudioApp({ projectId }: { projectId?: string }) {
     () => listResourceHealthIssues(project, userAssets, userFonts),
     [project, userAssets, userFonts],
   );
-  const resolvedTheme = resolveTheme(themeMode, prefersDark);
-  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
-  const sidebarBounds = getPanelWidthBounds("sidebar", viewportWidth, panelLayout.inspectorWidth);
-  const inspectorBounds = getPanelWidthBounds("inspector", viewportWidth, panelLayout.sidebarWidth);
-  const workspaceStyle = {
-    "--sidebar-width": `${panelLayout.sidebarWidth}px`,
-    "--inspector-width": `${panelLayout.inspectorWidth}px`,
-  } as CSSProperties;
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => setPrefersDark(media.matches);
-    media.addEventListener?.("change", onChange);
-    return () => media.removeEventListener?.("change", onChange);
-  }, []);
-
-  useEffect(() => {
-    saveThemeMode(themeMode);
-  }, [themeMode]);
-
-  useEffect(() => {
-    saveStudioSkin(skin);
-  }, [skin]);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const root = document.documentElement;
-    root.dataset.editorTheme = resolvedTheme;
-    root.dataset.editorSkin = skin;
-    root.style.colorScheme = resolvedTheme === "dark" ? "dark" : "light";
-  }, [resolvedTheme, skin]);
-
-  useEffect(() => {
-    try {
-      writeEditorPanelLayout(window.localStorage, panelLayout, window.innerWidth);
-    } catch {
-      // Panel sizing remains usable when browser storage is unavailable.
-    }
-  }, [panelLayout]);
-
-  useEffect(() => {
-    const onResize = () => {
-      setPanelLayout((current) => normalizeEditorPanelLayout(current, window.innerWidth));
-    };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  const updatePanelWidth = (side: PanelSide, value: number) => {
-    setPanelLayout((current) => normalizeEditorPanelLayout({
-      ...current,
-      [side === "sidebar" ? "sidebarWidth" : "inspectorWidth"]: value,
-    }, viewportWidth));
-  };
+  const {
+    themeMode,
+    setThemeMode,
+    skin,
+    setSkin,
+    resolvedTheme,
+    panelLayout,
+    resizingPanel,
+    setResizingPanel,
+    sidebarBounds,
+    inspectorBounds,
+    workspaceStyle,
+    updatePanelWidth,
+  } = useStudioPreferences();
 
   useEffect(() => {
     if (typeof document === "undefined") return;

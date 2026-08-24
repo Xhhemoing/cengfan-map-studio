@@ -5,7 +5,7 @@
  * `applyImportedPackage` and `reportStatus` callbacks.
  */
 import { useRef, useState, type RefObject } from "react";
-import { downloadDataUrl, downloadText, serializePosterSvg, svgToPngDataUrl } from "./export-poster";
+import { downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
 import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
 import type { CustomTemplateRecord } from "./template-store";
@@ -138,12 +138,13 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       if (!svg) throw new Error("海报预览尚未准备好");
       await ensureUserFontsLoaded(userFonts);
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
-      const dataUrl = await svgToPngDataUrl(source, {
+      // PNG 走 blob：大倍率导出不再产生整包 base64 字符串，下载后由 downloadBlob 负责 revoke。
+      const blob = await svgToPngBlob(source, {
         width: project.canvas.width * pngScale,
         height: project.canvas.height * pngScale,
         transparentBackground: transparentExport,
       });
-      downloadDataUrl(dataUrl, "我的毕业去向图.png");
+      downloadBlob(blob, "我的毕业去向图.png");
       setExportState("success");
       reportStatus("PNG 已导出");
     } catch (error) {

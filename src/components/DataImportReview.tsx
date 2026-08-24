@@ -122,7 +122,8 @@ export function ImportCandidateReview({
   return (
     <div className="import-review">
       <PanelHeader title="确认候选" meta={`有效 ${summary.valid} · 未识别 ${unparsedCount} · 缺失字段 ${summary.missing} · 重复 ${summary.duplicate}`} />
-      <div className="review-list">
+      {/* 勾选框逐行有名字了,但整组还没有:读屏进到这里只会念一串孤立的复选框,不知道自己在哪张表、还剩几条要确认。 */}
+      <div className="review-list" role="group" aria-label={`待确认导入 ${rows.length} 条`}>
         {rows.map((row, index) => {
           const scope = describeCandidateScope(row);
           return (
