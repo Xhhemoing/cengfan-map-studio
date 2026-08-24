@@ -1,35 +1,15 @@
-import { StrictMode, useSyncExternalStore, type ReactElement } from "react";
+import { StrictMode, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { App } from "./App";
 import { WorkflowPrototype } from "./components/WorkflowPrototype";
-import { ProjectWorkbench } from "./components/ProjectWorkbench";
 import { StudioMuiProvider } from "./components/StudioMuiProvider";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
-import { createIndexedDbProjectStore, type ProjectStoreHealth } from "./lib/project-store";
+import { ProjectRoute, WorkbenchRoute } from "./components/StudioRoutes";
+import { editorProjectStore } from "./lib/editor-project-store";
 import "./styles.css";
 
-/** 订阅槽:store 在构造时就要拿到回调,而路由组件要到首次渲染才存在。 */
-const healthSubscribers = new Set<() => void>();
-
-export const workbenchStore = createIndexedDbProjectStore(globalThis.indexedDB, {
-  onHealthChange: () => { for (const notify of [...healthSubscribers]) notify(); },
-});
-
-function subscribeHealth(notify: () => void): () => void {
-  healthSubscribers.add(notify);
-  return () => { healthSubscribers.delete(notify); };
-}
-
-/** 每次渲染都重新读取快照,而不是把降级前的值定格下来:恢复持久化后提示必须自行消失。 */
-function readHealth(): ProjectStoreHealth {
-  return workbenchStore.health;
-}
-
-function WorkbenchRoute() {
-  const health = useSyncExternalStore(subscribeHealth, readHealth, readHealth);
-  return <ProjectWorkbench store={workbenchStore} health={health} />;
-}
+/** 工作台路由沿用的旧名字,指向同一个共享实例。 */
+export const workbenchStore = editorProjectStore;
 
 function projectIdFromHash(hash: string): string | null {
   const match = hash.match(/^#\/project\/([A-Za-z0-9-]+)$/);
@@ -52,7 +32,14 @@ function renderView(container: HTMLElement, view: ReactElement) {
   }
   if (!root) root = createRoot(container);
   const activeRoot: Root = root; // const 捕获,避免闭包内 TS18047 窄化丢失
-  flushSync(() => activeRoot.render(<StrictMode><StudioMuiProvider><AppErrorBoundary>{view}</AppErrorBoundary></StudioMuiProvider></StrictMode>));
+  // 崩溃边界必须拿到共享 store:自建实例看不到降级会话留在内存里的项目,导出通道会空手而归。
+  flushSync(() => activeRoot.render(
+    <StrictMode>
+      <StudioMuiProvider>
+        <AppErrorBoundary projectStore={editorProjectStore}>{view}</AppErrorBoundary>
+      </StudioMuiProvider>
+    </StrictMode>,
+  ));
 }
 
 export function renderApp(container: HTMLElement): void {
@@ -63,7 +50,7 @@ export function renderApp(container: HTMLElement): void {
     }
     const projectId = projectIdFromHash(window.location.hash);
     if (projectId) {
-      renderView(container, <App projectId={projectId} />);
+      renderView(container, <ProjectRoute projectId={projectId} />);
       return;
     }
     renderView(container, <WorkbenchRoute />);
