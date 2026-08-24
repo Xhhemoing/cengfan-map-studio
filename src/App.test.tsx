@@ -2976,3 +2976,53 @@ describe("Editor action seams extracted into src/lib (R8-7)", () => {
     expect(container.querySelector(".data-upload-workspace")).not.toBeNull();
   });
 });
+
+describe("Lifecycle seams extracted into src/lib (R9-5)", () => {
+  function renderLegacyStage(stage: string): HTMLDivElement {
+    window.localStorage.clear();
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+      stage,
+      savedAt: "2026-08-24T00:00:00.000Z",
+    }));
+    return renderLegacyApp({ clearStorage: false });
+  }
+
+  function findButton(container: HTMLElement, text: string): HTMLButtonElement {
+    return [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent?.includes(text))!;
+  }
+
+  it("captures a custom template and names it back to the user", () => {
+    vi.spyOn(window, "prompt").mockReturnValue("我的春日版式");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const container = renderLegacyStage("frame");
+
+    click(findButton(container, "保存当前整体模板"));
+
+    expect(container.textContent).toContain("已保存模板：我的春日版式");
+    expect(container.querySelector(".view-list")?.textContent).toContain("我的春日版式");
+  });
+
+  it("keeps the new-project reset behind its confirmation", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const container = renderLegacyStage("roster");
+    const before = container.querySelectorAll("[data-student-row]").length;
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="新建项目"]')!);
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(container.querySelectorAll("[data-student-row]").length).toBe(before);
+    expect(container.textContent).not.toContain("已新建空项目");
+  });
+
+  it("reports the force-save outcome after the local overwrite lands", async () => {
+    const container = renderLegacyStage("deliver");
+
+    click(findButton(container, "保存到本机"));
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("强制保存完成：全部数据已覆盖到浏览器本地");
+    });
+    expect(window.localStorage.getItem("cengfan-map-studio:workspace-mirror")).toContain("renderSettings");
+  });
+});

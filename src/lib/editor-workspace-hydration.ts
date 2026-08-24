@@ -81,9 +81,12 @@ export function useEditorWorkspaceHydration(
     browserStores,
     initialExportedAt,
     projectStore,
-    record,
     workspaceSync,
   } = options;
+  // 项目身份的三个 ref 由 useEditorProjectRecord 持有,这里只往里写值。先解构成局部 ref,
+  // 写的就是 ref 本身而不是「调用方传进来的那个对象」——后者是 react-hooks/immutability 明令
+  // 禁止的改法。
+  const { idRef: projectIdRef, nameRef: projectNameRef, createdAtRef: projectCreatedAtRef } = options.record;
 
   const latestWorkspaceRef = useRef<EditorWorkspaceSnapshot>({
     project,
@@ -141,7 +144,7 @@ export function useEditorWorkspaceHydration(
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
-    record.idRef.current = projectId;
+    projectIdRef.current = projectId;
     void loadStoredProject(projectStore, projectId).then((outcome) => {
       if (cancelled) return;
       const sink = sinkRef.current;
@@ -152,13 +155,13 @@ export function useEditorWorkspaceHydration(
         sink.setProjectMissing(outcome.observation);
         return;
       }
-      record.nameRef.current = outcome.record.name;
-      record.createdAtRef.current = outcome.record.createdAt;
+      projectNameRef.current = outcome.record.name;
+      projectCreatedAtRef.current = outcome.record.createdAt;
       adoptWorkspace(hydratedRef, skipNextPendingRef, sink, outcome.restored);
       sink.reportStatus(`已打开项目「${outcome.record.name}」`);
     });
     return () => { cancelled = true; };
-  }, [projectId, projectStore, record]);
+  }, [projectId, projectStore, projectIdRef, projectNameRef, projectCreatedAtRef]);
 
   return {
     readWorkspace: () => latestWorkspaceRef.current,
