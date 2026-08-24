@@ -371,6 +371,37 @@ describe("AgentSession", () => {
     await expect(session.run("地图小一点")).resolves.toMatchObject({ kind: "failed", error: expect.stringContaining(expected) });
   });
 
+  it("tells the user how long to wait when a 429 carries Retry-After", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: new Headers({ "Retry-After": "12" }),
+      json: async () => ({ error: { code: "AI_RATE_LIMITED", message: "请求过于频繁，请稍后重试。" } }),
+    }));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await expect(session.run("地图小一点")).resolves.toEqual({ kind: "failed", error: "请求过于频繁，请 12 秒后再试。" });
+  });
+
+  it("keeps the vague rate-limit sentence when Retry-After is missing or unparsable", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const rateLimited = (headers?: Headers) => ({
+      ok: false,
+      status: 429,
+      headers,
+      json: async () => ({ error: { code: "AI_RATE_LIMITED", message: "请求过于频繁，请稍后重试。" } }),
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(rateLimited())
+      .mockResolvedValueOnce(rateLimited(new Headers({ "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const session = new AgentSession(project, { mode: "conservative" });
+      await expect(session.run("地图小一点")).resolves.toEqual({ kind: "failed", error: "请求过于频繁，请稍后重试。" });
+    }
+  });
+
   it("marks a session unusable for continuation once the server reports an expired receipt", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const fetchMock = vi.fn()

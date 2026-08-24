@@ -7,6 +7,7 @@ import type { StudioAsset } from "./assets";
 import { duplicateStudentIds } from "./data-duplicate";
 import { createId } from "./ids";
 import { classifyAgentCall, highestRisk, type AgentToolCall, type RiskLevel } from "./agent-risk";
+import { rateLimitedMessage } from "./ai-client";
 import { buildProjectDigest, digestFingerprint, type ProjectDigestLayer } from "./project-digest";
 import type { ProjectDocument, ProjectTransaction } from "./project-document";
 import { updateSceneTarget, type SceneSelection } from "./scene-document";
@@ -743,7 +744,8 @@ export class AgentSession {
             const data = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
             const code = data?.error?.code;
             const messageByCode: Record<string, string> = {
-              AI_RATE_LIMITED: "请求过于频繁，请稍后重试。",
+              // 退避秒数只有响应头知道；读不到时 rateLimitedMessage 会退回原来的模糊说法。
+              AI_RATE_LIMITED: rateLimitedMessage(response),
               AI_VALIDATION_ERROR: "请求内容未通过校验，请重新开始当前 AI 任务。",
               AI_RECEIPT_EXPIRED: "会话预算回执已过期或已被使用，无法继续这轮对话。",
               AI_UPSTREAM_UNAVAILABLE: "AI 服务暂时不可用，请稍后重试。",
