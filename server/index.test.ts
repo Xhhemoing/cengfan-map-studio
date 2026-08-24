@@ -504,8 +504,9 @@ describe("unified application server", () => {
 
       const unchanged = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-digest", budgetReceipt: firstBody.budgetReceipt, digest: { map: { scale: 1 } }, messages: history });
       expect(unchanged.status).toBe(200);
-      expect(prompts[1]).not.toContain("\\\"scale\\\":1");
       expect(prompts[1]).toContain("与上一轮相同");
+      // 命中去重只省明细数组：标量投影仍然回贴，续聊问版面时模型不至于失明。
+      expect(prompts[1]).toContain("\\\"scale\\\":1");
 
       const changed = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-digest", budgetReceipt: (JSON.parse(unchanged.body) as { budgetReceipt: string }).budgetReceipt, digest: { map: { scale: 0.85 } }, messages: history });
       expect(changed.status).toBe(200);
@@ -555,7 +556,9 @@ describe("unified application server", () => {
       const continued = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-layer", budgetReceipt: firstBody.budgetReceipt, digest: coreDigest, digestFingerprint: "fnv1a32:deadbeef", messages: history });
       expect(continued.status).toBe(200);
       expect(prompts[1]).toContain("与上一轮相同");
-      expect(prompts[1]).not.toContain("\\\"scale\\\":1");
+      expect(prompts[1]).toContain("\\\"scale\\\":1");
+      // 省下的是明细：首轮 full 里的 textElements 条目不会跟着骨架重贴（查 id，正文里的“标题”二字工具说明也有）。
+      expect(prompts[1]).not.toContain("\\\"t1\\\"");
 
       // 工程真的变了：指纹跟着变，整包投影必须重发。
       const changed = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-layer", budgetReceipt: (JSON.parse(continued.body) as { budgetReceipt: string }).budgetReceipt, digest: { ...coreDigest, map: { scale: 0.85 } }, digestFingerprint: "fnv1a32:0000cafe", messages: history });

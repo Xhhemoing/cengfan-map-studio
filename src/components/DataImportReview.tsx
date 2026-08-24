@@ -75,6 +75,17 @@ function describeCandidateScope(row: ImportReviewRow): string {
   return parts.join(" · ");
 }
 
+/**
+ * 勾选框的无障碍名称:靠 label 里的文本拼出来的名字对读屏没用——
+ * 姓名缺失的候选只会念出分隔符,同名候选之间也分不出是哪一条。
+ * 统一带上源行号,任何一行都能被念清楚、也能被指名定位。
+ */
+function describeCandidateCheckbox(row: ImportReviewRow): string {
+  const subject = `第 ${row.sourceLine} 行 ${row.name.trim() || "未识别姓名"}`;
+  const detail = [row.university.trim(), row.city.trim()].filter(Boolean).join(" · ");
+  return detail ? `导入${subject}（${detail}）` : `导入${subject}`;
+}
+
 export function ImportCandidateReview({
   rows,
   unparsedCount,
@@ -118,6 +129,7 @@ export function ImportCandidateReview({
             <label key={`${row.sourceLine}-${index}`} className="review-row">
               <input
                 type="checkbox"
+                aria-label={describeCandidateCheckbox(row)}
                 checked={row.accepted}
                 onChange={(event) => onToggleRow(index, event.target.checked)}
               />

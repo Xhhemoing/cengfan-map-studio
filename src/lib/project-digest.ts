@@ -116,7 +116,7 @@ export interface DigestRect {
   height: number;
 }
 
-/** 单张目的地卡片在画布上的实际方位；与 students.topProvinces 逐条对齐。 */
+/** 单张目的地卡片在画布上的实际方位；按 province 与 students.topProvinces 对齐（同省可有多块）。 */
 export interface DigestCardBlock {
   province: string;
   id: string;
@@ -150,8 +150,16 @@ const layoutSectionCache = new WeakMap<ProjectDocument, ProjectDigest["layout"]>
 
 /**
  * 版面真值的投影：地图内容框与卡片方位都取自画布同一份 `buildRenderFacts`，
- * 模型看到的方位与用户看到的一致（手工位置优先）。每个 topProvince 至多一块，
- * 分组不是省份时按卡片首个学生的省份对齐。
+ * 模型看到的方位与用户看到的一致（手工位置优先）。分组不是省份时按卡片首个学生的省份对齐。
+ *
+ * city / university 分组下同一省份会落出多张卡（浙江省名下的杭州、宁波各一张），
+ * 所以每个 topProvince 投影它名下的全部卡片、按省份连续排列；条数上限沿用
+ * `DIGEST_ELEMENT_LIMIT`，预算上限仍由 `shrinkToBudget` 兜底。province 分组下
+ * 每省本来就只有一组，投影结果与按省一块时逐条相同。
+ *
+ * 回滚：把 `cardBlocks` 换回「按 topProvinces 取每省第一块」的 flatMap 并删掉
+ * `takeCardBlocks` 即可。字段形状（含 cardBlockCount）未变，`shrinkToBudget`、
+ * core 层裁剪与 agent 提示词都不需要同步改动，也不影响已存的会话。
  */
 function buildLayoutSection(
   project: ProjectDocument,
@@ -161,27 +169,57 @@ function buildLayoutSection(
   if (cached) return cached;
   const facts = buildRenderFacts(project);
   const placements = new Map(facts.placements.map((placement) => [placement.id, effectiveCardPlacement(project, placement)]));
+  const blocksByProvince = new Map<string, DigestCardBlock[]>();
+  for (const fact of facts.cards) {
+    if (fact.isInternational) continue;
+    const placement = placements.get(fact.group.key);
+    if (!placement) continue;
+    const province = fact.province || "未知";
+    const block: DigestCardBlock = {
+      province,
+      id: shortText(fact.group.key),
+      x: Math.round(placement.x),
+      y: Math.round(placement.y),
+      w: Math.round(placement.width),
+      h: Math.round(placement.height),
+      side: placement.side,
+    };
+    const existing = blocksByProvince.get(province);
+    if (existing) existing.push(block);
+    else blocksByProvince.set(province, [block]);
+  }
   const layout: ProjectDigest["layout"] = {
     mapContentBounds: roundRect(facts.geometry.mapContentBounds),
     // 总数取求解出的全部方位块，与下面按 topProvinces 对齐的样本无关，裁剪也不会改它。
     cardBlockCount: placements.size,
-    cardBlocks: topProvinces.flatMap(({ province }): DigestCardBlock[] => {
-      const fact = facts.cards.find((card) => !card.isInternational && (card.province || "未知") === province);
-      const placement = fact ? placements.get(fact.group.key) : undefined;
-      if (!fact || !placement) return [];
-      return [{
-        province,
-        id: shortText(fact.group.key),
-        x: Math.round(placement.x),
-        y: Math.round(placement.y),
-        w: Math.round(placement.width),
-        h: Math.round(placement.height),
-        side: placement.side,
-      }];
-    }),
+    cardBlocks: takeCardBlocks(topProvinces, blocksByProvince, DIGEST_ELEMENT_LIMIT),
   };
   layoutSectionCache.set(project, layout);
   return layout;
+}
+
+/**
+ * 条数配额按轮发放：第 n 轮依 topProvinces 顺序各取该省第 n 张卡，取满 `limit` 即止，
+ * 最后再按省份归拢成连续块输出。轮转是为了让「一个省几十张城市卡」不会把靠后的省份
+ * 整省挤出投影——每省先各拿到一块，富余额度才给多卡省份。
+ */
+function takeCardBlocks(
+  topProvinces: readonly { province: string }[],
+  blocksByProvince: ReadonlyMap<string, DigestCardBlock[]>,
+  limit: number,
+): DigestCardBlock[] {
+  const buckets = topProvinces.map(({ province }) => blocksByProvince.get(province) ?? []);
+  const quotas = buckets.map(() => 0);
+  const maxRounds = Math.max(0, ...buckets.map((bucket) => bucket.length));
+  let taken = 0;
+  for (let round = 0; round < maxRounds && taken < limit; round += 1) {
+    for (let index = 0; index < buckets.length && taken < limit; index += 1) {
+      if (quotas[index]! >= buckets[index]!.length) continue;
+      quotas[index] += 1;
+      taken += 1;
+    }
+  }
+  return buckets.flatMap((bucket, index) => bucket.slice(0, quotas[index]));
 }
 
 /**

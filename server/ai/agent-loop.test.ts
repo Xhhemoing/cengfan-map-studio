@@ -176,7 +176,7 @@ describe("runAgentTurn", () => {
     expect(sent.filter((message) => message.role === "user" && message.content === "地图小一点")).toHaveLength(1);
   });
 
-  it("replaces the digest payload with a short notice when the caller says it did not change", async () => {
+  it("keeps the projection skeleton in the digest message when the caller says it did not change", async () => {
     let sent: Array<{ role: string; content?: string | null }> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
       sent = (JSON.parse(String(init.body)) as { messages: Array<{ role: string; content?: string | null }> }).messages;
@@ -187,14 +187,56 @@ describe("runAgentTurn", () => {
       calls(["check_health", {}]),
       { role: "tool", tool_call_id: "call-0", content: "{\"ok\":true}" },
     ];
-    await runAgentTurn(CONFIG, { userMessage: "地图小一点", digest: { map: { scale: 1 } }, messages: history, digestUnchanged: true });
+    const digest = {
+      layer: "core",
+      map: { scale: 1 },
+      layout: { mapContentBounds: { x: 10, y: 20, width: 300, height: 400 }, cardBlocks: [{ province: "北京", id: "b1" }], cardBlockCount: 4 },
+      textElements: [{ id: "t1", content: "毕业去向" }],
+      textElementCount: 7,
+      students: { total: 42, topProvinces: [{ province: "北京", count: 9 }] },
+    };
+    await runAgentTurn(CONFIG, { userMessage: "地图小一点", digest, messages: history, digestUnchanged: true });
 
     const noticeIndex = sent.findIndex((message) => message.content?.includes("与上一轮相同"));
+    const notice = sent[noticeIndex]?.content ?? "";
     expect(noticeIndex).toBeGreaterThan(-1);
-    expect(sent.some((message) => message.content?.includes("\"scale\":1"))).toBe(false);
-    // 前缀纪律不变：短声明仍夹在 history 与本轮用户消息之间。
+    // digest 消息从不回写 messages，续聊窗口里没有上一轮投影：关键字段必须原地重贴。
+    expect(notice).toContain("\"layer\":\"core\"");
+    expect(notice).toContain("\"mapContentBounds\"");
+    expect(notice).toContain("\"cardBlockCount\":4");
+    expect(notice).toContain("\"textElementCount\":7");
+    expect(notice).toContain("\"topProvinces\"");
+    expect(notice).toContain("\"scale\":1");
+    // 省下来的只有明细：三处大数组不重贴，并明说「字段缺失≠没有」。
+    expect(notice).not.toContain("毕业去向");
+    // 只查 JSON 里的键：说明文字本身就点名了 layout.cardBlocks。
+    expect(notice).not.toContain("\"cardBlocks\"");
+    expect(notice).toContain("字段缺失不代表");
+    expect(notice).toContain("inspect_project");
+    // 前缀纪律不变：digest 消息仍夹在 history 与本轮用户消息之间。
     expect(sent.findIndex((message) => message.content === "{\"ok\":true}")).toBeLessThan(noticeIndex);
     expect(sent.at(-1)).toMatchObject({ role: "user", content: "地图小一点" });
+  });
+
+  it("emits byte-identical text for an unchanged digest so the prefix stays cacheable", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const messages = (JSON.parse(String(init.body)) as { messages: Array<{ content?: string | null }> }).messages;
+      seen.push(messages.find((message) => message.content?.includes("与上一轮相同"))?.content ?? "");
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ choices: [{ message: { role: "assistant", content: "完成" } }] }) };
+    }));
+    const digest = { layer: "core", layout: { mapContentBounds: { x: 0, y: 0, width: 10, height: 10 }, cardBlockCount: 2 }, textElementCount: 3 };
+    await runAgentTurn(CONFIG, { userMessage: "继续", digest, messages: [], digestUnchanged: true });
+    // 轮次推进、键序抖动都不该改动文本：内容一样就必须逐字节一样。
+    await runAgentTurn(CONFIG, {
+      userMessage: "继续",
+      digest: { textElementCount: 3, layout: { cardBlockCount: 2, mapContentBounds: { height: 10, width: 10, y: 0, x: 0 } }, layer: "core" },
+      messages: [{ role: "user", content: "继续" }, calls(["check_health", {}]), { role: "tool", tool_call_id: "call-0", content: "{\"ok\":true}" }],
+      digestUnchanged: true,
+    });
+
+    expect(seen[0]).not.toBe("");
+    expect(seen[1]).toBe(seen[0]);
   });
 
   it("still sends the whole digest on the first turn and whenever it changed", async () => {

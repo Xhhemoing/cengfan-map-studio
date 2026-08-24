@@ -581,7 +581,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       };
       const markConflict = () => {
         collaboration.setCollaborationStatus("conflict");
-        collaboration.setCollaborationMessage("同一内容被其他成员修改；已暂停上传，请重新加入房间确认最新版本");
+        collaboration.setCollaborationMessage("同一内容被其他成员修改；自动同步未成功，请稍后重试或重新加入房间确认最新版本");
       };
       // 冲突后先补齐远端增量,再基于新基线重试一次提交(只重试一次,不做无限重试)。
       // 远端优先:与刚补齐的远端操作重叠的本地改动不自动重推,直接转人工确认。

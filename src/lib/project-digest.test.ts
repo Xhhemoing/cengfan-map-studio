@@ -81,6 +81,95 @@ describe("buildProjectDigest", () => {
     }
   });
 
+  it("projects every card of a province when cards are grouped by city", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "city" });
+    const digest = buildProjectDigest({
+      ...project,
+      students: [
+        { id: "s1", name: "甲", university: "浙大", city: "杭州", province: "浙江省", visibility: true },
+        { id: "s2", name: "乙", university: "宁波大学", city: "宁波", province: "浙江省", visibility: true },
+        { id: "s3", name: "丙", university: "温州大学", city: "温州", province: "浙江省", visibility: true },
+        { id: "s4", name: "丁", university: "北大", city: "北京", province: "北京市", visibility: true },
+      ],
+    });
+
+    expect(digest.cards.grouping).toBe("city");
+    // 同省多张卡都要在场，否则续聊问「杭州那张卡」会落空。
+    expect(digest.layout.cardBlocks.filter((block) => block.province === "浙江省").map((block) => block.id))
+      .toEqual(["杭州", "宁波", "温州"]);
+    expect(digest.layout.cardBlocks.map((block) => block.id)).toContain("北京");
+    expect(digest.layout.cardBlocks).toHaveLength(4);
+    expect(digest.layout.cardBlockCount).toBe(4);
+    for (const block of digest.layout.cardBlocks) {
+      expect([block.x, block.y, block.w, block.h].every(Number.isInteger)).toBe(true);
+      expect(block.h).toBeGreaterThan(0);
+    }
+  });
+
+  it("projects every card of a province when cards are grouped by university", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "university" });
+    const digest = buildProjectDigest({
+      ...project,
+      students: [
+        { id: "s1", name: "甲", university: "浙大", city: "杭州", province: "浙江省", visibility: true },
+        { id: "s2", name: "乙", university: "宁波大学", city: "宁波", province: "浙江省", visibility: true },
+        { id: "s3", name: "丙", university: "北大", city: "北京", province: "北京市", visibility: true },
+      ],
+    });
+
+    expect(digest.cards.grouping).toBe("university");
+    // 省内顺序沿用画布的分组顺序（人数降序、同人数按标题排序），不是学生录入顺序。
+    expect(digest.layout.cardBlocks.filter((block) => block.province === "浙江省").map((block) => block.id))
+      .toEqual(["宁波大学", "浙大"]);
+    expect(digest.layout.cardBlockCount).toBe(3);
+  });
+
+  it("keeps one block per top province when cards are grouped by province", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const digest = buildProjectDigest({
+      ...project,
+      students: [
+        { id: "s1", name: "甲", university: "浙大", city: "杭州", province: "浙江省", visibility: true },
+        { id: "s2", name: "乙", university: "宁波大学", city: "宁波", province: "浙江省", visibility: true },
+        { id: "s3", name: "丙", university: "北大", city: "北京", province: "北京市", visibility: true },
+      ],
+    });
+
+    expect(digest.cards.grouping).toBe("province");
+    expect(digest.layout.cardBlocks.map((block) => block.province)).toEqual(digest.students.topProvinces.map((entry) => entry.province));
+    expect(digest.layout.cardBlocks.map((block) => block.id)).toEqual(["浙江省", "北京市"]);
+    expect(digest.layout.cardBlockCount).toBe(2);
+  });
+
+  it("caps the city-grouped blocks per round so a card-heavy province cannot crowd out the others", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "city" });
+    const provinces = ["北京市", "浙江省", "广东省", "江苏省", "四川省", "湖北省", "山东省", "河南省", "陕西省", "福建省"];
+    const digest = buildProjectDigest({
+      ...project,
+      students: provinces.flatMap((province, provinceIndex) => Array.from({ length: provinceIndex === 0 ? 40 : 2 }, (_, index) => ({
+        id: `s-${province}-${index}`,
+        name: `同学${index}`,
+        university: `${province}大学`,
+        city: `${province}城市${index}`,
+        province,
+        visibility: true,
+      }))),
+    });
+
+    expect(digest.layout.cardBlocks.length).toBeLessThanOrEqual(DIGEST_ELEMENT_LIMIT);
+    expect(digest.layout.cardBlockCount).toBe(58);
+    // 靠前省份的 40 张城市卡不能把靠后的省份整省挤掉。
+    for (const { province } of digest.students.topProvinces) {
+      expect(digest.layout.cardBlocks.some((block) => block.province === province)).toBe(true);
+    }
+    // 同省的块连续排列，模型可以按省定位。
+    expect(digest.layout.cardBlocks.map((block) => block.province))
+      .toEqual([...digest.layout.cardBlocks.map((block) => block.province)].sort((left, right) =>
+        digest.students.topProvinces.findIndex((entry) => entry.province === left)
+        - digest.students.topProvinces.findIndex((entry) => entry.province === right)));
+    expect(digestByteLength(digest)).toBeLessThanOrEqual(DIGEST_MAX_BYTES);
+  });
+
   it("reports the manual card position instead of the solved one", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const students = [{ id: "s1", name: "甲", university: "北大", city: "北京", province: "北京市", visibility: true }];

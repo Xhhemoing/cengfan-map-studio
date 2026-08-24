@@ -649,7 +649,7 @@ describe("App student editing", () => {
         path: ["project", "students"],
         item: expect.objectContaining({ id: "student-1", name: "冲突林舟" }),
       }));
-      expect(container.textContent).not.toContain("请重新加入房间确认最新版本");
+      expect(container.textContent).not.toContain("自动同步未成功");
     } finally {
       globalThis.fetch = originalFetch;
       vi.unstubAllGlobals();
@@ -666,7 +666,7 @@ describe("App student editing", () => {
     ));
     try {
       await editStudentInRoom(container, request, "再冲突林舟");
-      await vi.waitFor(() => expect(container.textContent).toContain("请重新加入房间确认最新版本"), { timeout: 5_000 });
+      await vi.waitFor(() => expect(container.textContent).toContain("自动同步未成功，请稍后重试或重新加入房间确认最新版本"), { timeout: 5_000 });
 
       // 只补齐一次、只重试一次,不做无限重试。
       expect(request.mock.calls.filter(([input]) => String(input).includes("/operations?"))).toHaveLength(1);

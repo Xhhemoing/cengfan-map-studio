@@ -18,7 +18,7 @@ export interface AgentLoopRequest {
   digest: Record<string, unknown>;
   messages: ChatMessage[];
   budget?: AgentBudgetState;
-  /** 续聊时由路由层给出：当前 digest 指纹与上一轮回执里的一致，本轮只发短声明而不重发整包投影。 */
+  /** 续聊时由路由层给出：当前 digest 指纹与上一轮回执里的一致，本轮只回贴裁掉明细的投影骨架。 */
   digestUnchanged?: boolean;
   requestId?: string;
   signal?: AbortSignal;
@@ -172,6 +172,26 @@ export function buildSystemMessage(): ChatMessage {
   return { role: "system", content: SYSTEM_PROMPT };
 }
 
+/**
+ * 命中 digest 去重时仍要回贴的投影骨架：只把三处明细数组（textElements、assetElements、
+ * layout.cardBlocks）整段裁掉，layer、各 *Count、layout.mapContentBounds、
+ * students.topProvinces 以及 canvas/map/cards/guests 等标量字段一律照发。
+ * 明细才是 digest 的大头，裁掉它们既省下重复付费，又不至于让模型在续聊时对版面完全失明
+ * ——digest 消息从不回写客户端 messages，上一轮的投影不会留在下一轮窗口里。
+ */
+function digestRecap(digest: Record<string, unknown> | undefined): Record<string, unknown> {
+  const recap: Record<string, unknown> = { ...(digest ?? {}) };
+  delete recap.textElements;
+  delete recap.assetElements;
+  const layout = recap.layout;
+  if (layout && typeof layout === "object" && !Array.isArray(layout)) {
+    const trimmed = { ...(layout as Record<string, unknown>) };
+    delete trimmed.cardBlocks;
+    recap.layout = trimmed;
+  }
+  return recap;
+}
+
 function localToolCall(id: string, name: string, args: Record<string, unknown>): AgentToolCall {
   return { id, name, arguments: args };
 }
@@ -275,16 +295,21 @@ export async function runAgentTurn(
     return { kind: "finish", summary: "工具参数多次校验失败，已停止继续尝试。" };
   }
 
-  // digest 与上一轮完全一致时只发一句短声明：整包 JSON 上一轮已经进过 prompt，重发是纯重复付费。
+  // digest 与上一轮完全一致时回贴裁掉明细的骨架，而不是一句「与上一轮相同」的空指针：
+  // 上一轮的 digest 消息不会回写进客户端 messages，续聊窗口里根本没有那份投影，
+  // 只发短声明会让模型在问版面时全盲。骨架按 canonicalValue 规范化后序列化，
+  // 内容相同的两轮文本逐字节一致，前缀缓存不会被键序抖动打散。
+  // 回滚：把 digestUnchanged 分支改回单句短声明即可（模型会退回续聊失明的老行为）。
   // 精简层要额外挑明「空数组≠没有」，否则模型会把被裁掉的明细当成画布上不存在。
   const coreLayer = request.digest?.layer === "core";
   const coreLayerNote = coreLayer
     ? "（本轮投影是精简层 layer=core：layout.cardBlocks、textElements、assetElements 已被整段裁掉，空数组不代表没有；实际数量看 layout.cardBlockCount、textElementCount、assetElementCount，需要明细请调用 inspect_project。）"
     : "";
+  const unchangedNote = "（明细数组 textElements、assetElements、layout.cardBlocks 本轮未重贴，字段缺失不代表画布上没有；数量一律以各 *Count 为准，需要明细请调用 inspect_project。）";
   const digestMessage: ChatMessage = {
     role: "user",
     content: request.digestUnchanged
-      ? `当前工程精简投影与上一轮相同，继续使用已给出的工程投影（只读；不要把它当作可直接写回的完整工程）。${coreLayerNote}`
+      ? `当前工程精简投影与上一轮相同，下面是同一份投影去掉明细后的关键字段（只读；不要把它当作可直接写回的完整工程）：${JSON.stringify(canonicalValue(digestRecap(request.digest)))}${unchangedNote}${coreLayerNote}`
       : `当前工程精简投影（只读；不要把它当作可直接写回的完整工程）：${JSON.stringify(request.digest)}${coreLayerNote}`,
   };
   const history = request.messages.filter((message) => message.role !== "system");

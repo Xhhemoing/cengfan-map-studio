@@ -616,6 +616,52 @@ describe("DataWorkspace", () => {
     expect(rows[2]!.querySelector(".review-row__scope")).toBeNull();
   });
 
+  it("names every candidate checkbox so a screen reader can tell the rows apart", async () => {
+    const onAppendStudents = vi.fn();
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
+      provider: "local-fallback",
+      candidates: [
+        { name: "苏禾", university: "浙江大学", city: "杭州", sourceLine: 1, rawLine: "苏禾 浙江大学 杭州" },
+        { name: "苏禾", university: "南京大学", city: "南京", sourceLine: 2, rawLine: "苏禾 南京大学 南京" },
+        { name: "", university: "", city: "", sourceLine: 3, rawLine: "空行" },
+      ],
+      unparsed: [],
+    }));
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "候选名单");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    const checkboxes = Array.from(container.querySelectorAll<HTMLInputElement>(".review-row input[type=checkbox]"));
+    // 同名候选靠源行号区分；姓名缺失的候选也要念得出来，不能只剩分隔符。
+    expect(checkboxes.map((box) => box.getAttribute("aria-label"))).toEqual([
+      "导入第 1 行 苏禾（浙江大学 · 杭州）",
+      "导入第 2 行 苏禾（南京大学 · 南京）",
+      "导入第 3 行 未识别姓名",
+    ]);
+    expect(checkboxes.every((box) => box.tabIndex === 0 && !box.disabled)).toBe(true);
+
+    const second = container.querySelector<HTMLInputElement>('input[aria-label="导入第 2 行 苏禾（南京大学 · 南京）"]')!;
+    click(second);
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    // 按名字点到的是第 2 行，同名的第 1 行不受影响。
+    expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "苏禾", university: "浙江大学" })]);
+  });
+
   it("uses AI parsing for one-click import of text the local rules cannot read", async () => {
     const onAppendStudents = vi.fn();
     const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
