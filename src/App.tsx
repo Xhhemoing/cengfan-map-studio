@@ -99,7 +99,6 @@ import {
 } from "./lib/editor-commands";
 import {
   applyTransaction,
-  createProjectDocument,
   redoTransaction,
   undoTransaction,
   type ProjectDocument,
@@ -112,7 +111,8 @@ import {
   loadCustomTemplates,
   type CustomTemplateRecord,
 } from "./lib/template-store";
-import { captureCustomTemplate, withCapturedTemplate } from "./lib/template-capture";
+import { createTemplateCaptureAction } from "./lib/editor-template-capture-action";
+import { createProjectResetActions } from "./lib/editor-project-reset-actions";
 import { PosterCanvas } from "./components/canvas/PosterCanvas";
 import { type ProvinceAppearance, type SceneSelection } from "./lib/scene-document";
 
@@ -123,7 +123,6 @@ import {
   loadUserAssets,
   type UserAsset,
 } from "./lib/assets";
-import { restoreProjectPackage, type ProjectPackage } from "./lib/project-package";
 import { usePosterExport } from "./lib/usePosterExport";
 import {
   loadStudioSkin,
@@ -156,17 +155,8 @@ import type { LocalWorkspaceOverwriteState } from "./lib/incremental-workspace-s
 import { useEditorProjectRecord } from "./lib/editor-project-record";
 import { useWorkspaceSaveLifecycle } from "./lib/editor-save-lifecycle";
 import { useEditorWorkspaceHydration } from "./lib/editor-workspace-hydration";
-import {
-  applyWorkspacePackage,
-  collaborationPackage,
-  mergeSharedProject,
-  restoredSceneSelection,
-} from "./lib/editor-workspace-state";
-import {
-  armCollaborationSend,
-  createCollaborationHealTracker,
-} from "./lib/collaboration-send";
-import { useCollaborationRoom, type UseCollaborationRoomRefs } from "./lib/useCollaborationRoom";
+import { restoredSceneSelection } from "./lib/editor-workspace-state";
+import { useEditorCollaboration } from "./lib/editor-collaboration-wiring";
 
 function StudioApp({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
@@ -219,22 +209,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     projectStore: editorProjectStore,
     onStateChange: setSyncState,
   });
-  const collaborationBaselineRef = useRef<ProjectPackage | null>(null);
-  const collaborationVersionRef = useRef(0);
-  const collaborationRoomRef = useRef<string | null>(null);
-  const collaborationAccessTokenRef = useRef<string | null>(null);
-  const suppressCollaborationSendRef = useRef(false);
-  const backfillInFlightRef = useRef(false);
-  // 房间控制器与送出侧共享同一组 ref:两边各持一份的话,基线与版本会立刻分叉。
-  const collaborationRefs: UseCollaborationRoomRefs = {
-    baselineRef: collaborationBaselineRef,
-    versionRef: collaborationVersionRef,
-    roomRef: collaborationRoomRef,
-    accessTokenRef: collaborationAccessTokenRef,
-    suppressSendRef: suppressCollaborationSendRef,
-    backfillInFlightRef,
-  };
-
   const posterRef = useRef<SVGSVGElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel>(() => WORKFLOW_STAGE_TO_LEGACY_PANEL[workspaceSession.stage] ?? "roster");
@@ -335,69 +309,24 @@ function StudioApp({ projectId }: { projectId?: string }) {
     },
   });
 
-  const currentCollaborationPackage = (exportedAt = new Date().toISOString()): ProjectPackage =>
-    collaborationPackage(readWorkspace(), exportedAt);
-
-  const applySharedPackage = (pack: ProjectPackage, _version: number): ProjectPackage => {
-    const restored = restoreProjectPackage(pack);
-    applyWorkspacePackage({
-      setProject: () => setProject((current) => mergeSharedProject(current, restored.project)),
+  const collaboration = useEditorCollaboration({
+    clientId: collaborationClientId,
+    project,
+    assets: userAssets,
+    fonts: userFonts,
+    customTemplates,
+    renderSettings,
+    readWorkspace,
+    workspaceSync,
+    sink: {
+      setProject,
       setUserAssets,
       setUserFonts,
       setCustomTemplates,
       setRenderSettings,
       clearPreviewCommands: () => setPreviewCommands([]),
-    }, restored);
-    workspaceSync.markPending();
-    return restored;
-  };
-
-  const collaboration = useCollaborationRoom({
-    clientId: collaborationClientId,
-    currentPackage: currentCollaborationPackage,
-    applyPackage: applySharedPackage,
-    ...collaborationRefs,
+    },
   });
-
-  /**
-   * 卸载之后 ref 还活着,但组件已经不在树上:在途上传的回执既不能改基线,也不能再
-   * 对着卸载的树 setState。StrictMode 会先卸载再重挂,所以每次挂载都要重新置位。
-   */
-  const collaborationMountedRef = useRef(true);
-  useEffect(() => {
-    collaborationMountedRef.current = true;
-    return () => {
-      collaborationMountedRef.current = false;
-    };
-  }, []);
-
-  // 愈合探测只置位标记、不额外触发渲染:它的两个信号同时也是送出 effect 的依赖,而
-  // effect 按声明顺序执行,标记在同一次 commit 里先于送出 effect 就绪。
-  const [collaborationHeal] = useState(createCollaborationHealTracker);
-  useEffect(() => {
-    collaborationHeal.observe({
-      roomId: collaboration.roomId,
-      connectionHealCount: collaboration.connectionHealCount,
-      roomVersion: collaboration.roomVersion,
-    });
-  }, [collaborationHeal, collaboration.connectionHealCount, collaboration.roomId, collaboration.roomVersion]);
-
-  useEffect(() => armCollaborationSend({
-    clientId: collaborationClientId,
-    room: collaboration,
-    refs: { ...collaborationRefs, mountedRef: collaborationMountedRef },
-    heal: collaborationHeal,
-    controller: collaboration,
-    currentPackage: currentCollaborationPackage,
-    applyPackage: applySharedPackage,
-    // Depend on the individual room fields rather than the whole controller
-    // object so the debounce only re-arms when the room or workspace changes.
-    // connectionHealCount/roomVersion are the heal signals: without them a diff
-    // stranded by a partition waits for the next user edit. The offline flag
-    // itself is deliberately not a dependency — the send path now raises it, and
-    // re-arming on the raise would retry a doomed upload during the partition.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [collaborationClientId, customTemplates, project, renderSettings, collaboration.connectionHealCount, collaboration.roomAccessToken, collaboration.roomId, collaboration.roomRole, collaboration.roomReadonly, collaboration.roomClosed, collaboration.roomExpired, collaboration.roomVersion, userAssets, userFonts]);
 
   const commitProject = (next: ProjectDocument) => {
     if (!collaboration.canEdit) {
@@ -600,40 +529,23 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildProjectLayoutHealthInput(project)), [project]);
 
-  const saveCurrentTemplate = () => {
-    const name = window.prompt("自定义模板名称", "我的地图版式");
-    if (!name?.trim()) return;
-    const scope = window.confirm("点击“确定”保存视觉样式；点击“取消”保存布局倾向（含卡片分组）")
-      ? "visual"
-      : "layout";
-    const record = captureCustomTemplate({ name, scope, project });
-    setCustomTemplates(withCapturedTemplate(customTemplates, record));
-    setStatusMessage(`已保存模板：${record.name}`);
-  };
+  const saveCurrentTemplate = createTemplateCaptureAction({
+    project,
+    customTemplates,
+    setCustomTemplates,
+    reportStatus: setStatusMessage,
+  });
 
-  const createNewProject = () => {
-    if (!window.confirm("新建项目会清空当前未保存修改，是否继续？")) return;
-    const next = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
-    setProject(next);
-    setPreviewCommands([]);
-    setSelection({ type: "canvas" });
-    setSelectedStudentId(null);
-    setActivePanel("roster");
-    setActiveWorkflowStep("roster");
-    setActiveStage("data");
-    setStatusMessage("已新建空项目");
-  };
-
-  const restoreLocalProject = () => {
-    const next = loadInitialProject();
-    setProject(next);
-    setPreviewCommands([]);
-    setSelection({ type: "canvas" });
-    setActivePanel("roster");
-    setActiveWorkflowStep("roster");
-    setActiveStage("data");
-    setStatusMessage("已恢复本机最近项目");
-  };
+  const { createNewProject, restoreLocalProject } = createProjectResetActions({
+    setProject,
+    clearPreviewCommands: () => setPreviewCommands([]),
+    setSelection,
+    setSelectedStudentId,
+    setActivePanel,
+    setActiveWorkflowStep,
+    setActiveStage,
+    reportStatus: setStatusMessage,
+  });
 
   const dataWorkspaceProps = {
     students: project.students,
