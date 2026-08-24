@@ -128,6 +128,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 - Full suite on merged tree: **189 files, 1757 passed / 2 skipped** (83.0s).
 - Lint: 0 errors, **6 warnings** (StorageNotice react-refresh gone after R7-4; back to R5 level). Typecheck: `tsc -b --noEmit` 0.
+- CI: push + pull_request green on `362c318`.
 - Behavior: skip vs trim honesty on HTTP + menu + App wiring; persist failures recorded; trimmed rooms proven to survive restart; App.tsx 1988 lines.
 - Known leftovers for R8: 36 tests unmount only inline in `it`; durability file at 399 lines; trim warn template still says "skipped rooms remain in memory"; durable capacity ceiling 12 MiB; App still ≫ 400 lines.
 
