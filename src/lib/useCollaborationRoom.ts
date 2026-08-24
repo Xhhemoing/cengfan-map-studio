@@ -41,9 +41,18 @@ export type RoomCollaborationStatus = "idle" | "connecting" | "connected" | "syn
  * 补齐动作的触发场景:
  * - `disconnect`:SSE 断线后自动补齐,过程中先进入 `error` 等待浏览器重连;
  * - `conflict`:上传遇到 `VERSION_CONFLICT` 时由调用方主动补齐,属于上传流程的一部分,
- *   全程保持 `syncing`,最终状态由调用方决定。
+ *   全程保持 `syncing`,最终状态由调用方决定;
+ * - `gap`:流上的 version 跳变(收到的增量不接本地版本)时自动补齐,连接本身没断,
+ *   所以全程保持 `syncing`,补齐完成后回到 `connected`。
  */
-export type CollaborationBackfillReason = "disconnect" | "conflict";
+export type CollaborationBackfillReason = "disconnect" | "conflict" | "gap";
+
+/** 补齐成功后的提示,按触发场景区分,避免把版本跳变说成断线。 */
+const BACKFILL_DONE_MESSAGE: Record<CollaborationBackfillReason, string> = {
+  disconnect: "已补齐断线期间的修改",
+  conflict: "已补齐远端修改，正在重试上传",
+  gap: "已补齐跳过的远端修改",
+};
 
 /**
  * 重连由 `subscribeRoom` 自己接管(换新 ticket、退避、心跳看门狗),浏览器自带的 EventSource
@@ -214,40 +223,6 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     return false;
   };
 
-  const receiveRoomUpdate = (room: CollaborationRoom<ProjectPackage>) => {
-    if (room.members && !receiveRoomMembers(room.members)) return;
-    if (room.readonly !== undefined) setRoomReadonly(room.readonly);
-    if (room.closed) {
-      setRoomClosed(true);
-      setCollaborationStatus("closed");
-      setCollaborationMessage("房间已关闭，无法继续同步或编辑");
-    }
-    if (room.version <= versionRef.current) return;
-    if (room.operations && baselineRef.current) {
-      const { currentPackage, applyPackage } = optionsRef.current;
-      const current = currentPackage(baselineRef.current.exportedAt);
-      const rebased = rebaseRemoteCollaborationOperations(baselineRef.current, current, room.operations);
-      baselineRef.current = rebased.baseline;
-      suppressSendRef.current = true;
-      applyPackage(rebased.current, room.version);
-      baselineRef.current = rebased.baseline;
-    } else if (room.snapshot) {
-      suppressSendRef.current = true;
-      baselineRef.current = optionsRef.current.applyPackage(room.snapshot, room.version);
-    }
-    // ref 与 state 必须一起推进:只写 ref 会让协作面板/查看者一直停在 v0。
-    versionRef.current = room.version;
-    setRoomVersion(room.version);
-    setCollaborationStatus("connected");
-    setCollaborationMessage(room.rebasedFromVersion === undefined ? "增量同步已完成" : "已自动合并互不冲突的并发修改");
-  };
-
-  useEffect(() => {
-    receiveRoomUpdateRef.current = receiveRoomUpdate;
-    receiveRoomMembersRef.current = receiveRoomMembers;
-    resetRoomStateRef.current = resetCollaborationRoomState;
-  });
-
   const failedBackfill = (): CollaborationBackfillOutcome => ({
     ok: false,
     version: versionRef.current,
@@ -264,8 +239,12 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     const activeToken = accessTokenRef.current;
     if (!activeRoomId || !activeToken || backfillInFlightRef.current) return failedBackfill();
     backfillInFlightRef.current = true;
-    // 断线补齐先落到 error(提示浏览器重连);冲突补齐由上传流程发起,保持 syncing 不闪状态。
+    // 断线补齐先落到 error(提示连接中断);冲突/跳变补齐时连接还在,保持 syncing 不闪状态。
     if (reason === "disconnect") setCollaborationStatus("error");
+    else if (reason === "gap") {
+      setCollaborationStatus("syncing");
+      setCollaborationMessage("远端版本不连续，正在补齐缺失的修改");
+    }
     try {
       const interval = await fetchRoomOperations(activeRoomId, activeToken, versionRef.current);
       let baseline = baselineRef.current;
@@ -284,7 +263,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       versionRef.current = interval.version;
       setRoomVersion(interval.version);
       setCollaborationStatus(reason === "conflict" ? "syncing" : "connected");
-      setCollaborationMessage(reason === "conflict" ? "已补齐远端修改，正在重试上传" : "已补齐断线期间的修改");
+      setCollaborationMessage(BACKFILL_DONE_MESSAGE[reason]);
       return {
         ok: true,
         version: interval.version,
@@ -320,6 +299,49 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       backfillInFlightRef.current = false;
     }
   };
+
+  const receiveRoomUpdate = (room: CollaborationRoom<ProjectPackage>) => {
+    if (room.members && !receiveRoomMembers(room.members)) return;
+    if (room.readonly !== undefined) setRoomReadonly(room.readonly);
+    if (room.closed) {
+      setRoomClosed(true);
+      setCollaborationStatus("closed");
+      setCollaborationMessage("房间已关闭，无法继续同步或编辑");
+    }
+    if (room.version <= versionRef.current) return;
+    // 增量只有严格接在本地版本之后才能套用:version 跳变说明中间事务没送到本端,
+    // 直接应用最后一笔 ops 会让中间事务静默丢失,而且之后的上传都基于跳变后的版本,
+    // 服务端不会再判 VERSION_CONFLICT。跳变时改走整包快照,没有快照就拉区间补齐。
+    const contiguous = room.version === versionRef.current + 1;
+    if (room.operations && !contiguous && !room.snapshot) {
+      // 补齐会自己推进 versionRef/roomVersion 与状态,这里不能先把版本记成跳变后的值。
+      void backfillCollaborationGap("gap");
+      return;
+    }
+    if (room.operations && contiguous && baselineRef.current) {
+      const { currentPackage, applyPackage } = optionsRef.current;
+      const current = currentPackage(baselineRef.current.exportedAt);
+      const rebased = rebaseRemoteCollaborationOperations(baselineRef.current, current, room.operations);
+      baselineRef.current = rebased.baseline;
+      suppressSendRef.current = true;
+      applyPackage(rebased.current, room.version);
+      baselineRef.current = rebased.baseline;
+    } else if (room.snapshot) {
+      suppressSendRef.current = true;
+      baselineRef.current = optionsRef.current.applyPackage(room.snapshot, room.version);
+    }
+    // ref 与 state 必须一起推进:只写 ref 会让协作面板/查看者一直停在 v0。
+    versionRef.current = room.version;
+    setRoomVersion(room.version);
+    setCollaborationStatus("connected");
+    setCollaborationMessage(room.rebasedFromVersion === undefined ? "增量同步已完成" : "已自动合并互不冲突的并发修改");
+  };
+
+  useEffect(() => {
+    receiveRoomUpdateRef.current = receiveRoomUpdate;
+    receiveRoomMembersRef.current = receiveRoomMembers;
+    resetRoomStateRef.current = resetCollaborationRoomState;
+  });
 
   useEffect(() => {
     if (!roomId || !roomAccessToken) return;

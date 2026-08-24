@@ -2,7 +2,7 @@ import { act, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ROOM_ACCESS_STORAGE_PREFIX } from "./app-constants";
-import type { CollaborationRoom, RoomKickedInfo, RoomMember } from "./collaboration-client";
+import { CollaborationClientError, type CollaborationRoom, type RoomKickedInfo, type RoomMember } from "./collaboration-client";
 import type { ProjectPackage } from "./project-package";
 import { useCollaborationRoom, type UseCollaborationRoomResult } from "./useCollaborationRoom";
 
@@ -39,6 +39,9 @@ let notifyStreamError: (() => void) | null = null;
 /** subscribeRoom 的房间事件回调:用来投递远端增量/快照。 */
 let emitRoomUpdate: ((room: CollaborationRoom<ProjectPackage>) => void) | null = null;
 let subscribeOptions: { version?: number | (() => number) } | null = null;
+/** applyPackage 的调用记录:用来断言写回工作区的是哪一份工程、对应哪个版本。 */
+let appliedPackages: Array<{ pack: Record<string, unknown>; version: number }> = [];
+const lastApplied = (): Record<string, unknown> => appliedPackages.at(-1)!.pack;
 /** 每条订阅一个条目,记录是否已经退订,用来断言同一时刻只有一条流。 */
 let subscriptions: Array<{ live: boolean }> = [];
 const liveSubscriptions = (): number => subscriptions.filter((entry) => entry.live).length;
@@ -54,7 +57,10 @@ function Harness({ onRender }: { onRender: (result: UseCollaborationRoomResult) 
   const result = useCollaborationRoom({
     clientId: "self",
     currentPackage: () => samplePackage,
-    applyPackage: (pack) => pack,
+    applyPackage: (pack, version) => {
+      appliedPackages.push({ pack: pack as unknown as Record<string, unknown>, version });
+      return pack;
+    },
     baselineRef,
     versionRef,
     roomRef,
@@ -94,6 +100,7 @@ beforeEach(() => {
   emitRoomUpdate = null;
   subscribeOptions = null;
   subscriptions = [];
+  appliedPackages = [];
   window.localStorage.clear();
   mocks.createRoom.mockResolvedValue({
     room: { id: "ROOM01", version: 0, ready: false, updatedBy: "self", members: [member("self", "owner")] },
@@ -297,14 +304,17 @@ describe("useCollaborationRoom version state", () => {
 
     act(() => emitRoomUpdate!({
       id: "ROOM01",
-      version: 4,
+      version: 2,
       ready: true,
       updatedBy: "mate",
       operations: [{ type: "set", path: ["title"], value: "远端改名" }],
     }));
 
-    expect(latest!.roomVersion).toBe(4);
+    expect(latest!.roomVersion).toBe(2);
     expect(latest!.collaborationStatus).toBe("connected");
+    expect(lastApplied().title).toBe("远端改名");
+    // 增量接得上本地版本时不该多打一次补齐请求。
+    expect(mocks.fetchRoomOperations).not.toHaveBeenCalled();
   });
 
   it("advances the room version when a remote snapshot arrives", async () => {
@@ -335,5 +345,101 @@ describe("useCollaborationRoom version state", () => {
 
     expect(latest!.roomVersion).toBe(9);
     expect(latest!.collaborationStatus).toBe("connected");
+  });
+});
+
+describe("useCollaborationRoom version continuity", () => {
+  it("backfills the whole interval when a delta skips versions", async () => {
+    await mountRoom();
+    expect(latest!.roomVersion).toBe(1);
+    mocks.fetchRoomOperations.mockResolvedValue({
+      id: "ROOM01",
+      version: 4,
+      operations: [
+        { type: "set", path: ["title"], value: "中间事务" },
+        { type: "set", path: ["subtitle"], value: "最后事务" },
+      ],
+    });
+
+    // v1 的本端收到 v4:v2、v3 没送到,事件里只带最后一笔 ops。
+    await act(async () => {
+      emitRoomUpdate!({
+        id: "ROOM01",
+        version: 4,
+        ready: true,
+        updatedBy: "mate",
+        operations: [{ type: "set", path: ["subtitle"], value: "最后事务" }],
+      });
+    });
+
+    expect(mocks.fetchRoomOperations).toHaveBeenCalledWith("ROOM01", "self-token", 1);
+    expect(latest!.roomVersion).toBe(4);
+    expect(latest!.collaborationStatus).toBe("connected");
+    expect(latest!.collaborationMessage).toBe("已补齐跳过的远端修改");
+    // 直接套用最后一笔 ops 会丢掉 v2 的改动,补齐后中间事务必须还在。
+    expect(lastApplied().title).toBe("中间事务");
+    expect(lastApplied().subtitle).toBe("最后事务");
+  });
+
+  it("applies the full snapshot when a version jump carries one", async () => {
+    await mountRoom();
+
+    // 断线重连时服务端会重放整份房间:snapshot 与最后一笔 ops 同时在场。
+    await act(async () => {
+      emitRoomUpdate!({
+        id: "ROOM01",
+        version: 6,
+        ready: true,
+        updatedBy: "mate",
+        snapshot: remotePackage,
+        operations: [{ type: "set", path: ["title"], value: "最后事务" }],
+      });
+    });
+
+    expect(mocks.fetchRoomOperations).not.toHaveBeenCalled();
+    expect(latest!.roomVersion).toBe(6);
+    expect(lastApplied()).toBe(remotePackage as unknown as Record<string, unknown>);
+  });
+
+  it("falls back to the full snapshot when the skipped interval is no longer available", async () => {
+    await mountRoom();
+    mocks.fetchRoomOperations.mockRejectedValue(
+      new CollaborationClientError("VERSION_CONFLICT", "增量历史已被裁剪，请重新获取完整快照", 7),
+    );
+
+    await act(async () => {
+      emitRoomUpdate!({
+        id: "ROOM01",
+        version: 7,
+        ready: true,
+        updatedBy: "mate",
+        operations: [{ type: "set", path: ["title"], value: "最后事务" }],
+      });
+    });
+
+    expect(latest!.roomVersion).toBe(7);
+    expect(latest!.collaborationStatus).toBe("connected");
+    expect(lastApplied()).toBe(remotePackage as unknown as Record<string, unknown>);
+  });
+
+  it("keeps the local version behind when the gap cannot be backfilled", async () => {
+    await mountRoom();
+    mocks.fetchRoomOperations.mockRejectedValue(new Error("network down"));
+
+    await act(async () => {
+      emitRoomUpdate!({
+        id: "ROOM01",
+        version: 5,
+        ready: true,
+        updatedBy: "mate",
+        operations: [{ type: "set", path: ["title"], value: "最后事务" }],
+      });
+    });
+
+    // 补齐失败还把本地记成 v5 的话,之后的上传都基于错的基线,服务端也不会再判 VERSION_CONFLICT。
+    expect(latest!.roomVersion).toBe(1);
+    expect(latest!.collaborationStatus).toBe("error");
+    // 跳变的那笔 ops 一次都不该落到工作区。
+    expect(appliedPackages).toHaveLength(0);
   });
 });
