@@ -6,11 +6,7 @@ import {
   type SyncWorkspaceStore,
 } from "../lib/browser-workspace-store";
 import { downloadProjectPackage, type ProjectPackage } from "../lib/project-package";
-import {
-  createIndexedDbProjectStore,
-  type ProjectStore,
-  type ProjectStoreHealth,
-} from "../lib/project-store";
+import type { ProjectStore, ProjectStoreHealth } from "../lib/project-store";
 
 type BackupOutcome =
   | "exported"
@@ -22,6 +18,7 @@ type BackupOutcome =
   | "store-empty"
   | "store-degraded"
   | "store-unreadable"
+  | "store-unavailable"
   | "project-missing";
 
 const OK_OUTCOMES = new Set<BackupOutcome>(["exported", "store-listed"]);
@@ -36,10 +33,18 @@ export interface AppErrorBoundaryProps {
   children: ReactNode;
   /** 覆盖工作区镜像来源，默认读取 localStorage 镜像。 */
   mirror?: SyncWorkspaceStore;
-  /** 覆盖项目库来源，默认读取 IndexedDB 项目库（只读，不会写回）。 */
+  /**
+   * 项目库来源（只读，不会写回），由 main.tsx 注入共享实例。
+   * 崩溃屏绝不自建 store：降级会话里的工程只活在共享实例的内存副本里，
+   * 第二个实例既看不到这些工程，还会再占一条数据库连接。
+   */
   projectStore?: ProjectStore;
   /** 覆盖下载通道，默认走工程包下载助手。 */
   downloadPack?: (pack: ProjectPackage, filename?: string) => void;
+  /** 覆盖跳转通道，默认改写地址栏 hash。 */
+  navigate?: (hash: string) => void;
+  /** 覆盖整页重载通道，默认调用 window.location.reload。 */
+  reload?: () => void;
 }
 
 interface CrashDetail {
@@ -91,8 +96,6 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
 
   private crash: CrashDetail | null = null;
 
-  private ownStore: ProjectStore | null = null;
-
   /** 列举当时的持久化状态：导出读不到工程时，用它区分“中途掉线”与“真的没了”。 */
   private listedHealth: ProjectStoreHealth | null = null;
 
@@ -109,13 +112,6 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
 
   componentWillUnmount(): void {
     this.mounted = false;
-  }
-
-  /** 同一次崩溃里复用一个 store 实例：list / get 必须看到同一个连接与同一份降级状态。 */
-  private projectStore(): ProjectStore {
-    if (this.props.projectStore) return this.props.projectStore;
-    this.ownStore ??= createIndexedDbProjectStore();
-    return this.ownStore;
   }
 
   private finishBackup(
@@ -196,7 +192,16 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
 
   /** 镜像没救时的第二条通道：只读列出本机项目库，交给用户逐个导出。 */
   private async offerStoredProjects(): Promise<void> {
-    const store = this.projectStore();
+    const store = this.props.projectStore;
+    if (!store) {
+      this.finishBackup(
+        "store-unavailable",
+        "崩溃屏没有拿到本机项目库通道，无法列出可导出的工程；请保留此页面并反馈控制台中的诊断信息。",
+        {},
+        true,
+      );
+      return;
+    }
     let items;
     try {
       items = await store.list();
@@ -264,7 +269,13 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   }
 
   private async runStoredProjectExport(item: RecoverableProject): Promise<void> {
-    const store = this.projectStore();
+    const store = this.props.projectStore;
+    if (!store) {
+      this.finishBackup("store-unavailable", `崩溃屏没有拿到本机项目库通道，无法导出「${item.name}」。`, {
+        projectId: item.id,
+      });
+      return;
+    }
     const download = this.props.downloadPack ?? downloadProjectPackage;
     let stored;
     try {
@@ -302,6 +313,33 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     this.finishBackup("exported", `已导出「${stored.name}」，可在恢复后通过「导入工程」重新载入。`, detail);
   }
 
+  /** 软重置：只丢掉崩溃态，页面（以及共享 store 实例与它的内存副本）原地保留。 */
+  private clearCrashScreen = (): void => {
+    if (!this.mounted) return;
+    this.setState({ failed: false, backup: null, projects: [] });
+  };
+
+  /**
+   * 列出来的工程只存在于降级 store 的内存副本里：整页重载会连同这份堆内存
+   * 一起丢掉，而崩溃屏刚刚才让用户“立刻导出”它们。这种时候只切 hash，不重载。
+   */
+  private holdsMemoryOnlyProjects(): boolean {
+    return this.listedHealth === "memory" && this.state.projects.length > 0;
+  }
+
+  private returnToProjectList = (): void => {
+    const navigate = this.props.navigate ?? ((hash: string) => { window.location.hash = hash; });
+    const keepHeapAlive = this.holdsMemoryOnlyProjects();
+    navigate("#/");
+    if (!keepHeapAlive) {
+      (this.props.reload ?? (() => { window.location.reload(); }))();
+      return;
+    }
+    // hashchange 是异步派发的：在同一个宏任务里清崩溃态，只会把刚崩过的子树再渲染一遍。
+    // 等路由换完视图再重置，页面不重载，内存里的工程也就还在。
+    window.setTimeout(this.clearCrashScreen, 0);
+  };
+
   render(): ReactNode {
     if (!this.state.failed) return this.props.children;
     const { backup, projects } = this.state;
@@ -316,7 +354,7 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
               type="button"
               className="primary-button"
               aria-label="重新加载界面"
-              onClick={() => this.setState({ failed: false, backup: null, projects: [] })}
+              onClick={this.clearCrashScreen}
             >
               重新加载
             </button>
@@ -324,10 +362,7 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
               type="button"
               className="secondary-button"
               aria-label="返回项目列表"
-              onClick={() => {
-                window.location.hash = "#/";
-                window.location.reload();
-              }}
+              onClick={this.returnToProjectList}
             >
               返回项目列表
             </button>
