@@ -6,6 +6,12 @@ function response(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
 }
 
+function userContents(fetchMock: ReturnType<typeof vi.fn>, index: number): string[] {
+  const init = (fetchMock.mock.calls[index] as unknown[] | undefined)?.[1] as RequestInit | undefined;
+  const body = JSON.parse(String(init?.body)) as { messages: Array<{ role: string; content?: string }> };
+  return body.messages.filter((message) => message.role === "user").map((message) => String(message.content));
+}
+
 /** Mirrors the readonly history proxy `applyTransaction` hands to `transaction.apply`. */
 function readonlyHistoryView(history: ProjectHistory): ProjectHistory {
   const wrap = <V>(candidate: V): V => {
@@ -393,6 +399,50 @@ describe("AgentSession", () => {
     release();
     await first;
     expect((await session.continue("继续")).kind).toBe("finish");
+  });
+
+  it("does not re-append the unanswered request when a transport failure is resumed with the same text", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+
+    await expect(session.run("地图小一点")).resolves.toMatchObject({ kind: "failed", reason: "network", retriable: true });
+    await expect(session.continue("地图小一点")).resolves.toMatchObject({ kind: "finish" });
+
+    expect(userContents(fetchMock, 1)).toEqual(["地图小一点"]);
+    expect(session.exportSnapshot().conversation).toEqual([{ role: "user", content: "地图小一点" }]);
+  });
+
+  it("appends a resume text that differs from the unanswered request", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+
+    await session.run("地图小一点");
+    await expect(session.continue("改成蓝色")).resolves.toMatchObject({ kind: "finish" });
+
+    expect(userContents(fetchMock, 1)).toEqual(["地图小一点", "改成蓝色"]);
+  });
+
+  it("appends the same text again when the model already replied to the earlier request", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [], assistantMessage: { role: "assistant", content: "正在规划" } }))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+
+    await expect(session.run("地图小一点")).resolves.toMatchObject({ kind: "failed", reason: "network" });
+    await expect(session.continue("地图小一点")).resolves.toMatchObject({ kind: "finish" });
+
+    expect(userContents(fetchMock, 2)).toEqual(["地图小一点", "地图小一点"]);
   });
 
   it("lands nothing and records the failure when a selected step no longer replays on the live document", async () => {
