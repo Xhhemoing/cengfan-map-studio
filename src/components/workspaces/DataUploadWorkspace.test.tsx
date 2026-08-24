@@ -76,7 +76,7 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
 }
 
 describe("DataUploadWorkspace", () => {
-  it("is the upload data workbench and excludes templates and map expression controls", () => {
+  it("is the upload data workbench with the XLSX template download and without map expression controls", () => {
     const { container } = renderWorkspace();
 
     expect(container.querySelector('main[aria-label="数据与素材工作台"]')).not.toBeNull();
@@ -91,9 +91,9 @@ describe("DataUploadWorkspace", () => {
     flushSync(() => importRoster?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(container.querySelector('button[aria-label="收起新增学生"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(container.querySelector('button[aria-label="收起导入名单"]')?.getAttribute("aria-expanded")).toBe("true");
-    expect(container.textContent).not.toContain("模板");
+    expect(container.querySelector('[aria-label="整体模板"]')).toBeNull();
     expect(container.textContent).not.toContain("地图呈现");
-    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).not.toBeNull();
     expect(container.querySelector(".student-table")).not.toBeNull();
     expect(container.querySelector('[aria-label="数据质量"]')).not.toBeNull();
   });

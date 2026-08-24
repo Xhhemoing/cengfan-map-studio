@@ -603,4 +603,63 @@ describe("AgentSession", () => {
     await first;
     expect((await session.continue("继续")).kind).toBe("finish");
   });
+
+  it("reports the server budget instead of accumulating gross round tokens", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    let rounds = 0;
+    let usedTokens = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      rounds += 1;
+      usedTokens = Math.min(60_000, usedTokens + 1_200);
+      return response({
+        kind: "tool-call",
+        calls: [{ id: `round-${rounds}`, name: "inspect_project", arguments: { path: "map.scale" } }],
+        assistantMessage: { role: "assistant", content: null, tool_calls: [{ id: `round-${rounds}`, type: "function", function: { name: "inspect_project", arguments: "{}" } }] },
+        meta: { route: "primary", provider: "test-provider", usage: { totalTokens: 7_000 } },
+        budget: { usedTokens, maxTokens: 60_000, rounds, maxRounds: 20 },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("反复检查工程");
+
+    expect(fetchMock).toHaveBeenCalledTimes(20);
+    expect(session.metrics).toMatchObject({ rounds, usedTokens, route: "primary", provider: "test-provider" });
+    expect(usedTokens).toBe(24_000);
+    expect(() => session.exportSnapshot()).not.toThrow();
+    expect(session.exportSnapshot().metrics).toMatchObject({ rounds: 20, usedTokens: 24_000 });
+  });
+
+  it("keeps the snapshot valid after continuing an exhausted session twice", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    let rounds = 0;
+    let usedTokens = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      const meta = { route: "primary", provider: "test-provider", usage: { totalTokens: 7_000 } };
+      if (rounds >= 20) {
+        // 只读连轮等收尾分支不带 budget，客户端只能自增 rounds，越界会让整段预览失效。
+        return fetchMock.mock.calls.length > 21
+          ? response({ kind: "finish", summary: "连续只读未动手，已交回结论", meta })
+          : response({ kind: "finish", summary: "已达到 AI 任务预算", meta, budget: { usedTokens, maxTokens: 60_000, rounds, maxRounds: 20 } });
+      }
+      rounds += 1;
+      usedTokens = Math.min(60_000, usedTokens + 3_000);
+      return response({
+        kind: "tool-call",
+        calls: [{ id: `round-${rounds}`, name: "update_map", arguments: { patch: { width: 600 + rounds } } }],
+        assistantMessage: { role: "assistant", content: null, tool_calls: [{ id: `round-${rounds}`, type: "function", function: { name: "update_map", arguments: "{}" } }] },
+        meta,
+        budget: { usedTokens, maxTokens: 60_000, rounds, maxRounds: 20 },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("反复调整地图");
+    expect((await session.continue("继续一")).kind).toBe("finish");
+    expect((await session.continue("继续二")).kind).toBe("finish");
+
+    const snapshot = session.exportSnapshot();
+    expect(snapshot.metrics).toMatchObject({ rounds: 20, usedTokens: 60_000 });
+    expect(AgentSession.restore(project, snapshot, { mode: "conservative" }).canContinue).toBe(true);
+  });
 });

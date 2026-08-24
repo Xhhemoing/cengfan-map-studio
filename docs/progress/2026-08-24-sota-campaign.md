@@ -23,9 +23,9 @@
 |---|---|---|---|
 | 1 | 已完成 | fable ×5 | 分区只读审计 + 可落地切片 |
 | 2 | 已完成 | opus ×5 | 按第 1 轮结论落地最高价值切片 |
-| 3 | 进行中 | 混编 ×5 | 深化打磨与回归 |
-| 4 | 待开始 | 视结论混编 | 继续打磨 |
-| 5+ | 待开始 | 视结论混编 | 达标后继续 |
+| 3 | 已完成 | 混编 ×5 | 深化打磨与回归 |
+| 4 | 已完成 | opus ×5 | 复查 P0 与导入/兜底收紧 |
+| 5 | 进行中 | 混编 ×5 | 达标后继续 |
 
 ### 第 1 轮工作流（只读）
 
@@ -75,4 +75,19 @@
 - 导入别名统一；Excel 缺格进 unparsed；缺列不再串列回退。
 - 默认六阶段 StatusBar；去掉 `requestAiProposal` 与浮窗助手；rail 用 `useId` + 方向键。
 
-**第 3 轮计划：** App `contentLayoutIssues` 改接 `buildHealthInput`；导入报告 UI + 名单导出；digest 增加 layout 节；本地统计预路由；独立复查第 2 轮。
+## 第 3 轮已合入
+
+- App `contentLayoutIssues` 已接 `buildHealthInput`（与 Agent 同源）。
+- 导入结果「成功 N · 跳过 M」+ 明细；名单 xlsx 导出与模板表头同源。
+- digest 增加 `layout` 节（mapContentBounds + cardBlocks）。
+- 高置信只读统计预路由（`local-preroute.ts`），写意图不命中。
+
+## 第 4 轮已合入
+
+- 客户端 `usedTokens`/`rounds` 镜像服务端预算，长会话快照不再因毛计量破 100k。
+- 文本/无表头 Excel 空列保留槽位，不再串列。
+- borderless+低透明度时 check_health 不报幽灵连线。
+- DATA 主流程出现「下载 XLSX 模板」。
+- `runLocalAgentTurn` 不再把「把城市字号调大」切成城市视图。
+
+**第 5 轮：** App 健康检查降频；移动端抽屉卸载不取消进行中的 Agent；协作 leave 收紧；复查 3–4 轮；SKILL/AGENTS 路径文档对齐。

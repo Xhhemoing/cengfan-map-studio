@@ -29,7 +29,10 @@ export function buildHealthInput(
       positionKey: fact.group.key,
     }] : [];
   });
-  const connectors: LayoutHealthConnector[] = facts.cards.flatMap((fact) => {
+  // 与 PosterCanvas 一致：无边框卡片在填充过淡时整条连线不画，
+  // 这里也必须省略，否则模型会为画布上不存在的连线报 connector-conflict。
+  const connectorsHidden = project.cards.preset === "borderless" && (project.cards.opacity ?? 1) < 0.9;
+  const connectors: LayoutHealthConnector[] = connectorsHidden ? [] : facts.cards.flatMap((fact) => {
     const placement = placements.get(fact.group.key);
     if (!placement || fact.isInternational) return [];
     return [{

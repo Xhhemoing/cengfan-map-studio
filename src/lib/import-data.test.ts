@@ -135,6 +135,43 @@ describe("import data", () => {
     ]);
   });
 
+  it("keeps blank delimited cells as column slots instead of shifting the scope column", () => {
+    const result = parseStudentText("张三,,北京市,海外");
+
+    expect(result.candidates).toEqual([]);
+    expect(result.unparsed).toEqual([
+      {
+        sourceLine: 1,
+        rawLine: "张三,,北京市,海外",
+        reason: "无法识别学生名称、录取院校和城市",
+      },
+    ]);
+  });
+
+  it("drops rows with a blank middle column in parseDelimitedTable instead of shifting them", () => {
+    const rows = parseDelimitedTable([
+      "姓名,院校,城市,去向类型",
+      "张三,,北京市,海外",
+      "周晴,哈佛大学,美国·波士顿,海外",
+    ].join("\n"));
+
+    expect(rows).toEqual([{
+      name: "周晴",
+      university: "哈佛大学",
+      city: "美国·波士顿",
+      locationScope: "international",
+      sourceLine: 3,
+      rawLine: "周晴,哈佛大学,美国·波士顿,海外",
+    }]);
+  });
+
+  it("keeps a leading blank tab cell as a column slot", () => {
+    const result = parseStudentText("\t张三\t北京大学\t北京市");
+
+    expect(result.candidates).toEqual([]);
+    expect(result.unparsed).toHaveLength(1);
+  });
+
   it("recognizes labeled records that use alias labels", () => {
     const result = parseStudentText("学生姓名：苏禾；录取学校：浙江大学；所在城市：杭州市");
 

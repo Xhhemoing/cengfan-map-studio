@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildSystemMessage, runAgentTurn, MAX_READ_ONLY_STREAK, MAX_TURNS } from "./agent-loop";
+import { buildSystemMessage, runAgentTurn, runLocalAgentTurn, MAX_READ_ONLY_STREAK, MAX_TURNS } from "./agent-loop";
 import type { AiConfig } from "./llm-client";
 import type { AgentBudgetState, ChatMessage } from "./agent-types";
 
@@ -301,6 +301,68 @@ describe("runAgentTurn", () => {
   it("stops at the turn limit", async () => {
     const messages: ChatMessage[] = Array.from({ length: MAX_TURNS }, () => calls(["update_map", { patch: { width: 1 } }]));
     const outcome = await runAgentTurn(CONFIG, { userMessage: "x", digest: {}, messages });
+    expect(outcome.kind).toBe("finish");
+  });
+});
+
+/** 本地兜底会直接产出工具调用，误判就是改画布，因此意图必须和只读预路由一样严格。 */
+describe("runLocalAgentTurn", () => {
+  function localCalls(userMessage: string, digest: Record<string, unknown> = {}) {
+    const outcome = runLocalAgentTurn({ userMessage, digest, messages: [] });
+    return outcome.kind === "tool-call" ? outcome.calls : [];
+  }
+
+  it.each([
+    ["按城市分组", "city"],
+    ["按照城市来分组", "city"],
+    ["帮我把所有学生按城市分组", "city"],
+    ["城市分组", "city"],
+    ["城市视图", "city"],
+    ["切换到城市视图", "city"],
+    ["城市视图切换一下", "city"],
+    ["按大学分组", "university"],
+    ["按院校归类", "university"],
+    ["切换到大学视图", "university"],
+  ])("把「%s」识别为 %s 视图", (message, view) => {
+    expect(localCalls(message)).toEqual([{ id: expect.any(String), name: "set_data_view", arguments: { view } }]);
+  });
+
+  it("不再把「把城市字号调大」切成城市视图", () => {
+    const outcome = runLocalAgentTurn({ userMessage: "把城市字号调大", digest: {}, messages: [] });
+    expect(outcome.kind).toBe("finish");
+    if (outcome.kind === "finish") expect(outcome.summary).toContain("字号");
+  });
+
+  it.each([
+    "把城市字号调大",
+    "城市卡片的颜色换成蓝色",
+    "把大学名字的字体改一下",
+    "城市太多了",
+    "广东有几人",
+    "这些城市该怎么排版",
+    "把地图上的城市字号调小",
+  ])("含样式属性或非切换意图的「%s」不产出 set_data_view", (message) => {
+    expect(localCalls(message, { map: { scale: 1 } }).filter((call) => call.name === "set_data_view")).toEqual([]);
+  });
+
+  it("保留地图缩放与紧凑预设兜底", () => {
+    expect(localCalls("把地图缩小一点", { map: { scale: 1 } })).toEqual([
+      { id: "local-map", name: "update_map", arguments: { patch: { scale: 0.85 } } },
+    ]);
+    expect(localCalls("地图放大", { map: { scale: 2 } })).toEqual([
+      { id: "local-map", name: "update_map", arguments: { patch: { scale: 2.3 } } },
+    ]);
+    expect(localCalls("生成一版更紧凑的布局")).toEqual([
+      { id: "local-cards", name: "update_cards", arguments: { patch: { preset: "compact", compactLayout: true } } },
+    ]);
+  });
+
+  it("已有工具往返时只收尾，不再追加本地规则", () => {
+    const outcome = runLocalAgentTurn({
+      userMessage: "按城市分组",
+      digest: {},
+      messages: [calls(["set_data_view", { view: "city" }]), { role: "tool", tool_call_id: "call-0", content: "{}" }],
+    });
     expect(outcome.kind).toBe("finish");
   });
 });

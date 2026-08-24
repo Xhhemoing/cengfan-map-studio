@@ -167,28 +167,77 @@ function localToolCall(id: string, name: string, args: Record<string, unknown>):
   return { id, name, arguments: args };
 }
 
+/** 只剥离称呼与句末语气，保留判定意图所需的实词。 */
+function normalizeLocalMessage(raw: string): string {
+  return (raw ?? "")
+    .replace(/\s+/gu, "")
+    .replace(/^(?:请问|请帮我|请帮|帮我|麻烦|请|你)+/u, "")
+    .replace(/[?？。.!！,，、~～]+$/u, "")
+    .replace(/(?:一下|吧|啊|呀|哦|嘛|呢|哈)+$/u, "");
+}
+
+/**
+ * 本地兜底只会切分组视图、套紧凑预设、缩放地图，改不了任何字号或配色。
+ * 句子点名了具体样式属性就整句判未识别，避免「把城市字号调大」被切成城市视图。
+ */
+const STYLE_PROPERTY_INTENT = /字号|字体|字大小|文字大小|颜色|配色|粗细|加粗|间距|行高|行距|透明度|边距|留白|宽度|高度/u;
+
+const GROUP_SCOPE = "(?:(?:把|将)(?:名单|表格|数据|学生|同学|卡片|所有(?:学生|同学)?|全部(?:学生|同学)?)?)?";
+const GROUP_BY = "(?:按|按照|依|依照|以|用|根据|基于)";
+const GROUP_ACTION = "(?:分组|归类|分类|聚合)";
+const VIEW_NOUN = "(?:视图|分组|模式|维度)";
+/** 只认纯切换动词。「改成/调成」这类写动词一律交给主模型，宁可少切一次视图。 */
+const VIEW_SWITCH = "(?:切换|切|换)";
+
+function anchoredIntent(body: string): RegExp {
+  return new RegExp(`^${body}$`, "u");
+}
+
+/** 整串锚定，维度词必须独立成分出现；「城市字号」这类偏正短语无法命中。 */
+function viewIntentPatterns(dimension: string): RegExp[] {
+  return [
+    anchoredIntent(`${GROUP_SCOPE}${GROUP_BY}${dimension}(?:来|去|重新)?${GROUP_ACTION}`),
+    anchoredIntent(`${dimension}${GROUP_ACTION}`),
+    anchoredIntent(`(?:${VIEW_SWITCH}(?:到|成|为|至)?)?${dimension}${VIEW_NOUN}(?:${VIEW_SWITCH})?`),
+  ];
+}
+
+const VIEW_INTENTS: Array<{ id: string; view: string; patterns: RegExp[] }> = [
+  { id: "local-view", view: "city", patterns: viewIntentPatterns("(?:城市|都市)") },
+  { id: "local-view-university", view: "university", patterns: viewIntentPatterns("(?:大学|高校|院校|学校)") },
+];
+
+function mapScale(digest: Record<string, unknown>): number {
+  const scale = (digest.map as Record<string, unknown> | undefined)?.scale;
+  return typeof scale === "number" ? Number(scale) : 1;
+}
+
 /** 无 API key 或模型暂时不可用时的确定性兜底，保持 agent 协议可继续工作。 */
 export function runLocalAgentTurn(request: AgentLoopRequest): AgentLoopOutcome {
   const hasToolResult = request.messages.some((message) => message.role === "tool");
   if (hasToolResult) return { kind: "finish", summary: "已按本地规则完成可识别的修改；更复杂的需求需要配置 AI 模型。" };
-  const message = request.userMessage;
+  const message = normalizeLocalMessage(request.userMessage);
   const calls: AgentToolCall[] = [];
   const digest = request.digest;
-  if (message.includes("城市")) calls.push(localToolCall("local-view", "set_data_view", { view: "city" }));
-  if (message.includes("大学") && message.includes("分组")) calls.push(localToolCall("local-view-university", "set_data_view", { view: "university" }));
-  if (message.includes("紧凑")) calls.push(localToolCall("local-cards", "update_cards", { patch: { preset: "compact", compactLayout: true } }));
-  if (/(地图|map).*(缩小|小一点|小些)/i.test(message)) {
-    const currentScale = typeof (digest.map as Record<string, unknown> | undefined)?.scale === "number"
-      ? Number((digest.map as Record<string, unknown>).scale)
-      : 1;
-    calls.push(localToolCall("local-map", "update_map", { patch: { scale: Math.max(0.1, Number((currentScale * 0.85).toFixed(2))) } }));
-  } else if (/(地图|map).*(放大|大一点|大些)/i.test(message)) {
-    const currentScale = typeof (digest.map as Record<string, unknown> | undefined)?.scale === "number"
-      ? Number((digest.map as Record<string, unknown>).scale)
-      : 1;
-    calls.push(localToolCall("local-map", "update_map", { patch: { scale: Math.min(3, Number((currentScale * 1.15).toFixed(2))) } }));
+  const stylePropertyRequest = STYLE_PROPERTY_INTENT.test(message);
+  if (!stylePropertyRequest) {
+    const view = VIEW_INTENTS.find((intent) => intent.patterns.some((pattern) => pattern.test(message)));
+    if (view) calls.push(localToolCall(view.id, "set_data_view", { view: view.view }));
+    if (message.includes("紧凑")) calls.push(localToolCall("local-cards", "update_cards", { patch: { preset: "compact", compactLayout: true } }));
+    if (/(地图|map).*(缩小|小一点|小些)/i.test(message)) {
+      calls.push(localToolCall("local-map", "update_map", { patch: { scale: Math.max(0.1, Number((mapScale(digest) * 0.85).toFixed(2))) } }));
+    } else if (/(地图|map).*(放大|大一点|大些)/i.test(message)) {
+      calls.push(localToolCall("local-map", "update_map", { patch: { scale: Math.min(3, Number((mapScale(digest) * 1.15).toFixed(2))) } }));
+    }
   }
-  if (calls.length === 0) return { kind: "finish", summary: "当前未识别出可自动执行的修改；请配置 deepseek-v4-flash 或换一种更明确的描述。" };
+  if (calls.length === 0) {
+    return {
+      kind: "finish",
+      summary: stylePropertyRequest
+        ? "本地兜底规则改不了字号、颜色这类样式属性；请配置 deepseek-v4-flash 后再试。"
+        : "当前未识别出可自动执行的修改；请配置 deepseek-v4-flash 或换一种更明确的描述。",
+    };
+  }
   const assistantMessage: ChatMessage = {
     role: "assistant",
     content: null,

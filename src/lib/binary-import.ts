@@ -64,9 +64,15 @@ function rowRawLine(cells: string[]): string {
   return cells.filter(Boolean).join("\t");
 }
 
+/** 无表头回退时按列位还原整行:保留中间空单元格,只截掉行尾的空列。 */
+function rowFallbackLine(cells: string[]): string {
+  const lastFilled = cells.reduce((last, cell, index) => (cell ? index : last), -1);
+  return lastFilled < 0 ? "" : cells.slice(0, lastFilled + 1).join("\t");
+}
+
 function matrixToText(rows: string[][]): string {
   return rows
-    .map((row) => rowRawLine(toRowCells(row)))
+    .map((row) => rowFallbackLine(toRowCells(row)))
     .filter((line) => line.length > 0)
     .join("\n");
 }

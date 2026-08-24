@@ -144,6 +144,48 @@ describe("health input", () => {
     expect(checkLayoutHealth(buildHealthInput(project)).some((issue) => issue.kind === "connector-conflict")).toBe(false);
   });
 
+  it("drops the connectors that borderless low-opacity cards never draw", () => {
+    const base = projectWith([
+      student("s1", "北京大学", "北京市"),
+      student("s2", "中山大学", "广州市"),
+    ]);
+    const borderless = { ...base, cards: { ...base.cards, preset: "borderless" as const, opacity: 0 } };
+    const opaque = { ...borderless, cards: { ...borderless.cards, opacity: 1 } };
+    const framed = { ...base, cards: { ...base.cards, preset: "standard" as const, opacity: 0 } };
+
+    expect(buildHealthInput(borderless).connectors).toEqual([]);
+    expect(buildHealthInput(opaque).connectors.length).toBeGreaterThan(0);
+    expect(buildHealthInput(framed).connectors.length).toBeGreaterThan(0);
+  });
+
+  it("reports no connector conflict when the hidden borderless connectors would cross", () => {
+    const base = projectWith([
+      student("s1", "北京大学", "北京市"),
+      student("s2", "中山大学", "广州市"),
+    ]);
+    const project = {
+      ...base,
+      cards: { ...base.cards, connectorStyle: "straight" as const, preset: "borderless" as const, opacity: 0 },
+    };
+    const facts = buildRenderFacts(project);
+    const [first, second] = facts.cards;
+    const swapped = {
+      ...project,
+      cards: {
+        ...project.cards,
+        positions: {
+          [first!.group.key]: { x: second!.anchorX - first!.width / 2, y: second!.anchorY - first!.height / 2 },
+          [second!.group.key]: { x: first!.anchorX - second!.width / 2, y: first!.anchorY - second!.height / 2 },
+        },
+      },
+    };
+
+    const drawn = { ...swapped, cards: { ...swapped.cards, opacity: 1 } };
+
+    expect(checkLayoutHealth(buildHealthInput(drawn)).some((issue) => issue.kind === "connector-conflict")).toBe(true);
+    expect(checkLayoutHealth(buildHealthInput(swapped)).some((issue) => issue.kind === "connector-conflict")).toBe(false);
+  });
+
   it("lets a manual position override the solved card bounds through positionKey", () => {
     const base = projectWith([student("s1", "北京大学", "北京市")]);
     const key = buildCardFacts(base)[0]!.group.key;

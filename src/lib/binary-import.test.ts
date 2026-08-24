@@ -180,6 +180,30 @@ describe("binary import adapters", () => {
     ]);
   });
 
+  it("keeps blank middle cells as column slots on the headerless fallback path", () => {
+    const result = parseExcelWorkbookRows([
+      ["张三", "", "北京市", "海外"],
+      ["周晴", "哈佛大学", "美国·波士顿", "海外"],
+    ]);
+
+    expect(result.headerRowIndex).toBeUndefined();
+    expect(result.candidates).toEqual([{
+      name: "周晴",
+      university: "哈佛大学",
+      city: "美国·波士顿",
+      locationScope: "international",
+      sourceLine: 2,
+      rawLine: "周晴\t哈佛大学\t美国·波士顿\t海外",
+    }]);
+    expect(result.unparsed).toEqual([
+      {
+        sourceLine: 1,
+        rawLine: "张三\t\t北京市\t海外",
+        reason: "无法识别学生名称、录取院校和城市",
+      },
+    ]);
+  });
+
   it("builds a canonical import template with a separate guide sheet", () => {
     const template = createImportTemplateSheets();
 

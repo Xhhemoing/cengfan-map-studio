@@ -106,6 +106,8 @@ function validateScenePatch(domain: SceneDomain, patch: Record<string, unknown>)
 }
 
 const MAX_ROUNDS = 20;
+/** 快照可接受的最大计量值；服务端预算上限可配置，越界时宁可截断也不能让快照失效。 */
+const MAX_SNAPSHOT_USED_TOKENS = 100_000;
 const READ_ONLY_TOOLS = new Set(["inspect_project", "describe_capability", "check_health", "find_assets", "query_students"]);
 
 export interface AgentToolResult {
@@ -221,12 +223,16 @@ export function validateAgentSessionSnapshot(value: unknown): asserts value is A
   if (typeof value.metrics.rounds !== "number" || typeof value.metrics.usedTokens !== "number" ||
     !Number.isFinite(value.metrics.rounds) || !Number.isFinite(value.metrics.usedTokens) ||
     !Number.isInteger(value.metrics.rounds) || !Number.isInteger(value.metrics.usedTokens) ||
-    value.metrics.rounds < 0 || value.metrics.usedTokens < 0 || value.metrics.rounds > MAX_ROUNDS || value.metrics.usedTokens > 100_000 ||
+    value.metrics.rounds < 0 || value.metrics.usedTokens < 0 || value.metrics.rounds > MAX_ROUNDS || value.metrics.usedTokens > MAX_SNAPSHOT_USED_TOKENS ||
     (value.metrics.route !== undefined && value.metrics.route !== "primary" && value.metrics.route !== "fallback" && value.metrics.route !== "local") ||
     (value.metrics.provider !== undefined && (typeof value.metrics.provider !== "string" || value.metrics.provider.length > 512)) ||
     (value.metrics.fallbackReason !== undefined && (typeof value.metrics.fallbackReason !== "string" || value.metrics.fallbackReason.length > 2048)) ||
     !isSafeJson(value.metrics)) throw new Error("Agent 会话快照字段无效");
   if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_SNAPSHOT_BYTES) throw new Error("Agent 会话快照过大");
+}
+
+function boundedMetric(value: number | undefined, max: number, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(0, Math.floor(value))) : fallback;
 }
 
 function readPath(value: unknown, path: string): unknown {
@@ -687,8 +693,16 @@ export class AgentSession {
           const outcome = await response.json() as AgentApiOutcome & { taskId?: string; budgetReceipt?: string };
           this.taskId = outcome.taskId ?? this.taskId;
           this.budgetReceipt = outcome.budgetReceipt ?? this.budgetReceipt;
+          // usedTokens 以服务端预算为准：meta.usage.totalTokens 含缓存复用的提示词，逐轮累加会在长会话里虚高数倍。
+          if (outcome.meta || outcome.budget) {
+            this._metrics = {
+              ...this._metrics,
+              rounds: boundedMetric(outcome.budget?.rounds ?? this._metrics.rounds + 1, MAX_ROUNDS, this._metrics.rounds),
+              usedTokens: boundedMetric(outcome.budget?.usedTokens, MAX_SNAPSHOT_USED_TOKENS, this._metrics.usedTokens),
+            };
+          }
           if (outcome.meta) {
-            this._metrics = { ...this._metrics, rounds: this._metrics.rounds + 1, usedTokens: this._metrics.usedTokens + (outcome.meta.usage?.totalTokens ?? 0), route: outcome.meta.route, provider: outcome.meta.provider ?? outcome.meta.model, fallbackReason: outcome.meta.fallbackReason };
+            this._metrics = { ...this._metrics, route: outcome.meta.route, provider: outcome.meta.provider ?? outcome.meta.model, fallbackReason: outcome.meta.fallbackReason };
           }
           if (outcome.budget) this.budget = outcome.budget;
           if (outcome.kind === "failed") return { kind: "failed" as const, error: outcome.error ?? "Agent 失败" };

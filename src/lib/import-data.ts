@@ -26,11 +26,16 @@ export interface TextImportResult {
   unparsed: UnparsedLine[];
 }
 
+/** 行首制表符代表空列位置,清理缩进时必须保留,否则整行列位会左移。 */
+function trimLineEdges(line: string): string {
+  return line.replace(/^[^\S\t]+/, "").replace(/\s+$/, "");
+}
+
 function splitLines(text: string): string[] {
   return text
     .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    .map(trimLineEdges)
     .filter((line) => line.length > 0);
 }
 
@@ -43,11 +48,9 @@ function detectDelimiter(line: string): string | null {
 }
 
 function splitParts(line: string, delimiter: string | null): string[] {
+  // 有明确分隔符时空槽即列位:只 trim 不丢弃,否则「张三,,北京市,海外」会把城市读成海外。
   if (delimiter) {
-    return line
-      .split(delimiter)
-      .map((part) => part.trim())
-      .filter(Boolean);
+    return line.split(delimiter).map((part) => part.trim());
   }
 
   return line
