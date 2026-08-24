@@ -136,6 +136,8 @@ function jsonStringBytesWithin(value: string, remainingBytes: number): number | 
   let bytes = Buffer.byteLength(value, "utf8") + 2;
   if (bytes > remainingBytes) return undefined;
 
+  // JSON strings escape C0 controls; the class is RFC 8259, not a bug.
+  // eslint-disable-next-line no-control-regex
   const escapedCharacters = /["\\\u0000-\u001f\uD800-\uDFFF]/g;
   let match: RegExpExecArray | null;
   while ((match = escapedCharacters.exec(value)) !== null) {

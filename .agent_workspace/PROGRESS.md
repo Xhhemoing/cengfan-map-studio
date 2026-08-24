@@ -20,7 +20,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 1 | CLOSED | T1–T10 + R2-0 | — | Hotfix-after full suite 1391 pass / 1 skip |
 | 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
-| 4 | MERGED_PENDING_FULL_SUITE | R4-1–R4-10 | — | Targeted tests green; `tsc -b` 0. Full suite + lint + fable next. |
+| 4 | CLOSED | R4-1–R4-10 | — | Full suite 171 files / 1534 pass / 2 skip; lint 0 errors (7 warnings); fable review next |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -69,6 +69,13 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R4-8: retriable transport keeps conversation; 网络恢复后重试.
 - R4-9: `npm run typecheck`; workbook Node reuse 69.9% faster; browser 62.3% claim unverified.
 - R4-10: degrade recovery, newest-wins write-back; quota stays memory.
+
+## Round 4 closeout
+
+- Full suite: **171 files, 1534 passed / 2 skipped** (70.0s).
+- Lint: 0 errors, 7 warnings (5 pre-existing react-refresh; DataWorkspace exhaustive-deps; new `main.tsx` react-refresh from WorkbenchRoute). Two `no-control-regex` errors from R4-4/R4-7 silenced with documented disables.
+- Typecheck: `npm run typecheck` (`tsc -b --noEmit`) exit 0.
+- Fable: pending `.agent_workspace/round-4-review.md`. PR stays draft until fable.
 
 ## Round Briefings
 

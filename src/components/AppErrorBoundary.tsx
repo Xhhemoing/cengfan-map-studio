@@ -62,6 +62,8 @@ function errorMessage(reason: unknown): string {
 
 /** 工程名可能带路径分隔符等在下载时非法的字符。 */
 function filenameSafe(name: string): string {
+  // C0 controls are illegal in download names; the class is intentional.
+  // eslint-disable-next-line no-control-regex
   const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "_").trim();
   return cleaned || "未命名项目";
 }
