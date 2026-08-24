@@ -8,8 +8,15 @@ function rightmostHop(value: HeaderValue, arrayMode: "join" | "last"): string | 
   const hops = Array.isArray(value)
     ? (arrayMode === "join" ? value.join(",") : value.at(-1))
     : value;
-  return hops?.split(",").map((hop) => hop.trim()).filter(Boolean).at(-1)
-    ?.replace(ipv4WithPort, "$1");
+  if (!hops) return undefined;
+
+  const candidates = hops.split(",");
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const hop = candidates[index].trim().replace(ipv4WithPort, "$1");
+    if (!hop || hop.toLowerCase() === "unknown" || hop.startsWith("_")) continue;
+    return hop;
+  }
+  return undefined;
 }
 
 function forwardedParts(value: string): string[] {

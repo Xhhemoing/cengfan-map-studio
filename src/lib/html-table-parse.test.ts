@@ -22,6 +22,34 @@ describe("pasted html tables", () => {
     expect(result.unparsed).toEqual([]);
   });
 
+  it("reads a name a word processor padded out with typographic spaces", () => {
+    // Word and the online spreadsheets justify a two-character name with &emsp;/&ensp;/&thinsp;
+    // rather than with a plain space, and those entities used to reach the roster as text.
+    const result = parseHtmlTable(
+      "<table><tr><th>姓名</th><th>院校</th><th>城市</th></tr>"
+      + "<tr><td>苏&emsp;禾</td><td>浙江大学</td><td>杭州市</td></tr>"
+      + "<tr><td>林&ensp;&thinsp;舟</td><td>北京大学</td><td>北京市</td></tr></table>",
+    );
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏 禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "林 舟", university: "北京大学", city: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("leaves an entity that is not whitespace alone", () => {
+    // Only the spacing entities become a space: a quote decodes to itself, and an entity
+    // nobody knows stays as written instead of silently losing a character of the cell.
+    expect(parseHtmlTableRows(
+      "<table><tr><td>姓名</td><td>院校</td></tr>"
+      + "<tr><td>苏禾</td><td>&ldquo;强基&rdquo;计划 &amp; A&unknown;B</td></tr></table>",
+    )).toEqual([
+      ["姓名", "院校"],
+      ["苏禾", "&ldquo;强基&rdquo;计划 & A&unknown;B"],
+    ]);
+  });
+
   it("fills a rowspan and colspan block the way a merged workbook cell is filled", () => {
     const rows = parseHtmlTableRows(`
       <table>

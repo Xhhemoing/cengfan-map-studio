@@ -82,7 +82,7 @@ export function AssetPanelLibrary({
                   label={`删除素材 ${asset.label}`}
                   variant="danger"
                   onClick={() => deleteAsset(asset)}
-                  icon={<Trash2 size={14} />}
+                  icon={<Trash2 size={14} aria-hidden />}
                 />
               </div>
             ))}
@@ -115,7 +115,7 @@ export function AssetPanelLibrary({
               {asset.kind === "decoration" && !asset.mattingApplied && !asset.src.startsWith("data:image/svg+xml") && (
                 <IconButton
                   label={`自动抠图 ${asset.label}`}
-                  icon={<Scissors size={14} />}
+                  icon={<Scissors size={14} aria-hidden />}
                   variant="ghost"
                   disabled={processing}
                   onClick={() => onApplyMatting(asset)}
@@ -123,7 +123,7 @@ export function AssetPanelLibrary({
               )}
               <IconButton
                 label={`删除素材 ${asset.label}`}
-                icon={<Trash2 size={14} />}
+                icon={<Trash2 size={14} aria-hidden />}
                 variant="danger"
                 onClick={() => deleteAsset(asset)}
               />

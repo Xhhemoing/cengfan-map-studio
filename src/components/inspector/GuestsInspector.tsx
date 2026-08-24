@@ -76,7 +76,7 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
       {!peopleOnly && <>
         <InspectorHeader
           title="特邀嘉宾"
-          actions={<IconButton label={guests.visibility ? "隐藏嘉宾板块" : "显示嘉宾板块"} icon={guests.visibility ? <EyeOff size={15} /> : <Eye size={15} />} variant="ghost" onClick={() => onPatch({ visibility: !guests.visibility })} />}
+          actions={<IconButton label={guests.visibility ? "隐藏嘉宾板块" : "显示嘉宾板块"} icon={guests.visibility ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />} variant="ghost" onClick={() => onPatch({ visibility: !guests.visibility })} />}
         />
         <label htmlFor="guests-title">板块标题
           <DeferredInput id="guests-title" value={guests.title} onCommit={(title) => onPatch({ title })} />
@@ -158,7 +158,7 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
                 }}
               />
               {person.avatarSrc && (
-                <IconButton label={`清除 ${person.name} 的头像`} icon={<X size={14} />} variant="ghost" data-guest-avatar-clear={person.id} onClick={() => updatePerson(person.id, { avatarSrc: undefined })} />
+                <IconButton label={`清除 ${person.name} 的头像`} icon={<X size={14} aria-hidden />} variant="ghost" data-guest-avatar-clear={person.id} onClick={() => updatePerson(person.id, { avatarSrc: undefined })} />
               )}
             </div>
             <ActionGroup label={`${person.name} 操作`} className="guest-person-row__actions">
@@ -170,7 +170,7 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
               />
                 显示
               </label>
-              <IconButton label={`删除 ${person.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={() => removePerson(person.id)} />
+              <IconButton label={`删除 ${person.name}`} icon={<Trash2 size={14} aria-hidden />} variant="danger" onClick={() => removePerson(person.id)} />
             </ActionGroup>
           </div>
         ))}

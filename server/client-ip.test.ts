@@ -32,6 +32,22 @@ describe("clientIp", () => {
     expect(clientIp(request, true)).toBe("203.0.113.2");
   });
 
+  it("skips a trailing unknown X-Forwarded-For hop", () => {
+    const request = requestWith({
+      "x-forwarded-for": "198.51.100.1, unknown",
+    });
+
+    expect(clientIp(request, true)).toBe("198.51.100.1");
+  });
+
+  it("skips an obfuscated X-Forwarded-For suffix", () => {
+    const request = requestWith({
+      "x-forwarded-for": "198.51.100.1, _hidden",
+    });
+
+    expect(clientIp(request, true)).toBe("198.51.100.1");
+  });
+
   it("strips an IPv4 source port from X-Forwarded-For", () => {
     const request = requestWith({ "x-forwarded-for": "203.0.113.9:54321" });
 
@@ -68,6 +84,14 @@ describe("clientIp", () => {
     });
 
     expect(clientIp(request, true)).toBe("203.0.113.2");
+  });
+
+  it("skips a trailing unknown X-Real-IP hop", () => {
+    const request = requestWith({
+      "x-real-ip": "198.51.100.1, unknown",
+    });
+
+    expect(clientIp(request, true)).toBe("198.51.100.1");
   });
 
   it("strips an IPv4 source port from X-Real-IP", () => {

@@ -6,7 +6,7 @@ import {
   packSideCards,
   packSides,
 } from "./card-layout-modes";
-import { LayoutSpace, PlacementIndex } from "./card-layout-space";
+import { LayoutSpace, PlacementIndex, validateHard } from "./card-layout-space";
 import type { CardArea, CardLayoutBounds, CardLayoutInput } from "./card-layout-types";
 
 const occupied = { x: 300, y: 220, width: 300, height: 260 };
@@ -209,6 +209,30 @@ describe("packSides", () => {
     expect(sides).toContain("bottom");
     expect(sides).not.toContain("right");
     expect(sides).not.toContain("left");
+  });
+
+  it("hands back the caller's order even though sides pack on their own axis", () => {
+    // Two things reorder the result on the way out: sides are packed
+    // right-before-left, and each side sorts its cards along its own axis
+    // (the left column packs c3, c2, c0, c1). Neither is the input order, so
+    // returning the pack-order list would hand callers a different array than
+    // the one they passed in and break index-based lookups.
+    const space = makeSpace();
+    const placements = packSides(leftColumnBoard, space, "quadrant", {});
+
+    expect(placements.map((placement) => placement.id))
+      .toEqual(leftColumnBoard.map((card) => card.id));
+    // Reordering must not disturb the geometry: still a legal board, and the
+    // column labels still sit on the cards the packer gave them to.
+    expect(validateHard(placements, space)).toBe(true);
+    for (const [index, placement] of placements.entries()) {
+      const card = leftColumnBoard[index]!;
+      expect(placement.width).toBe(card.width);
+      expect(placement.height).toBe(card.height);
+    }
+    const byId = new Map(placements.map((placement) => [placement.id, placement.side]));
+    expect(["c0", "c1", "c2", "c3"].map((id) => byId.get(id))).toEqual(["left", "left", "left", "left"]);
+    expect(["c4", "c5", "c6"].map((id) => byId.get(id))).toEqual(["right", "right", "right"]);
   });
 
   it("never places a card twice across randomized boards", () => {

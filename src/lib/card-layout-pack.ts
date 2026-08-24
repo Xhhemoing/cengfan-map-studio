@@ -208,8 +208,10 @@ export function repackAll(cards: readonly CardLayoutInput[], space: LayoutSpace)
 
       let best: CardPlacement | null = null;
       let bestDistance = Infinity;
-      for (const x of nearestValues(xCandidates, preferredX, railLimit)) {
-        for (const y of nearestValues(yCandidates, preferredY, railLimit)) {
+      const nearestX = nearestValues(xCandidates, preferredX, railLimit);
+      const nearestY = nearestValues(yCandidates, preferredY, railLimit);
+      for (const x of nearestX) {
+        for (const y of nearestY) {
           const area = { x, y, width: card.width, height: card.height };
           if (!isFree(area, space, placed)) continue;
           const distance = (x + card.width / 2 - card.anchorX) ** 2 + (y + card.height / 2 - card.anchorY) ** 2;

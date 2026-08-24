@@ -10,7 +10,15 @@ import { trimImportCell } from "./import-data";
  * in a test, and clipboard markup is never inserted into the document, so no untrusted node is
  * ever created.
  */
-const HTML_NAMED_ENTITIES: Record<string, string> = { amp: "&", apos: "'", gt: ">", lt: "<", nbsp: " ", quot: '"' };
+/**
+ * A word processor lays a two-character name out to the width of a three-character one with the
+ * typographic spaces, so "苏禾" reaches the clipboard as `苏&emsp;禾`. They decode to a plain space
+ * like `&nbsp;` does, in time for the collapse in `htmlCellText` to fold them into the one space
+ * that separates the characters — left undecoded they became part of the name itself.
+ */
+const HTML_NAMED_ENTITIES: Record<string, string> = {
+  amp: "&", apos: "'", emsp: " ", ensp: " ", gt: ">", lt: "<", nbsp: " ", quot: '"', thinsp: " ",
+};
 
 const MAX_HTML_SPAN = 512;
 

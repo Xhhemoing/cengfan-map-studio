@@ -8,7 +8,7 @@
  * neighbour instead of being lost.
  */
 import { centerOf, clamp, overlaps } from "./card-layout-geometry";
-import { containFree, marginSeat, stackAtMargin } from "./card-layout-pack";
+import { containFree, marginSeat, orderResult, stackAtMargin } from "./card-layout-pack";
 import { PlacementIndex, type LayoutSpace } from "./card-layout-space";
 import {
   MIN_GAP,
@@ -345,5 +345,8 @@ export function packSides(
     placed.add(placement);
     placedIds.add(card.id);
   }
-  return placed.items;
+  // Sides are packed one at a time along their own axis, so `placed.items` is
+  // in pack order, not caller order. Every canonical exit hands back the
+  // caller's order so downstream indexing lines up with the input array.
+  return orderResult(cards, placed.items, space);
 }
