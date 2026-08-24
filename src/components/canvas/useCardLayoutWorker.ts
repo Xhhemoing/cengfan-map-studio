@@ -51,6 +51,10 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
   const requestRef = useRef(request);
   const activeKeyRef = useRef(requestKey);
   const requestIdRef = useRef(0);
+  const generationRef = useRef(0);
+  const activeGenerationRef = useRef(0);
+  const inFlightGenerationRef = useRef<number | null>(null);
+  const queuedMessageRef = useRef<CardLayoutWorkerMessage | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const [state, setState] = useState<KeyedCardLayoutWorkerState>(() => ({
     key: resolved.key,
@@ -65,6 +69,10 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
   useEffect(() => {
     const currentRequest = requestRef.current;
     activeKeyRef.current = requestKey;
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    activeGenerationRef.current = generation;
+    queuedMessageRef.current = null;
     if (!currentRequest) {
       setState({ key: null, result: null, pending: false });
       return;
@@ -93,7 +101,19 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
     if (!worker.onmessage) {
       worker.onmessage = (event: MessageEvent<CardLayoutWorkerResponse>) => {
         const response = event.data;
-        if (response.type !== "result"
+        if (response.type !== "result" || workerRef.current !== worker) return;
+
+        if (response.generation === inFlightGenerationRef.current) {
+          inFlightGenerationRef.current = null;
+          const queuedMessage = queuedMessageRef.current;
+          queuedMessageRef.current = null;
+          if (queuedMessage) {
+            inFlightGenerationRef.current = queuedMessage.generation;
+            worker.postMessage(queuedMessage);
+          }
+        }
+
+        if (response.generation !== activeGenerationRef.current
           || response.requestId !== requestIdRef.current
           || response.key !== activeKeyRef.current) return;
         cardLayoutCache.set(response.key, response.result);
@@ -104,6 +124,10 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
         worker.terminate();
         workerRef.current = null;
         requestIdRef.current += 1;
+        generationRef.current += 1;
+        activeGenerationRef.current = generationRef.current;
+        inFlightGenerationRef.current = null;
+        queuedMessageRef.current = null;
         const fallbackRequest = requestRef.current;
         if (!fallbackRequest || fallbackRequest.key !== activeKeyRef.current) return;
         const result = solveCardLayout(fallbackRequest.cards, fallbackRequest.bounds, fallbackRequest.options);
@@ -116,14 +140,22 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
     const message: CardLayoutWorkerMessage = {
       type: "solve",
       requestId,
+      generation,
       ...currentRequest,
     };
-    worker.postMessage(message);
+    if (inFlightGenerationRef.current === null) {
+      inFlightGenerationRef.current = generation;
+      worker.postMessage(message);
+    } else {
+      queuedMessageRef.current = message;
+    }
   }, [forceSync, requestKey]);
 
   useEffect(() => () => {
     workerRef.current?.terminate();
     workerRef.current = null;
+    inFlightGenerationRef.current = null;
+    queuedMessageRef.current = null;
   }, []);
 
   if (!request) return { result: null, pending: false };

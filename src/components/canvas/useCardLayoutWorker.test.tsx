@@ -100,25 +100,28 @@ describe("useCardLayoutWorker", () => {
     flushSync(() => root.render(<Harness request={first} />));
     const worker = FakeWorker.instances[0]!;
     expect(worker.messages).toHaveLength(1);
-    const firstMessage = worker.messages[0] as { requestId: number; key: string };
+    const firstMessage = worker.messages[0] as { requestId: number; generation: number; key: string };
 
     flushSync(() => root.render(<Harness request={second} />));
-    expect(worker.messages).toHaveLength(2);
-    const secondMessage = worker.messages[1] as { requestId: number; key: string };
+    expect(worker.messages).toHaveLength(1);
 
     flushSync(() => worker.emit({
       type: "result",
       requestId: firstMessage.requestId,
+      generation: firstMessage.generation,
       key: firstMessage.key,
       result: makeResult(first, 100),
     }));
     expect(current?.result).toBeNull();
     expect(current?.pending).toBe(true);
+    expect(worker.messages).toHaveLength(2);
+    const secondMessage = worker.messages[1] as { requestId: number; generation: number; key: string };
 
     const secondResult = makeResult(second, 200);
     flushSync(() => worker.emit({
       type: "result",
       requestId: secondMessage.requestId,
+      generation: secondMessage.generation,
       key: secondMessage.key,
       result: secondResult,
     }));
@@ -130,6 +133,49 @@ describe("useCardLayoutWorker", () => {
     container.remove();
   });
 
+  it("replaces queued requests so a ten-request burst posts at most two solves", () => {
+    const requests = Array.from({ length: 10 }, (_, index) => makeRequest(`burst-${index}`));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<Harness request={requests[0]!} />));
+    const worker = FakeWorker.instances[0]!;
+    for (const request of requests.slice(1)) {
+      flushSync(() => root.render(<Harness request={request} />));
+    }
+
+    expect(worker.messages).toHaveLength(1);
+    const firstMessage = worker.messages[0] as { requestId: number; generation: number; key: string };
+    flushSync(() => worker.emit({
+      type: "result",
+      requestId: firstMessage.requestId,
+      generation: firstMessage.generation,
+      key: firstMessage.key,
+      result: makeResult(requests[0]!, 100),
+    }));
+
+    expect(current?.result).toBeNull();
+    expect(current?.pending).toBe(true);
+    expect(worker.messages).toHaveLength(2);
+    const latestMessage = worker.messages[1] as { requestId: number; generation: number; key: string };
+    expect(latestMessage.key).toBe(requests[9]!.key);
+    expect(latestMessage.generation).toBeGreaterThan(firstMessage.generation);
+
+    const latestResult = makeResult(requests[9]!, 200);
+    flushSync(() => worker.emit({
+      type: "result",
+      requestId: latestMessage.requestId,
+      generation: latestMessage.generation,
+      key: latestMessage.key,
+      result: latestResult,
+    }));
+    expect(current?.result).toEqual(latestResult);
+    expect(current?.pending).toBe(false);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("does not expose the previous result while a new key is pending", () => {
     const first = makeRequest("stale-first");
     const second = makeRequest("stale-second");
@@ -138,11 +184,12 @@ describe("useCardLayoutWorker", () => {
 
     flushSync(() => root.render(<Harness request={first} />));
     const worker = FakeWorker.instances[0]!;
-    const firstMessage = worker.messages[0] as { requestId: number; key: string };
+    const firstMessage = worker.messages[0] as { requestId: number; generation: number; key: string };
     const firstResult = makeResult(first, 100);
     flushSync(() => worker.emit({
       type: "result",
       requestId: firstMessage.requestId,
+      generation: firstMessage.generation,
       key: firstMessage.key,
       result: firstResult,
     }));
@@ -211,12 +258,13 @@ describe("useCardLayoutWorker", () => {
     expect(current?.result).toBeNull();
     expect(current?.pending).toBe(true);
 
-    const staleMessage = worker.messages[1] as { requestId: number; key: string };
+    const staleMessage = worker.messages[0] as { requestId: number; generation: number; key: string };
     flushSync(() => worker.emit({
       type: "result",
       requestId: staleMessage.requestId,
+      generation: staleMessage.generation,
       key: staleMessage.key,
-      result: makeResult(second, 180),
+      result: makeResult(first, 180),
     }));
     expect(current?.result).toBeNull();
     expect(current?.pending).toBe(true);
