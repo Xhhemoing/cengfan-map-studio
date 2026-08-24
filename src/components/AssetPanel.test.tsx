@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { AssetPanel } from "./AssetPanel";
+import { MAX_RESOURCE_PACK_BYTES } from "../lib/import-file-limits";
 
 
 vi.mock("../lib/background-removal", () => ({
@@ -645,6 +646,39 @@ describe("AssetPanel", () => {
     const button = Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.includes("导出资源包"))!;
     flushSync(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onExportResourcePack).toHaveBeenCalledTimes(1);
+    root.unmount();
+  });
+
+  it("refuses resource packs over the byte ceiling before the parent reads them", () => {
+    const onImportResourcePack = vi.fn();
+    const { container, root } = renderPanel({ onImportResourcePack });
+
+    const input = container.querySelector("#asset-pack-import") as HTMLInputElement;
+    const oversized = new File(["{}"], "资源包.json", { type: "application/json" });
+    Object.defineProperty(oversized, "size", { value: MAX_RESOURCE_PACK_BYTES + 1 });
+    Object.defineProperty(input, "files", { configurable: true, value: [oversized] });
+    flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+
+    expect(onImportResourcePack).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("资源包过大");
+    expect(container.textContent).toContain("上限 24.0 MB");
+
+    root.unmount();
+  });
+
+  it("hands a resource pack within the ceiling to the parent importer", () => {
+    const onImportResourcePack = vi.fn();
+    const { container, root } = renderPanel({ onImportResourcePack });
+
+    const input = container.querySelector("#asset-pack-import") as HTMLInputElement;
+    const pack = new File(["{}"], "资源包.json", { type: "application/json" });
+    Object.defineProperty(pack, "size", { value: MAX_RESOURCE_PACK_BYTES });
+    Object.defineProperty(input, "files", { configurable: true, value: [pack] });
+    flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+
+    expect(onImportResourcePack).toHaveBeenCalledWith(pack);
+    expect(container.textContent).not.toContain("资源包过大");
+
     root.unmount();
   });
 

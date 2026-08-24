@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_PROJECT_PACKAGE_BYTES,
+  MAX_RESOURCE_PACK_BYTES,
   MAX_SPREADSHEET_IMPORT_BYTES,
   PROJECT_PACKAGE_IMPORT_LIMIT,
+  RESOURCE_PACK_IMPORT_LIMIT,
   SPREADSHEET_IMPORT_LIMIT,
   checkImportFileSize,
 } from "./import-file-limits";
@@ -37,6 +39,16 @@ describe("checkImportFileSize", () => {
     expect(message).toContain("工程包过大");
     expect(message).toContain("上限 24.0 MB");
     expect(message).toContain("工程包包含资源");
+  });
+
+  it("holds the resource pack to the same budget as the project package", () => {
+    expect(MAX_RESOURCE_PACK_BYTES).toBe(MAX_PROJECT_PACKAGE_BYTES);
+    expect(checkImportFileSize(fileOfSize(MAX_RESOURCE_PACK_BYTES, "资源包.json"), RESOURCE_PACK_IMPORT_LIMIT)).toBeNull();
+
+    const message = checkImportFileSize(fileOfSize(MAX_RESOURCE_PACK_BYTES + 1, "资源包.json"), RESOURCE_PACK_IMPORT_LIMIT);
+    expect(message).toContain("资源包过大");
+    expect(message).toContain("上限 24.0 MB");
+    expect(message).toContain("重新导出资源包");
   });
 
   it("treats a non-finite size as zero rather than rejecting the file", () => {

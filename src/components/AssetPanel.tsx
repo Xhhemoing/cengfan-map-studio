@@ -8,6 +8,7 @@ import {
 } from "../lib/assets";
 import { removeBackground } from "../lib/background-removal";
 import { checkImageBudget, downscaleImageDataUrl } from "../lib/image-downscale";
+import { checkImportFileSize, RESOURCE_PACK_IMPORT_LIMIT } from "../lib/import-file-limits";
 import {
   extractImageColor,
   extractImageTheme,
@@ -331,6 +332,16 @@ export function AssetPanel({
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleResourcePackImport = (file: File) => {
+    // 上层是 `readAsText` + 同步 `JSON.parse`，超限的包只能在读之前挡掉。
+    const oversized = checkImportFileSize(file, RESOURCE_PACK_IMPORT_LIMIT);
+    if (oversized) {
+      setMessage(oversized);
+      return;
+    }
+    onImportResourcePack?.(file);
   };
 
   const applyMatting = async (asset: UserAsset) => {
@@ -745,7 +756,7 @@ export function AssetPanel({
             accept="application/json,.json"
             icon={<PackageOpen size={16} aria-hidden />}
             variant="compact"
-            onFile={(file) => onImportResourcePack?.(file)}
+            onFile={handleResourcePackImport}
           />
         </div>
         <p className="panel-note">导出包含本地上传的图片素材与自定义字体，可备份或迁移到其他设备。</p>

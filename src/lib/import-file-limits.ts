@@ -14,6 +14,9 @@ export const MAX_SPREADSHEET_IMPORT_BYTES = 12 * 1024 * 1024;
 /** 工程包是 JSON，里面的素材与字体都是 base64，所以上限比表格宽一档。 */
 export const MAX_PROJECT_PACKAGE_BYTES = 24 * 1024 * 1024;
 
+/** 资源包与工程包同为 base64 JSON、同一条 `JSON.parse` 路径，预算保持对齐。 */
+export const MAX_RESOURCE_PACK_BYTES = MAX_PROJECT_PACKAGE_BYTES;
+
 export interface ImportSizeLimit {
   /** 用户看得懂的入口名称，例如「表格文件」。 */
   label: string;
@@ -32,6 +35,12 @@ export const PROJECT_PACKAGE_IMPORT_LIMIT: ImportSizeLimit = {
   label: "工程包",
   limitBytes: MAX_PROJECT_PACKAGE_BYTES,
   advice: "请在导出时取消勾选「工程包包含资源」，或先精简素材与字体后重新导出",
+};
+
+export const RESOURCE_PACK_IMPORT_LIMIT: ImportSizeLimit = {
+  label: "资源包",
+  limitBytes: MAX_RESOURCE_PACK_BYTES,
+  advice: "请先删掉素材库里用不到的图片与字体，再重新导出资源包",
 };
 
 /**
