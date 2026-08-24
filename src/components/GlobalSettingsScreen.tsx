@@ -134,11 +134,12 @@ export function GlobalSettingsScreen({
   selectedStudentId: string | null;
   onSelectStudent: (id: string) => void;
   onChangeDataView: (view: DataViewId) => void;
-  onAppendStudents: (students: Student[]) => void;
-  onReplaceStudents: (students: Student[]) => void;
-  onUpdateStudent: (id: string, patch: Partial<Pick<Student, "name" | "university" | "city" | "province" | "locationScope">>) => void;
+  /** 返回 false 表示写入被拒绝（如协作房间仅查看），数据面板会就地报错。 */
+  onAppendStudents: (students: Student[]) => boolean | void;
+  onReplaceStudents: (students: Student[]) => boolean | void;
+  onUpdateStudent: (id: string, patch: Partial<Pick<Student, "name" | "university" | "city" | "province" | "locationScope">>) => boolean | void;
   onToggleStudentVisibility: (id: string) => void;
-  onDeleteStudent: (id: string) => void;
+  onDeleteStudent: (id: string) => boolean | void;
   onSetStudentsVisibility: (visibility: boolean) => void;
   provinces: readonly string[];
   onApplyFont: (target: TypographyTarget, fontId: string, applyToAll: boolean) => void;

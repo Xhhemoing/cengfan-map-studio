@@ -56,6 +56,10 @@ const studentColumnLabels: Record<StudentColumn, string> = {
   locationScope: "去向类型",
 };
 
+// 协作房间里查看者的写操作会被 App 拒绝（回调返回 false）；
+// 数据面板必须就地报错，绝不能展示「已更新/已新增」假成功。
+const READ_ONLY_MESSAGE = "当前仅查看，无法修改此工程";
+
 export function DataWorkspace({
   students,
   onReplaceStudents,
@@ -76,11 +80,12 @@ export function DataWorkspace({
   compactRosterControls = false,
 }: {
   students: Student[];
-  onReplaceStudents: (students: Student[]) => void;
-  onAppendStudents: (students: Student[]) => void;
-  onUpdateStudent: (id: string, patch: Partial<Pick<Student, "name" | "university" | "city" | "province" | "locationScope">>) => void;
+  /** 返回 false 表示写入被拒绝（如协作房间仅查看），面板必须可见地报错。 */
+  onReplaceStudents: (students: Student[]) => boolean | void;
+  onAppendStudents: (students: Student[]) => boolean | void;
+  onUpdateStudent: (id: string, patch: Partial<Pick<Student, "name" | "university" | "city" | "province" | "locationScope">>) => boolean | void;
   onToggleVisibility: (id: string) => void;
-  onDeleteStudent: (id: string) => void;
+  onDeleteStudent: (id: string) => boolean | void;
   onSetStudentsVisibility: (visibility: boolean) => void;
   selectedStudentId?: string | null;
   onSelectStudent?: (id: string) => void;
@@ -199,10 +204,15 @@ export function DataWorkspace({
       setMessage(reason);
       return;
     }
-    onAppendStudents(result.students.map((student) => ({
+    const appended = onAppendStudents(result.students.map((student) => ({
       ...student,
       province: draft.locationScope === "international" ? undefined : draft.province?.trim() || undefined,
     })));
+    if (appended === false) {
+      setDraftError(READ_ONLY_MESSAGE);
+      setMessage(READ_ONLY_MESSAGE);
+      return;
+    }
     setDraft(createEmptyStudentDraft());
     setDraftError(null);
     setMessage("已新增 1 名学生");
@@ -232,7 +242,11 @@ export function DataWorkspace({
       setMessage("学生姓名、就读院校和城市不能为空");
       return;
     }
-    onUpdateStudent(student.id, next);
+    // 写入被拒绝（仅查看）时保持编辑态并报错，绝不能提示「已更新」。
+    if (onUpdateStudent(student.id, next) === false) {
+      setMessage(READ_ONLY_MESSAGE);
+      return;
+    }
     setEditingStudentId(null);
     setEditingDraft(createEmptyStudentDraft());
     setMessage(`已更新 ${next.name}`);
@@ -315,8 +329,14 @@ export function DataWorkspace({
     if (mode === "replace") {
       // 取消替换时直接返回，不留下任何“替换摘要”残留状态。
       if (!confirmReplace({ currentCount: students.length, nextCount: next.length })) return;
-      onReplaceStudents(next);
-    } else onAppendStudents(next);
+      if (onReplaceStudents(next) === false) {
+        setMessage(READ_ONLY_MESSAGE);
+        return;
+      }
+    } else if (onAppendStudents(next) === false) {
+      setMessage(READ_ONLY_MESSAGE);
+      return;
+    }
     setReviewRows([]);
     setExcelRecognition(null);
     setUnparsedLines([]);
@@ -343,19 +363,25 @@ export function DataWorkspace({
     } finally {
       setIsAiParsing(false);
     }
+    // 一键导入同样要回显未识别行的计数与明细，不允许静默丢弃（I-10-02）。
+    setUnparsedLines(parsed.unparsed);
+    const unparsedNote = parsed.unparsed.length > 0 ? `，${parsed.unparsed.length} 行未识别（见下方明细）` : "";
     if (parsed.candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入的学生记录`);
+      setMessage(`没有从${sourceLabel}识别到可导入的学生记录${unparsedNote}`);
       return;
     }
     const result = confirmImportCandidates(parsed.candidates.map((c) => ({ ...c, accepted: true })));
     if (result.students.length === 0) {
-      setMessage("识别结果无法转换为有效记录");
+      setMessage(`识别结果无法转换为有效记录${unparsedNote}`);
       return;
     }
-    onAppendStudents(result.students);
+    if (onAppendStudents(result.students) === false) {
+      setMessage(READ_ONLY_MESSAGE);
+      return;
+    }
     setReviewRows([]);
     setImportText("");
-    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录`);
+    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录${unparsedNote}`);
   };
 
   return (
@@ -683,7 +709,10 @@ export function DataWorkspace({
                             />
                             <IconButton label={`保存 ${student.name} 省份`} icon={<Check size={14} />} onClick={(event) => {
                               event.stopPropagation();
-                              onUpdateStudent(student.id, { province: provinceDraft.trim() || undefined });
+                              if (onUpdateStudent(student.id, { province: provinceDraft.trim() || undefined }) === false) {
+                                setMessage(READ_ONLY_MESSAGE);
+                                return;
+                              }
                               setProvinceEditingId(null);
                               setProvinceDraft("");
                             }} />
@@ -715,7 +744,7 @@ export function DataWorkspace({
                       <td><div className="student-row__buttons">
                         <IconButton label={`编辑 ${student.name}`} icon={<Pencil size={14} />} onClick={(event) => { event.stopPropagation(); startEditing(student); }} />
                         <IconButton label={`${isVisible ? "隐藏" : "显示"} ${student.name}`} icon={isVisible ? <EyeOff size={14} /> : <Eye size={14} />} onClick={(event) => { event.stopPropagation(); onToggleVisibility(student.id); }} />
-                        <IconButton label={`删除 ${student.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={(event) => { event.stopPropagation(); if (confirmDelete(student)) onDeleteStudent(student.id); }} />
+                        <IconButton label={`删除 ${student.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={(event) => { event.stopPropagation(); if (confirmDelete(student) && onDeleteStudent(student.id) === false) setMessage(READ_ONLY_MESSAGE); }} />
                       </div></td>
                     </>
                   )}

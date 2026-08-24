@@ -282,8 +282,11 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   const joinCollaborationRoom = async () => {
     const normalizedRoomId = roomInput.trim().toUpperCase();
     if (!normalizedRoomId) return;
-    const persistedToken = storedRoomAccess(normalizedRoomId);
-    if (!inviteTokenInput.trim() && !persistedToken) return;
+    // 用户显式填入的邀请凭证优先于本地保存的旧凭证：重新加入时按新凭证
+    // 的角色进入（如查看者换用编辑邀请），成功后新凭证覆盖旧凭证。
+    const inviteToken = inviteTokenInput.trim();
+    const persistedToken = inviteToken ? null : storedRoomAccess(normalizedRoomId);
+    if (!inviteToken && !persistedToken) return;
     setCollaborationStatus("connecting");
     setCollaborationMessage(persistedToken ? "正在恢复房间访问" : "正在验证邀请凭证");
     try {
@@ -291,7 +294,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
         ? { accessToken: persistedToken, role: null }
         : await joinRoom<ProjectPackage>({
           roomId: normalizedRoomId,
-          inviteToken: inviteTokenInput.trim(),
+          inviteToken,
           clientId,
           displayName: COLLABORATION_DISPLAY_NAME,
         }).then((joined) => joined.access);

@@ -417,6 +417,74 @@ describe("DataWorkspace", () => {
     expect(container.textContent).not.toContain("确认候选");
   });
 
+  it("surfaces unparsed lines after one-click import instead of dropping them silently (I-10-02)", async () => {
+    const onAppendStudents = vi.fn();
+    // AI 不可用时走本地文本识别，行为必须一致地回显未识别行。
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => {
+      throw new Error("AI 不可用");
+    });
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "苏禾 浙江大学 杭州\n这行无法识别");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("一键识别并导入"))!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "苏禾" })]);
+    // 未识别行必须回显计数与明细，不允许静默丢弃。
+    expect(container.textContent).toContain("1 行未识别");
+    const unparsedSection = container.querySelector('section[aria-label="未识别的导入行"]');
+    expect(unparsedSection).not.toBeNull();
+    expect(unparsedSection!.textContent).toContain("这行无法识别");
+  });
+
+  it("shows a visible read-only failure for save, add, and delete instead of fake success (I-10-03)", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn(() => false)}
+        onReplaceStudents={vi.fn(() => false)}
+        onUpdateStudent={vi.fn(() => false)}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn(() => false)}
+        onSetStudentsVisibility={vi.fn()}
+        confirmDelete={() => true}
+      />,
+    );
+
+    // 保存被拒绝：报错、保持编辑态、绝不提示「已更新」。
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "查看者改名");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+    expect(container.querySelector(".data-message")?.textContent).toContain("当前仅查看，无法修改此工程");
+    expect(container.textContent).not.toContain("已更新");
+    expect(container.querySelector('[data-student-row="student-1"]')?.getAttribute("data-editing")).toBe("true");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="取消编辑 林舟"]')!);
+
+    // 新增被拒绝：就近错误 + 不提示「已新增」。
+    changeInput(container.querySelector<HTMLInputElement>('input[placeholder="林舟"]')!, "新同学");
+    changeInput(getInput(container, "就读院校"), "浙江大学");
+    changeInput(getInput(container, "城市"), "杭州市");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("新增学生"))!);
+    expect(container.querySelector(".draft-form__error")?.textContent).toContain("当前仅查看，无法修改此工程");
+    expect(container.textContent).not.toContain("已新增");
+
+    // 删除被拒绝：确认后仍要可见失败。
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="删除 林舟"]')!);
+    expect(container.querySelector(".data-message")?.textContent).toContain("当前仅查看，无法修改此工程");
+  });
+
   it("edits a record with its stable id and allows manual province override", () => {
     const onUpdateStudent = vi.fn();
     const container = render(

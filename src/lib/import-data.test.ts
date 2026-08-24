@@ -118,4 +118,39 @@ describe("import data", () => {
       rawLine: "周晴,哈佛大学,美国·波士顿,海外",
     }]);
   });
+
+  it("recognizes 海外去向 in plain pasted text via the shared scope parser (I-10-01)", () => {
+    const result = parseStudentText("王远 剑桥大学 英国·伦敦 海外去向");
+
+    expect(result.candidates).toEqual([{
+      name: "王远",
+      university: "剑桥大学",
+      city: "英国·伦敦",
+      locationScope: "international",
+      sourceLine: 1,
+      rawLine: "王远 剑桥大学 英国·伦敦 海外去向",
+    }]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("flags out-of-enum destination scopes in pasted text with a readable warning (I-10-01)", () => {
+    const result = parseStudentText([
+      "林舟 北京大学 北京 中国去向",
+      "陈宁 香港大学 香港 港澳台",
+    ].join("\n"));
+
+    expect(result.candidates).toHaveLength(2);
+    // 枚举内取值不产生提示。
+    expect(result.candidates[0]!.locationScope).toBeUndefined();
+    expect(result.candidates[0]!.warnings).toBeUndefined();
+    // 枚举外取值仍按中国去向导入，但必须带可读提示，不允许静默。
+    expect(result.candidates[1]!.locationScope).toBeUndefined();
+    expect(result.candidates[1]!.warnings).toEqual(["去向类型「港澳台」未识别，已按中国去向导入"]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("applies the shared scope parser on delimited tables too (I-10-01)", () => {
+    const rows = parseDelimitedTable("姓名,院校,城市,去向类型\n王远,剑桥大学,英国·伦敦,海外去向");
+    expect(rows).toEqual([expect.objectContaining({ name: "王远", locationScope: "international" })]);
+  });
 });

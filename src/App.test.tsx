@@ -398,6 +398,107 @@ describe("App student editing", () => {
     }
   });
 
+  it("surfaces a visible failure instead of fake success when a viewer saves a roster edit (I-10-03)", async () => {
+    const container = renderApp();
+    const roomId = "VIEW03";
+    const originalEventSource = globalThis.EventSource;
+    class QuietEventSource {
+      addEventListener() {}
+      onerror = null;
+      close() {}
+      constructor(public readonly url: string) {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    const remoteProject = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+    const originalFetch = globalThis.fetch;
+    const request = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/api/rooms/${roomId}/join`)) {
+        return new Response(JSON.stringify({ room: { id: roomId }, access: { accessToken: "viewer-token", role: "viewer", participantId: "viewer", id: "viewer", displayName: "查看者" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/api/rooms/${roomId}`)) {
+        return new Response(JSON.stringify({ id: roomId, version: 0, ready: true, snapshot: createProjectPackage({ project: remoteProject, assets: [], fonts: [], customTemplates: [], renderSettings: { mode: "normal", fixedFps: 20 } }), role: "viewer", participants: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/events-ticket")) return new Response(JSON.stringify({ ticket: "ticket" }), { status: 201, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    globalThis.fetch = request as typeof fetch;
+    try {
+      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作邀请凭证"]')!, "viewer-invite");
+      click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
+      await vi.waitFor(() => expect(container.textContent).toContain("已加入房间"));
+
+      openPeopleData(container);
+      click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+      changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "查看者改名");
+      click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+
+      // 保存必须可见失败：数据面板出现「仅查看」错误，绝不能出现「已更新」。
+      await vi.waitFor(() => expect(container.querySelector(".data-message")?.textContent).toContain("当前仅查看，无法修改此工程"));
+      expect(container.textContent).not.toContain("已更新");
+      // 底层名单没有被改动。
+      click(container.querySelector<HTMLButtonElement>('button[aria-label="取消编辑 林舟"]')!);
+      expect(container.querySelector('[data-student-row="student-1"]')?.textContent).toContain("林舟");
+      expect(container.querySelector('[data-student-row="student-1"]')?.textContent).not.toContain("查看者改名");
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    }
+  });
+
+  it("prefers an explicitly entered invitation over a persisted stale credential when rejoining (I-10-04)", async () => {
+    const container = renderApp();
+    const roomId = "EDIT01";
+    const originalEventSource = globalThis.EventSource;
+    class QuietEventSource {
+      addEventListener() {}
+      onerror = null;
+      close() {}
+      constructor(public readonly url: string) {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    // 刷新前留下的旧查看者凭证不应短路用户显式填入的编辑邀请。
+    window.localStorage.setItem(`cengfan-map-studio:room-access:${roomId}`, "stale-viewer-token");
+    const remoteProject = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+    const originalFetch = globalThis.fetch;
+    const request = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/api/rooms/${roomId}/join`)) {
+        return new Response(JSON.stringify({ room: { id: roomId }, access: { accessToken: "editor-token", role: "editor", participantId: "editor", id: "editor", displayName: "编辑者" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/api/rooms/${roomId}`)) {
+        return new Response(JSON.stringify({ id: roomId, version: 0, ready: true, snapshot: createProjectPackage({ project: remoteProject, assets: [], fonts: [], customTemplates: [], renderSettings: { mode: "normal", fixedFps: 20 } }), role: "editor", readonly: false, closed: false, participants: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/events-ticket")) return new Response(JSON.stringify({ ticket: "ticket" }), { status: 201, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    globalThis.fetch = request as typeof fetch;
+    try {
+      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作邀请凭证"]')!, "editor-invite");
+      click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
+
+      // 显式邀请必须走 /join 验证，而不是直接复用旧凭证。
+      await vi.waitFor(() => expect(request).toHaveBeenCalledWith(`/api/rooms/${roomId}/join`, expect.anything()));
+      const joinCall = request.mock.calls.find(([input]) => String(input).endsWith(`/api/rooms/${roomId}/join`));
+      expect(JSON.parse((joinCall?.[1] as RequestInit).body as string)).toMatchObject({ inviteToken: "editor-invite" });
+      await vi.waitFor(() => {
+        expect(container.textContent).toContain("已加入房间");
+        // 新凭证覆盖旧凭证，角色升级为可编辑。
+        expect(window.localStorage.getItem(`cengfan-map-studio:room-access:${roomId}`)).toBe("editor-token");
+      });
+      expect(container.textContent).toContain("模式：可编辑");
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    }
+  });
+
   it("shows room members with the owner marked and lets the owner toggle readonly", async () => {
     const container = renderApp();
     const roomId = "ROOM1";

@@ -20,6 +20,29 @@ export interface TextImportResult {
   unparsed: UnparsedLine[];
 }
 
+const INTERNATIONAL_SCOPE_PATTERN = /海外|international|overseas/;
+const CHINA_SCOPE_PATTERN = /中国|国内|china|domestic/;
+
+export interface LocationScopeParse {
+  scope?: "international";
+  warning?: string;
+}
+
+/**
+ * 去向类型枚举：中国去向 / 海外去向。留空按中国去向处理；
+ * 非空且不在枚举内的取值仍按中国去向导入，但必须带可读提示
+ * 回显到确认面板，不允许静默当成中国去向。
+ * 文本粘贴与 Excel 路径共用同一份识别规则。
+ */
+export function parseLocationScope(value: string | undefined): LocationScopeParse {
+  const raw = value?.trim() ?? "";
+  if (!raw) return {};
+  const normalized = raw.toLocaleLowerCase("zh-CN");
+  if (INTERNATIONAL_SCOPE_PATTERN.test(normalized)) return { scope: "international" };
+  if (CHINA_SCOPE_PATTERN.test(normalized)) return {};
+  return { warning: `去向类型「${raw}」未识别，已按中国去向导入` };
+}
+
 function splitLines(text: string): string[] {
   return text
     .replace(/^\uFEFF/, "")
@@ -88,13 +111,13 @@ function toCandidate(
   if (parts.length < 3) return null;
   const [name, university, city, scope] = parts;
   if (!name || !university || !city) return null;
+  const { scope: locationScope, warning: scopeWarning } = parseLocationScope(scope);
   return {
     name,
     university,
     city,
-    ...(scope?.trim().toLocaleLowerCase("zh-CN") === "海外" || scope?.trim().toLocaleLowerCase("zh-CN") === "international"
-      ? { locationScope: "international" as const }
-      : {}),
+    ...(locationScope ? { locationScope } : {}),
+    ...(scopeWarning ? { warnings: [scopeWarning] } : {}),
     sourceLine,
     rawLine,
   };

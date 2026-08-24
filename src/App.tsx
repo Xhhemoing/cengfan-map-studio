@@ -653,21 +653,24 @@ function StudioApp({ projectId }: { projectId?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collaborationClientId, customTemplates, project, renderSettings, collaboration.roomAccessToken, collaboration.roomId, collaboration.roomRole, collaboration.roomReadonly, collaboration.roomClosed, userAssets, userFonts]);
 
-  const commitProject = (next: ProjectDocument) => {
-    if (!collaboration.canEdit) {
-      collaboration.setCollaborationMessage("当前仅查看，无法修改此工程");
-      return;
-    }
+  // 仅查看时的拒绝必须全局可见（StatusToast），协作浮层可能是收起的；
+  // 返回 false 让调用方（如数据面板）就地报错，避免「已更新」假成功。
+  const rejectReadOnlyCommit = (): false => {
+    collaboration.setCollaborationMessage("当前仅查看，无法修改此工程");
+    setStatusMessage("当前仅查看，无法修改此工程");
+    return false;
+  };
+
+  const commitProject = (next: ProjectDocument): boolean => {
+    if (!collaboration.canEdit) return rejectReadOnlyCommit();
     setProject(next);
     setPreviewCommands([]);
     workspaceSync.markPending();
+    return true;
   };
 
-  const commitProjectTransaction = (transaction: ProjectTransaction) => {
-    if (!collaboration.canEdit) {
-      collaboration.setCollaborationMessage("当前仅查看，无法修改此工程");
-      return;
-    }
+  const commitProjectTransaction = (transaction: ProjectTransaction): boolean => {
+    if (!collaboration.canEdit) return rejectReadOnlyCommit();
     setProject((current) => {
       const next = applyTransaction(current, transaction);
       return next;
@@ -675,6 +678,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setPreviewCommands([]);
     setAgentPreview(null);
     workspaceSync.markPending();
+    return true;
   };
 
   const posterExport = usePosterExport({
