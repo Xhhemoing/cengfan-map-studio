@@ -17,7 +17,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | IMPLEMENTING | T4, T5, T6, T7 | — | T4/T5/T6 metrics + T7 IDB recovery (31 tests); remaining tasks isolated |
+| 1 | IMPLEMENTING | T4, T5, T6, T7, T9 | — | T9 export bytes −42.4% (30 tests); remaining T1/T2/T3/T8/T10 isolated |
 
 ## Round 0 Baseline (pre-optimization)
 
