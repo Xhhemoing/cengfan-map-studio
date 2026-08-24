@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
-import type { ProjectListItem, ProjectStoreError } from "../lib/project-store";
+import type { ProjectStoreError } from "../lib/project-store";
 
 const MEMORY_MODE_NOTICE = "本次编辑不会保存到本机，请及时导出工程备份";
 const MEMORY_MODE_DETAIL = "浏览器本机存储不可用，内容只保留在当前标签页内存中。";
@@ -68,8 +68,4 @@ export function StorageNoticeExportAction({
 /** 导出失败也要留在横幅里:按钮点了没反应,用户会以为备份已经落盘。 */
 export function StorageNoticeActionError({ message }: { message: string }) {
   return <li className="workbench-storage-notice-error" role="alert">{message}</li>;
-}
-
-export function projectPackageFileName(project: Pick<ProjectListItem, "name" | "updatedAt">): string {
-  return `${project.name}-${project.updatedAt.slice(0, 10)}.json`;
 }

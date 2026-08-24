@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { StorageNotice, StorageNoticeActionError, StorageNoticeExportAction, projectPackageFileName } from "./StorageNotice";
+import { StorageNotice, StorageNoticeActionError, StorageNoticeExportAction } from "./StorageNotice";
 import { ProjectStoreError } from "../lib/project-store";
 
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
@@ -74,12 +74,5 @@ describe("StorageNotice", () => {
     button.click();
 
     expect(exported).toBe("proj-1");
-  });
-});
-
-describe("projectPackageFileName", () => {
-  it("names the package after the project and its update day", () => {
-    expect(projectPackageFileName({ name: "备份项目", updatedAt: "2026-08-24T02:00:00.000Z" }))
-      .toBe("备份项目-2026-08-24.json");
   });
 });
