@@ -17,7 +17,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | AUDIT_IN_PROGRESS | — | — | fable audit + gpt-sol baselines in flight |
+| 1 | AUDIT_IN_PROGRESS | — | — | gpt-sol baselines ready; fable 10-task audit still in flight |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -25,7 +25,11 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - Perf command: `npm run perf:layout`
 - Known hotspots: `src/App.tsx` (2466), `src/styles.css` (3732), `PosterCanvas.tsx` (1588), `card-layout.ts` (~1300), `server/index.ts` (1076)
 - Prior unmerged campaign: `origin/cursor/sota-campaign-6231` (31+ rounds, mainly import/collab/ai/export fixes). Treat as reference, not a dump.
-- `npm audit`: high `nanoid <3.3.18` (GHSA-2v37-7h3g-55p8); `npm audit fix` available. Confirm it is not a production runtime path before bumping.
+- Layout bench (5-run median): 36=31.4ms, 60=31.9ms, 100=28.5ms, 200=50.1ms, **400=95.2ms** (gate on 400-card; 36-card noise is 16.6%). Bench currently skips `occupiedPolygons`, so production `optimizedLayout` is unmeasured.
+- Representative tests: layout 44/44 in 2.445s wall; canvas perf 1/1 in 1.563s; collab/API 72/72 in 0.921s.
+- `npm audit`: high `nanoid@3.3.17` via Vite/PostCSS (`GHSA-2v37-7h3g-55p8`). Targeted bump to `3.3.18` without touching pinned `xlsx`.
+- Top Round-1 hypotheses: (1) EventSource re-ticket + ordered backfill, (2) IndexedDB migration/CAS, (3) spatial index in card-layout, (4) layout-worker coalescing, (5) off-thread import + size caps.
+- Full numbers: `.agent_workspace/round-1-baseline.md`
 
 ## Round Briefings
 
