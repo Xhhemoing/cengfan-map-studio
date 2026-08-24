@@ -24,7 +24,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
 | 6 | CLOSED | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn; fable 6 ACCEPT + 4 NITS; no blocker. |
 | 7 | CLOSED | R7-1–R7-9 + R7-3b + R7-10 | — | 189/1757/2; lint 0/6; CI `362c318`; fable 8 ACCEPT + 2 NITS; no blocker. |
-| 8 | IN_PROGRESS | R8-1, R8-4 | — | Warn legend + banner export errors. Awaiting R8-2/5–9. |
+| 8 | IN_PROGRESS | R8-1, R8-4, R8-9 | — | Awaiting R8-2/5–8. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -139,6 +139,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - Headline leftovers: `roomPersistence()` ignores `lastFailure` (stale-good on create/join/snapshot during disk failure); warn legend always mentions both skip and trim.
 - R8-1 (`a72bf30` / `a88fc5e`+`e41aeaa`): flush warn legend clauses gated on non-empty groups. Rollback = revert the merge. collaboration.test.ts 57/1 skip; tsc node 0.
 - R8-4 (`8fefafc` / `7496c57`+`376129f`): banner export failures render `StorageNoticeActionError` in the notice. Rollback = revert the merge. ProjectWorkbench 31/31; tsc app 0.
+- R8-9 (`4d2a887` / `1c3099b`+`bbc7093`): `studioTheme` and `globalDataViewLabel` moved to `src/lib`. Rollback = revert the merge. Owned tests 8/8; scoped eslint 0; tsc app 0.
 
 ## Round Briefings
 
