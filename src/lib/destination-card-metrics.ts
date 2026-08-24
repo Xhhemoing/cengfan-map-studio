@@ -38,9 +38,18 @@ export const DESTINATION_CARD_FLOW_BODY_GAP = 8;
 export const DESTINATION_CARD_TITLE_LINE_MIN_HEIGHT = 16;
 export const DESTINATION_CARD_TITLE_LINE_LEADING = 4;
 
-/** Floor and leading of one flow body line. Fixed mode uses the solved `rowHeight` instead. */
+/** Floor of one flow body line. Fixed mode floors at {@link DESTINATION_CARD_FIXED_ROW_MIN_HEIGHT}. */
 export const DESTINATION_CARD_ROW_LINE_MIN_HEIGHT = 16;
+
+/** Leading of one body line, shared by the solved fixed step and the per-block flow step. */
 export const DESTINATION_CARD_ROW_LINE_LEADING = 6;
+
+/** Floor of one fixed-mode body row; the compact layout tightens it. */
+export const DESTINATION_CARD_FIXED_ROW_MIN_HEIGHT = 20;
+export const DESTINATION_CARD_COMPACT_ROW_MIN_HEIGHT = 18;
+
+/** Leading a flow block falls back to when it declares none. */
+export const DESTINATION_CARD_FLOW_LINE_HEIGHT = 1.2;
 
 /**
  * Horizontal room the province thumbnail takes out of the header. `PosterCanvas` subtracts the
@@ -115,7 +124,16 @@ export function destinationCardSurfaceChrome(
   };
 }
 
-/** Horizontal room a preset ornament takes at the start of the header (photo avatar today). */
+/**
+ * Horizontal room a preset ornament takes at the start of the header (photo avatar today).
+ *
+ * Header-only on purpose. The avatar disc ends at {@link DESTINATION_CARD_PHOTO_AVATAR_CENTER_Y}
+ * plus {@link DESTINATION_CARD_PHOTO_AVATAR_RADIUS}, above {@link DESTINATION_CARD_FIXED_BODY_TOP},
+ * so body rows have nothing to clear — while their wrap width is solved from the full padding box
+ * (`contentWidth` in `prepared-card-content`, fed by `PosterCanvas`) without the offset. Indenting
+ * the body by it would push the last glyph of every wrapped line past the card's right padding
+ * instead. The metrics test guards the avatar against growing down into the body band.
+ */
 export function destinationCardHeaderOffset(preset: CardPreset): number {
   return destinationCardPresetOverlay(preset)?.headerOffset ?? 0;
 }
@@ -156,9 +174,53 @@ export function destinationCardBodyTop(input: {
   return input.flowContentStart + input.flowTitleFontSize + DESTINATION_CARD_FLOW_BODY_GAP;
 }
 
-/** Flow-mode step between body lines. Fixed mode uses the solved `rowHeight` unchanged. */
+/** Flow-mode step between body lines: each block carries its own size and leading. */
 export function destinationCardFlowRowHeight(fontSize: number, lineHeight: number): number {
   return Math.max(DESTINATION_CARD_ROW_LINE_MIN_HEIGHT, fontSize + DESTINATION_CARD_ROW_LINE_LEADING) * lineHeight;
+}
+
+/**
+ * Font size the fixed-mode row step is measured from. Every body line of a document steps by
+ * the same height, so it follows the largest text a line can hold: each visible field at the
+ * size its row paints it with, plus the city heading, which province cards draw even when
+ * `city` is not a row field of its own.
+ *
+ * A visible `city` field counts at the plain card font size rather than the one-step-smaller
+ * heading size: inside a normal row the city is a `tspan` that inherits the row's own size
+ * unless `fieldTypography.city` overrides it. Measuring it with `cardFieldFontSize` instead
+ * would under-reserve the step and drop the last line past the card's bottom padding.
+ */
+export function destinationCardRowFontSize(input: {
+  visibleFieldFontSizes: readonly number[];
+  cityHeadingFontSize: number;
+}): number {
+  return Math.max(...input.visibleFieldFontSizes, input.cityHeadingFontSize);
+}
+
+/** Fixed-mode step between body lines, solved once per document and reused by every card. */
+export function destinationCardFixedRowHeight(input: {
+  rowFontSize: number;
+  compactLayout: boolean;
+  lineHeightMultiplier: number;
+}): number {
+  return Math.max(
+    input.compactLayout ? DESTINATION_CARD_COMPACT_ROW_MIN_HEIGHT : DESTINATION_CARD_FIXED_ROW_MIN_HEIGHT,
+    input.rowFontSize + DESTINATION_CARD_ROW_LINE_LEADING,
+  ) * input.lineHeightMultiplier;
+}
+
+/**
+ * The step a card walks its body lines with: the solved document-wide step in fixed mode,
+ * where the card height was reserved from it, or the block's own step in flow mode.
+ */
+export function destinationCardBodyRowHeight(input: {
+  mode: DisplayFrameMode;
+  solvedRowHeight: number;
+  fontSize: number;
+  lineHeight?: number;
+}): number {
+  if (input.mode === "fixed") return input.solvedRowHeight;
+  return destinationCardFlowRowHeight(input.fontSize, input.lineHeight ?? DESTINATION_CARD_FLOW_LINE_HEIGHT);
 }
 
 export function destinationCardBodyBaseline(input: {

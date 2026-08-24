@@ -25,9 +25,9 @@ import {
   DESTINATION_CARD_PHOTO_INITIAL_FONT_WEIGHT,
   destinationCardAvatar,
   destinationCardBodyBaseline,
+  destinationCardBodyRowHeight,
   destinationCardBodyTop,
   destinationCardDividerY,
-  destinationCardFlowRowHeight,
   destinationCardHeaderOffset,
   destinationCardSurfaceChrome,
   destinationCardTextureBox,
@@ -37,23 +37,14 @@ import {
   destinationCardTitleX,
 } from "../../lib/destination-card-metrics";
 import { resolveFontFamily, type UserFont } from "../../lib/fonts";
-import type { LayoutGroup, SchoolRowPart } from "../../lib/layout";
+import type { LayoutGroup } from "../../lib/layout";
+import type { PreparedCardRow } from "../../lib/prepared-card-content";
 import type { CardFontField, ProvinceAppearance, TextStyleOverride } from "../../lib/scene-document";
 import type { CardPreset } from "../../lib/template-document";
 
-export interface CardDisplayRow {
-  key: string;
-  parts: SchoolRowPart[];
-  remainingPeople: number;
-  cityHeading?: string;
-  city?: string;
-  university?: string;
-  names?: string;
-}
-
-export interface PreparedCardRow extends CardDisplayRow {
-  lines: CardTextLine<CardFontField>[];
-}
+// The row shapes live in `lib/prepared-card-content` (the module that builds them) so the
+// solver side never has to import from a component; re-exported here for existing callers.
+export type { CardDisplayRow, PreparedCardRow } from "../../lib/prepared-card-content";
 
 /**
  * Card styling shared by every destination card. PosterCanvas memoizes this object so a
@@ -241,9 +232,12 @@ export const DestinationCard = memo(function DestinationCard({
     const paint = block
       ? resolveDisplayFrameBlockPaint(block, surface, fallback)
       : resolveDisplayFrameFieldPaint({ field: rowField, style: fixedRowStyle, fallback }, surface);
-    const rowLineHeight = frameMode === "flow"
-      ? destinationCardFlowRowHeight(paint.fontSize, block?.lineHeight ?? 1.2)
-      : rowHeight;
+    const rowLineHeight = destinationCardBodyRowHeight({
+      mode: frameMode,
+      solvedRowHeight: rowHeight,
+      fontSize: paint.fontSize,
+      ...(block?.lineHeight !== undefined ? { lineHeight: block.lineHeight } : {}),
+    });
     const y = destinationCardBodyBaseline({ top: bodyTop, headerExtra, lineIndex, rowHeight: rowLineHeight });
     lineIndex += 1;
     return (
@@ -251,6 +245,8 @@ export const DestinationCard = memo(function DestinationCard({
         key={`${row.key}-${index}`}
         data-city-section={index === 0 ? row.cityHeading : undefined}
         data-card-row-line={row.key}
+        // No preset header offset here: it only clears the header band, and the body wrap
+        // width knows nothing about it (see `destinationCardHeaderOffset`).
         x={anchorXFor(frameBodyItem, paint)}
         y={y}
         textAnchor={paint.textAnchor}

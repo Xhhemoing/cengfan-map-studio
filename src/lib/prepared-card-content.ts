@@ -1,4 +1,3 @@
-import type { CardDisplayRow, PreparedCardRow } from "../components/canvas/DestinationCard";
 import { DEFAULT_CARD_EXPRESSION_TEMPLATES, formatCardExpression, type CardExpressionTemplates } from "./card-expression";
 import { wrapCardText, type CardTextFragment, type CardTextLine } from "./card-text-layout";
 import {
@@ -13,7 +12,27 @@ import { DEFAULT_NAME_FORMAT, formatStudentName } from "./name-format";
 import type { CardFontField, CardSettings } from "./scene-document";
 import { resolveStudentLocation } from "./student-data";
 import type { VisibleField } from "./template-document";
-import { DESTINATION_CARD_HEADER_HEIGHT } from "./destination-card-metrics";
+import {
+  DESTINATION_CARD_HEADER_HEIGHT,
+  destinationCardFixedRowHeight,
+  destinationCardRowFontSize,
+} from "./destination-card-metrics";
+
+/** One body row of a destination card, before its text is wrapped. */
+export interface CardDisplayRow {
+  key: string;
+  parts: SchoolRowPart[];
+  remainingPeople: number;
+  cityHeading?: string;
+  city?: string;
+  university?: string;
+  names?: string;
+}
+
+/** A display row wrapped to the card's content width. */
+export interface PreparedCardRow extends CardDisplayRow {
+  lines: CardTextLine<CardFontField>[];
+}
 
 /** Everything a destination card draws that depends only on its content and typography.
  *  Deliberately free of map pan/zoom so panning the map never re-wraps card text. */
@@ -58,7 +77,9 @@ export interface PreparedCardContentOptions {
 
 /** Shared vertical/horizontal metrics every card in a document uses. */
 export interface PreparedCardMetrics {
+  /** Largest size a body line can paint; body text wraps and steps against it. */
   rowFontSize: number;
+  /** Fixed-mode step between body lines, the one the card renderer walks rows with. */
   rowHeight: number;
   titleFontSize: number;
   titleLineHeight: number;
@@ -91,14 +112,23 @@ export function destinationCardHeight(
 
 export function computePreparedCardMetrics(options: PreparedCardContentOptions): PreparedCardMetrics {
   const fieldFontSize = (field: CardFontField) => cardFieldFontSize(field, options.fontSize, options.fieldTypography);
-  const rowFontSize = Math.max(...options.visibleFields.map(fieldFontSize), fieldFontSize("city"));
+  const rowFontSize = destinationCardRowFontSize({
+    // A row field keeps the card font size even when it is `city`: only the city *heading*
+    // shrinks one step, and it joins the step separately below.
+    visibleFieldFontSizes: options.visibleFields.map((field) => options.fieldTypography?.[field]?.fontSize ?? options.fontSize),
+    cityHeadingFontSize: fieldFontSize("city"),
+  });
   const titleFontSize = fieldFontSize("title");
   const cardWidth = Math.min(options.maxWidth, Math.max(80, options.canvasWidth - options.safeMargin * 2));
   const contentWidth = Math.max(rowFontSize, cardWidth - options.horizontalPadding * 2);
   const textureHeaderWidth = options.showProvinceTexture ? 36 : 0;
   return {
     rowFontSize,
-    rowHeight: Math.max(options.compactLayout ? 18 : 20, rowFontSize + 6) * options.lineHeightMultiplier,
+    rowHeight: destinationCardFixedRowHeight({
+      rowFontSize,
+      compactLayout: options.compactLayout,
+      lineHeightMultiplier: options.lineHeightMultiplier,
+    }),
     titleFontSize,
     titleLineHeight: Math.max(16, titleFontSize + 4) * options.lineHeightMultiplier,
     cardWidth,

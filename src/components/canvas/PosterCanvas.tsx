@@ -1,7 +1,15 @@
 import { geoMercator, geoPath } from "d3-geo";
 import { Fragment, memo, useCallback, useEffect, useMemo, type PointerEvent, type ReactNode, type RefObject } from "react";
 import type { DestinationCardStyle } from "./DestinationCard";
-import type { CardArea, CardLayoutBounds, CardLayoutMode, CardPoint, CardPolygon } from "../../lib/card-layout";
+import type {
+  CardArea,
+  CardLayoutBounds,
+  CardLayoutMode,
+  CardPlacement,
+  CardPoint,
+  CardPolygon,
+  CardSide,
+} from "../../lib/card-layout";
 import { createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
 import { computeMapContentBounds, computeMapOccupiedAreas } from "../../lib/map-content-bounds";
@@ -139,6 +147,19 @@ function textLayoutObstacle(text: CanvasText): CardArea | null {
     width: text.maxWidth,
     height: text.fontSize * 1.3,
   };
+}
+
+/**
+ * Which side of the map a stored card box sits on, classified the same way the solver
+ * classifies a placement it produced itself. A placement's `side` only picks the connector
+ * port in the degenerate case where the anchor coincides with the card center, so a frozen
+ * card never needs the side the discarded solver run would have assigned it.
+ */
+function frozenCardSide(card: CardArea, map: CardArea): CardSide {
+  const horizontal = (card.x + card.width / 2 - (map.x + map.width / 2)) / Math.max(1, map.width / 2);
+  const vertical = (card.y + card.height / 2 - (map.y + map.height / 2)) / Math.max(1, map.height / 2);
+  if (Math.abs(horizontal) >= Math.abs(vertical)) return horizontal < 0 ? "left" : "right";
+  return vertical < 0 ? "top" : "bottom";
 }
 
 /** Document slices painted for a given document object. A caller may edit a document in place
@@ -500,8 +521,31 @@ function PosterCanvasView({
     project.cards.gap,
   ]);
 
+  // Every card pinned to a stored position makes the solver pure overhead: `destinationCards`
+  // overwrites its x/y with those positions anyway, so a map pan would pay for a full re-solve
+  // that cannot move a single card. The stored positions are used exactly as saved — clamping
+  // them here would drag frozen cards around as the map slides underneath them.
+  const frozenPlacements = useMemo<CardPlacement[] | null>(() => {
+    const positions = project.cards.positions;
+    if (!positions || preparedCards.length === 0) return null;
+    const placements: CardPlacement[] = [];
+    for (const card of preparedCards) {
+      const position = positions[card.group.key];
+      if (!position) return null;
+      const box = { x: position.x, y: position.y, width: card.width, height: card.height };
+      placements.push({
+        id: card.group.key,
+        anchorX: card.anchorX,
+        anchorY: card.anchorY,
+        ...box,
+        side: frozenCardSide(box, mapContentBounds),
+      });
+    }
+    return placements;
+  }, [mapContentBounds, preparedCards, project.cards.positions]);
+
   const layoutRequest = useMemo<CardLayoutWorkerRequest | null>(() => {
-    if (preparedCards.length === 0) return null;
+    if (frozenPlacements || preparedCards.length === 0) return null;
     const layoutMode = (project.cards.layoutMode ?? "quadrant") as CardLayoutMode;
     const cards = preparedCards.map(({ group, anchorX, anchorY, width, height }) => ({
       id: group.key,
@@ -524,6 +568,7 @@ function PosterCanvasView({
     };
   }, [
     cardLayoutBounds,
+    frozenPlacements,
     preparedCards,
     project.cards.autoBalance,
     project.cards.connectorStyle,
@@ -533,15 +578,16 @@ function PosterCanvasView({
 
   const layoutState = useCardLayoutWorker(layoutRequest, exportMode);
   const destinationCards = useMemo<PlacedDestinationCard[]>(() => {
-    if (!layoutRequest || !layoutState.result) return [];
-    const placements = new Map(layoutState.result.placements.map((placement) => [placement.id, placement]));
+    const solved = frozenPlacements ?? (layoutRequest ? layoutState.result?.placements : null);
+    if (!solved) return [];
+    const placements = new Map(solved.map((placement) => [placement.id, placement]));
     return preparedCards.flatMap((card) => {
       const placement = placements.get(card.group.key);
       if (!placement) return [];
       const manual = project.cards.positions?.[card.group.key];
       return [manual ? { ...card, placement: { ...placement, x: manual.x, y: manual.y } } : { ...card, placement }];
     });
-  }, [layoutRequest, layoutState.result, preparedCards, project.cards.positions]);
+  }, [frozenPlacements, layoutRequest, layoutState.result, preparedCards, project.cards.positions]);
 
   useEffect(() => {
     if (!onCardPositionsResolved || destinationCards.length === 0) return;

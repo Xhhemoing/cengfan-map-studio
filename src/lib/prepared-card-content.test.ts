@@ -41,6 +41,17 @@ function textOf(lines: Array<Array<{ text: string }>>): string[] {
   return lines.map((line) => line.map((fragment) => fragment.text).join(""));
 }
 
+/** The row step `PosterCanvas` still inlines into `cardStyle`, i.e. the one cards paint with. */
+function canvasRowHeight(options: PreparedCardContentOptions): number {
+  return Math.max(
+    options.compactLayout ? 18 : 20,
+    Math.max(
+      ...options.visibleFields.map((field) => options.fieldTypography?.[field]?.fontSize ?? options.fontSize),
+      options.fieldTypography?.city?.fontSize ?? Math.max(9, options.fontSize - 1),
+    ) + 6,
+  ) * options.lineHeightMultiplier;
+}
+
 describe("prepared card metrics", () => {
   it("falls back to the card font size, one step smaller for city rows", () => {
     expect(cardFieldFontSize("name", 13)).toBe(13);
@@ -66,6 +77,38 @@ describe("prepared card metrics", () => {
     const loose = computePreparedCardMetrics(options({ lineHeightMultiplier: 1.5 }));
     expect(loose.rowHeight).toBeCloseTo(single.rowHeight * 1.5);
     expect(loose.titleLineHeight).toBeCloseTo(single.titleLineHeight * 1.5);
+  });
+
+  it("solves the row step the cards are painted with", () => {
+    const configurations: Array<Partial<PreparedCardContentOptions>> = [
+      {},
+      { visibleFields: ["city"], fontSize: 16 },
+      { visibleFields: ["city"], fontSize: 16, fieldTypography: { city: { fontSize: 11 } } },
+      { visibleFields: ["city", "university", "name"], fontSize: 16, fieldTypography: { university: { fontSize: 10 } } },
+      { visibleFields: ["name"], fontSize: 13, fieldTypography: { name: { fontSize: 22 } }, compactLayout: true },
+      { visibleFields: ["university", "name"], fontSize: 9, compactLayout: true },
+      { lineHeightMultiplier: 1.5 },
+    ];
+
+    for (const configuration of configurations) {
+      const configured = options(configuration);
+      expect(computePreparedCardMetrics(configured).rowHeight).toBeCloseTo(canvasRowHeight(configured));
+    }
+  });
+
+  it("steps a city-only card at the size its rows paint, not at the heading size", () => {
+    // Only the city *heading* shrinks one step; a `city` row field keeps the card font size,
+    // so a 16px city-only card steps at 16 + 6 instead of 15 + 6.
+    const cityOnly = options({ visibleFields: ["city"], fontSize: 16 });
+    const metrics = computePreparedCardMetrics(cityOnly);
+
+    expect(metrics.rowFontSize).toBe(16);
+    expect(metrics.rowHeight).toBe(22);
+
+    // One city heading line above the two (now field-less) school rows: 44 + 22 + 12.
+    const [beijing] = buildPreparedCardContents(cityOnly);
+    expect(beijing!.rows.flatMap((row) => row.lines)).toHaveLength(1);
+    expect(beijing!.height).toBe(78);
   });
 
   it("sums the header, wrapped title overflow, body rows and bottom padding", () => {

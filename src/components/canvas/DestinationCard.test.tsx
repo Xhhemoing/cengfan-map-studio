@@ -387,6 +387,10 @@ describe("DestinationCard", () => {
     expect(avatar.getAttribute("r")).toBe("13");
     // The avatar sits where the title would start, so the title clears it.
     expect(photo.container.querySelector("[data-card-title-line]")?.getAttribute("x")).toBe("44");
+    // Body rows stay on the padding box: the avatar ends above them and their wrap width was
+    // solved without the offset, so indenting them would overflow the right padding.
+    expect(Array.from(photo.container.querySelectorAll("[data-card-row-line]")).map((row) => row.getAttribute("x")))
+      .toEqual(["12", "12"]);
     photo.dispose();
 
     const textured = renderCard(createStyle({ preset: "photo" }), {

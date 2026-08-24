@@ -3,17 +3,25 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  DESTINATION_CARD_COMPACT_ROW_MIN_HEIGHT,
   DESTINATION_CARD_COUNT_BASELINE,
   DESTINATION_CARD_DIVIDER_Y,
   DESTINATION_CARD_FIXED_BODY_TOP,
+  DESTINATION_CARD_FIXED_ROW_MIN_HEIGHT,
   DESTINATION_CARD_HEADER_HEIGHT,
+  DESTINATION_CARD_PHOTO_AVATAR_CENTER_Y,
+  DESTINATION_CARD_PHOTO_AVATAR_RADIUS,
+  DESTINATION_CARD_ROW_LINE_LEADING,
   DESTINATION_CARD_TITLE_TOP,
   destinationCardAvatar,
   destinationCardBodyBaseline,
+  destinationCardBodyRowHeight,
   destinationCardBodyTop,
   destinationCardDividerY,
+  destinationCardFixedRowHeight,
   destinationCardFlowRowHeight,
   destinationCardHeaderOffset,
+  destinationCardRowFontSize,
   destinationCardSurfaceChrome,
   destinationCardTextureBox,
   destinationCardTicketOrnaments,
@@ -87,6 +95,45 @@ describe("destination card chrome metrics", () => {
     expect(destinationCardFlowRowHeight(8, 1)).toBe(16);
   });
 
+  it("measures the fixed row step from the largest field on the card", () => {
+    expect(destinationCardRowFontSize({ visibleFieldFontSizes: [13, 13], cityHeadingFontSize: 12 })).toBe(13);
+    // A city-only card still steps at the row size, not at the smaller heading size.
+    expect(destinationCardRowFontSize({ visibleFieldFontSizes: [16], cityHeadingFontSize: 15 })).toBe(16);
+    // No visible field at all leaves the city heading as the only body text.
+    expect(destinationCardRowFontSize({ visibleFieldFontSizes: [], cityHeadingFontSize: 15 })).toBe(15);
+  });
+
+  it("floors the fixed row step and tightens it for the compact layout", () => {
+    expect(destinationCardFixedRowHeight({ rowFontSize: 13, compactLayout: false, lineHeightMultiplier: 1 })).toBe(20);
+    expect(destinationCardFixedRowHeight({ rowFontSize: 13, compactLayout: true, lineHeightMultiplier: 1 })).toBe(19);
+    expect(destinationCardFixedRowHeight({ rowFontSize: 16, compactLayout: false, lineHeightMultiplier: 1 })).toBe(22);
+    expect(destinationCardFixedRowHeight({ rowFontSize: 16, compactLayout: false, lineHeightMultiplier: 1.5 })).toBe(33);
+  });
+
+  it("walks body lines with the solved step in fixed mode and the block step in flow mode", () => {
+    expect(destinationCardBodyRowHeight({ mode: "fixed", solvedRowHeight: 22, fontSize: 40, lineHeight: 3 })).toBe(22);
+    expect(destinationCardBodyRowHeight({ mode: "flow", solvedRowHeight: 22, fontSize: 12, lineHeight: 1.2 }))
+      .toBeCloseTo(21.6, 5);
+    // A flow block without its own leading falls back to the default one.
+    expect(destinationCardBodyRowHeight({ mode: "flow", solvedRowHeight: 22, fontSize: 12 })).toBeCloseTo(21.6, 5);
+  });
+
+  it("keeps the solved fixed row step in sync with the one the canvas still inlines", () => {
+    // `PosterCanvas` builds `cardStyle.rowHeight` from these literals; assert only when the
+    // expression is found, so importing the helper there does not fail this test spuriously.
+    const canvasDir = join(dirname(fileURLToPath(import.meta.url)), "..", "components", "canvas");
+    const sources = readdirSync(canvasDir)
+      .filter((file) => file.endsWith(".tsx") && !file.includes(".test."))
+      .map((file) => readFileSync(join(canvasDir, file), "utf8"));
+    for (const source of sources) {
+      for (const match of source.matchAll(/compactLayout \? (\d+) : (\d+),[\s\S]*?\+ (\d+),\s*\) \* lineHeightMultiplier/g)) {
+        expect(Number(match[1])).toBe(DESTINATION_CARD_COMPACT_ROW_MIN_HEIGHT);
+        expect(Number(match[2])).toBe(DESTINATION_CARD_FIXED_ROW_MIN_HEIGHT);
+        expect(Number(match[3])).toBe(DESTINATION_CARD_ROW_LINE_LEADING);
+      }
+    }
+  });
+
   it("reserves header room for the photo avatar and the province thumbnail", () => {
     expect(destinationCardHeaderOffset("photo")).toBe(32);
     expect(destinationCardHeaderOffset("standard")).toBe(0);
@@ -95,6 +142,13 @@ describe("destination card chrome metrics", () => {
     expect(destinationCardTitleX({ anchorX: 12, headerOffset: 0, hasTexture: false })).toBe(12);
     expect(destinationCardTitleX({ anchorX: 12, headerOffset: 32, hasTexture: false })).toBe(44);
     expect(destinationCardTitleX({ anchorX: 12, headerOffset: 32, hasTexture: true })).toBe(80);
+  });
+
+  it("keeps the photo avatar above the body band so body rows need no header offset", () => {
+    // Body rows wrap against the full padding box, so they may not be indented by the header
+    // offset. That only holds while the avatar stops short of the first body baseline.
+    expect(DESTINATION_CARD_PHOTO_AVATAR_CENTER_Y + DESTINATION_CARD_PHOTO_AVATAR_RADIUS)
+      .toBeLessThanOrEqual(DESTINATION_CARD_FIXED_BODY_TOP);
   });
 
   it("places the thumbnail, avatar and ticket ornaments off the card box", () => {

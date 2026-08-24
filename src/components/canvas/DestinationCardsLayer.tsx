@@ -226,7 +226,9 @@ function DestinationCardsLayerView({
               </filter>
             ) : filter.markupKey === "ink" ? (
               <filter key={filter.id} id={filter.id} x="-20%" y="-20%" width="140%" height="140%">
-                <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="1" result="noise" />
+                {/* Fixed seed: an unseeded turbulence is renderer-defined, so exports would
+                    not match the editor preview pixel for pixel. */}
+                <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="1" seed="1" result="noise" />
                 <feDisplacementMap in="SourceGraphic" in2="noise" scale={Math.max(0.6, appearance.connectorWidth * 0.35)} />
               </filter>
             ) : null

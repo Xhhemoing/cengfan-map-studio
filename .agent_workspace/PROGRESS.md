@@ -14,16 +14,16 @@
 
 严禁静默降级。子代理输出首行必须声明实际使用的模型 slug。
 
-## 文件所有权（Cycle 2 Round 2）
+## 文件所有权（Cycle 2 Round 3）
 
 | 角色 | 可写路径 | 禁止 |
 | --- | --- | --- |
-| fable-A | `.agent_workspace/cycle2-round2-fable-a.md` | 生产代码 |
-| fable-B | `.agent_workspace/cycle2-round2-fable-b.md` | 生产代码 |
-| opus-fast-A | `prepared-card-content.ts*`（类型下沉）、`DestinationCardsLayer.tsx*`、`DestinationCard.tsx` **仅** 移出被 lib 依赖的类型、相关测试 | `display-frame.ts` |
-| opus-fast-B | `destination-card-metrics.ts*`、`DestinationCard.tsx` 行高/photo 偏移、`display-frame-style.ts*` | `PosterCanvas.tsx`、`DestinationCardsLayer.tsx` |
+| fable-A | `.agent_workspace/cycle2-round3-fable-a.md` | 生产代码 |
+| fable-B | `.agent_workspace/cycle2-round3-fable-b.md` | 生产代码 |
+| opus-fast-A | `PosterCanvas.tsx`（provincePolygons/Areas 仿射或依赖收窄）、`MapLayer.tsx` 若必须、相关测试 | `DestinationCard.tsx` |
+| opus-fast-B | `destination-card-metrics.ts*`、`prepared-card-content.ts`（titleWidth/flow 行高）、`DestinationCard.tsx`、`PosterCanvas.tsx` **仅** cardStyle.rowHeight 改调用 metrics | `DestinationCardsLayer.tsx` |
 | gpt-sol-A | `scripts/perf-canvas-bench.ts`、`canvas-render-metrics.ts*` | UI 大重构 |
-| gpt-sol-B | 新建 `*.cycle2r2.test.ts(x)` | 生产实现 |
+| gpt-sol-B | 新建 `*.cycle2r3.test.ts(x)` | 生产实现 |
 
 ## 循环状态
 
@@ -55,14 +55,14 @@
   - opus-fast-B → `bc-398927a7-b6e9-5f44-8e86-ad251dd54bc9`
   - gpt-sol-A → `bc-06159e11-c8f6-5bba-ba71-c2b50e05f3e3`
   - gpt-sol-B → `bc-33c43960-3655-5ee6-959b-ebbc50f075f4`
-- [ ] Cycle 2 Round 2 — 几何真源合一与连接线预览（进行中，6 子代理并发）
+- [x] Cycle 2 Round 2 — 几何真源合一与连接线预览（完成，见 `cycle2-round2-conclusion.md`）
   - fable-A → `bc-af7afc4a-12d6-559f-b5ac-022b0ffe8ef6`
   - fable-B → `bc-a1b331fd-bfc6-5c19-8ede-d7a2a3bc66fd`
   - opus-fast-A → `bc-733c666d-cd91-582b-b177-a6f3ee17f863`
   - opus-fast-B → `bc-1385e303-e7c3-53d1-930d-69fd30b0ff01`
   - gpt-sol-A → `bc-514033cc-1496-5354-a5d2-b165f21b071c`
   - gpt-sol-B → `bc-cdfd55cc-82ab-59d5-9531-9d88b287a8a2`
-- [ ] Cycle 2 Round 3
+- [ ] Cycle 2 Round 3 — 地图仿射缓存与样式收口（派发中）
 - [ ] Cycle 3 Round 1
 - [ ] Cycle 3 Round 2
 - [ ] Cycle 3 Round 3
