@@ -108,19 +108,26 @@ function readOnlyStreak(messages: ChatMessage[]): number {
 }
 
 /**
- * 当前任务段的起点：messages 中第一条内容等于本轮 userMessage 的 user 消息。
- * 不能取最后一条 user——parseAgentRequest 会把 userMessage 补写到 messages 末尾，
- * 取最后一条会把整段历史都算成「上一段」。找不到边界（历史被压缩掉了本轮消息）时返回 0，
- * 退回全局口径，宁可早停也不放任无限重试。
+ * 当前任务段的起点：messages 中最后一条内容等于本轮 userMessage 的 user 消息，找不到返回 -1。
+ * 必须取最后一条：同一句话连问两轮时第一条属于上一段任务，拿它当边界会把上一段的拒绝计数
+ * 带进新一轮，用户重复一句话就再也调不动模型。
+ * 唯一要跳过的是 parseAgentRequest 补写的回声——末尾不是本轮用户消息时它会补一条到末尾，
+ * 那条后面什么都没有，直接当段起点会让段内计数恒为 0。补写点前面必然是工具结果或续跑提示
+ * （assistant 的 tool_calls 后面必须先消费完 tool 结果），说明本段还在工具往返里，跳过回声继续往前找；
+ * 前一条是 assistant 文本时那是上一段的收尾总结，末尾这条就是新一段的真起点。
+ * 回滚：改回 findIndex 即可（会退回「同一句话连问两轮被上一段毒化」的老行为）。
  */
-function currentTaskStart(messages: ChatMessage[], userMessage: string): number {
-  const index = messages.findIndex((message) => message.role === "user" && message.content === userMessage);
-  return index < 0 ? 0 : index;
+export function currentTaskStart(messages: ChatMessage[], userMessage: string): number {
+  const isTaskStart = (message: ChatMessage) => message.role === "user" && message.content === userMessage;
+  const last = messages.length - 1;
+  const echoed = last > 0 && isTaskStart(messages[last]!) && messages[last - 1]!.role !== "assistant";
+  return (echoed ? messages.slice(0, last) : messages).findLastIndex(isTaskStart);
 }
 
 /**
  * 拒绝次数只算当前任务段内的：上一段任务里被拒过两次的补丁不该让「继续对话」的第一轮
  * 不调模型就直接 finish。段内计数仍然是硬闸，模型在同一段里连错两次照样停。
+ * 边界找不到时由调用方退回 0（全局口径），宁可早停也不放任无限重试。
  * 回滚：把 from 参数删掉、改回 messages.filter 全量统计即可。
  */
 function rejectedCount(messages: ChatMessage[], from: number): number {
@@ -307,7 +314,7 @@ export async function runAgentTurn(
   if (readOnlyStreak(request.messages) >= MAX_READ_ONLY_STREAK) {
     return { kind: "finish", summary: "连续多轮只读未动手，任务无进展，已交回当前结论。" };
   }
-  if (rejectedCount(request.messages, currentTaskStart(request.messages, request.userMessage)) >= MAX_TOOL_REJECTIONS) {
+  if (rejectedCount(request.messages, Math.max(0, currentTaskStart(request.messages, request.userMessage))) >= MAX_TOOL_REJECTIONS) {
     return { kind: "finish", summary: "工具参数多次校验失败，已停止继续尝试。" };
   }
 

@@ -427,6 +427,41 @@ describe("runAgentTurn", () => {
     expect(outcome.kind).toBe("tool-call");
   });
 
+  it("still calls the model when the user repeats the same sentence after a rejected task", async () => {
+    stubReply(calls(["update_map", { patch: { scale: 0.85 } }]));
+    const rejection = JSON.stringify({ code: "PATCH_REJECTED", domain: "map", unknownProps: ["fontSize"], availableProps: ["scale"] });
+    // 两轮文字完全相同：段边界取第一条会把上一段的两次拒绝算进新一轮，用户重问一次就再也调不动模型。
+    const messages: ChatMessage[] = [
+      { role: "user", content: "地图小一点" },
+      ...Array.from({ length: MAX_TOOL_REJECTIONS }, () => [
+        calls(["update_map", { patch: { fontSize: 60 } }]),
+        { role: "tool" as const, tool_call_id: "call-0", content: rejection },
+      ]).flat(),
+      { role: "assistant", content: "工具参数多次校验失败，已停止继续尝试。" },
+      { role: "user", content: "地图小一点" },
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "地图小一点", digest: {}, messages });
+    expect(outcome.kind).toBe("tool-call");
+  });
+
+  it("still counts rejections before the echo parseAgentRequest appends mid-task", async () => {
+    stubReply(calls(["update_map", { patch: { scale: 0.85 } }]));
+    const rejection = JSON.stringify({ code: "PATCH_REJECTED", domain: "map", unknownProps: ["fontSize"], availableProps: ["scale"] });
+    // 段内轮次里末尾那条用户消息是 parseAgentRequest 补写的回声（前一条是 tool 结果），
+    // 拿它当段起点会让段内计数恒为 0，两次拒绝的硬闸就失效了。
+    const messages: ChatMessage[] = [
+      { role: "user", content: "地图小一点" },
+      ...Array.from({ length: MAX_TOOL_REJECTIONS }, () => [
+        calls(["update_map", { patch: { fontSize: 60 } }]),
+        { role: "tool" as const, tool_call_id: "call-0", content: rejection },
+      ]).flat(),
+      { role: "user", content: "地图小一点" },
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "地图小一点", digest: {}, messages });
+    expect(outcome.kind).toBe("finish");
+    if (outcome.kind === "finish") expect(outcome.summary).toContain("多次校验失败");
+  });
+
   it("still stops after MAX_TOOL_REJECTIONS rejections inside the current task segment", async () => {
     stubReply(calls(["update_map", { patch: { scale: 0.85 } }]));
     const rejection = JSON.stringify({ code: "PATCH_REJECTED", domain: "map", unknownProps: ["fontSize"], availableProps: ["scale"] });

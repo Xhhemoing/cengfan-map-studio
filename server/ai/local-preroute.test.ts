@@ -175,10 +175,22 @@ describe("tryLocalPreroute", () => {
       { role: "user" as const, content: "多少人" },
       { role: "assistant" as const, content: null, tool_calls: [{ id: "t1", type: "function" as const, function: { name: "inspect_project", arguments: "{}" } }] },
       { role: "tool" as const, tool_call_id: "t1", content: "{}" },
-      // parseAgentRequest 会把本轮 userMessage 补写到末尾，边界必须取第一条而不是最后一条。
+      // 末尾这条是 parseAgentRequest 补写的回声（前一条是 tool 结果），不是新一段的起点。
       { role: "user" as const, content: "多少人" },
     ];
     expect(tryLocalPreroute({ userMessage: "多少人", digest, messages })).toBeNull();
+  });
+
+  it("同一句统计问题重问一遍仍命中预路由", () => {
+    // 上一段用同样这句话跑过工具往返并收了尾；边界取第一条会让重问永远被上一段挡住。
+    const messages = [
+      { role: "user" as const, content: "一共多少人" },
+      { role: "assistant" as const, content: null, tool_calls: [{ id: "t1", type: "function" as const, function: { name: "inspect_project", arguments: "{}" } }] },
+      { role: "tool" as const, tool_call_id: "t1", content: "{}" },
+      { role: "assistant" as const, content: "当前名单共 42 名同学，其中 2 名已隐藏。" },
+      { role: "user" as const, content: "一共多少人" },
+    ];
+    expect(tryLocalPreroute({ userMessage: "一共多少人", digest, messages })?.intent).toBe("student-total");
   });
 
   it("此前只有纯文本往返时仍可预路由", () => {
