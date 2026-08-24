@@ -161,6 +161,60 @@ describe("collaboration client", () => {
     }
   });
 
+  /**
+   * 稳态下正在编辑的成员只会反复收到事务回执:创建/加入/快照那三个报落盘的响应他一次也不会
+   * 再取,SSE 对落盘一言不发。回执上的落盘字段如果不过同一把尺子,要么整个丢掉(面板永远追不上
+   * 中途开始的失败连击),要么直通(响应形状一变面板就跟着改口)。
+   */
+  it("normalizes the persistence verdict carried on a transaction acknowledgement", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({
+        id: "ABC123", version: 2, ready: true, updatedBy: "c1", lastTxId: "tx-1",
+        persistedAtLastFlush: true, persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: 1_764_000_000_900 },
+      }))
+      .mockImplementationOnce(() => ok({
+        id: "ABC123", version: 3, ready: true, updatedBy: "c1", lastTxId: "tx-2",
+        persistedAtLastFlush: false, persistence: { outcome: "trimmed", at: null },
+      }));
+
+    const uploaded = await submitRoomSnapshot("ABC123", "owner-token", { txId: "tx-1", clientId: "c1", baseVersion: 1, snapshot: {} }, request);
+    const applied = await submitRoomOperations("ABC123", "owner-token", { txId: "tx-2", clientId: "c1", baseVersion: 2, operations: [] }, request);
+
+    expect(uploaded.persistence).toEqual({ outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: 1_764_000_000_900 });
+    expect(uploaded.persistedAtLastFlush).toBe(true);
+    // 连击结束的那一笔回执:带了处置却没带失败时刻,键整个不出现,和快照路径一字不差。
+    expect(applied.persistence).toEqual({ outcome: "trimmed", at: null });
+    expect(applied.persistence).not.toHaveProperty("lastFailureAt");
+    expect(applied.persistedAtLastFlush).toBe(false);
+  });
+
+  it("applies the same persistence discipline to acknowledgements from an old or garbled server", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 2, ready: true, updatedBy: "c1", lastTxId: "tx-1" }))
+      .mockImplementationOnce(() => ok({
+        id: "ABC123", version: 3, ready: true, updatedBy: "c1", lastTxId: "tx-2",
+        persistedAtLastFlush: "false", persistence: { outcome: "purged", at: 1 },
+      }))
+      .mockImplementationOnce(() => ok({
+        id: "ABC123", version: 4, ready: true, updatedBy: "c1", lastTxId: "tx-3",
+        persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: null, note: "read-only fs" },
+      }));
+
+    // 旧服务端的回执不带这两个字段:必须是"没有说法",而不是任何一种说法。
+    const legacy = await submitRoomOperations("ABC123", "owner-token", { txId: "tx-1", clientId: "c1", baseVersion: 1, operations: [] }, request);
+    expect(legacy).not.toHaveProperty("persistedAtLastFlush");
+    expect(legacy).not.toHaveProperty("persistence");
+
+    // 字符串布尔与第四种处置都不算数,和 create/join/快照三条路径同一把尺子。
+    const garbled = await submitRoomOperations("ABC123", "owner-token", { txId: "tx-2", clientId: "c1", baseVersion: 2, operations: [] }, request);
+    expect(garbled).not.toHaveProperty("persistedAtLastFlush");
+    expect(garbled).not.toHaveProperty("persistence");
+
+    // 未知的额外键一律丢掉,`lastFailureAt: null` 与键缺席是同一件事。
+    const extras = await submitRoomOperations("ABC123", "owner-token", { txId: "tx-3", clientId: "c1", baseVersion: 3, operations: [] }, request);
+    expect(extras.persistence).toEqual({ outcome: "persisted", at: 1_764_000_000_000 });
+  });
+
   it("creates an initializing room without serializing an initial snapshot", async () => {
     const request = vi.fn(() => ok({ room: { id: "FAST01", version: 0, ready: false }, access: { accessToken: "owner-token" } }, 201));
 

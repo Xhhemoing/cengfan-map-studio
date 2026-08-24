@@ -17,7 +17,7 @@ import {
 } from "./collaboration-operations";
 import { createId } from "./ids";
 import type { ProjectPackage } from "./project-package";
-import type { RoomCollaborationStatus, UseCollaborationRoomRefs } from "./useCollaborationRoom";
+import type { RoomCollaborationStatus, RoomPersistenceReport, UseCollaborationRoomRefs } from "./useCollaborationRoom";
 
 /**
  * 版本冲突后的重投预算。补齐一次、重投一次就停:再冲突说明房间正在被高频改写,
@@ -99,6 +99,11 @@ export interface CollaborationSendController {
   setCollaborationMessage(message: string): void;
   setCollaborationOffline(offline: boolean): void;
   reportTerminalRejection(code: string): boolean;
+  /**
+   * 回执上的落盘说法(R9-2)。上传是稳态下唯一还在往返的请求,不从这里递出去,面板就只剩
+   * 加入那一刻的说法。纯展示态:不改送出侧的任何判据。
+   */
+  noteAcknowledgedPersistence(report: RoomPersistenceReport): void;
 }
 
 export interface CollaborationSendTransport {
@@ -154,6 +159,19 @@ export function conflictMessage(attempt: number): string {
 export function submitFailureMessage(error: unknown, partitioned: boolean): string {
   if (partitioned) return "网络异常，本地修改已保留，恢复后会自动续传";
   return error instanceof Error ? error.message : "增量同步失败";
+}
+
+/**
+ * 回执上与落盘有关的那两项。客户端已经保证"没有说法"时键整个不出现,这里只做投影——
+ * 补一个 `undefined` 上去会让面板那一侧的"缺席即沿用"读成"服务端明说没有"。
+ */
+function acknowledgedPersistence(
+  acknowledged: Pick<CollaborationRoom, "persistedAtLastFlush" | "persistence">,
+): RoomPersistenceReport {
+  return {
+    ...(acknowledged.persistedAtLastFlush === undefined ? {} : { persistedAtLastFlush: acknowledged.persistedAtLastFlush }),
+    ...(acknowledged.persistence === undefined ? {} : { persistence: acknowledged.persistence }),
+  };
 }
 
 /** 送出前的资格判断:终局房间与只读身份都不该再攒出一笔注定失败的事务。 */
@@ -212,8 +230,12 @@ export function armCollaborationSend(options: CollaborationSendOptions): (() => 
   };
 
   const commitAcknowledgement = (txId: string, operations: CollaborationOperation[], acknowledged: CollaborationRoom<ProjectPackage>) => {
+    if (outdated()) return;
+    // 落盘说法与基线、与回声抑制都无关:后两者管的是这批 ops 要不要再叠一次。回执是稳态下
+    // 唯一还在往返的服务端说法,任何一条提前返回把它一起丢掉,面板就再也追不上磁盘的处境。
+    controller.noteAcknowledgedPersistence(acknowledgedPersistence(acknowledged));
     const activeBaseline = baselineRef.current;
-    if (!activeBaseline || outdated()) return;
+    if (!activeBaseline) return;
     // 自回声抑制:版本已经走到回执版本之后,说明本次事务的 ops 事件已经从流上回放过
     // (lastTxId 用来确认那正是本次事务),基线里已经有这批 ops。再叠一次会把回声之后
     // 落地的远端修改按旧值盖回去,下一次 diff 就会把远端的修改当成本地改动重新上传。

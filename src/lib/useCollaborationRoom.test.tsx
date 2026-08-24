@@ -1145,4 +1145,121 @@ describe("useCollaborationRoom", () => {
       harness.unmount();
     });
   });
+
+  /**
+   * 落盘说法只从创建、加入与快照那三条响应上进来,而正在编辑的成员稳态下一条也不会再取:
+   * 他反复读到的只有事务回执。磁盘中途开始坏掉,面板于是一直停在加入那一刻的说法。R9-2 让
+   * 服务端在回执上也报落盘,这里把回执并进同一条记账口,规则与三条握手路径共用一份。
+   */
+  describe("noteAcknowledgedPersistence", () => {
+    const FAILED_AT = 1_764_000_000_900;
+
+    async function joinHealthy(): Promise<Harness> {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({ persistedAtLastFlush: true, persistence: { outcome: "persisted", at: 1_764_000_000_000 } })),
+        room: () => json({
+          id: ROOM_ID, version: 1, ready: true, snapshot: samplePackage(), role: "editor", members: [],
+          persistedAtLastFlush: true, persistence: { outcome: "persisted", at: 1_764_000_000_000 },
+        }),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoomWithInvite(harness);
+      await vi.waitFor(() => expect(harness.refs.versionRef.current).toBe(1));
+      return harness;
+    }
+
+    it("surfaces a streak that only the transaction acknowledgement reports", async () => {
+      const harness = await joinHealthy();
+      expect(harness.controller().roomPersistFailureAt).toBeNull();
+
+      flushSync(() => harness.controller().noteAcknowledgedPersistence({
+        persistedAtLastFlush: true,
+        persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: FAILED_AT },
+      }));
+
+      expect(harness.controller().roomPersistFailureAt).toBe(FAILED_AT);
+      // 连击不改上一次成功落盘的说法,也不碰离线、终局与连接状态。
+      expect(harness.controller().roomPersistenceKind).toBe("persisted");
+      expect(harness.controller().roomPersistenceDegraded).toBe(false);
+      expect(harness.controller().collaborationOffline).toBe(false);
+      expect(harness.controller().roomExpired).toBe(false);
+      expect(harness.controller().collaborationStatus).toBe("connected");
+      harness.unmount();
+    });
+
+    it("keeps the standing verdicts when an old server acknowledges without one", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({
+          persistedAtLastFlush: false,
+          persistence: { outcome: "trimmed", at: null, lastFailureAt: FAILED_AT },
+        })),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoomWithInvite(harness);
+      await vi.waitFor(() => expect(harness.controller().roomPersistFailureAt).toBe(FAILED_AT));
+
+      // 回执上一个字段都没有:服务端没提这件事,不代表磁盘忽然好了。
+      flushSync(() => harness.controller().noteAcknowledgedPersistence({}));
+
+      expect(harness.controller().roomPersistFailureAt).toBe(FAILED_AT);
+      expect(harness.controller().roomPersistenceKind).toBe("trimmed");
+      expect(harness.controller().roomPersistenceDegraded).toBe(true);
+      harness.unmount();
+    });
+
+    it("lets a boolean-only acknowledgement move the flag without touching the verdict or the streak", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({
+          persistedAtLastFlush: false,
+          persistence: { outcome: "trimmed", at: null, lastFailureAt: FAILED_AT },
+        })),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoomWithInvite(harness);
+      await vi.waitFor(() => expect(harness.controller().roomPersistFailureAt).toBe(FAILED_AT));
+
+      flushSync(() => harness.controller().noteAcknowledgedPersistence({ persistedAtLastFlush: true }));
+
+      // 只认布尔位的服务端说不出是哪一种处置,更说不出连击有没有结束:两者都沿用上一个说法。
+      expect(harness.controller().roomPersistenceDegraded).toBe(false);
+      expect(harness.controller().roomPersistenceKind).toBe("trimmed");
+      expect(harness.controller().roomPersistFailureAt).toBe(FAILED_AT);
+      harness.unmount();
+    });
+
+    it("lets the acknowledgement end a streak the handshake reported", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({
+          persistedAtLastFlush: true,
+          persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: FAILED_AT },
+        })),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoomWithInvite(harness);
+      await vi.waitFor(() => expect(harness.controller().roomPersistFailureAt).toBe(FAILED_AT));
+
+      // 带了处置却没带失败时刻,是服务端明说"此刻没有连击":菜单上的警告要跟着落下去。
+      flushSync(() => harness.controller().noteAcknowledgedPersistence({
+        persistedAtLastFlush: true,
+        persistence: { outcome: "persisted", at: 1_764_000_001_000 },
+      }));
+
+      expect(harness.controller().roomPersistFailureAt).toBeNull();
+      expect(harness.controller().roomPersistenceKind).toBe("persisted");
+      expect(harness.controller().roomPersistenceDegraded).toBe(false);
+      harness.unmount();
+    });
+  });
 });

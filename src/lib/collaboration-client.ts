@@ -479,17 +479,22 @@ export function fetchRoomOperations(
   }, input, { idempotent: true });
 }
 
+/**
+ * 事务回执(R9-2 起也报落盘)与快照响应是同一种形状:落盘字段就在房间对象上。稳态下正在
+ * 编辑的成员反复读到的只有回执——创建/加入/快照那三条路径他一次也不会再走——所以回执必须
+ * 过同一把尺子,否则要么整个丢掉说法,要么把响应形状的抖动直通给面板。
+ */
 export function submitRoomSnapshot<T>(
   roomId: string,
   accessToken: string,
   transaction: CollaborationTransaction<T>,
   input: CollaborationRequestInput = {},
 ): Promise<CollaborationRoom<T>> {
-  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}/transactions`, {
+  return jsonRequest<CollaborationRoom<T>>(`/api/rooms/${normalizedRoomId(roomId)}/transactions`, {
     method: "POST",
     headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json", Prefer: "return=minimal" }),
     body: JSON.stringify(transaction),
-  }, input, { idempotent: false, timeoutMs: COLLABORATION_UPLOAD_TIMEOUT_MS });
+  }, input, { idempotent: false, timeoutMs: COLLABORATION_UPLOAD_TIMEOUT_MS }).then(parseRoomSnapshot);
 }
 
 export function submitRoomOperations<T>(
@@ -498,11 +503,11 @@ export function submitRoomOperations<T>(
   transaction: CollaborationOperationTransaction,
   input: CollaborationRequestInput = {},
 ): Promise<CollaborationRoom<T>> {
-  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}/transactions`, {
+  return jsonRequest<CollaborationRoom<T>>(`/api/rooms/${normalizedRoomId(roomId)}/transactions`, {
     method: "POST",
     headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json", Prefer: "return=minimal" }),
     body: JSON.stringify(transaction),
-  }, input, { idempotent: false, timeoutMs: COLLABORATION_UPLOAD_TIMEOUT_MS });
+  }, input, { idempotent: false, timeoutMs: COLLABORATION_UPLOAD_TIMEOUT_MS }).then(parseRoomSnapshot);
 }
 
 export function isOwnRoomAcknowledgement(

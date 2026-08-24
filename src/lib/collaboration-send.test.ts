@@ -52,6 +52,7 @@ function controller() {
     setCollaborationMessage: vi.fn(),
     setCollaborationOffline: vi.fn(),
     reportTerminalRejection: vi.fn(() => false),
+    noteAcknowledgedPersistence: vi.fn(),
   };
 }
 
@@ -189,6 +190,78 @@ describe("armCollaborationSend", () => {
 
     expect(armCollaborationSend({ ...options, room: { ...connectedRoom, roomRole: "viewer" }, refs: refs(pack(20)) })).toBeUndefined();
     expect(armCollaborationSend({ ...options, room: connectedRoom, refs: refs(null) })).toBeUndefined();
+  });
+
+  /**
+   * 稳态下正在编辑的成员唯一反复读到的服务端说法就是回执。回执被拆成版本与 id 之后,落盘
+   * 处境在送出这一路上就断了:磁盘中途开始坏掉,他手上的面板还是加入那一刻的说法。
+   */
+  it("threads the acknowledged persistence verdict to the panel", async () => {
+    vi.useFakeTimers();
+    try {
+      const submit = vi.fn(async () => ({
+        id: "ROOM01",
+        version: 2,
+        ready: true,
+        updatedBy: "someone-else",
+        persistedAtLastFlush: true,
+        persistence: { outcome: "persisted" as const, at: 1_764_000_000_000, lastFailureAt: 1_764_000_000_900 },
+      } as CollaborationRoom<ProjectPackage>)) as unknown as CollaborationSendTransport["submitOperations"];
+      const panel = controller();
+
+      const cancel = armCollaborationSend({
+        clientId: "client-1",
+        room: connectedRoom,
+        refs: refs(pack(20)),
+        heal: createCollaborationHealTracker(),
+        controller: panel,
+        currentPackage: (exportedAt) => ({ ...pack(45), exportedAt: exportedAt ?? pack(45).exportedAt }),
+        applyPackage: () => undefined,
+        transport: transport(submit),
+        delayMs: 10,
+      });
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(panel.noteAcknowledgedPersistence).toHaveBeenCalledWith({
+        persistedAtLastFlush: true,
+        persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: 1_764_000_000_900 },
+      });
+      // 纯展示态:回执照旧收尾,落盘说法不参与状态与文案。
+      expect(panel.setCollaborationStatus).toHaveBeenLastCalledWith("connected");
+      expect(panel.setCollaborationMessage).toHaveBeenLastCalledWith("增量同步已完成");
+      cancel?.();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says nothing about persistence when the acknowledgement carries no verdict", async () => {
+    vi.useFakeTimers();
+    try {
+      const submit = vi.fn(async () => ({
+        id: "ROOM01", version: 2, ready: true, updatedBy: "someone-else",
+      } as CollaborationRoom<ProjectPackage>)) as unknown as CollaborationSendTransport["submitOperations"];
+      const panel = controller();
+
+      const cancel = armCollaborationSend({
+        clientId: "client-1",
+        room: connectedRoom,
+        refs: refs(pack(20)),
+        heal: createCollaborationHealTracker(),
+        controller: panel,
+        currentPackage: (exportedAt) => ({ ...pack(45), exportedAt: exportedAt ?? pack(45).exportedAt }),
+        applyPackage: () => undefined,
+        transport: transport(submit),
+        delayMs: 10,
+      });
+      await vi.advanceTimersByTimeAsync(20);
+
+      // 旧服务端的回执两个字段都没有:上报一个空说法即可,判定沿用不沿用由面板那一侧的同一套规则决定。
+      expect(panel.noteAcknowledgedPersistence).toHaveBeenCalledWith({});
+      cancel?.();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports a transport failure as offline while keeping the local edits", async () => {

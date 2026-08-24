@@ -86,6 +86,15 @@ function terminalRejectionReason(code: string): SubscribeTerminalReason | null {
   return code === "ROOM_NOT_FOUND" || code === "ROOM_FORBIDDEN" || code === "ROOM_CLOSED" ? code : null;
 }
 
+/**
+ * 服务端在一条响应里对落盘说的话。创建、加入、快照与事务回执四条路径给出的是同一组字段,
+ * 所以记账口只有一个,规则也只有一份。
+ */
+export interface RoomPersistenceReport {
+  persistedAtLastFlush?: boolean;
+  persistence?: RoomPersistence;
+}
+
 export interface UseCollaborationRoomRefs {
   baselineRef: MutableRefObject<ProjectPackage | null>;
   versionRef: MutableRefObject<number>;
@@ -164,6 +173,13 @@ export interface UseCollaborationRoomResult {
    * 仍由调用方按冲突或离线处理。重复上报只认第一个成因。
    */
   reportTerminalRejection: (code: string) => boolean;
+  /**
+   * 让调用方把事务回执上的落盘说法并进同一份展示态(R9-2 起服务端也在回执上报落盘)。稳态下
+   * 正在编辑的成员只会反复收到回执,创建/加入/快照那三条报落盘的响应他一次也不会再取——不从
+   * 这里进来,中途开始的失败连击就永远追不上他。与那三条路径共用同一套判定,同样是纯展示态:
+   * 不碰重连、补齐、离线与终局的任何判据。
+   */
+  noteAcknowledgedPersistence: (report: RoomPersistenceReport) => void;
   setCollaborationMessage: (message: string) => void;
   setCollaborationOpen: (open: boolean) => void;
   setRoomInput: (value: string) => void;
@@ -334,7 +350,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
    * 失败连击跟着处置一起更新:带了处置却没带 `lastFailureAt`,是服务端明说"此刻没有连击"
    * (下一次成功落盘就会清掉它),不是没说;只带布尔位的响应才是没说,那时沿用上一个说法。
    */
-  const notePersistence = (source: { persistedAtLastFlush?: boolean; persistence?: RoomPersistence }) => {
+  const notePersistence = (source: RoomPersistenceReport) => {
     if (source.persistence) {
       setRoomPersistenceKind(source.persistence.outcome);
       setRoomPersistenceDegraded(source.persistence.outcome !== "persisted");
@@ -775,6 +791,11 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     else markOnline();
   };
 
+  // 回执与握手读的是同一组字段,规则不复制一份:哪一条响应带来的说法不改变怎么记账。
+  const noteAcknowledgedPersistence = (report: RoomPersistenceReport) => {
+    notePersistence(report);
+  };
+
   const reportTerminalRejection = (code: string): boolean => {
     const reason = terminalRejectionReason(code);
     if (!reason) return false;
@@ -812,6 +833,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setCollaborationStatus,
     setCollaborationOffline,
     reportTerminalRejection,
+    noteAcknowledgedPersistence,
     setCollaborationMessage,
     setCollaborationOpen,
     setRoomInput,
