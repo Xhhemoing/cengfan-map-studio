@@ -11,8 +11,33 @@ export interface StoredProject {
   pack: ProjectPackage;
 }
 
+export interface ProjectMetadata {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  exportedAt: string;
+  studentCount: number;
+  assetCount: number;
+  fontCount: number;
+  customTemplateCount: number;
+}
+
+/**
+ * 项目卡片仍通过 pack.exportedAt / pack.project.students.length 展示已有信息。
+ * 这里是只含时间与计数的兼容视图，不是完整工程包；需要工程包的操作必须调用 get(id)。
+ */
+export interface ProjectListItem extends ProjectMetadata {
+  pack: {
+    exportedAt: string;
+    project: {
+      students: { readonly length: number };
+    };
+  };
+}
+
 export interface ProjectStore {
-  list(): Promise<StoredProject[]>;
+  list(): Promise<ProjectListItem[]>;
   get(id: string): Promise<StoredProject | null>;
   put(project: StoredProject): Promise<void>;
   remove(id: string): Promise<void>;
@@ -60,12 +85,36 @@ export function duplicateStoredProject(source: StoredProject, name = `${source.n
   };
 }
 
+function projectMetadata(project: StoredProject): ProjectMetadata {
+  return {
+    id: project.id,
+    name: project.name,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    exportedAt: project.pack.exportedAt,
+    studentCount: project.pack.project.students.length,
+    assetCount: project.pack.assets.length,
+    fontCount: project.pack.fonts.length,
+    customTemplateCount: project.pack.customTemplates.length,
+  };
+}
+
+function projectListItem(metadata: ProjectMetadata): ProjectListItem {
+  return {
+    ...metadata,
+    pack: {
+      exportedAt: metadata.exportedAt,
+      project: { students: { length: metadata.studentCount } },
+    },
+  };
+}
+
 export function createMemoryProjectStore(): ProjectStore {
   const records = new Map<string, StoredProject>();
   return {
     async list() {
       return [...records.values()]
-        .map((record) => structuredClone(record))
+        .map((record) => projectListItem(projectMetadata(record)))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     },
     async get(id) {
@@ -81,6 +130,60 @@ export function createMemoryProjectStore(): ProjectStore {
   };
 }
 
+function timestampOrEpoch(value: unknown): string {
+  return typeof value === "string" ? value : new Date(0).toISOString();
+}
+
+function parseCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function parseProjectMetadata(value: unknown): ProjectMetadata | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== "string" || typeof record.name !== "string" || typeof record.exportedAt !== "string") return null;
+  const studentCount = parseCount(record.studentCount);
+  const assetCount = parseCount(record.assetCount);
+  const fontCount = parseCount(record.fontCount);
+  const customTemplateCount = parseCount(record.customTemplateCount);
+  if (studentCount === null || assetCount === null || fontCount === null || customTemplateCount === null) return null;
+  return {
+    id: record.id,
+    name: record.name,
+    createdAt: timestampOrEpoch(record.createdAt),
+    updatedAt: timestampOrEpoch(record.updatedAt),
+    exportedAt: record.exportedAt,
+    studentCount,
+    assetCount,
+    fontCount,
+    customTemplateCount,
+  };
+}
+
+/** 旧版 projects 记录的轻量解析：升级时不反序列化其中可能很大的 base64 资源。 */
+function metadataFromStoredValue(value: unknown): ProjectMetadata | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const pack = record.pack;
+  if (!pack || typeof pack !== "object" || Array.isArray(pack)) return null;
+  const packageRecord = pack as Record<string, unknown>;
+  const project = packageRecord.project;
+  if (packageRecord.kind !== "cengfan-project-package" || !project || typeof project !== "object" || Array.isArray(project)) return null;
+  const projectRecord = project as Record<string, unknown>;
+  if (typeof record.id !== "string" || typeof record.name !== "string" || !Array.isArray(projectRecord.students)) return null;
+  return {
+    id: record.id,
+    name: record.name,
+    createdAt: timestampOrEpoch(record.createdAt),
+    updatedAt: timestampOrEpoch(record.updatedAt),
+    exportedAt: timestampOrEpoch(packageRecord.exportedAt),
+    studentCount: projectRecord.students.length,
+    assetCount: Array.isArray(packageRecord.assets) ? packageRecord.assets.length : 0,
+    fontCount: Array.isArray(packageRecord.fonts) ? packageRecord.fonts.length : 0,
+    customTemplateCount: Array.isArray(packageRecord.customTemplates) ? packageRecord.customTemplates.length : 0,
+  };
+}
+
 function parseStoredProject(value: unknown): StoredProject | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -89,8 +192,8 @@ function parseStoredProject(value: unknown): StoredProject | null {
     return {
       id: record.id,
       name: record.name,
-      createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date(0).toISOString(),
-      updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date(0).toISOString(),
+      createdAt: timestampOrEpoch(record.createdAt),
+      updatedAt: timestampOrEpoch(record.updatedAt),
       pack: restoreProjectPackage(record.pack),
     };
   } catch {
@@ -101,6 +204,7 @@ function parseStoredProject(value: unknown): StoredProject | null {
 const DATABASE_NAME = "cengfan-map-studio";
 const DATABASE_VERSION = 2;
 const STORE_NAME = "projects";
+const METADATA_STORE_NAME = "project-metadata";
 const LEGACY_WORKSPACE_STORE = "workspace";
 const LEGACY_WORKSPACE_KEY = "current";
 /** 迁移完成标记，与迁移写入同一个事务，保证多标签页/多实例只迁移一次。 */
@@ -128,13 +232,14 @@ function openDatabase(factory: IDBFactory): Promise<{ db: IDBDatabase; legacyV1:
       const db = probe.result;
       const version = db.version;
       const hasProjects = db.objectStoreNames.contains(STORE_NAME);
+      const hasMetadata = db.objectStoreNames.contains(METADATA_STORE_NAME);
       // 只有真正的 v1 旧库（有 workspace、无 projects）才需要迁移数据；
       // workspace 模块新建的 v2 库不应触发迁移。
       const legacyV1 = version === 1 && !hasProjects;
       db.close();
       // 目标版本至少为 DATABASE_VERSION；若缺 store 则必须高于当前版本以触发升级。
       let target = Math.max(version, DATABASE_VERSION);
-      if (!hasProjects) target = Math.max(target, version + 1);
+      if (!hasProjects || !hasMetadata) target = Math.max(target, version + 1);
       openAtVersion(factory, target)
         .then((opened) => resolve({ db: opened, legacyV1 }), reject);
     };
@@ -160,6 +265,21 @@ function openAtVersion(factory: IDBFactory, version: number): Promise<IDBDatabas
       // 否则版本变更事务 active 期间创建新事务并访问 objectStore 会抛 InvalidStateError，
       // 导致“Version change transaction was aborted in upgradeneeded event handler”。
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+      if (!db.objectStoreNames.contains(METADATA_STORE_NAME)) {
+        const metadataStore = db.createObjectStore(METADATA_STORE_NAME);
+        // 旧版项目只在首次创建元数据 store 时投影一次；升级事务保证 pack 与投影不会出现半迁移状态。
+        const projects = request.transaction?.objectStore(STORE_NAME);
+        const cursorRequest = projects?.openCursor();
+        if (cursorRequest) {
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
+            if (!cursor) return;
+            const metadata = metadataFromStoredValue(cursor.value);
+            if (metadata) metadataStore.put(metadata, metadata.id);
+            cursor.continue();
+          };
+        }
+      }
       // 同时确保 workspace store 存在：迁移与 workspace 模块共用此库，
       // 双方升级时都补齐全部 store，避免另一方随后再升级而触发 blocked。
       if (!db.objectStoreNames.contains(LEGACY_WORKSPACE_STORE)) db.createObjectStore(LEGACY_WORKSPACE_STORE);
@@ -199,13 +319,18 @@ function openAtVersion(factory: IDBFactory, version: number): Promise<IDBDatabas
  * 两个 store 实例（或两个标签页）并发打开时只会有一方真正迁移，不会产生重复项目。
  */
 function migrateLegacyWorkspace(db: IDBDatabase): Promise<void> {
-  if (!db.objectStoreNames.contains(LEGACY_WORKSPACE_STORE) || !db.objectStoreNames.contains(STORE_NAME)) {
+  if (
+    !db.objectStoreNames.contains(LEGACY_WORKSPACE_STORE)
+    || !db.objectStoreNames.contains(STORE_NAME)
+    || !db.objectStoreNames.contains(METADATA_STORE_NAME)
+  ) {
     return Promise.resolve();
   }
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([STORE_NAME, LEGACY_WORKSPACE_STORE], "readwrite");
+    const tx = db.transaction([STORE_NAME, METADATA_STORE_NAME, LEGACY_WORKSPACE_STORE], "readwrite");
     const workspace = tx.objectStore(LEGACY_WORKSPACE_STORE);
     const projects = tx.objectStore(STORE_NAME);
+    const metadataStore = tx.objectStore(METADATA_STORE_NAME);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 迁移失败"));
     tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 迁移中止"));
@@ -224,7 +349,10 @@ function migrateLegacyWorkspace(db: IDBDatabase): Promise<void> {
         keysRequest.onsuccess = () => {
           const occupied = (keysRequest.result ?? []).length > 0;
           const migrated = occupied ? null : buildMigratedProject(legacyPack);
-          if (migrated) projects.put(migrated, migrated.id);
+          if (migrated) {
+            projects.put(migrated, migrated.id);
+            metadataStore.put(projectMetadata(migrated), migrated.id);
+          }
           // 迁移完成（或旧数据损坏/已有项目而放弃）后清掉旧键并落标记，保证幂等。
           workspace.delete(LEGACY_WORKSPACE_KEY);
           workspace.put(true, LEGACY_MIGRATION_MARKER_KEY);
@@ -315,11 +443,14 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
   });
   return {
     async list() {
-      return run(STORE_NAME, "readonly", (tx) => new Promise<StoredProject[]>((resolve) => {
-        const request = tx.objectStore(STORE_NAME).getAll();
+      return run(METADATA_STORE_NAME, "readonly", (tx) => new Promise<ProjectListItem[]>((resolve) => {
+        const request = tx.objectStore(METADATA_STORE_NAME).getAll();
         request.onsuccess = () => {
-          // 单条记录损坏只丢弃该条，其余项目必须照常列出。
-          const items = (request.result ?? []).map(parseStoredProject).filter((item): item is StoredProject => item !== null);
+          // 单条元数据损坏只丢弃该条，其余项目必须照常列出。
+          const items = (request.result ?? [])
+            .map(parseProjectMetadata)
+            .filter((item): item is ProjectMetadata => item !== null)
+            .map(projectListItem);
           resolve(items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
         };
         request.onerror = () => resolve([]);
@@ -335,16 +466,18 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
       }));
     },
     async put(project) {
-      await run(STORE_NAME, "readwrite", (tx) => new Promise<void>((resolve, reject) => {
+      await run([STORE_NAME, METADATA_STORE_NAME], "readwrite", (tx) => new Promise<void>((resolve, reject) => {
         tx.objectStore(STORE_NAME).put(structuredClone(project), project.id);
+        tx.objectStore(METADATA_STORE_NAME).put(projectMetadata(project), project.id);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 写入失败"));
         tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 写入中止"));
       }));
     },
     async remove(id) {
-      await run(STORE_NAME, "readwrite", (tx) => new Promise<void>((resolve, reject) => {
+      await run([STORE_NAME, METADATA_STORE_NAME], "readwrite", (tx) => new Promise<void>((resolve, reject) => {
         tx.objectStore(STORE_NAME).delete(id);
+        tx.objectStore(METADATA_STORE_NAME).delete(id);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 删除失败"));
         tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 删除中止"));

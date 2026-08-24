@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createEmptyProject, createSampleProject, duplicateStoredProject, type ProjectStore, type StoredProject } from "../lib/project-store";
+import {
+  createEmptyProject,
+  createSampleProject,
+  duplicateStoredProject,
+  type ProjectListItem,
+  type ProjectStore,
+  type StoredProject,
+} from "../lib/project-store";
 import { downloadProjectPackage, parseProjectPackage, projectPackageDisplayName } from "../lib/project-package";
 import { createId } from "../lib/ids";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
@@ -26,7 +33,7 @@ function formatUpdatedAt(value: string): string {
 
 export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   const go = navigate ?? ((hash: string) => { window.location.hash = hash; });
-  const [projects, setProjects] = useState<StoredProject[]>([]);
+  const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -119,11 +126,13 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
     }
   };
 
-  const renameProject = async (project: StoredProject) => {
+  const renameProject = async (project: Pick<ProjectListItem, "id" | "name">) => {
     const name = window.prompt("请输入新项目名称", project.name);
     if (name === null || !name.trim()) return;
     try {
-      await store.put({ ...project, name: name.trim(), updatedAt: new Date().toISOString() });
+      const stored = await store.get(project.id);
+      if (!stored) throw new Error("项目不存在");
+      await store.put({ ...stored, name: name.trim(), updatedAt: new Date().toISOString() });
       setOpenMenuId(null);
       await refresh();
     } catch (reason) {
@@ -131,9 +140,11 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
     }
   };
 
-  const duplicateProject = async (project: StoredProject) => {
+  const duplicateProject = async (project: Pick<ProjectListItem, "id">) => {
     try {
-      const copy = duplicateStoredProject(project);
+      const stored = await store.get(project.id);
+      if (!stored) throw new Error("项目不存在");
+      const copy = duplicateStoredProject(stored);
       await store.put(copy);
       setOpenMenuId(null);
       await refresh();
@@ -142,7 +153,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
     }
   };
 
-  const deleteProject = async (project: StoredProject) => {
+  const deleteProject = async (project: Pick<ProjectListItem, "id" | "name">) => {
     if (!window.confirm(`删除项目「${project.name}」？此操作不可恢复。`)) return;
     try {
       await store.remove(project.id);
@@ -153,9 +164,15 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
     }
   };
 
-  const exportProject = (project: StoredProject) => {
-    downloadProjectPackage(project.pack, `${project.name}-${project.updatedAt.slice(0, 10)}.json`);
-    setOpenMenuId(null);
+  const exportProject = async (project: Pick<ProjectListItem, "id" | "name" | "updatedAt">) => {
+    try {
+      const stored = await store.get(project.id);
+      if (!stored) throw new Error("项目不存在");
+      downloadProjectPackage(stored.pack, `${project.name}-${project.updatedAt.slice(0, 10)}.json`);
+      setOpenMenuId(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? `导出项目失败：${reason.message}` : "导出项目失败");
+    }
   };
 
   const importProject = async (file: File | null) => {
@@ -192,7 +209,19 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
 
       {localEntry && <ContinueEditingCard entry={localEntry} onResume={() => void continueEditing()} />}
 
-      <ProjectGrid projects={sorted} loading={loading} hasError={Boolean(error)} openMenuId={openMenuId} formatUpdatedAt={formatUpdatedAt} onOpen={openProject} onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)} onRename={(project) => void renameProject(project)} onDuplicate={(project) => void duplicateProject(project)} onExport={exportProject} onDelete={(project) => void deleteProject(project)} />
+      <ProjectGrid
+        projects={sorted as unknown as StoredProject[]}
+        loading={loading}
+        hasError={Boolean(error)}
+        openMenuId={openMenuId}
+        formatUpdatedAt={formatUpdatedAt}
+        onOpen={openProject}
+        onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)}
+        onRename={(project) => void renameProject(project)}
+        onDuplicate={(project) => void duplicateProject(project)}
+        onExport={(project) => void exportProject(project)}
+        onDelete={(project) => void deleteProject(project)}
+      />
     </main>
   );
 }
