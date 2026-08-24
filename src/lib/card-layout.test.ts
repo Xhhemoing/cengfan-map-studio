@@ -1032,3 +1032,147 @@ describe("connector search cost control", () => {
     }
   });
 });
+
+/**
+ * The solver is spread over a dozen modules, several of which keep mutable
+ * state for speed: the grid index stamps entries to de-duplicate a query, the
+ * province entries memoize their last ray cast, the occupancy raster is filled
+ * in once and read millions of times. All of it is per-`LayoutSpace` and
+ * per-query by construction.
+ *
+ * "Same input, same output" only holds while that stays true, and a solve run
+ * on its own can never catch a leak — the state has to be dirtied by something
+ * else first. So these run the boards against each other rather than against
+ * themselves.
+ */
+describe("solver state isolation", () => {
+  const provinces = Array.from({ length: 20 }, (_, index) => ({
+    rings: [Array.from({ length: 30 }, (_, step) => {
+      const angle = (step / 30) * Math.PI * 2;
+      const radius = 32 + (index % 6) * 7;
+      return {
+        x: 420 + ((index * 149) % 660) + Math.cos(angle) * radius,
+        y: 170 + ((index * 97) % 540) + Math.sin(angle) * radius,
+      };
+    })],
+  }));
+
+  function roster(prefix: string, count: number, width: number, height: number): CardLayoutInput[] {
+    return Array.from({ length: count }, (_, index) => cardInput({
+      id: `${prefix}-${index}`,
+      anchorX: 390 + ((index * 137) % 720),
+      anchorY: 145 + ((index * 89) % 610),
+      width,
+      height,
+    }));
+  }
+
+  const boards: { name: string; cards: CardLayoutInput[]; canvas: CardLayoutBounds; mode: CardLayoutMode }[] = [
+    { name: "vector", cards: roster("v", 22, 140, 60), canvas: { ...bounds, occupiedAreas: [], occupiedPolygons: provinces }, mode: "quadrant" },
+    { name: "rectangles", cards: roster("r", 18, 160, 70), canvas: { ...bounds, occupiedAreas: [bounds.map] }, mode: "radial" },
+    { name: "open canvas", cards: roster("o", 14, 150, 64), canvas: bounds, mode: "quadrant" },
+    { name: "grid", cards: roster("g", 26, 120, 52), canvas: { ...bounds, occupiedAreas: [bounds.map] }, mode: "grid" },
+    { name: "saturated", cards: roster("s", 44, 210, 96), canvas: { ...bounds, width: 820, height: 620, occupiedAreas: [{ x: 200, y: 140, width: 420, height: 340 }] }, mode: "quadrant" },
+  ];
+  const options = { connectorStyle: "curve" as const, connectorWidth: 1.5 };
+
+  it("gives each board the same answer however the solves are interleaved", () => {
+    const alone = new Map(boards.map((board) =>
+      [board.name, solveCardLayout(board.cards, board.canvas, { ...options, mode: board.mode })]));
+
+    // Round-robin, so every board's solve is sandwiched between two others'
+    // and would see any state they left behind.
+    for (let pass = 0; pass < 3; pass += 1) {
+      for (const board of [...boards].reverse()) {
+        const again = solveCardLayout(board.cards, board.canvas, { ...options, mode: board.mode });
+        expect({ board: board.name, pass, result: again })
+          .toEqual({ board: board.name, pass, result: alone.get(board.name) });
+      }
+    }
+  });
+
+  it("keeps every card on every board, whatever ran before it", () => {
+    for (const board of boards) {
+      const result = solveCardLayout(board.cards, board.canvas, { ...options, mode: board.mode });
+      expect(result.placements.map((placement) => placement.id)).toEqual(board.cards.map((card) => card.id));
+      for (const placement of result.placements) {
+        expect(Number.isFinite(placement.x) && Number.isFinite(placement.y)).toBe(true);
+      }
+    }
+  });
+
+  it("answers a reused space's obstacle queries independently of probe order", () => {
+    // One space, many probes: the raster, the edge index and the per-polygon
+    // ray-cast memo are all consulted here, and the memo in particular only
+    // holds one slot, so an order-dependent answer would mean it is keyed
+    // wrongly.
+    const space = new LayoutSpace({ ...bounds, occupiedAreas: [], occupiedPolygons: provinces });
+    const probes = Array.from({ length: 400 }, (_, index) => ({
+      x: 40 + ((index * 131) % 1380),
+      y: 40 + ((index * 79) % 900),
+      width: 20 + (index % 5) * 30,
+      height: 18 + (index % 4) * 24,
+    }));
+
+    const forward = probes.map((probe) => space.blocked(probe));
+    const backward = [...probes].reverse().map((probe) => space.blocked(probe)).reverse();
+    expect(backward).toEqual(forward);
+
+    // A fresh space must agree with the one that has answered 800 queries.
+    const pristine = new LayoutSpace({ ...bounds, occupiedAreas: [], occupiedPolygons: provinces });
+    expect(probes.map((probe) => pristine.blocked(probe))).toEqual(forward);
+  });
+
+  it("counts province crossings independently of the order lines are measured in", () => {
+    const space = new LayoutSpace({ ...bounds, occupiedAreas: [], occupiedPolygons: provinces });
+    // Anchors are laid out in columns, so consecutive lines keep asking about
+    // the same x with a different y. The per-province ray-cast memo holds a
+    // single slot keyed on the whole point, and a column is what tells a
+    // correctly keyed memo apart from one that matches on x alone.
+    const lines = Array.from({ length: 96 }, (_, index) => {
+      const anchor = { x: 420 + (index % 8) * 90, y: 180 + Math.floor(index / 8) * 55 };
+      return {
+        anchor,
+        segments: [{ start: anchor, end: { x: 60 + ((index * 53) % 1340), y: 60 + ((index * 37) % 880) } }],
+      };
+    });
+
+    const forward = lines.map((line) => space.polygonCrossings(line.segments, line.anchor));
+    const backward = [...lines].reverse().map((line) => space.polygonCrossings(line.segments, line.anchor)).reverse();
+    const repeated = lines.map((line) => space.polygonCrossings(line.segments, line.anchor));
+    // A space that has answered nothing yet has an empty memo, so it is the
+    // reference the warmed-up one has to keep agreeing with.
+    const pristine = new LayoutSpace({ ...bounds, occupiedAreas: [], occupiedPolygons: provinces });
+
+    expect(backward).toEqual(forward);
+    expect(repeated).toEqual(forward);
+    expect(lines.map((line) => pristine.polygonCrossings(line.segments, line.anchor))).toEqual(forward);
+    // Guard against the whole thing being trivially zero.
+    expect(forward.some((count) => count > 0)).toBe(true);
+  });
+
+  it("keeps a line that starts inside a province distinct from one that merely shares its column", () => {
+    // The narrowest form of the same hazard: two anchors on one vertical line,
+    // one inside the shape and one outside it, crossing the same outline. A
+    // memo that forgets to compare y answers the second with the first's ray
+    // cast, and the connector score silently loses a province crossing.
+    const block = {
+      rings: [[
+        { x: 400, y: 200 }, { x: 600, y: 200 }, { x: 600, y: 400 }, { x: 400, y: 400 },
+      ]],
+    };
+    const space = new LayoutSpace({ ...bounds, occupiedAreas: [], occupiedPolygons: [block] });
+    const inside = { x: 500, y: 300 };
+    const outside = { x: 500, y: 100 };
+    const leaving = [{ start: inside, end: { x: 1400, y: 300 } }];
+    const entering = [{ start: outside, end: { x: 500, y: 900 } }];
+
+    // Alone: leaving your own province is free, cutting through someone else's costs one.
+    expect(space.polygonCrossings(leaving, inside)).toBe(0);
+    expect(new LayoutSpace({ ...bounds, occupiedAreas: [], occupiedPolygons: [block] })
+      .polygonCrossings(entering, outside)).toBe(1);
+    // Back to back, in both orders.
+    expect(space.polygonCrossings(entering, outside)).toBe(1);
+    expect(space.polygonCrossings(leaving, inside)).toBe(0);
+  });
+});
