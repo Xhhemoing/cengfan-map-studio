@@ -348,6 +348,36 @@ describe("AgentAssistant", () => {
     restored.root.unmount();
   });
 
+  it("switches to a fresh task after the server reports an expired budget receipt", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-expiry", budgetReceipt: "v1.receipt.expiry", summary: "第一轮完成" }))
+      // 台账 TTL 到点后服务端只会回这个新错误码，旧的 AI_VALIDATION_ERROR 文案对用户毫无意义。
+      .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: { code: "AI_RECEIPT_EXPIRED", message: "会话预算回执已过期或已被使用，请新开一个 AI 任务" } }) })
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-fresh", budgetReceipt: "v1.receipt.fresh", summary: "新任务完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, root } = await renderAssistant(project);
+    setMessage(container, "第一轮");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("第一轮完成"));
+
+    setMessage(container, "半小时后继续");
+    clickText(container, "继续对话");
+    await vi.waitFor(() => expect(container.textContent).toContain("会话预算回执已过期或已被使用"));
+    expect(container.textContent).toContain("发送新需求会新开一个 AI 任务");
+    expect(container.textContent).not.toContain("请求内容未通过校验");
+    expect(container.textContent).not.toContain("继续对话");
+
+    setMessage(container, "换个方向");
+    clickText(container, "新开任务");
+    await vi.waitFor(() => expect(container.textContent).toContain("新任务完成"));
+    const freshBody = JSON.parse(String(((fetchMock.mock.calls[2] as unknown[])[1] as RequestInit).body)) as { taskId?: string; budgetReceipt?: string; messages: Array<{ role: string }> };
+    expect(freshBody.taskId).toBeUndefined();
+    expect(freshBody.budgetReceipt).toBeUndefined();
+    expect(freshBody.messages).toEqual([{ role: "user", content: "换个方向" }]);
+    root.unmount();
+  });
+
   it("does not auto-commit a low-risk continuation of a restored smart conversation", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const fetchMock = vi.fn()

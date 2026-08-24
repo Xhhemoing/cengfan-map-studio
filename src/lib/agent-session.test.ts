@@ -289,6 +289,20 @@ describe("AgentSession", () => {
     await expect(session.run("地图小一点")).resolves.toMatchObject({ kind: "failed", error: expect.stringContaining(expected) });
   });
 
+  it("marks a session unusable for continuation once the server reports an expired receipt", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-ttl", budgetReceipt: "v1.receipt.ttl", summary: "第一轮完成" }))
+      .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: { code: "AI_RECEIPT_EXPIRED", message: "会话预算回执已过期或已被使用，请新开一个 AI 任务" } }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("地图小一点");
+    expect(session.canContinue).toBe(true);
+    await expect(session.continue("再小一点")).resolves.toMatchObject({ kind: "failed", error: expect.stringContaining("会话预算回执已过期或已被使用") });
+    // 过期后不能再续聊，调用方只能新开任务。
+    expect(session.canContinue).toBe(false);
+  });
+
   it("aborts a hung round after the client timeout", async () => {
     vi.useFakeTimers();
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
@@ -713,5 +727,41 @@ describe("AgentSession", () => {
     const snapshot = session.exportSnapshot();
     expect(snapshot.metrics).toMatchObject({ rounds: 20, usedTokens: 60_000 });
     expect(AgentSession.restore(project, snapshot, { mode: "conservative" }).canContinue).toBe(true);
+  });
+
+  // 检查器里用户能改的字段必须同样对 AI 开放，否则 update_map/update_cards 会误报 PATCH_REJECTED。
+  it("writes the inspector-editable palette, shadow, boundary margin and card presentation", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "call-map", name: "update_map", arguments: { patch: { dataPalette: "playful", shadow: true, mapBoundaryMargin: 24 } } },
+        { id: "call-cards", name: "update_cards", arguments: { patch: { presentation: "glass-stat" } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("换个多彩配色并加投影");
+
+    expect(session.steps.map((step) => JSON.parse(step.result.content).code)).toEqual([undefined, undefined]);
+    expect(session.steps.every((step) => step.result.ok)).toBe(true);
+    expect(session.shadowProject.map).toMatchObject({ dataPalette: "playful", shadow: true, mapBoundaryMargin: 24 });
+    expect(session.shadowProject.cards.presentation).toBe("glass-stat");
+  });
+
+  it("keeps rejecting unknown scene props and protected card positions", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "call-unknown", name: "update_map", arguments: { patch: { dataPalette: "pastel", nonsense: 1 } } },
+        { id: "call-protected", name: "update_cards", arguments: { patch: { presentation: "standard", positions: {} } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("乱写一通");
+
+    const unknown = JSON.parse(session.steps[0]!.result.content);
+    expect(unknown).toMatchObject({ ok: false, code: "PATCH_REJECTED", unknownProps: ["nonsense"] });
+    expect(unknown.availableProps).toContain("dataPalette");
+    expect(JSON.parse(session.steps[1]!.result.content)).toMatchObject({ ok: false, code: "PATCH_REJECTED", protectedProps: ["positions"] });
+    expect(session.shadowProject.map.dataPalette).not.toBe("pastel");
   });
 });

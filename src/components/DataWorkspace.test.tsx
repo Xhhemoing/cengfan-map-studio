@@ -795,6 +795,122 @@ describe("DataWorkspace", () => {
     expect(onUpdateStudent).toHaveBeenCalledWith("student-1", expect.objectContaining({ locationScope: undefined }));
   });
 
+  it("upgrades OCR text parsing to AI with the ocr source when local rules leave unparsed lines", async () => {
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
+      provider: "local-fallback",
+      candidates: [
+        { name: "温言", university: "南京大学", city: "南京市", sourceLine: 1, rawLine: "温言｜南京大学｜南京市" },
+        { name: "还没定", university: "北京大学", city: "北京", sourceLine: 2, rawLine: "还没定" },
+      ],
+      unparsed: [],
+    }));
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "温言｜南京大学｜南京市\n还没定");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("识别 OCR 文本"))!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    expect(requestAiParse).toHaveBeenCalledWith({ text: "温言｜南京大学｜南京市\n还没定", source: "ocr" });
+    expect(container.textContent).toContain("从OCR 智能识别（local-fallback）识别到 2 条候选");
+  });
+
+  it("keeps OCR text parsing local when the local rules read every line", async () => {
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({ provider: "local-fallback", candidates: [], unparsed: [] }));
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "温言｜南京大学｜南京市");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("识别 OCR 文本"))!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    expect(requestAiParse).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("从OCR 文本识别到 1 条候选");
+  });
+
+  it("falls back to local OCR candidates when AI parsing is unavailable", async () => {
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => {
+      throw new Error("上游不可用");
+    });
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "温言｜南京大学｜南京市\n还没定");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("识别 OCR 文本"))!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    expect(requestAiParse).toHaveBeenCalledWith({ text: "温言｜南京大学｜南京市\n还没定", source: "ocr" });
+    expect(container.textContent).toContain("从OCR 文本识别到 1 条候选，另有 1 行未识别");
+    expect(container.querySelector<HTMLButtonElement>('button[disabled]')).toBeNull();
+  });
+
+  it("drops the stale replacement summary once a later import lands", async () => {
+    const onAppendStudents = vi.fn();
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
+      provider: "local-fallback",
+      candidates: [{ name: "苏禾", university: "浙江大学", city: "杭州", sourceLine: 1, rawLine: "苏禾 浙江大学 杭州" }],
+      unparsed: [],
+    }));
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+        confirmReplace={() => false}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "候选名单");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("替换全部"))!);
+    expect(container.textContent).toContain("替换摘要：");
+
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "苏禾" })]);
+    expect(container.textContent).not.toContain("替换摘要：");
+  });
+
   it("keeps pasted OCR text parsing available without advertising image OCR", () => {
     const container = render(
       <DataWorkspace

@@ -80,6 +80,26 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
     return () => { cancelled = true; };
   }, [refresh, store]);
 
+  // 卡片菜单打开时才挂文档级监听：点到菜单外或按 Esc 就关闭。
+  // 焦点回退由 ProjectCard 处理（它会 stopPropagation，这里的 Esc 只是兜底）。
+  useEffect(() => {
+    if (!openMenuId) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".workbench-card-menu")) return;
+      setOpenMenuId(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenMenuId(null);
+    };
+    document.addEventListener("click", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("click", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openMenuId]);
+
   const openProject = (id: string) => go(`#/project/${encodeURIComponent(id)}`);
 
   const continueEditing = async () => {

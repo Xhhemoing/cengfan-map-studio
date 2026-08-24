@@ -117,6 +117,34 @@ describe("data workspace helpers", () => {
     expect(result.issues.some((issue) => issue.code === "missing_field")).toBe(true);
   });
 
+  it("carries a candidate's manual province into the confirmed student", () => {
+    const result = confirmImportCandidates([
+      {
+        name: "林舟",
+        university: "北京大学",
+        city: "火星市",
+        province: " 江苏省 ",
+        sourceLine: 1,
+        rawLine: "林舟 北京大学 火星市 江苏省",
+        accepted: true,
+      },
+      {
+        name: "苏禾",
+        university: "浙江大学",
+        city: "杭州",
+        province: "  ",
+        sourceLine: 2,
+        rawLine: "苏禾 浙江大学 杭州",
+        accepted: true,
+      },
+    ]);
+
+    expect(result.students).toHaveLength(2);
+    expect(result.students[0]).toMatchObject({ city: "火星市", province: "江苏省" });
+    expect(result.students[1]).not.toHaveProperty("province");
+    expect(result.issues.some((issue) => issue.code === "unresolved_city")).toBe(false);
+  });
+
   describe("applyUniversityAutoLocation", () => {
     it("fills city and province from the university catalog when both are empty", () => {
       const draft = createEmptyStudentDraft();

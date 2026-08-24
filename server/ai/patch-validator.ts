@@ -1,41 +1,8 @@
-export type SceneDomain = "canvas" | "map" | "province" | "cards" | "guests" | "text" | "asset";
+import { SCENE_DOMAIN_PROPS, type SceneDomain } from "../../src/lib/scene-writable-props";
 
-/** SceneDocument 各域允许由 Agent 修改的顶层属性。 */
-export const SCENE_DOMAIN_PROPS: Record<SceneDomain, readonly string[]> = {
-  canvas: [
-    "width", "height", "safeMargin", "backgroundColor", "backgroundImageSrc",
-    "backgroundFit", "backgroundOpacity", "lineHeight",
-  ],
-  map: [
-    "x", "y", "width", "height", "scale", "zIndex", "opacity", "landColor",
-    "activeColor", "edgeColor", "edgeStyle", "edgeWidth", "showProvinceLabels",
-    "provinceLabelFontId", "provinceLabelTypography", "collapseSouthChinaSea",
-    "fillMode", "heatScale", "emptyProvinceFill", "renderSource", "provinceStyles",
-    "provinceTextureUniformSize",
-  ],
-  province: ["fill", "textureSrc", "visible", "labelFontId", "appearance"],
-  cards: [
-    "preset", "displayFrame", "compactLayout", "x", "y", "maxWidth", "padding",
-    "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity",
-    "textColor", "fontSize", "fieldFonts", "fieldTypography", "connectorStyle",
-    "connectorColor", "connectorWidth", "connectorDash", "visibleFields", "noWrapFields",
-    "citySubgroups", "expressionTemplates", "nameFormat", "layoutMode", "autoBalance",
-    "allowMapOverlap", "showProvinceTexture", "showCount", "zIndex",
-  ],
-  guests: [
-    "title", "x", "y", "width", "padding", "background", "opacity", "textColor",
-    "fontSize", "titleFontId", "peopleFontId", "titleTypography", "peopleTypography",
-    "displayMode", "customText", "visibility", "people",
-  ],
-  text: [
-    "role", "content", "x", "y", "fontSize", "color", "fontWeight", "fontId",
-    "textAlign", "maxWidth", "visibility",
-  ],
-  asset: [
-    "assetId", "label", "kind", "province", "x", "y", "width", "height", "rotation",
-    "opacity", "zIndex", "visibility",
-  ],
-};
+// 可写清单由 src/lib/scene-writable-props.ts 统一维护，这里只做转发，避免前后端两份副本走偏。
+export { SCENE_DOMAIN_PROPS };
+export type { SceneDomain };
 
 /** 普通场景补丁永远不能触碰的字段。 */
 export const PROTECTED_SCENE_FIELDS: Record<SceneDomain, readonly string[]> = {

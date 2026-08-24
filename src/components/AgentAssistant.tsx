@@ -26,6 +26,11 @@ type AssistantConversation = {
   provider: string;
   restored: boolean;
   projectDigest: string;
+  /**
+   * 服务端回执过期/被占用：仅本次会话内有效，不进持久化，刷新后按普通失败对话处理（失败态本来就会新开任务）。
+   * 回滚：删掉该字段与依赖它的按钮文案、提示语即可，续聊失败会退回"开始规划"。
+   */
+  budgetExpired: boolean;
 };
 
 function digestFor(project: ProjectDocument): string {
@@ -66,6 +71,7 @@ function restoreConversation(project: ProjectDocument, assets: UserAsset[], reco
     provider: record.provider,
     restored: true,
     projectDigest: record.projectDigest ?? digestFor(project),
+    budgetExpired: false,
   };
 }
 
@@ -144,6 +150,7 @@ function createConversation(project: ProjectDocument, mode: Mode, assets: UserAs
     provider: "",
     restored: false,
     projectDigest: digestFor(project),
+    budgetExpired: false,
   };
 }
 
@@ -370,7 +377,8 @@ export function AgentAssistant({
       }));
     };
     // 没有预算回执的会话（v2 快照恢复）只能只读打开，续聊会被服务端拒绝，这里直接改成新开任务。
-    const isFresh = active.status === "draft" || active.status === "failed" || active.status === "cancelled" || !active.session.canContinue;
+    // 回执过期（服务端台账默认 30 分钟 TTL）同理：上一次续聊已经判定过期，这一次必须新开任务。
+    const isFresh = active.status === "draft" || active.status === "failed" || active.status === "cancelled" || active.budgetExpired || !active.session.canContinue;
     const session = isFresh
       ? new AgentSession(project, { mode: active.mode, assets, onProgress: progress })
       : active.session;
@@ -388,6 +396,7 @@ export function AgentAssistant({
       selectedStepIds: isFresh ? [] : active.selectedStepIds,
       progress: "",
       mode: active.mode,
+      budgetExpired: false,
     }));
     try {
       const sessionWithProgress = session;
@@ -408,7 +417,9 @@ export function AgentAssistant({
         return;
       }
       if (outcome.kind === "failed") {
-        updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", error: outcome.error ?? "AI 会话失败", steps: preview.steps, progress: "" }));
+        // 续聊失败后会话仍标记为已完成，只有回执被服务端判过期/占用时 canContinue 才会翻成 false。
+        const budgetExpired = !isFresh && !sessionWithProgress.canContinue;
+        updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", error: outcome.error ?? "AI 会话失败", steps: preview.steps, progress: "", budgetExpired }));
         onPreview?.(null);
         return;
       }
@@ -486,8 +497,9 @@ export function AgentAssistant({
         {conversation.status === "running" ? (
           <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
         ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && conversation.status === "completed" ? (conversation.session.canContinue ? "继续对话" : "新开任务") : "开始规划"}</button>
+          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && (conversation.budgetExpired || conversation.status === "completed") ? (!conversation.budgetExpired && conversation.session.canContinue ? "继续对话" : "新开任务") : "开始规划"}</button>
         )}
+        {projectIsCurrent && conversation.budgetExpired && <p className="panel-note" role="status">会话预算已过期或已被占用，发送新需求会新开一个 AI 任务。</p>}
         {projectIsCurrent && conversation.status === "completed" && !conversation.session.canContinue && <p className="panel-note" role="status">历史会话已只读恢复，发送新需求会新开一个 AI 任务。</p>}
         {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
         {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
@@ -529,6 +541,7 @@ export function AgentAssistant({
     provider: "",
     restored: false,
     projectDigest: currentProjectDigest,
+    budgetExpired: false,
   };
 
   return (

@@ -10,6 +10,7 @@ import { classifyAgentCall, highestRisk, type AgentToolCall, type RiskLevel } fr
 import { buildProjectDigest } from "./project-digest";
 import type { ProjectDocument, ProjectTransaction } from "./project-document";
 import { updateSceneTarget, type SceneSelection } from "./scene-document";
+import { SCENE_DOMAIN_PROPS, type SceneDomain } from "./scene-writable-props";
 import type { DataViewId, Student } from "./project-data";
 import { buildProvinceSummary } from "./project-data";
 import { resolveCityLocation, resolveStudentLocation } from "./student-data";
@@ -78,18 +79,8 @@ export function compactAgentToolResult(callName: string, content: string): strin
   }
   return best;
 }
-type SceneDomain = "canvas" | "map" | "province" | "cards" | "guests" | "text" | "asset";
 
-const SCENE_DOMAIN_PROPS: Record<SceneDomain, readonly string[]> = {
-  canvas: ["width", "height", "safeMargin", "backgroundColor", "backgroundImageSrc", "backgroundFit", "backgroundOpacity", "lineHeight"],
-  map: ["x", "y", "width", "height", "scale", "zIndex", "opacity", "landColor", "activeColor", "edgeColor", "edgeStyle", "edgeWidth", "showProvinceLabels", "provinceLabelFontId", "provinceLabelTypography", "collapseSouthChinaSea", "fillMode", "heatScale", "emptyProvinceFill", "renderSource", "provinceStyles", "provinceTextureUniformSize"],
-  province: ["fill", "textureSrc", "visible", "labelFontId", "appearance"],
-  cards: ["preset", "displayFrame", "compactLayout", "x", "y", "maxWidth", "padding", "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity", "textColor", "fontSize", "fieldFonts", "fieldTypography", "connectorStyle", "connectorColor", "connectorWidth", "connectorDash", "visibleFields", "noWrapFields", "citySubgroups", "expressionTemplates", "nameFormat", "layoutMode", "autoBalance", "allowMapOverlap", "showProvinceTexture", "showCount", "zIndex"],
-  guests: ["title", "x", "y", "width", "padding", "background", "opacity", "textColor", "fontSize", "titleFontId", "peopleFontId", "titleTypography", "peopleTypography", "displayMode", "customText", "visibility", "people"],
-  text: ["role", "content", "x", "y", "fontSize", "color", "fontWeight", "fontId", "textAlign", "maxWidth", "visibility"],
-  asset: ["assetId", "label", "kind", "province", "x", "y", "width", "height", "rotation", "opacity", "zIndex", "visibility"],
-};
-
+// 可写清单与服务端共用同一份定义（server/ai/patch-validator.ts 亦从此文件转发）。
 const PROTECTED_SCENE_FIELDS: Record<SceneDomain, readonly string[]> = {
   canvas: [], map: [], province: [], cards: ["positions"], guests: [], text: ["id"], asset: ["id", "src"],
 };
@@ -713,9 +704,13 @@ export class AgentSession {
             const messageByCode: Record<string, string> = {
               AI_RATE_LIMITED: "请求过于频繁，请稍后重试。",
               AI_VALIDATION_ERROR: "请求内容未通过校验，请重新开始当前 AI 任务。",
+              AI_RECEIPT_EXPIRED: "会话预算回执已过期或已被使用，无法继续这轮对话。",
               AI_UPSTREAM_UNAVAILABLE: "AI 服务暂时不可用，请稍后重试。",
               AI_TIMEOUT: "AI 请求超时，请稍后重试。",
             };
+            // 回执一旦过期/被占用，本会话再也续不上，直接置成不可续聊，UI 会把按钮换成「新开任务」。
+            // 回滚：删掉这一行与上面的 AI_RECEIPT_EXPIRED 映射，续聊失败会退回统一的校验失败文案。
+            if (code === "AI_RECEIPT_EXPIRED") this.continuable = false;
             return { kind: "failed" as const, error: messageByCode[code ?? ""] ?? data?.error?.message ?? `Agent 接口错误：${response.status}` };
           }
           const outcome = await response.json() as AgentApiOutcome & { taskId?: string; budgetReceipt?: string };

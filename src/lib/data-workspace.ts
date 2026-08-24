@@ -93,6 +93,9 @@ export function confirmImportCandidates(
       university: row.university,
       city: row.city,
       locationScope: row.locationScope,
+      // 候选行里的手动省份原样下传,由 buildStudentRecords 决定是否落到 Student 上。
+      // 回滚办法:删掉这一行,导入结果重新只按城市推断省份。
+      province: row.province,
       raw: {
         name: row.name,
         university: row.university,

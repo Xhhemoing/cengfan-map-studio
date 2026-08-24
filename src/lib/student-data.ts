@@ -7,6 +7,11 @@ export interface StudentInput {
   university: string;
   city: string;
   locationScope?: "china" | "international";
+  /**
+   * 手动省份:选填,有值时写入 `Student.province` 并优先于按城市推断;空/空白视为未填。
+   * 回滚办法:删掉本字段与 buildStudentRecords 里的 manualProvince 分支,导入侧随之退回纯城市推断。
+   */
+  province?: string;
   raw?: {
     name: string;
     university: string;
@@ -99,10 +104,18 @@ export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult 
     }));
     issues.push(...fieldIssues);
 
+    // 与 resolveStudentLocation 一致:手动填了省份就视为已定位,不再按城市推断,
+    // 也不该因为城市不在目录里而报「无法定位」。
+    const manualProvince = input.province?.trim() ?? "";
     const location = input.locationScope === "international"
       ? { city: input.city.trim(), province: "", status: "unresolved" as const }
       : resolveCityLocation(input.city);
-    if (input.locationScope !== "international" && input.city.trim() && location.status === "unresolved") {
+    if (
+      input.locationScope !== "international"
+      && !manualProvince
+      && input.city.trim()
+      && location.status === "unresolved"
+    ) {
       issues.push({
         code: "unresolved_city",
         field: "city",
@@ -120,6 +133,8 @@ export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult 
       name,
       university: input.university.trim(),
       city: location.city || input.city.trim(),
+      // 省份留空时不写字段:保持既有的按城市推断,而不是塞空串盖掉推断结果。
+      ...(manualProvince ? { province: manualProvince } : {}),
       ...(input.locationScope === "international" ? { locationScope: "international" as const } : {}),
       visibility: true,
     });

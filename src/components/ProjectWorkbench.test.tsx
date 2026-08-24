@@ -8,6 +8,8 @@ import { serializeProjectPackage } from "../lib/project-package";
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
 function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, navigate = vi.fn()) {
   const container = document.createElement("div");
+  // 菜单的外点关闭与焦点管理依赖真实文档树，容器必须挂到 body 上。
+  document.body.appendChild(container);
   const root = createRoot(container);
   roots.push({ root, container });
   flushSync(() => root.render(<ProjectWorkbench store={store} navigate={navigate} />));
@@ -15,7 +17,10 @@ function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, nav
 }
 
 afterEach(() => {
-  roots.forEach(({ root }) => root.unmount());
+  roots.forEach(({ root, container }) => {
+    root.unmount();
+    container.remove();
+  });
   roots = [];
   window.localStorage.clear();
   vi.unstubAllGlobals();
@@ -204,6 +209,82 @@ describe("ProjectWorkbench", () => {
     container.querySelector<HTMLButtonElement>('[aria-label="新建项目"]')?.click();
     await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("创建项目失败"));
     expect(container.querySelector(".workbench-error")?.textContent).toContain("配额不足");
+  });
+
+  describe("卡片菜单的键盘与焦点行为", () => {
+    async function openCardMenu() {
+      const store = createMemoryProjectStore();
+      await store.put(createSampleProject());
+      const { container } = renderWorkbench(store);
+      await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+      const trigger = container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')!;
+      trigger.click();
+      await vi.waitFor(() => expect(container.querySelector('[role="menu"]')).not.toBeNull());
+      const menu = container.querySelector<HTMLElement>('[role="menu"]')!;
+      const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+      return { container, trigger, menu, items };
+    }
+
+    function pressKey(target: HTMLElement, key: string) {
+      target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    }
+
+    it("exposes menu semantics on the trigger button", async () => {
+      const { trigger, menu } = await openCardMenu();
+      expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+      expect(trigger.getAttribute("aria-controls")).toBe(menu.id);
+      expect(menu.id).not.toBe("");
+      expect(menu.getAttribute("aria-labelledby")).toBe(trigger.id);
+    });
+
+    it("moves focus into the menu when it opens", async () => {
+      const { items } = await openCardMenu();
+      expect(items).toHaveLength(4);
+      expect(document.activeElement).toBe(items[0]);
+      expect(items[0].tabIndex).toBe(0);
+      expect(items[1].tabIndex).toBe(-1);
+    });
+
+    it("cycles focus across menu items with the arrow keys", async () => {
+      const { menu, items } = await openCardMenu();
+      pressKey(document.activeElement as HTMLElement, "ArrowDown");
+      expect(document.activeElement).toBe(items[1]);
+      pressKey(document.activeElement as HTMLElement, "ArrowUp");
+      expect(document.activeElement).toBe(items[0]);
+      // 首项再往上应回环到末项
+      pressKey(document.activeElement as HTMLElement, "ArrowUp");
+      expect(document.activeElement).toBe(items[items.length - 1]);
+      // 末项再往下应回环到首项
+      pressKey(document.activeElement as HTMLElement, "ArrowDown");
+      expect(document.activeElement).toBe(items[0]);
+      pressKey(menu, "End");
+      expect(document.activeElement).toBe(items[items.length - 1]);
+      pressKey(menu, "Home");
+      expect(document.activeElement).toBe(items[0]);
+    });
+
+    it("closes on Escape and returns focus to the trigger", async () => {
+      const { container, trigger } = await openCardMenu();
+      pressKey(document.activeElement as HTMLElement, "Escape");
+      await vi.waitFor(() => expect(container.querySelector('[role="menu"]')).toBeNull());
+      expect(document.activeElement).toBe(trigger);
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("closes when clicking outside the menu", async () => {
+      const { container, trigger } = await openCardMenu();
+      container.querySelector<HTMLElement>(".workbench-grid")!.click();
+      await vi.waitFor(() => expect(container.querySelector('[role="menu"]')).toBeNull());
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("keeps the menu open while interacting inside it", async () => {
+      const { container, menu } = await openCardMenu();
+      menu.click();
+      await Promise.resolve();
+      expect(container.querySelector('[role="menu"]')).not.toBeNull();
+    });
   });
 
   it("retries seeding after a failed seed", async () => {

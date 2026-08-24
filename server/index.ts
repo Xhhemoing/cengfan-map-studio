@@ -834,10 +834,20 @@ export function createAiServer(options: AiServerOptions = {}) {
         const initialClaim = parsed.value.budgetReceipt ? null : budgetReceiptLedger.reserveInitial(taskId);
         const claim = receiptClaim ?? initialClaim;
         const receipt = receiptClaim?.payload ?? null;
-        if ((historyHasAssistantOrTool && !parsed.value.budgetReceipt)
-          || (parsed.value.budgetReceipt && (!receiptClaim || receipt!.maxTokens !== agentRuntime.tokenBudget || receipt!.maxRounds !== agentRuntime.maxRounds))
+        // 带来的回执验不过：台账过了 TTL(默认 30 分钟)被清掉、并发抢占已消费、签名伪造、预算口径变了都算。
+        // 这类失败与"请求体字段校验失败"性质不同——用户只能新开任务，所以单独给一个 error.code，
+        // 客户端才能提示"会话预算已过期"而不是"内容未通过校验"。
+        // 回滚：删掉 receiptRejected 分支，让它落回下面统一的 AI_VALIDATION_ERROR 即可。
+        const receiptRejected = Boolean(parsed.value.budgetReceipt)
+          && (!receiptClaim || receipt!.maxTokens !== agentRuntime.tokenBudget || receipt!.maxRounds !== agentRuntime.maxRounds);
+        if (receiptRejected
+          || (historyHasAssistantOrTool && !parsed.value.budgetReceipt)
           || (!parsed.value.budgetReceipt && !initialClaim)) {
           if (claim) budgetReceiptLedger.rollback(claim);
+          if (receiptRejected) {
+            sendAi(400, { error: { code: "AI_RECEIPT_EXPIRED", message: "会话预算回执已过期或已被使用，请新开一个 AI 任务" } });
+            return;
+          }
           sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: "会话预算回执无效、已过期或已被使用" } });
           return;
         }

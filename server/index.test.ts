@@ -7,6 +7,7 @@ import { request as httpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
 import type http from "node:http";
 import { createAiLogger } from "./ai/ai-observability";
+import { createBudgetReceiptLedger, createBudgetReceiptSigner } from "./ai/budget-receipt";
 import { createRateLimiter } from "./ai/rate-limit";
 import { createAiServer, DEFAULT_PORT, resolvePort } from "./index";
 
@@ -326,7 +327,8 @@ describe("unified application server", () => {
     const results = await Promise.all([rawPost(origin, "/api/ai/agent", continuation), rawPost(origin, "/api/ai/agent", continuation)]);
     expect(results.filter((result) => result.status === 200)).toHaveLength(1);
     expect(results.filter((result) => result.status === 400)).toHaveLength(1);
-    expect(results.find((result) => result.status === 400)?.body).toContain("AI_VALIDATION_ERROR");
+    // 被抢占的那一次拿的是"回执已被使用"，与请求体校验失败分开报码。
+    expect(results.find((result) => result.status === 400)?.body).toContain("AI_RECEIPT_EXPIRED");
   });
 
   it("serves live and ready probes without exposing runtime paths or secrets", async () => {
@@ -520,6 +522,35 @@ describe("unified application server", () => {
     const response = await rawPost(origin, "/api/ai/agent", body);
     expect(response.status).toBe(400);
     expect(JSON.parse(response.body)).toMatchObject({ error: { code: "AI_VALIDATION_ERROR" } });
+  });
+
+  it("reports an expired or forged budget receipt with its own error code", async () => {
+    // 台账过了 TTL 就把条目清掉：客户端手里那张仍然验签通过的回执再也兑不出预算，
+    // 而这与「请求体字段校验失败」是两回事，必须用不同的 error.code 区分。
+    let clock = Date.UTC(2026, 0, 1);
+    const ledger = createBudgetReceiptLedger(createBudgetReceiptSigner("receipt-expiry-secret"), { ttlMs: 60_000, now: () => clock });
+    const server = createAiServer({ budgetReceiptSecret: "receipt-expiry-secret", budgetReceiptLedger: ledger });
+    servers.push(server);
+    const origin = await startServer(server);
+    const first = await rawPost(origin, "/api/ai/agent", { userMessage: "地图缩小一点", taskId: "task-expiry", digest: { map: { scale: 1 } }, messages: [] });
+    expect(first.status).toBe(200);
+    const { budgetReceipt } = JSON.parse(first.body) as { budgetReceipt: string };
+    const history = [{ role: "assistant", content: "上一轮" }];
+
+    clock += 120_000;
+    const expired = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-expiry", budgetReceipt, digest: {}, messages: history });
+    expect(expired.status).toBe(400);
+    expect(JSON.parse(expired.body)).toMatchObject({ error: { code: "AI_RECEIPT_EXPIRED" } });
+
+    // 伪造回执共用同一个新码：客户端对两者的处理都是「新开任务」，不需要再细分。
+    const forged = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-expiry", budgetReceipt: `${budgetReceipt}tamper`, digest: {}, messages: history });
+    expect(forged.status).toBe(400);
+    expect(JSON.parse(forged.body)).toMatchObject({ error: { code: "AI_RECEIPT_EXPIRED" } });
+
+    // 请求体字段校验失败仍然是 AI_VALIDATION_ERROR。
+    const invalid = await rawPost(origin, "/api/ai/agent", { userMessage: "  ", digest: {}, messages: [] });
+    expect(invalid.status).toBe(400);
+    expect(JSON.parse(invalid.body)).toMatchObject({ error: { code: "AI_VALIDATION_ERROR" } });
   });
 
   it("logs the fallback route when the agent succeeds on the fallback model", async () => {

@@ -28,7 +28,8 @@
 | 5 | 已完成 | 混编 ×5 | 达标后继续 |
 | 6 | 已完成 | 混编 ×5 | 续聊闭环与死代码清理 |
 | 7 | 已完成 | 混编 ×5 | 导出补省份、digest 分层、续聊 digest 去重、健康检查缓存 |
-| 8 | 进行中 | 混编 ×5 | 省份写回、可写白名单、回执过期降级、工作台菜单、OCR |
+| 8 | 已完成 | 混编 ×5 | 省份写回、可写白名单、回执过期降级、工作台菜单、OCR |
+| 9 | 进行中 | 混编 ×5 | 删死端点、识别面板省份映射、续聊 core digest |
 
 ### 第 1 轮工作流（只读）
 
@@ -71,6 +72,7 @@
 - 2026-08-24：第 2 轮落地完成并合入专属分支。目标测试 12 文件 164 + 续跑 19 文件 284 通过。启动第 3 轮。
 - 2026-08-24：第 6 轮落地完成并合入专属分支。启动第 7 轮。
 - 2026-08-24：第 7 轮落地完成并合入专属分支。启动第 8 轮。
+- 2026-08-24：第 8 轮落地完成并合入专属分支。启动第 9 轮。
 
 ## 第 2 轮已合入
 
@@ -122,6 +124,12 @@
 - 续聊回执写入 `historyHash`：digest 未变则 prompt 只发短声明，首轮与变更轮仍全量。
 - `layoutHealthIssues` 按几何签名缓存，事务提交不再全量重算健康检查。
 
-**已知缺口（第 8 轮）：** `confirmImportCandidates` / `buildStudentRecords` 尚未接收 `ImportCandidate.province`，解析到的省份列还写不进学生。识别面板的 `StudentColumn` 被收窄，省份不出现在映射行。
+## 第 8 轮已合入
 
-**第 8 轮候选：** 省份写回确认导入；AI 可写白名单补 dataPalette/shadow/mapBoundaryMargin/presentation；回执过期独立错误码并降级「新开任务」；项目卡菜单 a11y；OCR 走智能识别且 `source:"ocr"`。`/api/ai/propose-edits` 仍是死端点，排在 `server/index.ts` 本轮回执改动之后再删。P2 视觉核对仍不做。
+- `StudentInput.province` → `buildStudentRecords` / `confirmImportCandidates`：手动省份写入学生并优先于城市推断。
+- `SCENE_DOMAIN_PROPS` 抽到 `src/lib/scene-writable-props.ts`：补 `dataPalette` / `shadow` / `mapBoundaryMargin` / `presentation`。
+- 回执过期/已用改为 `AI_RECEIPT_EXPIRED`，按钮降级「新开任务」。
+- 项目卡菜单：焦点、Esc、外点、方向键。
+- OCR 未识别完时升级智能识别，`source: "ocr"`。
+
+**第 9 轮候选：** 识别面板仍不展示省份映射行（binary-import `MAPPED_COLUMNS` 不含 province）；`/api/ai/propose-edits` 与 explain 死端点；客户端续聊尚未改用 `layer: "core"`。P2 视觉核对仍不做。

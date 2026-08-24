@@ -100,6 +100,46 @@ describe("student data", () => {
     expect(result.issues.some((issue) => issue.code === "unresolved_city")).toBe(true);
   });
 
+  it("keeps a manual province on the built record instead of inferring from city", () => {
+    const result = buildStudentRecords([
+      { name: "林舟", university: "北京大学", city: "杭州市", province: "  江苏省  " },
+    ]);
+
+    expect(result.students[0]).toMatchObject({
+      city: "杭州市",
+      province: "江苏省",
+    });
+    expect(resolveStudentLocation(result.students[0]!)).toMatchObject({
+      province: "江苏省",
+      status: "resolved",
+    });
+  });
+
+  it("treats a manual province as located for an unknown city", () => {
+    const result = buildStudentRecords([
+      { name: "小陈", university: "神秘大学", city: "火星市", province: "火星省" },
+    ]);
+
+    expect(result.students[0]?.province).toBe("火星省");
+    expect(result.issues.some((issue) => issue.code === "unresolved_city")).toBe(false);
+  });
+
+  it("falls back to city inference when the manual province is blank", () => {
+    const result = buildStudentRecords([
+      { name: "苏禾", university: "浙江大学", city: "杭州", province: "   " },
+      { name: "小陈", university: "神秘大学", city: "火星市", province: "" },
+    ]);
+
+    expect(result.students[0]).not.toHaveProperty("province");
+    expect(result.students[1]).not.toHaveProperty("province");
+    expect(resolveStudentLocation(result.students[0]!)).toMatchObject({
+      city: "杭州市",
+      province: "浙江省",
+      status: "resolved",
+    });
+    expect(result.issues.some((issue) => issue.code === "unresolved_city")).toBe(true);
+  });
+
   it("derives a student's location from city when manual province is absent", () => {
     const student: Student = {
       id: "student-1",

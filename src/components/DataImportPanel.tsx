@@ -99,6 +99,8 @@ export function DataImportPanel({
     setExcelRecognition(recognition?.headerRowIndex !== undefined ? recognition : null);
     setUnparsedRows(unparsed);
     setOutcome(null);
+    // 换了一批候选，上一次的替换摘要就过期了，避免旧数字残留误导用户。
+    setReplaceConfirmation(null);
     if (candidates.length === 0) {
       onMessage(`没有从${sourceLabel}识别到可导入数据`);
       setReviewRows([]);
@@ -115,9 +117,24 @@ export function DataImportPanel({
     setCandidates(parsed.candidates, parsed.unparsed, "文本");
   };
 
-  const prepareOcrImport = () => {
-    const parsed = parseOcrLikeText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed, "OCR 文本");
+  const prepareOcrImport = async () => {
+    const local = parseOcrLikeText(importText);
+    // 和「一键识别并导入」同一条升级路径：本地 OCR 规则能读全就不请求上游，
+    // 读不全时才交给智能识别，并按 ocr 来源告知服务端(截图排版和粘贴文本的噪声不同)。
+    if (!importText.trim() || local.unparsed.length === 0) {
+      setCandidates(local.candidates, local.unparsed, "OCR 文本");
+      return;
+    }
+    setIsAiParsing(true);
+    try {
+      const aiParsed = await requestAiParse({ text: importText, source: "ocr" });
+      setCandidates(aiParsed.candidates, aiParsed.unparsed, `OCR 智能识别（${aiParsed.provider}）`);
+    } catch {
+      // 没有可用 AI 或上游失败时退回纯本地结果，行为与升级前一致。
+      setCandidates(local.candidates, local.unparsed, "OCR 文本");
+    } finally {
+      setIsAiParsing(false);
+    }
   };
 
   const prepareAiImport = async () => {
@@ -215,6 +232,8 @@ export function DataImportPanel({
     setExcelRecognition(null);
     setUnparsedRows([]);
     setImportText("");
+    // 导入已经落地，替换摘要只服务于"确认前"的提示，落地后清掉。
+    setReplaceConfirmation(null);
     setOutcome({ title: mode === "replace" ? "替换导入结果" : "追加导入结果", success: next.length, skipped, warnings });
     onMessage(`已${mode === "replace" ? "替换" : "追加"} ${next.length} 条学生数据 · ${importOutcomeSummary(next.length, skipped.length)}`);
   };
@@ -259,6 +278,7 @@ export function DataImportPanel({
     setReviewRows([]);
     setUnparsedRows([]);
     setImportText("");
+    setReplaceConfirmation(null);
     setOutcome({ title: "一键导入结果", success: result.students.length, skipped, warnings });
     onMessage(
       `已从${sourceLabel}导入 ${result.students.length} 条学生记录 · ${importOutcomeSummary(result.students.length, skipped.length)}`,
@@ -308,7 +328,9 @@ export function DataImportPanel({
               <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing}>
                 {isAiParsing ? "智能识别中..." : "智能识别名单"}
               </CompactButton>
-              <CompactButton variant="secondary" onClick={prepareOcrImport}>识别 OCR 文本</CompactButton>
+              <CompactButton variant="secondary" onClick={prepareOcrImport} disabled={isAiParsing}>
+                {isAiParsing ? "OCR 识别中..." : "识别 OCR 文本"}
+              </CompactButton>
               <ActionButton onClick={importDirectly} disabled={isAiParsing}>
                 {isAiParsing ? "识别并导入中..." : "一键识别并导入"}
               </ActionButton>
