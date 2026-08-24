@@ -36,7 +36,8 @@
 | 13 | 已完成 | fable ×5 | 达标后继续：全仓剩余缺口复查 |
 | 14 | 已完成 | opus ×5 | 按第 13 轮结论落地最高价值切片 |
 | 15 | 已完成 | opus ×5 | 健康检查对齐、SSE 断流、parse-data 字段、AI 草稿、设置反馈 |
-| 16 | 进行中 | 混编 ×5 | 限流键、parse-data 告知、SSE 重订阅、rail listbox、剩余复查 |
+| 16 | 已完成 | 混编 ×5 | 限流键、parse-data 告知、SSE 重订阅、rail listbox、剩余复查 |
+| 17 | 进行中 | 混编 ×5 | 图片降采样、PNG 面积防护、工作台对话框、房间过期广播、复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -89,6 +90,7 @@
 - 2026-08-24：第 13 轮五区复查齐；启动第 14 轮 5 个落地子代理。
 - 2026-08-24：第 14 轮落地完成并合入专属分支。启动第 15 轮。
 - 2026-08-24：第 15 轮落地完成并合入专属分支。启动第 16 轮。
+- 2026-08-24：第 16 轮落地完成并合入专属分支。启动第 17 轮。
 
 ## 第 13 轮结论（5 份只读复查）
 
@@ -145,6 +147,27 @@
 | SSE 客户端重订阅 | `src/lib/collaboration-client.ts`、`src/lib/useCollaborationRoom.ts` 及测试 |
 | rail listbox a11y | `src/components/StudioAssistantRail.tsx` 及测试 |
 | 剩余缺口复查 | 只读，不改文件 |
+
+## 第 16 轮已合入
+
+- rail 元素 listbox：roving tabindex，方向键/Home/End。
+- SSE：非终局断流后换新 ticket 重建；kicked/closed 不重连。
+- 限流：XFF 末跳；ticket 按 IP 与房间分池；429 带 Retry-After；房间生命周期打点。
+- 导入：parse-data 上送前一次性告知，拒绝保持本地结果。
+
+## 第 16 轮复查结论
+
+前几轮清单已落地。剩余高价值缺口在图片资产与导出防护：原图 data URL 直灌工程/协作/撤销；大画布 ×3 PNG 超引擎面积上限；工作台仍用 prompt/confirm。
+
+## 第 17 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 图片降采样 | `src/lib/image-downscale.ts`（新）、AssetPanel 与四个 inspector 上传入口及测试 |
+| PNG 面积防护 | `src/lib/export-poster.ts`、`usePosterExport.ts`、`DeliveryWorkspace.tsx` 及测试 |
+| 工作台对话框 | `src/components/ProjectWorkbench.tsx`、`src/components/workbench/*`、对应测试 |
+| 房间过期广播 closed | `server/collaboration.ts`、`server/index.ts`（仅过期清理路径）、对应测试 |
+| 剩余复查 | 只读，不改文件 |
 
 ## 第 2 轮已合入
 
