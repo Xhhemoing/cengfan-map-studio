@@ -1,9 +1,76 @@
 // @vitest-environment node
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createRoomStore } from "./collaboration";
 import type { CollaborationOperation } from "../src/lib/collaboration-operations";
 
 describe("collaboration room store", () => {
+  it("reloads durable rooms with hashed access and invitation records", () => {
+    const directory = mkdtempSync(join(tmpdir(), "cengfan-collaboration-"));
+    const previous = process.env.COLLAB_STORE_DIR;
+    process.env.COLLAB_STORE_DIR = directory;
+    try {
+      const secrets = ["owner-access", "viewer-invite"];
+      const first = createRoomStore({
+        generateId: () => "DURABLE1",
+        generateSecret: () => secrets.shift()!,
+        now: () => 10_000,
+      });
+      const owner = first.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+      first.apply("DURABLE1", owner.access.accessToken, {
+        txId: "durable-update",
+        clientId: "owner",
+        baseVersion: 0,
+        snapshot: { title: "已保存" },
+      });
+      const invitation = first.createInvitation("DURABLE1", owner.access.accessToken, "viewer");
+
+      const second = createRoomStore({
+        generateSecret: () => "viewer-access",
+        now: () => 10_001,
+      });
+      expect(second.get("DURABLE1")).toMatchObject({ version: 1, snapshot: { title: "已保存" } });
+      expect(second.authorize("DURABLE1", owner.access.accessToken, "read")).toMatchObject({ id: "owner", role: "owner" });
+      const viewer = second.join("DURABLE1", {
+        inviteToken: invitation.token,
+        clientId: "viewer",
+        displayName: "查看者",
+      });
+
+      const third = createRoomStore({ now: () => 10_002 });
+      expect(third.authorize("DURABLE1", viewer.access.accessToken, "read")).toMatchObject({ id: "viewer", role: "viewer" });
+      expect(third.get("DURABLE1")?.members.map((member) => member.clientId)).toEqual(["owner", "viewer"]);
+
+      const files = readdirSync(directory);
+      expect(files).toEqual(["DURABLE1.json"]);
+      const serialized = readFileSync(join(directory, files[0]!), "utf8");
+      expect(serialized).not.toContain(owner.access.accessToken);
+      expect(serialized).not.toContain(invitation.token);
+      expect(serialized).not.toContain(viewer.access.accessToken);
+    } finally {
+      if (previous === undefined) delete process.env.COLLAB_STORE_DIR;
+      else process.env.COLLAB_STORE_DIR = previous;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not write room files when COLLAB_STORE_DIR is unset", () => {
+    const previous = process.env.COLLAB_STORE_DIR;
+    delete process.env.COLLAB_STORE_DIR;
+    const unexpectedFile = resolve(".data/rooms/MEMONLY.json");
+    try {
+      const store = createRoomStore({ generateId: () => "MEMONLY", generateSecret: () => "memory-token" });
+      store.create({ title: "仅内存" }, { clientId: "owner", displayName: "创建者" });
+      expect(store.get("MEMONLY")?.snapshot).toEqual({ title: "仅内存" });
+      expect(existsSync(unexpectedFile)).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.COLLAB_STORE_DIR;
+      else process.env.COLLAB_STORE_DIR = previous;
+    }
+  });
+
   it("creates a room with the owner as its first member", () => {
     const secrets = ["owner-access"];
     const store = createRoomStore({ generateId: () => "MEM001", generateSecret: () => secrets.shift()! });

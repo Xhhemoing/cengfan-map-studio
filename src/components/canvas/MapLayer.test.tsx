@@ -306,6 +306,138 @@ describe("MapLayer", () => {
     container.remove();
   });
 
+  it("exposes map selection as a frame button instead of nesting provinces inside one big button", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const onSelectMap = vi.fn();
+    flushSync(() => root.render(
+      <svg>
+        <MapLayer
+          settings={{ x: 0, y: 0, width: 800, height: 690, scale: 1, landColor: "#eee", activeColor: "#123", edgeColor: "#456", showProvinceLabels: false, ...baseMapSettings }}
+          features={[feature]}
+          counts={new Map()}
+          onSelectMap={onSelectMap}
+        />
+      </svg>,
+    ));
+
+    // The container is a named group without a tab stop; the focusable
+    // "select map" button lives on the frame rect so province and pin buttons
+    // are no longer interactive descendants of another button.
+    const group = container.querySelector("[data-map-layer]")!;
+    expect(group.getAttribute("role")).toBe("group");
+    expect(group.getAttribute("aria-label")).toBe("地图");
+    expect(group.hasAttribute("tabindex")).toBe(false);
+    const frame = container.querySelector("[data-map-frame]")!;
+    expect(frame.getAttribute("role")).toBe("button");
+    expect(frame.getAttribute("aria-label")).toBe("选择地图");
+    expect(frame.getAttribute("tabindex")).toBe("0");
+
+    flushSync(() => frame.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onSelectMap).toHaveBeenCalledWith({ type: "map" });
+    onSelectMap.mockClear();
+    flushSync(() => frame.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
+    expect(onSelectMap).toHaveBeenCalledWith({ type: "map" });
+
+    // Export renders keep the frame purely visual.
+    flushSync(() => root.render(
+      <svg>
+        <MapLayer
+          settings={{ x: 0, y: 0, width: 800, height: 690, scale: 1, landColor: "#eee", activeColor: "#123", edgeColor: "#456", showProvinceLabels: false, ...baseMapSettings }}
+          features={[feature]}
+          counts={new Map()}
+          onSelectMap={onSelectMap}
+          exportMode
+        />
+      </svg>,
+    ));
+    const exportFrame = container.querySelector("[data-map-frame]")!;
+    expect(exportFrame.hasAttribute("role")).toBe(false);
+    expect(exportFrame.hasAttribute("tabindex")).toBe(false);
+
+    root.unmount();
+    container.remove();
+  });
+
+  it("selects a province from the keyboard without the map stealing the selection", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const onSelectMap = vi.fn();
+    const onSelectProvince = vi.fn();
+    flushSync(() => root.render(
+      <svg>
+        <MapLayer
+          settings={{ x: 0, y: 0, width: 800, height: 690, scale: 1, landColor: "#eee", activeColor: "#123", edgeColor: "#456", showProvinceLabels: false, ...baseMapSettings }}
+          features={[feature]}
+          counts={new Map()}
+          onSelectMap={onSelectMap}
+          onSelectProvince={onSelectProvince}
+          selectedProvince="北京市"
+        />
+      </svg>,
+    ));
+
+    const hit = container.querySelector('[data-province-hit="1"]')!;
+    expect(hit.getAttribute("role")).toBe("button");
+    expect(hit.getAttribute("aria-label")).toBe("选择北京市");
+    // Selection state is exposed to assistive tech, not only via styling.
+    expect(hit.getAttribute("aria-current")).toBe("true");
+
+    flushSync(() => hit.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onSelectProvince).toHaveBeenCalledWith("北京市");
+    // Regression: the Enter press must not bubble into a map re-selection.
+    expect(onSelectMap).not.toHaveBeenCalled();
+
+    onSelectProvince.mockClear();
+    flushSync(() => hit.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
+    expect(onSelectProvince).toHaveBeenCalledWith("北京市");
+    expect(onSelectMap).not.toHaveBeenCalled();
+
+    root.unmount();
+    container.remove();
+  });
+
+  it("activates student pins with Enter and Space and marks the selected pin", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const onSelectMap = vi.fn();
+    const onSelectStudent = vi.fn();
+    flushSync(() => root.render(
+      <svg>
+        <MapLayer
+          settings={{ x: 0, y: 0, width: 800, height: 690, scale: 1, landColor: "#eee", activeColor: "#123", edgeColor: "#456", showProvinceLabels: false, ...baseMapSettings }}
+          features={[feature]}
+          counts={new Map([["北京市", 2]])}
+          dataView="pins"
+          pins={[
+            { id: "student-1", province: "北京市", label: "林舟" },
+            { id: "student-2", province: "北京市", label: "陈宁" },
+          ]}
+          selectedStudentId="student-1"
+          onSelectStudent={onSelectStudent}
+          onSelectMap={onSelectMap}
+        />
+      </svg>,
+    ));
+
+    const selectedPin = container.querySelector('[data-student-pin="student-1"]')!;
+    const otherPin = container.querySelector('[data-student-pin="student-2"]')!;
+    expect(selectedPin.getAttribute("role")).toBe("button");
+    expect(selectedPin.getAttribute("aria-label")).toBe("选择 林舟");
+    expect(selectedPin.getAttribute("aria-current")).toBe("true");
+    expect(otherPin.getAttribute("aria-current")).toBeNull();
+
+    flushSync(() => otherPin.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onSelectStudent).toHaveBeenCalledWith("student-2");
+    flushSync(() => selectedPin.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
+    expect(onSelectStudent).toHaveBeenCalledWith("student-1");
+    // Pin activation must not fall through to map selection.
+    expect(onSelectMap).not.toHaveBeenCalled();
+
+    root.unmount();
+    container.remove();
+  });
+
   it("renders one labeled pin per visible student in the pins view", () => {
     const container = document.createElement("div");
     const root = createRoot(container);

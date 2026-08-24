@@ -307,16 +307,13 @@ export function MapLayer({
       data-scale={settings.scale}
       data-collapse-south-sea={collapse || undefined}
       transform={`translate(${settings.x} ${settings.y}) translate(${centerX} ${centerY}) scale(${settings.scale}) translate(${-centerX} ${-centerY})`}
-      role={interactive ? "button" : undefined}
-      tabIndex={interactive ? 0 : undefined}
-      aria-label={interactive ? "选择地图" : undefined}
+      // The container is a named group, not a button: keeping the button role
+      // here would nest the focusable province/pin buttons inside another
+      // button (invalid) and its keydown handler would swallow Enter/Space
+      // bubbling up from them, re-selecting the map right after a province.
+      role={interactive ? "group" : undefined}
+      aria-label={interactive ? "地图" : undefined}
       onClick={interactive ? () => selectMap() : undefined}
-      onKeyDown={interactive ? (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          selectMap();
-        }
-      } : undefined}
     >
       {!exportMode && onSelectMap && (
         <rect
@@ -330,12 +327,23 @@ export function MapLayer({
           pointerEvents="none"
         />
       )}
+      {/* The frame rect carries the "select map" button: clicks bubble to the
+          group's onClick as before, keyboard activation is handled here. */}
       <rect
         data-map-frame
         width={settings.width}
         height={settings.height}
         fill="transparent"
         pointerEvents="all"
+        role={interactive ? "button" : undefined}
+        tabIndex={interactive ? 0 : undefined}
+        aria-label={interactive ? "选择地图" : undefined}
+        onKeyDown={interactive ? (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            selectMap();
+          }
+        } : undefined}
       />
       <g data-map-content opacity={settings.opacity ?? 1} style={settings.shadow ? { filter: "drop-shadow(0 8px 7px rgba(57, 67, 78, 0.24))" } : undefined}>
       {/* Vector fills under overlay images; hidden in replace mode. Textures deferred to top pass. */}
@@ -406,7 +414,15 @@ export function MapLayer({
             role={onSelectStudent ? "button" : undefined}
             tabIndex={onSelectStudent ? 0 : undefined}
             aria-label={onSelectStudent ? `选择 ${pin.label}` : undefined}
+            aria-current={onSelectStudent && selectedStudentId === pin.id ? "true" : undefined}
             onClick={onSelectStudent ? (event) => { event.stopPropagation(); onSelectStudent(pin.id); } : undefined}
+            onKeyDown={onSelectStudent ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.stopPropagation();
+                onSelectStudent(pin.id);
+              }
+            } : undefined}
           >
             <circle
               r={pinsView ? (selectedStudentId === pin.id ? 9 : 6) : 4}
@@ -458,10 +474,12 @@ export function MapLayer({
           role="button"
           tabIndex={0}
           aria-label={`选择${feature.name}`}
+          aria-current={selectedProvince === feature.name ? "true" : undefined}
           onClick={(event) => { event.stopPropagation(); onSelectProvince(feature.name); }}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
+              event.stopPropagation();
               onSelectProvince(feature.name);
             }
           }}

@@ -51,4 +51,23 @@ describe("assertLayoutInvariants", () => {
     expect(() => assertLayoutInvariants(overlapping, bounds, { checkOverlaps: true }))
       .toThrow(/first and second/);
   });
+
+  it("keeps a same-anchor cluster on one side when requested", () => {
+    const cohesive = [
+      placement("cluster-a", 20, 20),
+      { ...placement("cluster-b", 110, 20), anchorX: 260, anchorY: 155 },
+    ];
+    const split = [
+      cohesive[0]!,
+      { ...cohesive[1]!, side: "right" as const },
+    ];
+
+    expect(() => assertLayoutInvariants(cohesive, bounds, {
+      checkSameAnchorClusters: true,
+    })).not.toThrow();
+    expect(() => assertLayoutInvariants(split, bounds)).not.toThrow();
+    expect(() => assertLayoutInvariants(split, bounds, {
+      checkSameAnchorClusters: true,
+    })).toThrow(/same-anchor cluster split.*cluster-a and cluster-b/);
+  });
 });

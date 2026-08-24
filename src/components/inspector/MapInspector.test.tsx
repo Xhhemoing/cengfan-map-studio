@@ -290,6 +290,170 @@ describe("MapInspector", () => {
     root.unmount();
   });
 
+  it("gives every rendered control an accessible name in vector, image, and collapsible modes", () => {
+    // Approximation of the accname algorithm for the mechanisms this panel
+    // uses: aria-label, aria-labelledby, label[for], wrapping label, content.
+    const accessibleName = (control: HTMLElement, scope: HTMLElement): string => {
+      const ariaLabel = control.getAttribute("aria-label");
+      if (ariaLabel?.trim()) return ariaLabel.trim();
+      const labelledby = control.getAttribute("aria-labelledby");
+      if (labelledby) {
+        const text = labelledby.split(/\s+/)
+          .map((id) => scope.querySelector(`[id="${id}"]`)?.textContent ?? "")
+          .join(" ")
+          .trim();
+        if (text) return text;
+      }
+      if (control.id) {
+        const label = scope.querySelector(`label[for="${control.id}"]`);
+        if (label?.textContent?.trim()) return label.textContent.trim();
+      }
+      const wrapping = control.closest("label");
+      if (wrapping?.textContent?.trim()) return wrapping.textContent.trim();
+      if (control.matches("button, summary, [role='button'], [role='option']")) {
+        return control.textContent?.trim() ?? "";
+      }
+      return "";
+    };
+    const auditNames = (scope: HTMLElement) => {
+      const controls = Array.from(scope.querySelectorAll<HTMLElement>(
+        "input, select, button, summary, [role='button']",
+      )).filter((control) => !control.hasAttribute("hidden") && !control.closest("[hidden]"));
+      expect(controls.length).toBeGreaterThan(0);
+      for (const control of controls) {
+        expect(
+          accessibleName(control, scope),
+          `unnamed control: <${control.tagName.toLowerCase()} id="${control.id}" class="${control.className}">`,
+        ).not.toBe("");
+      }
+    };
+
+    const imageMap: MapSettings = {
+      ...baseMap,
+      renderSource: {
+        kind: "image",
+        assetId: "map-1",
+        src: "data:image/png;base64,xx",
+        fit: "contain",
+        opacity: 0.9,
+        composition: "overlay",
+        clipToMap: true,
+        alignment: {
+          sourceWidth: 1000,
+          sourceHeight: 500,
+          sourceBounds: { x: 0, y: 0, width: 1, height: 1 },
+          x: 10,
+          y: 20,
+          width: 700,
+          height: 350,
+          rotation: 0,
+        },
+      },
+    };
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    // Vector map with the edge-style dial open (covers every dial option).
+    flushSync(() => root.render(
+      <MapInspector map={baseMap} onPatch={vi.fn()} onReset={() => undefined} />,
+    ));
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="打开边界风格选择器"]')?.click());
+    auditNames(container);
+
+    // Image map: overlay fit, alignment, and z-order controls.
+    flushSync(() => root.render(
+      <MapInspector map={imageMap} onPatch={vi.fn()} onReset={() => undefined} />,
+    ));
+    auditNames(container);
+
+    // Collapsible global mode: advanced <details>/<summary> fold.
+    flushSync(() => root.render(
+      <MapInspector map={baseMap} onPatch={vi.fn()} onReset={() => undefined} mode="global" collapsible />,
+    ));
+    auditNames(container);
+
+    root.unmount();
+  });
+
+  it("names the panel section, control groups, and the edge-style picker state for assistive tech", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <MapInspector map={baseMap} onPatch={vi.fn()} onReset={() => undefined} />,
+    ));
+
+    expect(container.querySelector("section.property-panel")?.getAttribute("aria-label")).toBe("地图属性");
+    const positionPair = container.querySelector('[data-property-pair="map-position"]')!;
+    expect(positionPair.getAttribute("role")).toBe("group");
+    expect(positionPair.getAttribute("aria-label")).toBe("地图位置");
+    const sizePair = container.querySelector('[data-property-pair="map-size"]')!;
+    expect(sizePair.getAttribute("role")).toBe("group");
+    expect(sizePair.getAttribute("aria-label")).toBe("地图尺寸");
+
+    // aria-label on a plain div is inert; role="group" makes these real groups.
+    const edgeGroup = container.querySelector(".map-edge-styles")!;
+    expect(edgeGroup.getAttribute("role")).toBe("group");
+    expect(edgeGroup.getAttribute("aria-label")).toBe("省界线纹理");
+    const heatPreview = container.querySelector(".heat-scale-control__preview")!;
+    expect(heatPreview.getAttribute("role")).toBe("group");
+    expect(heatPreview.getAttribute("aria-label")).toBe("热力色阶预览");
+
+    // The trigger announces that it opens a listbox and which style is active.
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="打开边界风格选择器"]')!;
+    expect(trigger.getAttribute("aria-haspopup")).toBe("listbox");
+    const describedby = trigger.getAttribute("aria-describedby")!;
+    expect(container.querySelector(`[id="${describedby}"]`)?.textContent).toBe("实线");
+
+    // Placement mode renders a differently named region.
+    flushSync(() => root.render(
+      <MapInspector map={baseMap} onPatch={vi.fn()} onReset={() => undefined} mode="placement" />,
+    ));
+    expect(container.querySelector("section.property-panel")?.getAttribute("aria-label")).toBe("地图位置与尺寸");
+
+    root.unmount();
+  });
+
+  it("opens the edge style dial with focus on the selected option and a single roving tab stop", () => {
+    const onPatch = vi.fn();
+    const container = document.createElement("div");
+    // Focus assertions need the tree to live in the document.
+    document.body.append(container);
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <MapInspector map={{ ...baseMap, edgeStyle: "wave" }} onPatch={onPatch} onReset={() => undefined} />,
+    ));
+    const keydown = (key: string) => flushSync(() => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="打开边界风格选择器"]')!;
+    flushSync(() => trigger.click());
+    const options = Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label="边界风格圆盘"] button'));
+    const selected = options.find((option) => option.getAttribute("aria-selected") === "true")!;
+    expect(selected.textContent).toContain("水纹");
+    // Focus lands inside the popup on the active style, not back on the page.
+    expect(document.activeElement).toBe(selected);
+    // Roving tabindex: exactly one option is in the Tab order.
+    expect(options.filter((option) => option.tabIndex === 0)).toEqual([selected]);
+
+    // The tab stop follows arrow-key focus.
+    keydown("ArrowRight");
+    const focused = document.activeElement as HTMLButtonElement;
+    expect(focused).not.toBe(selected);
+    expect(focused.tabIndex).toBe(0);
+    expect(selected.tabIndex).toBe(-1);
+    expect(options.filter((option) => option.tabIndex === 0)).toEqual([focused]);
+
+    // Escape resets: reopening focuses the selected option again.
+    keydown("Escape");
+    flushSync(() => trigger.click());
+    expect(document.activeElement?.textContent).toContain("水纹");
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("drives the edge style dial from the keyboard: arrows cycle, Escape closes and restores focus", () => {
     const onPatch = vi.fn();
     const container = document.createElement("div");

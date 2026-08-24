@@ -6,6 +6,12 @@ export interface LayoutInvariantOptions {
    * deliberately relax this guarantee, so callers opt in when it applies.
    */
   checkOverlaps?: boolean;
+  /**
+   * Check that cards in the same geographic anchor cluster remain on one side.
+   * Saturated fallback layouts may split clusters, so callers opt in only when
+   * the fixture has enough room for a cohesive result.
+   */
+  checkSameAnchorClusters?: boolean;
 }
 
 const EPSILON = 1e-7;
@@ -15,6 +21,11 @@ function rectanglesOverlap(left: CardPlacement, right: CardPlacement, gap: numbe
     && left.x + left.width + gap > right.x
     && left.y < right.y + right.height + gap
     && left.y + left.height + gap > right.y;
+}
+
+function sameAnchorCluster(left: CardPlacement, right: CardPlacement): boolean {
+  const tolerance = Math.max(24, Math.min(left.width, left.height, right.width, right.height) * 0.35);
+  return Math.hypot(left.anchorX - right.anchorX, left.anchorY - right.anchorY) <= tolerance;
 }
 
 function assertFinite(label: string, value: number): void {
@@ -61,13 +72,25 @@ export function assertLayoutInvariants(
     }
   }
 
-  if (!options.checkOverlaps) return;
+  if (options.checkOverlaps) {
+    for (let leftIndex = 0; leftIndex < placements.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < placements.length; rightIndex += 1) {
+        const left = placements[leftIndex]!;
+        const right = placements[rightIndex]!;
+        if (rectanglesOverlap(left, right, bounds.gap)) {
+          throw new Error(`placements overlap: ${left.id} and ${right.id}`);
+        }
+      }
+    }
+  }
+
+  if (!options.checkSameAnchorClusters) return;
   for (let leftIndex = 0; leftIndex < placements.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < placements.length; rightIndex += 1) {
       const left = placements[leftIndex]!;
       const right = placements[rightIndex]!;
-      if (rectanglesOverlap(left, right, bounds.gap)) {
-        throw new Error(`placements overlap: ${left.id} and ${right.id}`);
+      if (sameAnchorCluster(left, right) && left.side !== right.side) {
+        throw new Error(`same-anchor cluster split across sides: ${left.id} and ${right.id}`);
       }
     }
   }

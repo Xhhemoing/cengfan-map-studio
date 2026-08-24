@@ -6,6 +6,11 @@ import {
 } from "../src/lib/collaboration-operations";
 import type { CollaborationCapability, CollaborationRole, CollaborationRoom, CreatedRoom, LifecycleEvent, RoomAccess, RoomCreator, RoomInvitation, RoomJoinRequest, RoomMember, RoomParticipant, RoomStore, RoomStoreOptions, RoomTransaction } from "./collaboration-types";
 import { CollaborationError } from "./collaboration-error";
+import {
+  createFileRoomSnapshotStore,
+  type PersistedInvitationRecord,
+  type PersistedRevokedAccessRecord,
+} from "./collaboration-snapshot-store";
 import { assertSnapshotSize, defaultRoomId, defaultSecret, publicParticipant, tokenHash, tokenMatches } from "./collaboration-utils";
 
 export type * from "./collaboration-types";
@@ -13,16 +18,13 @@ export { CollaborationError } from "./collaboration-error";
 
 type Listener = (room: CollaborationRoom) => void;
 type LifecycleListener = (event: LifecycleEvent) => void;
-type InvitationRecord = { role: Exclude<CollaborationRole, "owner">; expiresAt: number };
+type InvitationRecord = PersistedInvitationRecord;
 const MAX_TRACKED_TRANSACTIONS = 256;
 const MAX_OPERATION_HISTORY = 256;
 const MAX_REVOKED_ACCESS_RECORDS = 256;
 const DEFAULT_MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 
-interface RevokedAccessRecord {
-  participant: RoomParticipant;
-  leaveResult: { id: string; version: number; members: RoomMember[] };
-}
+type RevokedAccessRecord = PersistedRevokedAccessRecord;
 
 export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): RoomStore {
   const options = typeof input === "function" ? { generateId: input } : input;
@@ -34,6 +36,10 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const roomTtlMs = options.roomTtlMs ?? 30 * 60 * 1000;
   const invitationTtlMs = options.invitationTtlMs ?? 24 * 60 * 60 * 1000;
   const now = options.now ?? Date.now;
+  const configuredStoreDir = options.storeDir ?? process.env.COLLAB_STORE_DIR;
+  const snapshotStore = configuredStoreDir?.trim()
+    ? createFileRoomSnapshotStore(configuredStoreDir.trim())
+    : undefined;
   const rooms = new Map<string, CollaborationRoom>();
   const listeners = new Map<string, Set<Listener>>();
   const lifecycleListeners = new Map<string, Set<LifecycleListener>>();
@@ -44,6 +50,46 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const revokedAccessRecords = new Map<string, Map<string, RevokedAccessRecord>>();
   const invitations = new Map<string, Map<string, InvitationRecord>>();
   const legacyRoomIds = new Set<string>();
+
+  for (const state of snapshotStore?.load() ?? []) {
+    const id = state.room.id.toUpperCase();
+    if (rooms.size >= maxRooms || rooms.has(id)) continue;
+    rooms.set(id, state.room);
+    accessRecords.set(id, new Map(state.accessRecords));
+    revokedAccessRecords.set(id, new Map(state.revokedAccessRecords));
+    invitations.set(id, new Map(state.invitations));
+    transactions.set(id, new Set(state.transactions));
+    operationHistory.set(id, state.operationHistory);
+    lastActivity.set(id, state.lastActivity);
+    if (state.legacy) legacyRoomIds.add(id);
+  }
+
+  const persistRoom = (id: string) => {
+    if (!snapshotStore) return;
+    const room = rooms.get(id);
+    const activity = lastActivity.get(id);
+    if (!room || activity === undefined) return;
+    snapshotStore.save({
+      schemaVersion: 1,
+      room,
+      lastActivity: activity,
+      accessRecords: Array.from(
+        accessRecords.get(id) ?? [],
+        ([hash, participant]): [string, RoomParticipant] => [hash, publicParticipant(participant)],
+      ),
+      revokedAccessRecords: Array.from(
+        revokedAccessRecords.get(id) ?? [],
+        ([hash, record]): [string, RevokedAccessRecord] => [
+          hash,
+          { ...record, participant: publicParticipant(record.participant) },
+        ],
+      ),
+      invitations: Array.from(invitations.get(id) ?? []),
+      transactions: Array.from(transactions.get(id) ?? []),
+      operationHistory: operationHistory.get(id) ?? [],
+      legacy: legacyRoomIds.has(id),
+    });
+  };
 
   const purgeExpired = () => {
     const threshold = now() - roomTtlMs;
@@ -59,6 +105,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       revokedAccessRecords.delete(id);
       invitations.delete(id);
       legacyRoomIds.delete(id);
+      snapshotStore?.delete(id);
     }
   };
 
@@ -77,7 +124,10 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const get = (id: string) => {
     purgeExpired();
     const room = rooms.get(id.toUpperCase());
-    if (room) touch(room.id);
+    if (room) {
+      touch(room.id);
+      persistRoom(room.id);
+    }
     return room ? copyRoom(room) : undefined;
   };
 
@@ -108,6 +158,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       || (capability === "invite" && participant.role === "owner");
     if (!allowed) throw new CollaborationError("ROOM_FORBIDDEN", "当前协作角色没有该操作权限");
     touch(key);
+    persistRoom(key);
     return publicParticipant(participant);
   };
 
@@ -155,10 +206,11 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     invitations.set(id, new Map());
     transactions.set(id, new Set());
     operationHistory.set(id, []);
+    if (typeof creator === "string") legacyRoomIds.add(id);
     touch(id);
+    persistRoom(id);
     notifyLifecycle(id, "members", room);
     if (typeof creator === "string") {
-      legacyRoomIds.add(id);
       return copyRoom(room);
     }
     return { room: copyRoom(room), access };
@@ -172,6 +224,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const token = generateSecret();
     const expiresAtMs = now() + invitationTtlMs;
     invitations.get(key)?.set(tokenHash(token), { role, expiresAt: expiresAtMs });
+    persistRoom(key);
     return { token, role, expiresAt: new Date(expiresAtMs).toISOString() };
   };
 
@@ -197,6 +250,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     if (!invitation || !invitationHash) throw new CollaborationError("INVITATION_INVALID", "邀请凭证无效或已被使用");
     if (invitation.expiresAt <= now()) {
       roomInvitations?.delete(invitationHash);
+      persistRoom(key);
       throw new CollaborationError("INVITATION_EXPIRED", "邀请凭证已过期");
     }
     if (room.members.some((member) => member.clientId === input.clientId)) {
@@ -214,6 +268,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const nextRoom = { ...room, members: [...room.members, { clientId: input.clientId, role: invitation.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
     rooms.set(key, nextRoom);
     touch(key);
+    persistRoom(key);
     notifyLifecycle(key, "members", nextRoom);
     return {
       room: copyRoom(nextRoom) as CollaborationRoom<T>,
@@ -285,6 +340,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     else history.length = 0;
     if (history.length > MAX_OPERATION_HISTORY) history.splice(0, history.length - MAX_OPERATION_HISTORY);
     operationHistory.set(key, history);
+    persistRoom(key);
     listeners.get(key)?.forEach((listener) => listener(copyRoom(next)));
     return copyRoom(next);
   };
@@ -337,6 +393,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       : { ...room, members: [...room.members, { clientId, role: participant.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
     rooms.set(key, nextRoom);
     touch(key);
+    persistRoom(key);
     notifyLifecycle(key, "members", nextRoom);
     return { id: room.id, version: nextRoom.version, members: membersOf(nextRoom) };
   };
@@ -374,6 +431,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       const oldest = revokedRecords.keys().next().value;
       if (oldest) revokedRecords.delete(oldest);
     }
+    persistRoom(key);
     notifyLifecycle(key, "members", nextRoom);
     return leaveResult;
   };
@@ -392,6 +450,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       : { ...room, closed: true, updatedAt };
     rooms.set(key, nextRoom);
     touch(key);
+    persistRoom(key);
     notifyLifecycle(key, action === "close" ? "closed" : "access", nextRoom);
     return { id: room.id, version: nextRoom.version, readonly: nextRoom.readonly === true, closed: nextRoom.closed === true };
   };

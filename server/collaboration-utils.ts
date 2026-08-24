@@ -25,7 +25,11 @@ export function tokenMatches(secret: string, expectedHash: string): boolean {
 }
 
 export function publicParticipant(participant: RoomParticipant): RoomParticipant {
-  return { ...participant };
+  return {
+    id: participant.id,
+    displayName: participant.displayName,
+    role: participant.role,
+  };
 }
 
 export function assertSnapshotSize(snapshot: unknown, maxSnapshotBytes: number): void {

@@ -75,6 +75,7 @@ export type LifecycleEvent =
 export interface RoomStoreOptions {
   generateId?: () => string;
   generateSecret?: () => string;
+  storeDir?: string;
   maxRooms?: number;
   maxSubscribers?: number;
   maxSnapshotBytes?: number;

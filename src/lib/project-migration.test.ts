@@ -320,6 +320,79 @@ describe("project migration", () => {
     expect(migrated.cards.visibleFields).toEqual(["name"]);
   });
 
+  it("still loads the oldest unversioned snapshot shape", () => {
+    const oldestSnapshot = {
+      template: "cartoon",
+      dataView: "student",
+      students: [{ id: "s1", name: "林舟", school: "浙江大学", city: "杭州" }],
+      textElements: [{ id: "text-wish", text: "毕业快乐" }],
+      regionalAssets: {
+        浙江省: [{ id: "asset-west-lake", label: "西湖剪影", src: "data:image/svg+xml,<svg />", scale: 1.5 }],
+      },
+      noWrapFields: ["university"],
+      version: 3,
+    };
+
+    const migrated = migrateProjectPayload(oldestSnapshot, {
+      provincePositions: { 浙江省: { x: 300, y: 400 } },
+    });
+
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.templateId).toBe("cartoon");
+    expect(migrated.dataView).toBe("province");
+    expect(migrated.version).toBe(3);
+    expect(migrated.students).toEqual([
+      { id: "s1", name: "林舟", university: "浙江大学", city: "杭州市", visibility: true },
+    ]);
+    expect(migrated.canvas).toMatchObject({ width: 1500, height: 1000 });
+    expect(migrated.cards.noWrapFields).toEqual(["university"]);
+    expect(migrated.textElements.find((item) => item.role === "note")).toMatchObject({
+      id: "text-note",
+      content: "毕业快乐",
+    });
+    expect(migrated.assetElements).toMatchObject([
+      { assetId: "asset-west-lake", province: "浙江省", x: 300, y: 400, width: 180, height: 180 },
+    ]);
+  });
+
+  it("keeps every student when the payload carries an unknown schema version", () => {
+    const migrated = migrateProjectPayload({
+      schemaVersion: 99,
+      dataView: "unheard-of-view",
+      templateId: "unheard-of-template",
+      students: [
+        { id: "future-1", name: "林舟", university: "浙江大学", city: "杭州" },
+        { id: "future-2", name: "陈宁", university: "清华大学", city: "北京市", visibility: false },
+      ],
+      version: 12,
+    });
+
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.templateId).toBe("original");
+    expect(migrated.dataView).toBe("province");
+    expect(migrated.version).toBe(12);
+    expect(migrated.students.map((student) => student.id)).toEqual(["future-1", "future-2"]);
+    expect(migrated.students[1]).toMatchObject({ name: "陈宁", visibility: false });
+  });
+
+  it("keeps partially filled student rows instead of dropping the person", () => {
+    const migrated = migrateProjectPayload({
+      students: [
+        { id: "pending-city", name: "待定同学", university: "浙江大学" },
+        { name: "只有姓名" },
+        { university: "北京大学", city: "北京市" },
+        { id: "no-text-columns", visibility: true },
+        "not-a-record",
+      ],
+    });
+
+    expect(migrated.students).toEqual([
+      { id: "pending-city", name: "待定同学", university: "浙江大学", city: "", visibility: true },
+      { id: "student-2", name: "只有姓名", university: "", city: "", visibility: true },
+      { id: "student-3", name: "", university: "北京大学", city: "北京市", visibility: true },
+    ]);
+  });
+
   it("keeps schema v2 compatible while deriving an old card frame without persisting it", () => {
     const legacy = migrateProjectPayload({ ...legacyDraft, cards: { positions: { 北京市: { x: 777, y: 333 } } } });
     expect(legacy.schemaVersion).toBe(2);
