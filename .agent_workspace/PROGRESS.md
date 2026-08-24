@@ -34,7 +34,13 @@
   - opus-fast-B `claude-opus-5-thinking-high-fast` 展示框 token/子画布 → `bc-835ca65f-3f64-5aa1-a14b-2ecad94e54be`
   - gpt-sol-A `gpt-5.6-sol-xhigh-fast` 画布基准脚本 → `bc-99c96d63-7966-5b5d-b937-90e98d6b50bd`
   - gpt-sol-B `gpt-5.6-sol-xhigh-fast` 边界测试 → `bc-d390ddb4-b179-59da-81e4-21ac391945cf`
-- [ ] Cycle 1 Round 2 — 靶向重构与深度优化（派发中）
+- [ ] Cycle 1 Round 2 — 靶向重构与深度优化（进行中，6 子代理并发）
+  - fable-A → `bc-4cfb2913-f556-5f00-b797-1dd50941e21e`
+  - fable-B → `bc-1a45644a-e9e4-52ce-bc9f-71da5e3b21ff`
+  - opus-fast-A → `bc-02056c3d-d4dd-5c18-91ad-ea64bdfa539e`
+  - opus-fast-B → `bc-42165287-40ae-53a9-ab03-be92cc120dc0`
+  - gpt-sol-A → `bc-f4e8c95d-f6e1-5205-9eca-12545f81f39d`
+  - gpt-sol-B → `bc-7e13aad9-37bd-55ad-9958-4d2031d69a8c`
 - [ ] Cycle 1 Round 3 — SOTA 打磨与交叉核验
 - [ ] Cycle 2 Round 1
 - [ ] Cycle 2 Round 2
