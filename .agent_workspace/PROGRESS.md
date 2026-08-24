@@ -17,7 +17,8 @@
 | Round 6 | complete | 2026-08-24 | 2026-08-24 | 核心实现文件压到 ≤400；AgentAssistant a11y；协作 hook/store 再拆 |
 | Round 7 | complete | 2026-08-24 | 2026-08-24 | agent-session 拆分；印刷出血导出；出血健康警告；快照 flock |
 | Round 8 | complete | 2026-08-24 | 2026-08-24 | 印前体检；交付页出血尺寸；helpers 再拆；损坏快照跳过 |
-| Round 9 | integrating | 2026-08-24 | — | App 测试拆分；幽灵卡修复；导入行号/引号；JSON 415；交付 a11y |
+| Round 9 | complete | 2026-08-24 | 2026-08-24 | App 测试拆分；幽灵卡修复；导入行号/引号；JSON 415；交付 a11y |
+| Round 10 | in progress | 2026-08-24 | — | 健康检查真高度/同层重叠；交付出血预览；导入副列回落；CORS X-Request-Id |
 
 ## Round 1 结论摘要
 
@@ -75,17 +76,17 @@
 
 ## Round 9 结论简报
 
-详见 [round9/BRIEF.md](round9/BRIEF.md)。六路均落地工作树。集成验证由主调度跑 `tsc` + 全量 vitest（提交后执行）。
+详见 [round9/BRIEF.md](round9/BRIEF.md)。集成：**tsc 绿、199×1658 tests 绿**。App 套件拆分（116 例保持 + 1 debug）；`packSides` 幽灵卡；导入引号换行/物理行号/零宽/残缺 HTML；JSON 415；交付出血成品标题与「见导出设置」。
 
-## 全局成果（八轮合计）
+## 全局成果（九轮合计）
 
-| 指标 | main 基线 | Round 3 结束 |
+| 指标 | main 基线 | Round 9 结束 |
 | --- | ---: | ---: |
-| App.tsx 行数 | 2466 | **331** |
-| card-layout 门面 | 1297 | 模块化 + 搜索短路 |
+| App.tsx 行数 | 2466 | **333** |
+| card-layout 门面 | 1297 | 模块化 + 幽灵卡修复 |
 | DataWorkspace | 705 | 组合器 + 子面板 |
-| server/index | 1076 | **400** |
-| 测试 | （基线已有大量单测） | **1635 passed / 187 files** |
+| server/index | 1076 | **396** |
+| 测试 | （基线已有大量单测） | **1658 passed / 199 files** |
 
 ## 回滚
 

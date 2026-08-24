@@ -3,7 +3,7 @@
 - **时间**: 2026-08-24
 - **前置**: Round 8 BRIEF
 - **模型**: 2× claude-fable-5-thinking-xhigh · 2× claude-opus-5-thinking-high-fast · 2× gpt-5.6-sol-xhigh-fast（六路均交付工作树改动）
-- **集成验证**: 见主调度后续记录（tsc + 全量 vitest）
+- **集成验证**: `tsc` app+node 0 error；全量 vitest **199 files / 1658 tests passed**（App 拆分后 12 文件 / 117 例，含既有 App.debug）
 
 ## 相对 Round 8
 
