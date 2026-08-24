@@ -150,6 +150,25 @@ function newId(): string {
   return `assistant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+type PrimaryAction = { kind: "start" | "continue" | "resume"; label: string; disabled: boolean };
+
+/**
+ * 主按钮是唯一的续跑入口：传输中断后默认重发原需求，用户改写输入框后才换成带新文本的续跑。
+ * 两个按钮同时出现会让用户在“重试”和“继续对话”之间二选一，而它们发出的其实是同一种请求。
+ */
+function primaryAction(conversation: { status: ConversationStatus; resumable: boolean; request: string }, draft: string, projectIsCurrent: boolean): PrimaryAction {
+  const typed = draft.trim();
+  const rewritten = typed.length > 0 && typed !== conversation.request.trim();
+  const canResume = projectIsCurrent && conversation.status === "failed" && conversation.resumable;
+  if (canResume && !rewritten) return { kind: "resume", label: "网络恢复后重试", disabled: false };
+  const canContinue = projectIsCurrent && (conversation.status === "completed" || canResume);
+  return {
+    kind: canContinue ? "continue" : "start",
+    label: canContinue ? "继续对话" : "开始规划",
+    disabled: !projectIsCurrent || typed.length === 0 || conversation.status === "applied",
+  };
+}
+
 function rebaseTextSession(project: ProjectDocument, assets: UserAsset[], conversation: AssistantConversation): AgentSession {
   try {
     const snapshot = conversation.session.exportSnapshot();
@@ -595,14 +614,14 @@ export function AgentAssistant({
         <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="描述你的需求" aria-label="描述 AI 修改需求" disabled={conversation.status === "running"} />
         {conversation.status === "running" ? (
           <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
-        ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && (conversation.status === "completed" || (conversation.status === "failed" && conversation.resumable)) ? "继续对话" : "开始规划"}</button>
-        )}
+        ) : (() => {
+          const action = primaryAction(conversation, message, projectIsCurrent);
+          return (
+            <button className="wide-button" type="button" data-agent-action={action.kind} aria-label={action.label} onClick={() => void run(action.kind === "resume" ? conversation.request : undefined)} disabled={action.disabled}><Sparkles size={16} aria-hidden /> {action.label}</button>
+          );
+        })()}
         {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
         {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
-        {conversation.status === "failed" && conversation.resumable && (
-          <button className="wide-button" type="button" aria-label="网络恢复后重试" onClick={() => void run(conversation.request)}><Sparkles size={16} aria-hidden /> 网络恢复后重试</button>
-        )}
         {conversation.landingError && <p className="panel-note agent-error" role="alert">{conversation.landingError}</p>}
         {conversation.route === "local" && <p className="panel-note" role="status">已使用本地规则完成可识别的修改。</p>}
         {conversation.route === "fallback" && <p className="panel-note" role="status">已切换备选模型：{conversation.provider || "备选模型"}。</p>}
