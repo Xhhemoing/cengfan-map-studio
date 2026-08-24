@@ -46,6 +46,7 @@
 | 23 | 已完成 | opus ×5 | 续聊回滚影子、禁并发会话、被踢 UI、心跳不续命、嘉宾零位移 |
 | 24 | 已完成 | opus ×5 | SVG 延迟 revoke、工作台包体积、导出对话框、字体去重映射、同 z 重叠 |
 | 25 | 已完成 | 混编 ×5 | 任务段 lastIndex、设置焦点、删不安全镜像工厂、空白选画布、复查 |
+| 26 | 进行中 | 混编 ×5 | 包下载延迟 revoke、删字体确认、资源包体积、429 Retry-After、复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -83,6 +84,7 @@
 
 ## 进度日志
 
+- 2026-08-24：启动第 26 轮：包下载 revoke、删字体确认、资源包体积、429 Retry-After。
 - 2026-08-24：第 25 轮任务段边界、设置焦点、删不安全镜像、空白选画布已合入。
 - 2026-08-24：第 24 轮 SVG revoke、工作台包体积、导出对话框、字体映射、同层重叠已合入；启动第 25 轮。
 - 2026-08-24：第 23 轮续聊回滚、禁并发、被踢 UI、心跳 sweep、嘉宾零位移已合入；启动第 24 轮。
@@ -353,6 +355,16 @@
 1. `downloadProjectPackage` / `downloadResourcePack` 仍同步 revoke，工程包/资源包体积更大，应走 `downloadBlob`。
 2. 删除使用中的字体无确认；`isFontInUse` 是生产死代码。
 3. 资源包导入仍无体积上限。
+
+## 第 26 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 包下载延迟 revoke | `src/lib/project-package.ts`、`src/lib/resource-pack.ts` 及测试。`download*` 走 `downloadBlob`。 |
+| 删字体确认 | `src/components/TypographyPanel.tsx` 及测试。使用中弹 ConfirmDialog，复用 `isFontInUse`/`findFontUsage`。不改 App.tsx、catalog-usage.ts。 |
+| 资源包体积上限 | `src/lib/import-file-limits.ts`、`src/components/AssetPanel.tsx` 及测试。新增 RESOURCE_PACK 上限，超限不 readAsText。不改 App.tsx。 |
+| AI 429 Retry-After | `src/lib/agent-session.ts`、`src/lib/ai-client.ts` 及测试。读取响应头秒数写入用户可见文案。不改 server/。 |
+| 剩余复查 | 只读。避开本轮落地文件与 `App.tsx`。 |
 
 ## 第 2 轮已合入
 
