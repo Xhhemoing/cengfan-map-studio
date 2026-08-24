@@ -47,6 +47,10 @@ export interface ContentLayoutWorkspaceProps {
   onAddNote?: () => void;
   /** 选中文本后可从检查器删除（含新添加的文本框/备注）。 */
   onDeleteText?: (id: string) => void;
+  /** 选中素材实例后可从检查器删除/复制/调整层级。 */
+  onDeleteAsset?: (id: string) => void;
+  onDuplicateAsset?: (id: string) => void;
+  onLayerChange?: (id: string, delta: -1 | 1) => void;
 }
 
 const EMPTY_ASSET_PANEL_PROPS: ContentAssetPanelProps = {
@@ -96,6 +100,9 @@ export function ContentLayoutRail({
   onAddText,
   onAddNote,
   onDeleteText,
+  onDeleteAsset,
+  onDuplicateAsset,
+  onLayerChange,
 }: ContentLayoutRailProps) {
   return (
     <aside className="content-layout-workspace__context" aria-label="内容对象属性">
@@ -117,6 +124,9 @@ export function ContentLayoutRail({
           onPatch={onPatch}
           onReset={onReset}
           onDeleteText={onDeleteText}
+          onDeleteAsset={onDeleteAsset}
+          onDuplicateAsset={onDuplicateAsset}
+          onLayerChange={onLayerChange}
           onApplyFont={onApplyFont}
           onUploadFont={onUploadFont}
           onDeleteUserFont={onDeleteUserFont}

@@ -169,6 +169,24 @@ describe("DataUploadWorkspace", () => {
     expect(mapping?.querySelector('[aria-label="省份分布"]')?.textContent).toContain("北京市");
   });
 
+  it("marks a province chip 已覆盖 only when the override differs from the resolved city", () => {
+    const rosterStudents: Student[] = [
+      // 目录自动带出的省份（与城市解析一致）：不算覆盖。
+      { id: "s-suzhou", name: "苏舟", university: "苏州大学", city: "苏州市", province: "江苏省", visibility: true },
+      // 真正的手动覆盖：省份与城市解析结果不一致。
+      { id: "s-mars", name: "陆星", university: "北京大学", city: "北京市", province: "火星省", visibility: true },
+    ];
+    const project = createProjectDocument({ students: rosterStudents, templateId: "original", dataView: "province" });
+    const { container } = renderWorkspace({ project });
+
+    const chips = Array.from(container.querySelectorAll('[aria-label="省份分布"] .data-upload-workspace__province-chip'));
+    const jiangsu = chips.find((chip) => chip.textContent?.includes("江苏省"));
+    const mars = chips.find((chip) => chip.textContent?.includes("火星省"));
+    expect(jiangsu).not.toBeUndefined();
+    expect(jiangsu?.textContent).not.toContain("已覆盖");
+    expect(mars?.textContent).toContain("已覆盖");
+  });
+
   it("defaults the side rail to the quality tab and switches to the asset library", () => {
     const { container } = renderWorkspace();
 

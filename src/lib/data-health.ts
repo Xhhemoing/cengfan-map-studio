@@ -33,8 +33,9 @@ export interface DataIssue {
 /**
  * 省份字段只有在与城市解析结果不一致时才算真正的「省份覆盖」。
  * 新增学生时院校目录会自动带出与城市一致的省份，这类冗余值不应刷屏待检查。
+ * 数据质量告警与地图映射 chip 的「已覆盖」标记都以此为准。
  */
-function isProvinceOverride(student: Student): boolean {
+export function isProvinceOverride(student: Student): boolean {
   const cityLocation = resolveCityLocation(student.city);
   if (cityLocation.status !== "resolved") return true;
   return resolveProvinceName(student.province ?? "") !== cityLocation.province;

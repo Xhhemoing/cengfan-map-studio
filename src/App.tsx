@@ -166,6 +166,8 @@ import {
   type PanelSide,
 } from "./lib/editor-layout";
 import { checkLayoutHealth } from "./lib/layout-health";
+import { estimateCardBounds } from "./lib/card-metrics";
+import { computeGuestPanelMetrics } from "./lib/guest-metrics";
 import { listResourceHealthIssues } from "./lib/resource-health";
 
 import {
@@ -1027,15 +1029,29 @@ function StudioApp({ projectId }: { projectId?: string }) {
       const content = text.content.trim();
       return content ? `文本「${content.length > 8 ? `${content.slice(0, 8)}…` : content}」` : "文本";
     };
+    // 与 PosterCanvas 渲染同源的估算尺寸：检查结果才能与导出 PNG/SVG 一致。
+    const cardBounds = estimateCardBounds({
+      students: project.students,
+      dataView: project.dataView,
+      cards: project.cards,
+      canvas: { width: project.canvas.width, safeMargin: project.canvas.safeMargin, lineHeight: project.canvas.lineHeight },
+    });
+    const guestHeight = computeGuestPanelMetrics(project.guests, project.canvas.lineHeight ?? 1).guestHeight;
     return checkLayoutHealth({
       canvas: { width: project.canvas.width, height: project.canvas.height, safeMargin: project.canvas.safeMargin },
       cardsPositions: project.cards.positions,
       objects: [
         { id: "map", kind: "map", label: "地图", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
-        ...Object.keys(project.cards.positions ?? {}).map((id) => ({ id, kind: "card" as const, label: `数据卡片「${id}」`, positionKey: id, zIndex: project.cards.zIndex, bounds: { x: 0, y: 0, width: project.cards.maxWidth, height: 180 } })),
-        ...(Object.keys(project.cards.positions ?? {}).length === 0 ? [{ id: "cards", kind: "card" as const, label: "数据卡片", zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } }] : []),
-        ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, label: "特邀嘉宾", zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
-        ...project.textElements.map((text) => ({
+        // 只检查当前分组真的会渲染的手动定位卡片；其余卡片由自动布局保证
+        // 不越界不重叠，遗留分组的 position 键并不渲染，不参与检查。
+        ...Object.keys(project.cards.positions ?? {}).flatMap((id) => {
+          const size = cardBounds.get(id);
+          if (!size) return [];
+          return [{ id, kind: "card" as const, label: `数据卡片「${id}」`, positionKey: id, zIndex: project.cards.zIndex, bounds: { x: 0, y: 0, width: size.width, height: size.height } }];
+        }),
+        ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, label: "特邀嘉宾", zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: guestHeight } }] : []),
+        // 空文本导出时不产生任何像素（占位提示仅编辑器可见），不参与遮挡/越界检测。
+        ...project.textElements.filter((text) => text.content.trim().length > 0).map((text) => ({
           id: text.id,
           kind: "text" as const,
           label: textElementLabel(text),
@@ -1943,6 +1959,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
               onAddText={addText}
               onAddNote={addNote}
               onDeleteText={removeText}
+              onDeleteAsset={removeAsset}
+              onDuplicateAsset={duplicateAsset}
+              onLayerChange={changeAssetLayer}
               onApplyFont={applyFont}
               onUploadFont={(font) => {
                 setUserFonts((current) => [...current, font]);

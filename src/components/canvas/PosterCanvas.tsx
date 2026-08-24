@@ -1,16 +1,11 @@
 import { geoMercator, geoPath } from "d3-geo";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, type PointerEvent, type ReactNode, type RefObject } from "react";
-import { clampDestinationCardPosition, type CardArea, type CardLayoutMode, type CardPoint, type CardPolygon } from "../../lib/card-layout";
+import { cardSideForArea, clampDestinationCardPosition, type CardArea, type CardLayoutInput, type CardLayoutMode, type CardPoint, type CardPolygon } from "../../lib/card-layout";
 import { createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
 import { computeMapContentBounds, computeMapOccupiedAreas } from "../../lib/map-content-bounds";
-import {
-  buildCitySections,
-  buildLayoutGroups,
-  buildSchoolRows,
-  schoolRowParts,
-  type SchoolRowPart,
-} from "../../lib/layout";
+import { prepareCardContents, type PreparedCardRow } from "../../lib/card-metrics";
+import type { LayoutGroup } from "../../lib/layout";
 import { buildProvinceSummary, getVisibleStudents } from "../../lib/project-data";
 import { CANVAS_LAYER_Z } from "../../lib/scene-document";
 import type { AssetElement, CanvasText, CardFontField, SceneSelection } from "../../lib/scene-document";
@@ -22,10 +17,8 @@ import { buildConnectorGeometry } from "../../lib/connector-geometry";
 import { resolveEdgeStyle } from "../../lib/edge-styles";
 import { resolveFontFamily, buildFontFaceCss, type UserFont } from "../../lib/fonts";
 import { clampGridSize, DEFAULT_GRID_SIZE } from "../../lib/grid";
-import { DEFAULT_CARD_EXPRESSION_TEMPLATES, formatCardExpression } from "../../lib/card-expression";
-import { DEFAULT_NAME_FORMAT, formatStudentName } from "../../lib/name-format";
+import { computeGuestPanelMetrics } from "../../lib/guest-metrics";
 import { universityEmblems } from "../../data/university-emblems";
-import { wrapCardText, type CardTextFragment, type CardTextLine } from "../../lib/card-text-layout";
 import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
 import { DecorationLayer } from "./DecorationLayer";
 import { MapLayer } from "./MapLayer";
@@ -50,30 +43,6 @@ const MemoizedTextLayer = memo(TextLayer);
 function truncateGuestText(text: string, maxChars: number): string {
   if (maxChars <= 0) return "";
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
-}
-
-const GUEST_CUSTOM_MAX_LINES = 14;
-
-/** Wrap the panel's free-form custom text into display lines (hard wrap by width, cap the line count). */
-function wrapGuestCustomText(text: string, maxChars: number): string[] {
-  const lines: string[] = [];
-  for (const rawLine of text.split("\n")) {
-    let rest = rawLine;
-    while (rest.length > maxChars) {
-      if (lines.length >= GUEST_CUSTOM_MAX_LINES) break;
-      lines.push(rest.slice(0, maxChars));
-      rest = rest.slice(maxChars);
-    }
-    if (lines.length >= GUEST_CUSTOM_MAX_LINES) {
-      if (rest.length > 0) {
-        const last = lines[GUEST_CUSTOM_MAX_LINES - 1];
-        if (last) lines[GUEST_CUSTOM_MAX_LINES - 1] = `${last.slice(0, maxChars - 1)}…`;
-      }
-      break;
-    }
-    lines.push(rest);
-  }
-  return lines;
 }
 
 function featureCoordinatePolygons(feature: MapFeature): Position[][][] {
@@ -157,10 +126,6 @@ export interface PosterCanvasProps {
   onCardPositionsResolved?: (positions: Record<string, { x: number; y: number }>) => void;
 }
 
-function destinationHeight(lineCount: number, rowHeight: number, bottomPadding: number, headerExtra: number): number {
-  return 44 + headerExtra + lineCount * rowHeight + bottomPadding;
-}
-
 function frameTextAnchor(item: DisplayFrameFixedItem): "start" | "middle" | "end" {
   if (item.style?.align === "center") return "middle";
   if (item.style?.align === "right") return "end";
@@ -228,29 +193,6 @@ function textLayoutObstacle(text: CanvasText): CardArea | null {
   };
 }
 
-function studentFieldParts(
-  student: { name: string; university: string; city: string },
-  fields: ProjectDocument["cards"]["visibleFields"],
-): SchoolRowPart[] {
-  return fields
-    .map((field) => ({ field, value: student[field] }))
-    .filter((part): part is SchoolRowPart => Boolean(part.value));
-}
-
-interface CardDisplayRow {
-  key: string;
-  parts: SchoolRowPart[];
-  remainingPeople: number;
-  cityHeading?: string;
-  city?: string;
-  university?: string;
-  names?: string;
-}
-
-interface PreparedCardRow extends CardDisplayRow {
-  lines: CardTextLine<CardFontField>[];
-}
-
 const REFERENCE_CARD_COLORS = ["#e95646", "#f3c847", "#efb8c6", "#3d8fc2", "#263b78"] as const;
 
 function referenceCardColor(key: string, fallback: string): string {
@@ -282,7 +224,7 @@ function renderReferenceCardVisual({
   titleFont,
 }: {
   presentation: Exclude<import("../../lib/scene-document").CardPresentation, "standard">;
-  group: ReturnType<typeof buildLayoutGroups>[number];
+  group: LayoutGroup;
   rows: PreparedCardRow[];
   width: number;
   height: number;
@@ -354,67 +296,6 @@ function renderReferenceCardVisual({
       })}
     </g>
   );
-}
-
-function rowFragments(
-  row: CardDisplayRow,
-  expression: string,
-  context: Parameters<typeof formatCardExpression>[1],
-): CardTextFragment<CardFontField>[] {
-  if (expression !== DEFAULT_CARD_EXPRESSION_TEMPLATES.row) {
-    return [{ text: formatCardExpression(expression, context, row.parts.map((part) => part.value).join(" · ")) }];
-  }
-  return row.parts.flatMap((part, index) => [
-    ...(index > 0 ? [{ text: " · " }] : []),
-    { text: part.value, field: part.field },
-  ]);
-}
-
-function cardRowsForGroup(
-  group: ReturnType<typeof buildLayoutGroups>[number],
-  grouping: ProjectDocument["cards"]["grouping"],
-  fields: ProjectDocument["cards"]["visibleFields"],
-  citySubgroups: boolean,
-  formatName: (name: string) => string,
-): CardDisplayRow[] {
-  const students = group.students.map((student) => ({ ...student, name: formatName(student.name) }));
-  if (grouping === "university") {
-    return students.map((student) => ({
-      key: student.id,
-      parts: studentFieldParts(student, fields),
-      city: student.city,
-      university: student.university,
-      names: student.name,
-      remainingPeople: 0,
-    }));
-  }
-
-  if (grouping === "province" && citySubgroups) {
-    const showCityHeading = fields.includes("city");
-    return buildCitySections(students).flatMap((section) => [{
-        key: `city-${section.city}`,
-        parts: showCityHeading ? [{ field: "city" as const, value: section.city }] : [],
-        cityHeading: showCityHeading ? section.city : undefined,
-        city: section.city,
-        remainingPeople: 0,
-      }, ...section.rows.map((row) => ({
-        key: row.studentIds[0] ?? `${section.city}-${row.university}`,
-        parts: schoolRowParts(row, fields.filter((field) => field !== "city")),
-        city: section.city,
-        university: row.university,
-        names: row.names.join("、"),
-        remainingPeople: 0,
-      }))]);
-  }
-
-  return buildSchoolRows(students).map((row) => ({
-    key: row.studentIds[0] ?? row.university,
-    parts: schoolRowParts(row, fields, grouping === "city" ? undefined : group.students[0]?.city),
-    city: grouping === "city" ? group.title : group.students[0]?.city,
-    university: row.university,
-    names: row.names.join("、"),
-    remainingPeople: 0,
-  }));
 }
 
 export function PosterCanvas({
@@ -528,9 +409,6 @@ export function PosterCanvas({
     }),
     [visibleStudents],
   );
-  const grouping = project.cards.grouping;
-  const expressionTemplates = project.cards.expressionTemplates ?? DEFAULT_CARD_EXPRESSION_TEMPLATES;
-  const groups = useMemo(() => buildLayoutGroups(visibleStudents, grouping), [grouping, visibleStudents]);
   const collapse = project.map.collapseSouthChinaSea === true;
   const mainlandFeatures = collapse ? foldedMapSplit.mainlandFeatures : openMapSplit.mainlandFeatures;
   const projection = useMemo(() => geoMercator().fitExtent(
@@ -593,10 +471,6 @@ export function PosterCanvas({
       && province.width === area.width
       && province.height === area.height)), [mapOccupiedAreas, provinceAreas]);
   const lineHeightMultiplier = project.canvas.lineHeight ?? 1;
-  const noWrapFieldSet = useMemo(
-    () => new Set(project.cards.noWrapFields ?? []),
-    [project.cards.noWrapFields],
-  );
   const guests = project.guests ?? {
     title: "特邀嘉宾 · 老师名单",
     x: 48,
@@ -610,45 +484,33 @@ export function PosterCanvas({
     visibility: true,
     people: [],
   };
-  const visibleGuests = guests.people.filter((person) => person.visibility !== false);
-  const guestTitleTypography = guests.titleTypography ?? {};
-  const guestPeopleTypography = guests.peopleTypography ?? {};
-  const guestTitleFontSize = guestTitleTypography.fontSize ?? guests.fontSize + 1;
-  const guestPeopleFontSize = guestPeopleTypography.fontSize ?? guests.fontSize;
-  const guestNoteFontSize = Math.max(10, guestPeopleFontSize - 2);
-  const guestsDisplayMode = guests.displayMode === "cards" ? "cards" : "list";
-  const guestListAvatarSize = Math.max(22, guestPeopleFontSize + 8);
-  const guestListUsesAvatar = visibleGuests.some((person) => person.avatarSrc);
-  const guestListAvatarGap = guestListUsesAvatar ? guestListAvatarSize + 8 : 0;
-  const guestNoteLineHeight = Math.max(13, guestNoteFontSize + 3) * lineHeightMultiplier;
-  const guestListNoteLines = visibleGuests.some((person) => person.note) ? guestNoteLineHeight : 0;
-  const guestRowHeight = Math.max(guestListAvatarSize, Math.max(16, guestPeopleFontSize + 6) * lineHeightMultiplier) + guestListNoteLines;
-  const guestCardGap = 10;
-  const guestCardMinWidth = 92;
-  const guestCardColumns = Math.max(1, Math.floor((guests.width - guests.padding * 2 + guestCardGap) / (guestCardMinWidth + guestCardGap)));
-  const guestCardWidth = (guests.width - guests.padding * 2 - (guestCardColumns - 1) * guestCardGap) / guestCardColumns;
-  const guestCardAvatarSize = 40;
-  const guestCardTitleLine = Math.max(15, guestPeopleFontSize + 5) * lineHeightMultiplier;
-  const guestCardSubLine = Math.max(12, Math.max(10, guestPeopleFontSize - 2) + 3) * lineHeightMultiplier;
-  const guestCardHasTitle = visibleGuests.some((person) => person.title);
-  const guestCardHasNote = visibleGuests.some((person) => person.note);
-  const guestCardHeight = 6 + guestCardAvatarSize + 6 + guestCardTitleLine
-    + (guestCardHasTitle ? guestCardSubLine : 0)
-    + (guestCardHasNote ? guestCardSubLine : 0) + 6;
-  const guestCardRows = Math.max(1, Math.ceil(visibleGuests.length / Math.max(1, guestCardColumns)));
-  const guestCustomText = guests.customText ?? "";
-  const guestCustomMaxChars = Math.max(8, Math.floor((guests.width - guests.padding * 2 - guestListAvatarGap) / guestPeopleFontSize));
-  const guestCustomLines = guestCustomText ? wrapGuestCustomText(guestCustomText, guestCustomMaxChars) : [];
-  const guestCustomLineHeight = Math.max(16, guestPeopleFontSize + 4) * lineHeightMultiplier;
-  // Gap between the header divider and the first custom-text baseline, scaled with the font size.
-  const guestCustomTopGap = Math.round(guestPeopleFontSize * 0.9) + 11;
-  const guestCustomHeight = guestCustomLines.length > 0
-    ? guestCustomTopGap + (guestCustomLines.length - 1) * guestCustomLineHeight + Math.round(guestPeopleFontSize * 0.35) + 8
-    : 0;
-  const guestHeight = guests.padding * 2 + 28 + guestCustomHeight
-    + (guestsDisplayMode === "cards"
-      ? guestCardRows * guestCardHeight + (guestCardRows - 1) * guestCardGap
-      : Math.max(1, visibleGuests.length) * guestRowHeight);
+  const {
+    visibleGuests,
+    guestTitleTypography,
+    guestPeopleTypography,
+    guestTitleFontSize,
+    guestPeopleFontSize,
+    guestNoteFontSize,
+    guestsDisplayMode,
+    guestListAvatarSize,
+    guestListUsesAvatar,
+    guestListAvatarGap,
+    guestRowHeight,
+    guestCardGap,
+    guestCardColumns,
+    guestCardWidth,
+    guestCardAvatarSize,
+    guestCardTitleLine,
+    guestCardSubLine,
+    guestCardHasTitle,
+    guestCardHeight,
+    guestCustomText,
+    guestCustomLines,
+    guestCustomLineHeight,
+    guestCustomTopGap,
+    guestCustomHeight,
+    guestHeight,
+  } = computeGuestPanelMetrics(guests, lineHeightMultiplier);
   const layoutOccupiedAreas = useMemo(() => {
     const textAreas = project.textElements.flatMap((text) => {
       const area = textLayoutObstacle(text);
@@ -688,98 +550,42 @@ export function PosterCanvas({
   const horizontalPadding = displayFrame.mode === "fixed"
     ? frameBodyItem?.x ?? project.cards.horizontalPadding ?? project.cards.padding
     : displayFrame.style.padding;
-  const preparedCards = useMemo(() => {
-    if (project.cards.visibleFields.length === 0 || project.dataView === "pins") return [];
-    const compactLayout = project.cards.compactLayout === true || project.cards.preset === "compact";
-    const cardFieldFontSize = (field: CardFontField) => project.cards.fieldTypography?.[field]?.fontSize ?? (field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize);
-    const rowFontSize = Math.max(...project.cards.visibleFields.map(cardFieldFontSize), cardFieldFontSize("city"));
-    const rowHeight = Math.max(compactLayout ? 18 : 20, rowFontSize + 6) * lineHeightMultiplier;
-    const titleFontSize = cardFieldFontSize("title");
-    const cardWidth = Math.min(project.cards.maxWidth, Math.max(80, project.canvas.width - project.canvas.safeMargin * 2));
-    const contentWidth = Math.max(rowFontSize, cardWidth - horizontalPadding * 2);
-    const bottomPadding = project.cards.bottomPadding ?? project.cards.padding;
-    const titleLineHeight = Math.max(16, titleFontSize + 4) * lineHeightMultiplier;
-    const formatName = (name: string) => formatStudentName(name, project.cards.nameFormat ?? DEFAULT_NAME_FORMAT);
-    const prepared = groups.map((group) => {
-      const isInternational = group.students.every((student) => student.locationScope === "international");
-      const province = isInternational || !group.students[0] ? "" : resolveStudentLocation(group.students[0]).province;
-      const feature = findProvinceFeature(features, province);
-      const administrativeCenter = feature ? projection(feature.center) : null;
-      const point = administrativeCenter && administrativeCenter.every(Number.isFinite)
-        ? administrativeCenter
-        : feature
-          ? mapPath.centroid(feature as never)
-          : [project.map.width / 2, project.map.height / 2];
-      const centerX = project.map.width / 2;
-      const centerY = project.map.height / 2;
-      const anchorX = Number.isFinite(point[0]) ? project.map.x + centerX + (point[0] - centerX) * project.map.scale : project.map.x + centerX;
-      const anchorY = Number.isFinite(point[1]) ? project.map.y + centerY + (point[1] - centerY) * project.map.scale : project.map.y + centerY;
-      const rows = cardRowsForGroup(group, grouping, project.cards.visibleFields, project.cards.citySubgroups !== false, formatName).map((row): PreparedCardRow => {
-        const context = {
-          group: group.title,
-          count: group.count,
-          province: grouping === "province" ? group.title : resolveStudentLocation(group.students[0]!).province,
-          city: row.city ?? group.students[0]?.city,
-          university: row.university,
-          names: row.names,
-        };
-        const fragments = row.cityHeading
-          ? [{ text: formatCardExpression(expressionTemplates.city, context, row.cityHeading), field: "city" as const }]
-          : rowFragments(row, expressionTemplates.row, context);
-        return { ...row, lines: wrapCardText(fragments, contentWidth, row.cityHeading ? cardFieldFontSize("city") : rowFontSize, {
-          preserveFields: noWrapFieldSet,
-        }) };
-      });
-      const lineCount = rows.reduce((total, row) => total + row.lines.length, 0);
-      const title = formatCardExpression(expressionTemplates.title, {
-        group: group.title,
-        count: group.count,
-        province: grouping === "province" ? group.title : resolveStudentLocation(group.students[0]!).province,
-        city: grouping === "city" ? group.title : undefined,
-        university: grouping === "university" ? group.students[0]?.university : undefined,
-      }, group.title);
-      const textureHeaderWidth = project.cards.showProvinceTexture === true ? 36 : 0;
-      const titleWidth = Math.max(titleFontSize, contentWidth - Math.max(42, titleFontSize * 3) - textureHeaderWidth);
-      const titleLines = wrapCardText([{ text: title, field: "title" as const }], titleWidth, titleFontSize);
-      const headerExtra = Math.max(0, titleLines.length - 1) * titleLineHeight;
-      return {
-        group,
-        province,
-        isInternational,
-        rows,
-        titleLines,
-        headerExtra,
-        anchorX,
-        anchorY,
-        width: cardWidth,
-        height: destinationHeight(lineCount, rowHeight, bottomPadding, headerExtra),
-      };
-    });
-    return prepared;
-  }, [
-    expressionTemplates.city,
-    expressionTemplates.row,
-    expressionTemplates.title,
-    groups,
-    grouping,
-    horizontalPadding,
-    lineHeightMultiplier,
+  const preparedContents = useMemo(
+    () => prepareCardContents({
+      students: project.students,
+      dataView: project.dataView,
+      cards: project.cards,
+      canvas: {
+        width: project.canvas.width,
+        safeMargin: project.canvas.safeMargin,
+        lineHeight: project.canvas.lineHeight,
+      },
+    }),
+    [
+      project.cards,
+      project.canvas.lineHeight,
+      project.canvas.safeMargin,
+      project.canvas.width,
+      project.dataView,
+      project.students,
+    ],
+  );
+  const preparedCards = useMemo(() => preparedContents.map((content) => {
+    const feature = findProvinceFeature(features, content.province);
+    const administrativeCenter = feature ? projection(feature.center) : null;
+    const point = administrativeCenter && administrativeCenter.every(Number.isFinite)
+      ? administrativeCenter
+      : feature
+        ? mapPath.centroid(feature as never)
+        : [project.map.width / 2, project.map.height / 2];
+    const centerX = project.map.width / 2;
+    const centerY = project.map.height / 2;
+    const anchorX = Number.isFinite(point[0]) ? project.map.x + centerX + (point[0] - centerX) * project.map.scale : project.map.x + centerX;
+    const anchorY = Number.isFinite(point[1]) ? project.map.y + centerY + (point[1] - centerY) * project.map.scale : project.map.y + centerY;
+    return { ...content, anchorX, anchorY };
+  }), [
     mapPath,
-    noWrapFieldSet,
-    project.cards.bottomPadding,
-    project.cards.citySubgroups,
-    project.cards.compactLayout,
-    project.cards.fieldTypography,
-    project.cards.fontSize,
-    project.cards.maxWidth,
-    project.cards.nameFormat,
-    project.cards.padding,
-    project.cards.preset,
-    project.cards.showProvinceTexture,
-    project.cards.visibleFields,
-    project.canvas.safeMargin,
-    project.canvas.width,
-    project.dataView,
+    preparedContents,
     project.map.height,
     project.map.scale,
     project.map.width,
@@ -791,18 +597,22 @@ export function PosterCanvas({
   const layoutRequest = useMemo<CardLayoutWorkerRequest | null>(() => {
     if (preparedCards.length === 0) return null;
     const layoutMode = (project.cards.layoutMode ?? "quadrant") as CardLayoutMode;
-    const cards = preparedCards.map(({ group, anchorX, anchorY, width, height }) => ({
-      id: group.key,
-      anchorX,
-      anchorY,
-      width,
-      height,
-    }));
+    // Manually positioned cards (dragged or frozen before a map edit) keep their
+    // stored spot; the solver only places the rest and must treat the manual
+    // rects as obstacles so auto cards never cover them.
+    const manualPositions = project.cards.positions ?? {};
+    const cards: CardLayoutInput[] = [];
+    const manualAreas: CardArea[] = [];
+    for (const { group, anchorX, anchorY, width, height } of preparedCards) {
+      const manual = manualPositions[group.key];
+      if (manual) manualAreas.push({ x: manual.x, y: manual.y, width, height });
+      else cards.push({ id: group.key, anchorX, anchorY, width, height });
+    }
     const bounds = {
       width: project.canvas.width,
       height: project.canvas.height,
       map: mapContentBounds,
-      occupiedAreas: layoutOccupiedAreas,
+      occupiedAreas: [...layoutOccupiedAreas, ...manualAreas],
       occupiedPolygons: layoutOccupiedPolygons,
       allowMapOverlap: project.cards.allowMapOverlap === true,
       margin: project.canvas.safeMargin,
@@ -834,6 +644,7 @@ export function PosterCanvas({
     project.cards.connectorWidth,
     project.cards.gap,
     project.cards.layoutMode,
+    project.cards.positions,
   ]);
 
   const layoutState = useCardLayoutWorker(layoutRequest, exportMode);
@@ -841,10 +652,22 @@ export function PosterCanvas({
     if (!layoutRequest || !layoutState.result) return [];
     const placements = new Map(layoutState.result.placements.map((placement) => [placement.id, placement]));
     return preparedCards.flatMap((card) => {
-      const placement = placements.get(card.group.key);
-      if (!placement) return [];
       const manual = project.cards.positions?.[card.group.key];
-      return [manual ? { ...card, placement: { ...placement, x: manual.x, y: manual.y } } : { ...card, placement }];
+      if (manual) {
+        const area = { x: manual.x, y: manual.y, width: card.width, height: card.height };
+        return [{
+          ...card,
+          placement: {
+            id: card.group.key,
+            anchorX: card.anchorX,
+            anchorY: card.anchorY,
+            ...area,
+            side: cardSideForArea(area, layoutRequest.bounds),
+          },
+        }];
+      }
+      const placement = placements.get(card.group.key);
+      return placement ? [{ ...card, placement }] : [];
     });
   }, [layoutRequest, layoutState.result, preparedCards, project.cards.positions]);
 

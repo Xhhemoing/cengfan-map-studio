@@ -491,13 +491,18 @@ function containFree(placement: CardPlacement, bounds: CardLayoutBounds, placed:
   return { ...placement, x: bounds.margin, y: clamp(y, bounds.margin, bounds.height - bounds.margin - placement.height) };
 }
 
-function sideForPlacement(placement: CardArea, bounds: CardLayoutBounds): CardSide {
+function sideForPlacement(placement: CardArea, bounds: Pick<CardLayoutBounds, "map">): CardSide {
   const mapCenter = centerOf(bounds.map);
   const cardCenter = centerOf(placement);
   const horizontal = (cardCenter.x - mapCenter.x) / Math.max(1, bounds.map.width / 2);
   const vertical = (cardCenter.y - mapCenter.y) / Math.max(1, bounds.map.height / 2);
   if (Math.abs(horizontal) >= Math.abs(vertical)) return horizontal < 0 ? "left" : "right";
   return vertical < 0 ? "top" : "bottom";
+}
+
+/** Connector side for a card whose position is user-set instead of solver-set. */
+export function cardSideForArea(area: CardArea, bounds: Pick<CardLayoutBounds, "map">): CardSide {
+  return sideForPlacement(area, bounds);
 }
 
 /**

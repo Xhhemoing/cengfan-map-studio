@@ -1,6 +1,6 @@
 import { CheckCircle2, LocateFixed, MapPinned, ShieldCheck } from "lucide-react";
 import { useState, type ComponentProps, type KeyboardEvent } from "react";
-import type { DataHealthSummary, DataIssue } from "../../lib/data-health";
+import { isProvinceOverride, type DataHealthSummary, type DataIssue } from "../../lib/data-health";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { Student } from "../../lib/project-data";
 import { searchProvinces } from "../../lib/search-catalog";
@@ -189,7 +189,8 @@ export function DataUploadRail({
     if (!name) continue;
     const entry = provinceDistribution.get(name) ?? { count: 0, overridden: false };
     entry.count += 1;
-    if (student.province?.trim()) entry.overridden = true;
+    // 与数据质量告警同一判定：目录自动带出且与城市一致的省份不算「已覆盖」。
+    if (student.province?.trim() && isProvinceOverride(student)) entry.overridden = true;
     provinceDistribution.set(name, entry);
   }
   const distributionEntries = [...provinceDistribution.entries()]
