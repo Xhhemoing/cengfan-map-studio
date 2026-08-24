@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -1930,16 +1930,94 @@ describe("unified application server", () => {
     servers.push(restored);
     expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 1 collaboration room(s)"));
 
+    // 没有快照就没有「恢复」可言：报一句 restored 0 会让日志读者以为读到过一份空快照。
     info.mockClear();
     const cold = createAiServer();
     servers.push(cold);
-    expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 0 collaboration room(s)"));
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining("collaboration room(s)"));
 
     // 形状不对的快照同样按 0 计：房间存储会整份丢弃它。
     info.mockClear();
     const bogus = createAiServer({ roomSnapshot: { version: 2, rooms: "nope" } });
     servers.push(bogus);
     expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 0 collaboration room(s)"));
+  });
+
+  it("reports the restored count only for a snapshot that actually came off disk", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-provenance-"));
+    directories.push(dataDir);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    const cold = await createReadyAiServer({ dataDir });
+    servers.push(cold);
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining("collaboration room(s)"));
+
+    const origin = await startServer(cold);
+    await createCollaborationRoom(origin, { title: "有据可查" });
+    await attachServerLifecycle(cold, { timeoutMs: 2_000 }).shutdown("SIGTERM");
+
+    info.mockClear();
+    servers.push(await createReadyAiServer({ dataDir }));
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 1 collaboration room(s)"));
+  });
+
+  it("surfaces rooms the previous shutdown dropped at the persistence cap", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const server = createAiServer({ roomSnapshot: { version: 1, rooms: [], skippedRoomCount: 3 } });
+    servers.push(server);
+
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 0 collaboration room(s)"));
+    // 上一次关停丢掉的房间只在那一刻的日志里出现过，重启后没人再提就等于没发生。
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("上次关停有 3 个房间超过持久化上限，未恢复"));
+  });
+
+  it("quarantines a snapshot that parses but carries an unusable envelope", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-envelope-"));
+    directories.push(dataDir);
+    const snapshotFile = join(dataDir, "collaboration-rooms.json");
+    // 合法 JSON、但信封不是 version 1 + rooms 数组：房间存储会整份丢弃它。
+    const unusable = JSON.stringify({ version: 2, rooms: "nope" });
+    await writeFile(snapshotFile, unusable, "utf8");
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const server = await createReadyAiServer({ dataDir });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    // 无法使用的信封同样是事故现场，留在正常路径上会被下一次成功落盘覆盖。
+    await expect(readFile(snapshotFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(`${snapshotFile}.bad`, "utf8")).resolves.toBe(unusable);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`${snapshotFile}.bad`));
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining("collaboration room(s)"));
+    expect((await fetch(`${origin}/api/live`)).status).toBe(200);
+  });
+
+  it("keeps only the newest quarantined sidecars instead of letting them pile up", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-sidecar-cap-"));
+    directories.push(dataDir);
+    const snapshotFile = join(dataDir, "collaboration-rooms.json");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    for (let index = 0; index < 6; index += 1) {
+      const sidecar = index === 0 ? `${snapshotFile}.bad` : `${snapshotFile}.${1_700_000_000_000 + index}.bad`;
+      await writeFile(sidecar, `old-${index}`, "utf8");
+      const modifiedAt = new Date(Date.now() - (6 - index) * 60_000);
+      await utimes(sidecar, modifiedAt, modifiedAt);
+    }
+    await writeFile(snapshotFile, "latest-corrupt", "utf8");
+
+    servers.push(await createReadyAiServer({ dataDir }));
+
+    const sidecars = (await readdir(dataDir)).filter((name) => name.endsWith(".bad"));
+    expect(sidecars).toHaveLength(5);
+    const contents = await Promise.all(sidecars.map((name) => readFile(join(dataDir, name), "utf8")));
+    expect(contents).toContain("latest-corrupt");
+    // 超出上限时先丢最旧的证据，近期的坏启动现场必须留住。
+    expect(contents).not.toContain("old-0");
+    expect(contents).not.toContain("old-1");
+    expect(contents).toEqual(expect.arrayContaining(["old-2", "old-3", "old-4", "old-5"]));
   });
 
   it("keeps AI endpoints open without a token in development", async () => {
