@@ -5,7 +5,13 @@ import { flushSync } from "react-dom";
 import { AppErrorBoundary, type AppErrorBoundaryProps } from "./AppErrorBoundary";
 import type { SyncWorkspaceStore } from "../lib/browser-workspace-store";
 import { createProjectDocument } from "../lib/project-document";
-import { createProjectPackage, parseProjectPackage, type ProjectPackage } from "../lib/project-package";
+import {
+  createProjectPackage,
+  parseProjectPackage,
+  serializeProjectPackage,
+  type ProjectPackage,
+} from "../lib/project-package";
+import type { ProjectStore, ProjectStoreHealth, StoredProject } from "../lib/project-store";
 
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
 let restores: Array<() => void> = [];
@@ -52,6 +58,36 @@ function memorySyncStore(initial: string | null = null): SyncWorkspaceStore {
   };
 }
 
+function storedProject(id: string, name: string, exportedAt: string): StoredProject {
+  return { id, name, createdAt: exportedAt, updatedAt: exportedAt, pack: packageAt(name, exportedAt) };
+}
+
+/** 只读的项目库替身：写入方法一旦被调用就让用例失败。 */
+function fakeProjectStore(projects: StoredProject[], health: ProjectStoreHealth = "persistent") {
+  const store = {
+    health,
+    list: vi.fn(async () => projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      exportedAt: project.pack.exportedAt,
+      studentCount: project.pack.project.students.length,
+      assetCount: project.pack.assets.length,
+      fontCount: project.pack.fonts.length,
+      customTemplateCount: project.pack.customTemplates.length,
+      pack: {
+        exportedAt: project.pack.exportedAt,
+        project: { students: { length: project.pack.project.students.length } },
+      },
+    }))),
+    get: vi.fn(async (id: string) => projects.find((project) => project.id === id) ?? null),
+    put: vi.fn(async () => { throw new Error("崩溃屏不允许写入项目库"); }),
+    remove: vi.fn(async () => { throw new Error("崩溃屏不允许写入项目库"); }),
+  };
+  return store satisfies ProjectStore;
+}
+
 /** jsdom 没有 object URL，这里补一层记录用的实现，测试结束后还原。 */
 function stubObjectUrls() {
   const created: Blob[] = [];
@@ -96,6 +132,23 @@ function backupNote(container: HTMLElement): Promise<string> {
     const note = container.querySelector('[role="status"]')?.textContent ?? "";
     expect(note).not.toBe("");
     return note;
+  });
+}
+
+/** 回落到项目库是异步的，提示会在镜像结论之后再追加一段。 */
+function waitForNote(container: HTMLElement, fragment: string): Promise<string> {
+  return vi.waitFor(() => {
+    const note = container.querySelector('[role="status"]')?.textContent ?? "";
+    expect(note).toContain(fragment);
+    return note;
+  });
+}
+
+function projectButtons(container: HTMLElement): Promise<HTMLButtonElement[]> {
+  return vi.waitFor(() => {
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>("button[data-project-id]")];
+    expect(buttons.length).toBeGreaterThan(0);
+    return buttons;
   });
 }
 
@@ -208,5 +261,144 @@ describe("AppErrorBoundary disaster-recovery export", () => {
     expect(await backupNote(container)).toContain("下载被拦截");
     expect(container.textContent).toContain("界面加载出错");
     expect(structuredLogs(errorSpy)[0]).toMatchObject({ outcome: "download-failed" });
+  });
+});
+
+describe("AppErrorBoundary project-store fallback", () => {
+  it("exports every stored project when the workspace mirror is empty", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const projects = [
+      storedProject("proj-1", "一班去向", "2026-08-18T08:00:00.000Z"),
+      storedProject("proj-2", "二班去向", "2026-08-19T08:00:00.000Z"),
+    ];
+    const projectStore = fakeProjectStore(projects);
+    const packs: ProjectPackage[] = [];
+    const filenames: Array<string | undefined> = [];
+    const downloadPack = vi.fn((pack: ProjectPackage, filename?: string) => {
+      packs.push(pack);
+      filenames.push(filename);
+    });
+
+    const container = mountBoundary(<Boom />, { mirror: memorySyncStore(), projectStore, downloadPack });
+    clickExport(container);
+
+    const buttons = await projectButtons(container);
+    expect(buttons).toHaveLength(2);
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      expect.stringContaining("一班去向"),
+      expect.stringContaining("二班去向"),
+    ]);
+    expect(structuredLogs(errorSpy)[0]).toMatchObject({ outcome: "mirror-empty" });
+    expect(structuredLogs(infoSpy)[0]).toMatchObject({ outcome: "store-listed", projects: 2 });
+
+    buttons[0]?.click();
+    await vi.waitFor(() => expect(downloadPack).toHaveBeenCalledTimes(1));
+    buttons[1]?.click();
+    await vi.waitFor(() => expect(downloadPack).toHaveBeenCalledTimes(2));
+
+    const restored = packs.map((pack) => parseProjectPackage(serializeProjectPackage(pack)));
+    expect(restored.map((pack) => pack.project.students[0]?.name)).toEqual(["一班去向", "二班去向"]);
+    expect(filenames).toEqual([
+      "cengfan-recovery-一班去向-2026-08-18.json",
+      "cengfan-recovery-二班去向-2026-08-19.json",
+    ]);
+    expect(await waitForNote(container, "已导出")).toContain("二班去向");
+    expect(projectStore.put).not.toHaveBeenCalled();
+    expect(projectStore.remove).not.toHaveBeenCalled();
+  });
+
+  it("still offers stored projects when the mirror is corrupt", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const projectStore = fakeProjectStore([storedProject("proj-1", "工作台工程", "2026-08-20T08:00:00.000Z")]);
+    const downloadPack = vi.fn();
+
+    const container = mountBoundary(<Boom />, {
+      mirror: memorySyncStore("{损坏的镜像"),
+      projectStore,
+      downloadPack,
+    });
+    clickExport(container);
+
+    const note = await waitForNote(container, "1 个工程");
+    expect(note).toContain("损坏");
+    expect(structuredLogs(errorSpy)[0]).toMatchObject({ outcome: "mirror-corrupt" });
+    expect(await projectButtons(container)).toHaveLength(1);
+  });
+
+  it("says nothing durable can be exported when the store is degraded to memory", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const projectStore = fakeProjectStore([], "memory");
+
+    const container = mountBoundary(<Boom />, { mirror: memorySyncStore(), projectStore });
+    clickExport(container);
+
+    expect(await waitForNote(container, "降级")).toContain("没有找到");
+    expect(structuredLogs(errorSpy)[1]).toMatchObject({ outcome: "store-degraded", storeHealth: "memory" });
+    expect(container.querySelector("button[data-project-id]")).toBeNull();
+  });
+
+  it("reports an empty project store separately from an empty mirror", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const projectStore = fakeProjectStore([]);
+
+    const container = mountBoundary(<Boom />, { mirror: memorySyncStore(), projectStore });
+    clickExport(container);
+
+    expect(await waitForNote(container, "也没有已保存的工程")).toContain("没有找到");
+    expect(structuredLogs(errorSpy)[1]).toMatchObject({ outcome: "store-empty", storeHealth: "persistent" });
+  });
+
+  it("reports a project store that cannot be listed", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const projectStore = fakeProjectStore([]);
+    projectStore.list.mockRejectedValueOnce(new Error("无法打开本机项目数据库"));
+    const mirror: SyncWorkspaceStore = {
+      get: () => { throw new DOMException("SecurityError", "SecurityError"); },
+      set: () => undefined,
+    };
+
+    const container = mountBoundary(<Boom />, { mirror, projectStore });
+    clickExport(container);
+
+    expect(await waitForNote(container, "无法打开本机项目数据库")).toContain("读取");
+    expect(structuredLogs(errorSpy)[0]).toMatchObject({ outcome: "mirror-unreadable" });
+    expect(structuredLogs(errorSpy)[1]).toMatchObject({ outcome: "store-unreadable" });
+  });
+
+  it("reports a project that vanished between listing and export", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const projectStore = fakeProjectStore([storedProject("proj-1", "已删除工程", "2026-08-20T08:00:00.000Z")]);
+    const downloadPack = vi.fn();
+
+    const container = mountBoundary(<Boom />, { mirror: memorySyncStore(), projectStore, downloadPack });
+    clickExport(container);
+
+    const buttons = await projectButtons(container);
+    projectStore.get.mockResolvedValueOnce(null);
+    buttons[0]?.click();
+
+    expect(await waitForNote(container, "已经不在本机项目库里")).toContain("已删除工程");
+    expect(downloadPack).not.toHaveBeenCalled();
+    expect(structuredLogs(errorSpy).at(-1)).toMatchObject({ outcome: "project-missing", projectId: "proj-1" });
+  });
+
+  it("leaves the project store untouched when the mirror still has data", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const projectStore = fakeProjectStore([storedProject("proj-1", "不该被读到", "2026-08-20T08:00:00.000Z")]);
+    const downloadPack = vi.fn();
+    const mirror = memorySyncStore(JSON.stringify(packageAt("镜像优先", "2026-08-22T08:00:00.000Z")));
+
+    const container = mountBoundary(<Boom />, { mirror, projectStore, downloadPack });
+    clickExport(container);
+
+    expect(await backupNote(container)).toContain("已导出");
+    expect(downloadPack).toHaveBeenCalledTimes(1);
+    expect(downloadPack.mock.calls[0]?.[0]).toMatchObject({ kind: "cengfan-project-package" });
+    expect(projectStore.list).not.toHaveBeenCalled();
+    expect(container.querySelector("button[data-project-id]")).toBeNull();
   });
 });
