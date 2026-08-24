@@ -96,6 +96,58 @@ describe("FileDropzone", () => {
     expect(container.querySelector(`label[for="${input.id}"]`)).not.toBeNull();
   });
 
+  it("exposes the control as a focusable button with an accessible name", () => {
+    const { container } = renderDropzone({ label: "导入 Excel", hint: "XLSX / CSV" });
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+
+    expect(dropzone.getAttribute("role")).toBe("button");
+    expect(dropzone.getAttribute("aria-label")).toBe("导入 Excel");
+    expect(dropzone.tabIndex).toBe(0);
+  });
+
+  it("opens the file picker from the keyboard with Enter and Space", () => {
+    const { container } = renderDropzone();
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+    const input = container.querySelector<HTMLInputElement>("#test-upload")!;
+    const clicks = vi.fn();
+    input.addEventListener("click", clicks);
+
+    dropzone.focus();
+    expect(document.activeElement).toBe(dropzone);
+
+    flushSync(() => dropzone.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    flushSync(() => dropzone.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
+
+    expect(clicks).toHaveBeenCalledTimes(2);
+
+    flushSync(() => dropzone.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true })));
+    expect(clicks).toHaveBeenCalledTimes(2);
+  });
+
+  it("takes the control out of the tab order and ignores keys while inactive", () => {
+    const { container } = renderDropzone({ disabled: true });
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+    const input = container.querySelector<HTMLInputElement>("#test-upload")!;
+    const clicks = vi.fn();
+    input.addEventListener("click", clicks);
+
+    expect(dropzone.tabIndex).toBe(-1);
+    flushSync(() => dropzone.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+
+    expect(clicks).not.toHaveBeenCalled();
+  });
+
+  it("links a rejection message to the control for screen readers", () => {
+    const { container } = renderDropzone();
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+
+    fireDrag(dropzone, "drop", new File(["text"], "名单.txt", { type: "text/plain" }));
+
+    const describedBy = dropzone.getAttribute("aria-describedby");
+    expect(describedBy).toBe("test-upload-error");
+    expect(container.querySelector(`#${describedBy}`)?.textContent).toBe("文件格式不支持");
+  });
+
   it("does not accept drops while disabled", () => {
     const { container, onFile } = renderDropzone({ disabled: true });
     const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;

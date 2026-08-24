@@ -1,126 +1,22 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   applyCollaborationOperations,
   areValidCollaborationOperations,
   collaborationOperationsOverlap,
   type CollaborationOperation,
 } from "../src/lib/collaboration-operations";
+import type { CollaborationCapability, CollaborationRole, CollaborationRoom, CreatedRoom, LifecycleEvent, RoomAccess, RoomCreator, RoomInvitation, RoomJoinRequest, RoomMember, RoomParticipant, RoomStore, RoomStoreOptions, RoomTransaction } from "./collaboration-types";
+import { CollaborationError } from "./collaboration-error";
+import { assertSnapshotSize, defaultRoomId, defaultSecret, publicParticipant, tokenHash, tokenMatches } from "./collaboration-utils";
 
-export type CollaborationRole = "owner" | "editor" | "viewer";
-export type CollaborationCapability = "read" | "write" | "invite";
-
-export interface RoomParticipant {
-  id: string;
-  displayName: string;
-  role: CollaborationRole;
-}
-
-export interface RoomMember {
-  clientId: string;
-  role: CollaborationRole;
-  joinedAt: string;
-  lastSeenAt: string;
-}
-
-export interface RoomAccess extends RoomParticipant {
-  participantId: string;
-  accessToken: string;
-}
-
-export interface RoomInvitation {
-  token: string;
-  role: Exclude<CollaborationRole, "owner">;
-  expiresAt: string;
-}
-
-export interface CollaborationRoom<T = unknown> {
-  id: string;
-  version: number;
-  snapshot?: T;
-  ready: boolean;
-  createdBy: string;
-  updatedBy: string;
-  lastTxId?: string;
-  updatedAt: string;
-  operations?: CollaborationOperation[];
-  rebasedFromVersion?: number;
-  readonly?: boolean;
-  closed?: boolean;
-  members: RoomMember[];
-}
-
-export interface RoomTransaction<T = unknown> {
-  txId: string;
-  clientId: string;
-  baseVersion: number;
-  snapshot?: T;
-  operations?: CollaborationOperation[];
-}
-
-export interface RoomCreator {
-  clientId: string;
-  displayName: string;
-}
-
-export interface RoomJoinRequest {
-  inviteToken: string;
-  clientId: string;
-  displayName: string;
-}
-
-export interface CreatedRoom<T = unknown> {
-  room: CollaborationRoom<T>;
-  access: RoomAccess;
-}
-
-export class CollaborationError extends Error {
-  constructor(
-    public readonly code: "ROOM_NOT_FOUND" | "VERSION_CONFLICT" | "INVALID_TRANSACTION" | "ROOM_LIMIT_REACHED" | "SUBSCRIBER_LIMIT_REACHED" | "ROOM_FORBIDDEN" | "INVITATION_INVALID" | "INVITATION_EXPIRED" | "FORBIDDEN" | "READONLY_ROOM" | "ROOM_CLOSED" | "ROOM_INITIALIZING",
-    message: string,
-    public readonly currentVersion?: number,
-  ) {
-    super(message);
-  }
-}
+export type * from "./collaboration-types";
+export { CollaborationError } from "./collaboration-error";
 
 type Listener = (room: CollaborationRoom) => void;
-export type LifecycleEvent = { kind: "members"; room: CollaborationRoom; members: RoomMember[] } | { kind: "access"; room: CollaborationRoom; members: RoomMember[] } | { kind: "closed"; room: CollaborationRoom; members: RoomMember[] };
 type LifecycleListener = (event: LifecycleEvent) => void;
 type InvitationRecord = { role: Exclude<CollaborationRole, "owner">; expiresAt: number };
 const MAX_TRACKED_TRANSACTIONS = 256;
 const MAX_OPERATION_HISTORY = 256;
-
-function defaultRoomId(): string {
-  return randomBytes(9).toString("hex").slice(0, 12).toUpperCase();
-}
-
-function defaultSecret(): string {
-  return randomBytes(32).toString("base64url");
-}
-
-function hashSecret(secret: string): string {
-  return createHash("sha256").update(secret).digest("hex");
-}
-
-function tokenMatches(secret: string, expectedHash: string): boolean {
-  const actual = Buffer.from(hashSecret(secret), "utf8");
-  const expected = Buffer.from(expectedHash, "utf8");
-  return actual.byteLength === expected.byteLength && timingSafeEqual(actual, expected);
-}
-
-function publicParticipant(participant: RoomParticipant): RoomParticipant {
-  return { ...participant };
-}
-
-export interface RoomStoreOptions {
-  generateId?: () => string;
-  generateSecret?: () => string;
-  maxRooms?: number;
-  maxSubscribers?: number;
-  roomTtlMs?: number;
-  invitationTtlMs?: number;
-  now?: () => number;
-}
+const DEFAULT_MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 
 export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): RoomStore {
   const options = typeof input === "function" ? { generateId: input } : input;
@@ -128,6 +24,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const generateSecret = options.generateSecret ?? defaultSecret;
   const maxRooms = options.maxRooms ?? 100;
   const maxSubscribers = options.maxSubscribers ?? 50;
+  const maxSnapshotBytes = options.maxSnapshotBytes ?? DEFAULT_MAX_SNAPSHOT_BYTES;
   const roomTtlMs = options.roomTtlMs ?? 30 * 60 * 1000;
   const invitationTtlMs = options.invitationTtlMs ?? 24 * 60 * 60 * 1000;
   const now = options.now ?? Date.now;
@@ -212,6 +109,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     if (!normalizedCreator.clientId || !normalizedCreator.displayName) {
       throw new CollaborationError("INVALID_TRANSACTION", "创建者信息无效");
     }
+    assertSnapshotSize(snapshot, maxSnapshotBytes);
     const joinedAt = new Date(now()).toISOString();
     const room: CollaborationRoom<T> = {
       id,
@@ -237,7 +135,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       accessToken,
     };
     rooms.set(id, room);
-    accessRecords.set(id, new Map([[hashSecret(accessToken), publicParticipant(access)]]));
+    accessRecords.set(id, new Map([[tokenHash(accessToken), publicParticipant(access)]]));
     invitations.set(id, new Map());
     transactions.set(id, new Set());
     operationHistory.set(id, []);
@@ -254,9 +152,10 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     if (role !== "editor" && role !== "viewer") throw new CollaborationError("INVALID_TRANSACTION", "邀请角色无效");
     authorize(id, accessToken, "invite");
     const key = id.toUpperCase();
+    if (rooms.get(key)?.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
     const token = generateSecret();
     const expiresAtMs = now() + invitationTtlMs;
-    invitations.get(key)?.set(hashSecret(token), { role, expiresAt: expiresAtMs });
+    invitations.get(key)?.set(tokenHash(token), { role, expiresAt: expiresAtMs });
     return { token, role, expiresAt: new Date(expiresAtMs).toISOString() };
   };
 
@@ -266,7 +165,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
-    if (!input.clientId || !input.displayName || !input.inviteToken) {
+    if (!input.clientId.trim() || !input.displayName.trim() || !input.inviteToken.trim()) {
       throw new CollaborationError("INVITATION_INVALID", "邀请凭证无效");
     }
     const roomInvitations = invitations.get(key);
@@ -284,6 +183,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       roomInvitations?.delete(invitationHash);
       throw new CollaborationError("INVITATION_EXPIRED", "邀请凭证已过期");
     }
+    if (room.members.some((member) => member.clientId === input.clientId)) {
+      throw new CollaborationError("ALREADY_JOINED", "该客户端已加入共享房间");
+    }
     roomInvitations?.delete(invitationHash);
     const accessToken = generateSecret();
     const participant: RoomParticipant = {
@@ -291,12 +193,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       displayName: input.displayName,
       role: invitation.role,
     };
-    accessRecords.get(key)?.set(hashSecret(accessToken), participant);
+    accessRecords.get(key)?.set(tokenHash(accessToken), participant);
     const seenAt = new Date(now()).toISOString();
-    const existingMember = room.members.find((member) => member.clientId === input.clientId);
-    const nextRoom = existingMember
-      ? { ...room, members: room.members.map((member) => member.clientId === input.clientId ? { ...member, lastSeenAt: seenAt } : member) }
-      : { ...room, members: [...room.members, { clientId: input.clientId, role: invitation.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
+    const nextRoom = { ...room, members: [...room.members, { clientId: input.clientId, role: invitation.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
     rooms.set(key, nextRoom);
     touch(key);
     notifyLifecycle(key, "members", nextRoom);
@@ -346,6 +245,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const nextSnapshot = operations
       ? applyCollaborationOperations(room.snapshot, operations)
       : structuredClone(transaction.snapshot);
+    assertSnapshotSize(nextSnapshot, maxSnapshotBytes);
     const next: CollaborationRoom<T> = {
       ...room,
       version: room.version + 1,
@@ -413,12 +313,12 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
+    if (participant.id !== clientId) throw new CollaborationError("ROOM_FORBIDDEN", "只能刷新当前访问凭证对应的成员");
     const seenAt = new Date(now()).toISOString();
-    const memberClientId = clientId || participant.id;
-    const existingMember = room.members.find((member) => member.clientId === memberClientId);
+    const existingMember = room.members.find((member) => member.clientId === clientId);
     const nextRoom = existingMember
-      ? { ...room, members: room.members.map((member) => member.clientId === memberClientId ? { ...member, lastSeenAt: seenAt } : member) }
-      : { ...room, members: [...room.members, { clientId: memberClientId, role: participant.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
+      ? { ...room, members: room.members.map((member) => member.clientId === clientId ? { ...member, lastSeenAt: seenAt } : member) }
+      : { ...room, members: [...room.members, { clientId, role: participant.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
     rooms.set(key, nextRoom);
     touch(key);
     notifyLifecycle(key, "members", nextRoom);
@@ -430,8 +330,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const key = id.toUpperCase();
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
-    const leavingClientId = clientId || participant.id;
-    const nextRoom = { ...room, members: room.members.filter((member) => member.clientId !== leavingClientId) };
+    if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
+    if (participant.id !== clientId) throw new CollaborationError("ROOM_FORBIDDEN", "只能移除当前访问凭证对应的成员");
+    const nextRoom = { ...room, members: room.members.filter((member) => member.clientId !== clientId) };
     rooms.set(key, nextRoom);
     touch(key);
     notifyLifecycle(key, "members", nextRoom);
@@ -444,6 +345,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
+    if (participant.id !== clientId) throw new CollaborationError("ROOM_FORBIDDEN", "访问凭证与客户端不匹配");
     if (participant.id !== room.createdBy) throw new CollaborationError("FORBIDDEN", "只有创建者可以修改房间权限");
     const updatedAt = new Date(now()).toISOString();
     const nextRoom = action === "set-readonly"
@@ -490,26 +392,4 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   };
 
   return { create, get, createInvitation, join, authorize, apply, subscribe, listParticipants, refreshMember, leave, setAccess, getOperations, subscribeLifecycle } as RoomStore;
-}
-
-export interface RoomStore {
-  create<T>(snapshot: T | undefined, creator: RoomCreator): CreatedRoom<T>;
-  /** @deprecated Compatibility overload for older in-process callers. HTTP routes never use it. */
-  create<T>(snapshot: T | undefined, clientId: string): CollaborationRoom<T>;
-  get: (id: string) => CollaborationRoom | undefined;
-  createInvitation: (id: string, accessToken: string, role: Exclude<CollaborationRole, "owner">) => RoomInvitation;
-  join<T>(id: string, input: RoomJoinRequest): CreatedRoom<T>;
-  authorize: (id: string, accessToken: string, capability: CollaborationCapability) => RoomParticipant;
-  apply<T>(id: string, accessToken: string, transaction: RoomTransaction<T>): CollaborationRoom<T>;
-  /** @deprecated Compatibility overload for older in-process callers. HTTP routes never use it. */
-  apply<T>(id: string, transaction: RoomTransaction<T>): CollaborationRoom<T>;
-  subscribe(id: string, accessToken: string, listener: Listener): () => void;
-  /** @deprecated Compatibility overload for older in-process callers. HTTP routes never use it. */
-  subscribe(id: string, listener: Listener): () => void;
-  listParticipants: (id: string, accessToken: string) => RoomParticipant[];
-  refreshMember: (id: string, accessToken: string, clientId: string) => { id: string; version: number; members: RoomMember[] };
-  leave: (id: string, accessToken: string, clientId: string) => { id: string; version: number; members: RoomMember[] };
-  setAccess: (id: string, accessToken: string, clientId: string, action: "set-readonly" | "close") => { id: string; version: number; readonly: boolean; closed: boolean };
-  getOperations: (id: string, accessToken: string, afterVersion: number) => { version: number; operations: CollaborationOperation[] };
-  subscribeLifecycle: (id: string, accessToken: string, listener: LifecycleListener) => () => void;
 }

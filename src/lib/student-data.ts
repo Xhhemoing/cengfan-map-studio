@@ -6,6 +6,8 @@ export interface StudentInput {
   name: string;
   university: string;
   city: string;
+  /** Optional manual province override; ignored for overseas destinations. */
+  province?: string;
   locationScope?: "china" | "international";
   raw?: {
     name: string;
@@ -87,10 +89,14 @@ export function resolveStudentLocation(student: Student): {
   return resolveCityLocation(student.city);
 }
 
+function duplicateKey(name: string, university: string): string {
+  return `${name}\u001f${university}`.toLocaleLowerCase("zh-CN").replace(/\s+/g, "");
+}
+
 export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult {
   const issues: StudentIssue[] = [];
   const students: Student[] = [];
-  const nameCounts = new Map<string, number>();
+  const duplicateCounts = new Map<string, { name: string; university: string; count: number }>();
 
   inputs.forEach((input, index) => {
     const fieldIssues = validateStudentInput(input).map((issue) => ({
@@ -99,10 +105,14 @@ export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult 
     }));
     issues.push(...fieldIssues);
 
-    const location = input.locationScope === "international"
+    const isInternational = input.locationScope === "international";
+    // Overseas destinations never carry a Chinese province, so they are also
+    // never reported as an unresolved China city.
+    const province = isInternational ? "" : (input.province?.trim() ?? "");
+    const location = isInternational
       ? { city: input.city.trim(), province: "", status: "unresolved" as const }
       : resolveCityLocation(input.city);
-    if (input.locationScope !== "international" && input.city.trim() && location.status === "unresolved") {
+    if (!isInternational && !province && input.city.trim() && location.status === "unresolved") {
       issues.push({
         code: "unresolved_city",
         field: "city",
@@ -113,25 +123,30 @@ export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult 
     }
 
     const name = input.name.trim();
-    nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+    const university = input.university.trim();
+    const key = duplicateKey(name, university);
+    const entry = duplicateCounts.get(key) ?? { name, university, count: 0 };
+    entry.count += 1;
+    duplicateCounts.set(key, entry);
 
     students.push({
       id: createId("student"),
       name,
-      university: input.university.trim(),
+      university,
       city: location.city || input.city.trim(),
-      ...(input.locationScope === "international" ? { locationScope: "international" as const } : {}),
+      ...(province ? { province } : {}),
+      ...(isInternational ? { locationScope: "international" as const } : {}),
       visibility: true,
     });
   });
 
-  for (const [name, count] of nameCounts.entries()) {
+  for (const { name, university, count } of duplicateCounts.values()) {
     if (name && count > 1) {
       issues.push({
         code: "duplicate_name",
         field: "name",
         level: "warning",
-        message: `存在重复学生名称：${name}`,
+        message: `存在重复学生记录：${name}${university ? ` · ${university}` : ""}`,
       });
     }
   }

@@ -1,6 +1,6 @@
 import { CheckCircle2, LocateFixed, MapPinned, ShieldCheck } from "lucide-react";
 import { useState, type ComponentProps, type KeyboardEvent } from "react";
-import type { DataHealthSummary, DataIssue } from "../../lib/data-health";
+import { resolveDataIssueId, type DataHealthSummary, type DataIssue } from "../../lib/data-health";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { Student } from "../../lib/project-data";
 import { searchProvinces } from "../../lib/search-catalog";
@@ -253,7 +253,7 @@ export function DataUploadRail({
               <div className="data-quality-list" role="list" aria-label="地图映射问题">
                 {mappingIssues.map((issue) => (
                   <MappingIssueRow
-                    key={`${issue.studentId}-${issue.kind}-${studentById.get(issue.studentId)?.province ?? ""}`}
+                    key={`${resolveDataIssueId(issue)}-${studentById.get(issue.studentId)?.province ?? ""}`}
                     student={studentById.get(issue.studentId)}
                     issue={issue}
                     onUpdateStudent={dataWorkspaceProps.onUpdateStudent}

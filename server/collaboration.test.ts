@@ -55,7 +55,8 @@ describe("collaboration room store", () => {
     const left = store.leave("MEM003", editor.access.accessToken, "editor");
     expect(left.members.map((member) => member.clientId)).toEqual(["owner"]);
     expect(store.leave("MEM003", editor.access.accessToken, "editor").members.map((member) => member.clientId)).toEqual(["owner"]);
-    expect(store.leave("MEM003", owner.access.accessToken, "nobody").members.map((member) => member.clientId)).toEqual(["owner"]);
+    expect(() => store.leave("MEM003", owner.access.accessToken, "nobody"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
   });
 
   it("lets only the owner set readonly/close; closed rooms reject writes, joins, and further access changes", () => {
@@ -64,6 +65,7 @@ describe("collaboration room store", () => {
     const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
     const editorInvite = store.createInvitation("ACC01", owner.access.accessToken, "editor");
     const editor = store.join("ACC01", { inviteToken: editorInvite.token, clientId: "editor", displayName: "编辑同学" });
+    const lateInvite = store.createInvitation("ACC01", owner.access.accessToken, "viewer");
 
     expect(() => store.setAccess("ACC01", editor.access.accessToken, "editor", "set-readonly")).toThrowError(expect.objectContaining({ code: "FORBIDDEN" }));
 
@@ -78,8 +80,8 @@ describe("collaboration room store", () => {
       .toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
     expect(() => store.refreshMember("ACC01", editor.access.accessToken, "editor")).toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
     expect(() => store.setAccess("ACC01", owner.access.accessToken, "owner", "set-readonly")).toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
-
-    const lateInvite = store.createInvitation("ACC01", owner.access.accessToken, "viewer");
+    expect(() => store.createInvitation("ACC01", owner.access.accessToken, "viewer")).toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
+    expect(() => store.leave("ACC01", editor.access.accessToken, "editor")).toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
     expect(() => store.join("ACC01", { inviteToken: lateInvite.token, clientId: "late", displayName: "迟到" }))
       .toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
   });
@@ -152,8 +154,9 @@ describe("collaboration room store", () => {
     expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "closed", room: expect.objectContaining({ closed: true }) }));
 
     unsubscribe();
-    store.leave("EVT01", owner.access.accessToken, "owner");
     const before = listener.mock.calls.length;
+    expect(() => store.leave("EVT01", owner.access.accessToken, "owner"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
     expect(listener.mock.calls.length).toBe(before);
   });
 
@@ -221,6 +224,59 @@ describe("collaboration room store", () => {
     const expired = store.createInvitation("INVITE1", owner.access.accessToken, "viewer");
     now += 11;
     expect(() => store.join("INVITE1", { inviteToken: expired.token, clientId: "late", displayName: "迟到" })).toThrowError(expect.objectContaining({ code: "INVITATION_EXPIRED" }));
+  });
+
+  it("rejects a second join for the same client without consuming the fresh invitation", () => {
+    const secrets = ["owner-access", "first-invite", "first-access", "second-invite", "other-access"];
+    const store = createRoomStore({ generateId: () => "JOIN01", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const firstInvite = store.createInvitation("JOIN01", owner.access.accessToken, "editor");
+    store.join("JOIN01", { inviteToken: firstInvite.token, clientId: "editor", displayName: "编辑者" });
+    const secondInvite = store.createInvitation("JOIN01", owner.access.accessToken, "viewer");
+
+    expect(() => store.join("JOIN01", {
+      inviteToken: secondInvite.token,
+      clientId: "editor",
+      displayName: "重复客户端",
+    })).toThrowError(expect.objectContaining({ code: "ALREADY_JOINED" }));
+
+    expect(store.join("JOIN01", {
+      inviteToken: secondInvite.token,
+      clientId: "viewer",
+      displayName: "查看者",
+    }).access.role).toBe("viewer");
+  });
+
+  it("enforces snapshot limits for room creation and transactions", () => {
+    const oversized = { payload: "x".repeat(128) };
+    const createStore = createRoomStore({ maxSnapshotBytes: 64, generateId: () => "SIZE01" });
+    expect(() => createStore.create(oversized, "owner")).toThrowError(expect.objectContaining({ code: "SNAPSHOT_TOO_LARGE" }));
+
+    const updateStore = createRoomStore({ maxSnapshotBytes: 64, generateId: () => "SIZE02", generateSecret: () => "owner-access" });
+    updateStore.create({ ok: true }, { clientId: "owner", displayName: "创建者" });
+    expect(() => updateStore.apply("SIZE02", "owner-access", {
+      txId: "large-1",
+      clientId: "owner",
+      baseVersion: 0,
+      snapshot: oversized,
+    })).toThrowError(expect.objectContaining({ code: "SNAPSHOT_TOO_LARGE" }));
+    expect(updateStore.get("SIZE02")).toMatchObject({ version: 0, snapshot: { ok: true } });
+  });
+
+  it("binds member mutations to the participant identified by the access token", () => {
+    const secrets = ["owner-access", "viewer-invite", "viewer-access"];
+    const store = createRoomStore({ generateId: () => "MEM004", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const invitation = store.createInvitation("MEM004", owner.access.accessToken, "viewer");
+    const viewer = store.join("MEM004", { inviteToken: invitation.token, clientId: "viewer", displayName: "查看者" });
+
+    expect(() => store.refreshMember("MEM004", viewer.access.accessToken, "owner"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+    expect(() => store.leave("MEM004", viewer.access.accessToken, "owner"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+    expect(() => store.leave("MEM004", "invalid-token", "viewer"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+    expect(store.get("MEM004")?.members.map((member) => member.clientId)).toEqual(["owner", "viewer"]);
   });
 
   it("enforces a maximum room count", () => {

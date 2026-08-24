@@ -391,6 +391,206 @@ describe("card layout", () => {
     assertHardConstraints(result.placements, { ...bounds, occupiedAreas: occupied }, occupied);
   });
 
+  it("returns an empty solved layout for empty input in every mode", () => {
+    for (const mode of ["quadrant", "radial", "right-stack", "grid"] as CardLayoutMode[]) {
+      const result = solveCardLayout([], bounds, { mode });
+      expect(result).toEqual({ status: "solved", placements: [], mode });
+    }
+  });
+
+  it("places a single card beside its anchor without touching the map", () => {
+    const occupied = [{ x: 350, y: 120, width: 800, height: 690 }];
+    const result = solveCardLayout(
+      [cardInput({ id: "only", anchorX: 1100, anchorY: 500 })],
+      { ...bounds, occupiedAreas: occupied },
+      { mode: "quadrant" },
+    );
+    expect(result.status).toBe("solved");
+    expect(result.placements).toHaveLength(1);
+    expect(result.placements[0]!.side).toBe("right");
+    assertHardConstraints(result.placements, { ...bounds, occupiedAreas: occupied }, occupied);
+  });
+
+  it("never throws on degenerate canvases and still returns every card", () => {
+    const degenerate: CardLayoutBounds[] = [
+      { width: 0, height: 0, map: { x: 0, y: 0, width: 0, height: 0 }, margin: 0, gap: 0 },
+      { width: 200, height: 150, map: { x: 10, y: 10, width: 50, height: 50 }, margin: 400, gap: 12 },
+      { width: 300, height: 300, map: { x: 0, y: 0, width: 300, height: 300 }, margin: 150, gap: 0 },
+    ];
+    const input = [
+      cardInput({ id: "a", anchorX: 10, anchorY: 10 }),
+      cardInput({ id: "b", anchorX: 120, anchorY: 90 }),
+    ];
+    for (const canvas of degenerate) {
+      for (const mode of ["quadrant", "radial", "right-stack", "grid"] as CardLayoutMode[]) {
+        const result = solveCardLayout(input, canvas, { mode });
+        expect(result.placements).toHaveLength(input.length);
+        expect(result.placements.map((placement) => placement.id)).toEqual(["a", "b"]);
+        for (const placement of result.placements) {
+          expect(Number.isFinite(placement.x)).toBe(true);
+          expect(Number.isFinite(placement.y)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("keeps non-finite input from poisoning the result", () => {
+    const broken = [
+      { id: "nan", anchorX: Number.NaN, anchorY: Number.NaN, width: 120, height: 60 },
+      { id: "infinite", anchorX: Number.POSITIVE_INFINITY, anchorY: -100, width: Number.NaN, height: -40 },
+      cardInput({ id: "sane", anchorX: 700, anchorY: 400 }),
+    ];
+    const result = solveCardLayout(broken, bounds, { mode: "quadrant" });
+    expect(result.placements.map((placement) => placement.id)).toEqual(["nan", "infinite", "sane"]);
+    for (const placement of result.placements) {
+      expect(Number.isFinite(placement.x)).toBe(true);
+      expect(Number.isFinite(placement.y)).toBe(true);
+      expect(Number.isFinite(placement.width)).toBe(true);
+      expect(Number.isFinite(placement.height)).toBe(true);
+    }
+  });
+
+  it("separates cards that share the exact same anchor", () => {
+    const occupied = [{ x: 560, y: 220, width: 380, height: 500 }];
+    const input = Array.from({ length: 6 }, (_, i) => cardInput({
+      id: `same-${i}`,
+      anchorX: 750,
+      anchorY: 470,
+      width: 160,
+      height: 80,
+    }));
+    const result = solveCardLayout(input, { ...bounds, occupiedAreas: occupied }, { mode: "quadrant" });
+    expect(result.status).toBe("solved");
+    expect(result.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
+    assertHardConstraints(result.placements, { ...bounds, occupiedAreas: occupied }, occupied);
+  });
+
+  it("auto-places over the map when allowMapOverlap is set and honours other obstacles", () => {
+    const obstacle = { x: 40, y: 40, width: 200, height: 120 };
+    const permissive: CardLayoutBounds = {
+      width: 700,
+      height: 560,
+      map: { x: 60, y: 60, width: 580, height: 440 },
+      margin: 24,
+      gap: 10,
+      occupiedAreas: [obstacle],
+      allowMapOverlap: true,
+    };
+    const input = Array.from({ length: 5 }, (_, i) => cardInput({
+      id: `o-${i}`,
+      anchorX: 150 + i * 90,
+      anchorY: 200 + (i % 2) * 150,
+      width: 150,
+      height: 70,
+    }));
+    const result = solveCardLayout(input, permissive, { mode: "quadrant" });
+    expect(result.status).toBe("solved");
+    assertHardConstraints(result.placements, permissive, [obstacle]);
+    // The map itself is coverable, so at least one card should sit over it.
+    expect(result.placements.some((placement) => overlaps(placement, permissive.map))).toBe(true);
+  });
+
+  it("reports fallback but stays contained when the canvas cannot hold the cards", () => {
+    const saturated: CardLayoutBounds = {
+      width: 700,
+      height: 500,
+      map: { x: 200, y: 100, width: 300, height: 300 },
+      margin: 20,
+      gap: 10,
+      occupiedAreas: [{ x: 200, y: 100, width: 300, height: 300 }],
+    };
+    const input = Array.from({ length: 30 }, (_, i) => cardInput({
+      id: `sat-${i}`,
+      anchorX: 350,
+      anchorY: 250,
+      width: 200,
+      height: 100,
+    }));
+    const result = solveCardLayout(input, saturated, { mode: "quadrant" });
+    expect(result.status).toBe("fallback");
+    expect(result.placements).toHaveLength(input.length);
+    for (const placement of result.placements) {
+      expect(placement.x).toBeGreaterThanOrEqual(saturated.margin - 1e-6);
+      expect(placement.y).toBeGreaterThanOrEqual(saturated.margin - 1e-6);
+      expect(placement.x + placement.width).toBeLessThanOrEqual(saturated.width - saturated.margin + 1e-6);
+      expect(placement.y + placement.height).toBeLessThanOrEqual(saturated.height - saturated.margin + 1e-6);
+    }
+  });
+
+  it("keeps 150 dense cards deterministic, in bounds and non-overlapping", () => {
+    const dense: CardLayoutBounds = {
+      width: 1600,
+      height: 1100,
+      map: { x: 500, y: 300, width: 300, height: 220 },
+      margin: 30,
+      gap: 6,
+      occupiedAreas: [{ x: 500, y: 300, width: 300, height: 220 }],
+    };
+    const input = Array.from({ length: 150 }, (_, i) => cardInput({
+      id: `d-${i}`,
+      anchorX: 120 + ((i * 97) % 1360),
+      anchorY: 80 + ((i * 53) % 940),
+      width: 84,
+      height: 38,
+    }));
+    const first = solveCardLayout(input, dense, { mode: "quadrant" });
+    const second = solveCardLayout(input, dense, { mode: "quadrant" });
+    expect(second).toEqual(first);
+    expect(first.status).toBe("solved");
+    expect(first.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
+    assertHardConstraints(first.placements, dense, dense.occupiedAreas);
+  });
+
+  it("is deterministic for every mode, obstacle shape and option set", () => {
+    const polygons = [{
+      rings: [[
+        { x: 520, y: 240 },
+        { x: 900, y: 240 },
+        { x: 900, y: 600 },
+        { x: 520, y: 600 },
+      ]],
+    }];
+    const input = Array.from({ length: 18 }, (_, i) => cardInput({
+      id: `det-${i}`,
+      anchorX: 400 + ((i * 131) % 700),
+      anchorY: 160 + ((i * 71) % 600),
+      width: 130 + (i % 3) * 20,
+      height: 60 + (i % 4) * 10,
+    }));
+    for (const mode of ["quadrant", "radial", "right-stack", "grid"] as CardLayoutMode[]) {
+      for (const canvas of [
+        bounds,
+        { ...bounds, occupiedAreas: [{ x: 520, y: 240, width: 380, height: 360 }] },
+        { ...bounds, occupiedAreas: [], occupiedPolygons: polygons },
+        { ...bounds, allowMapOverlap: true },
+      ]) {
+        const options = { mode, autoBalance: mode === "quadrant", connectorStyle: "elbow" as const, connectorWidth: 2 };
+        expect(solveCardLayout(input, canvas, options)).toEqual(solveCardLayout(input, canvas, options));
+      }
+    }
+  });
+
+  it("places every card even when no candidate avoids a connector crossing", () => {
+    const crowded: CardLayoutBounds = {
+      width: 900,
+      height: 700,
+      map: { x: 250, y: 180, width: 400, height: 340 },
+      margin: 24,
+      gap: 12,
+      occupiedAreas: [{ x: 250, y: 180, width: 400, height: 340 }],
+    };
+    const input = Array.from({ length: 12 }, (_, i) => cardInput({
+      id: `x-${i}`,
+      anchorX: 300 + ((i * 37) % 300),
+      anchorY: 220 + ((i * 61) % 280),
+      width: 170,
+      height: 74,
+    }));
+    const result = solveCardLayout(input, crowded, { mode: "radial", connectorStyle: "curve", connectorWidth: 3 });
+    expect(result.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
+    expect(new Set(result.placements.map((placement) => placement.id)).size).toBe(input.length);
+  });
+
   it("uses the renderer connector geometry while optimizing for distance and crossings", () => {
     const input = [
       cardInput({ id: "c1", anchorX: 515.9, anchorY: 605.4, width: 170, height: 90 }),

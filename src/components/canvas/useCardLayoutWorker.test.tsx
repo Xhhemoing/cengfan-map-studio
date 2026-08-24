@@ -242,6 +242,56 @@ describe("useCardLayoutWorker", () => {
     container.remove();
   });
 
+  it("solves synchronously when the worker reports it could not handle the request", () => {
+    const request = makeRequest("worker-error");
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<Harness request={request} />));
+    const worker = FakeWorker.instances[0]!;
+    const posted = worker.messages[0] as { requestId: number; key: string };
+
+    flushSync(() => worker.emit({
+      type: "error",
+      requestId: posted.requestId,
+      key: posted.key,
+      reason: "solver exploded",
+    }));
+
+    expect(current?.pending).toBe(false);
+    expect(current?.result?.placements.map((placement) => placement.id)).toEqual([request.cards[0]!.id]);
+    expect(cardLayoutCache.get(request.key)).toEqual(current?.result);
+    expect(worker.terminated).toBe(false);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("ignores malformed worker messages and stays pending", () => {
+    const request = makeRequest("worker-garbage");
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<Harness request={request} />));
+    const worker = FakeWorker.instances[0]!;
+    const posted = worker.messages[0] as { requestId: number; key: string };
+
+    for (const message of [
+      undefined,
+      { type: "result", requestId: posted.requestId, key: posted.key },
+      { type: "unknown", requestId: posted.requestId, key: posted.key },
+      { type: "error", requestId: posted.requestId, key: posted.key },
+    ]) {
+      flushSync(() => worker.emit(message as CardLayoutWorkerResponse));
+    }
+
+    expect(current?.result).toBeNull();
+    expect(current?.pending).toBe(true);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("solves synchronously when Worker is unavailable", () => {
     globalWithWorker.Worker = undefined;
     const request = makeRequest("fallback");

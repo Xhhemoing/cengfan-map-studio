@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createProjectDocument } from "./project-document";
-import { buildDataHealthSummary, listDataIssues } from "./data-health";
+import { buildDataHealthSummary, dataIssueId, listDataIssues, resolveDataIssueId } from "./data-health";
 
 describe("project data health", () => {
   it("summarizes visible, hidden, international, unresolved, and missing records", () => {
@@ -58,6 +58,77 @@ describe("project data health", () => {
       "student-1:hidden",
       "student-1:duplicate",
       "student-2:duplicate",
+    ]);
+  });
+
+  it("gives every issue a stable kind:studentId identifier the UI can locate", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "student-1", name: "未匹配", university: "大学", city: "不存在", province: "火星省", visibility: false },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    const issues = listDataIssues(project);
+    const ids = issues.map((issue) => issue.id);
+
+    expect(ids).toEqual(["manual-province:student-1", "hidden:student-1"]);
+    expect(new Set(ids).size).toBe(ids.length);
+    // Re-running on the same data must produce the same ids.
+    expect(listDataIssues(project).map((issue) => issue.id)).toEqual(ids);
+    expect(dataIssueId("hidden", "student-1")).toBe("hidden:student-1");
+    expect(resolveDataIssueId({ studentId: "student-9", studentName: "无 id", kind: "duplicate", detail: "", severity: "warning" }))
+      .toBe("duplicate:student-9");
+  });
+
+  it("reports a whitespace-only name as a missing field and labels it 未命名学生", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "blank-name", name: "   ", university: "浙江大学", city: "杭州市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project).missingRequired).toBe(1);
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({
+        id: "missing-field:blank-name",
+        studentName: "未命名学生",
+        kind: "missing-field",
+        detail: "缺少姓名",
+      }),
+    ]);
+  });
+
+  it("flags a city-only row for its missing name and university without dropping it", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "city-only", name: "", university: "", city: "杭州市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ total: 1, missingRequired: 1, unresolved: 0 });
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({ kind: "missing-field", detail: "缺少姓名、院校" }),
+    ]);
+  });
+
+  it("never asks an overseas record for a Chinese city or province", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "overseas", name: "周晴", university: "哈佛大学", city: "美国·波士顿", locationScope: "international", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ unresolved: 0, international: 1, missingRequired: 0 });
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({ id: "international:overseas", kind: "international", severity: "info" }),
     ]);
   });
 });

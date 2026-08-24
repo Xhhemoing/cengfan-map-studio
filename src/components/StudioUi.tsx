@@ -248,11 +248,13 @@ export function WorkspaceNav<Id extends string>({
           key={id}
           type="button"
           aria-label={description ? `${label}：${description}` : label}
-          aria-selected={activeId === id}
+          // aria-selected is invalid on plain buttons; aria-current marks the
+          // active workspace inside a navigation landmark.
+          aria-current={activeId === id ? "page" : undefined}
           className={activeId === id ? "is-active" : undefined}
           onClick={() => onChange(id)}
         >
-          {Icon && <Icon size={17} />}
+          {Icon && <Icon size={17} aria-hidden />}
           <span><strong>{label}</strong>{description && <small>{description}</small>}</span>
         </button>
       ))}

@@ -93,4 +93,73 @@ describe("binary import adapters", () => {
       ["去向类型", "否", "中国去向 / 海外去向"],
     ]));
   });
+
+  it("returns an empty result for an empty or blank-only sheet", () => {
+    expect(parseExcelWorkbookRows([])).toEqual({
+      candidates: [],
+      unparsed: [],
+      columnMappings: [],
+      unmappedHeaders: [],
+      missingRequiredFields: [],
+    });
+    const blank = parseExcelWorkbookRows([["", ""], ["   "]]);
+    expect(blank.candidates).toEqual([]);
+    expect(blank.unparsed).toEqual([]);
+    expect(blank.headerRowIndex).toBeUndefined();
+  });
+
+  it("matches headers coming from a BOM-prefixed CSV and numeric cells", () => {
+    const result = parseExcelWorkbookRows([
+      ["\uFEFF姓名", "学校", "城市"],
+      ["林舟", "北京大学", "北京"],
+      [123, "清华大学", "北京"],
+    ]);
+
+    expect(result.headerRowIndex).toBe(0);
+    expect(result.missingRequiredFields).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学" }),
+      expect.objectContaining({ name: "123", university: "清华大学" }),
+    ]);
+  });
+
+  it("maps a province column and keeps it off overseas rows", () => {
+    const result = parseExcelWorkbookRows([
+      ["名字", "去向", "市", "省", "去向类型"],
+      ["苏禾", "浙江大学", "杭州市", "浙江省", "中国去向"],
+      ["周晴", "哈佛大学", "美国·波士顿", "", "海外"],
+    ]);
+
+    expect(result.columnMappings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "province", sourceHeader: "省" }),
+      expect.objectContaining({ field: "city", sourceHeader: "市" }),
+      expect.objectContaining({ field: "university", sourceHeader: "去向" }),
+    ]));
+    expect(result.candidates[0]).toEqual(expect.objectContaining({ name: "苏禾", province: "浙江省" }));
+    expect(result.candidates[0]).not.toHaveProperty("locationScope");
+    expect(result.candidates[1]).toEqual(expect.objectContaining({ name: "周晴", locationScope: "international" }));
+    expect(result.candidates[1]).not.toHaveProperty("province");
+    expect(result.unmappedHeaders).toEqual([]);
+  });
+
+  it("skips rows that leave a required cell blank instead of importing them", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "录取院校", "城市"],
+      ["苏禾", "浙江大学", "杭州市"],
+      ["   ", "浙江大学", "杭州市"],
+      ["缺城市", "浙江大学", ""],
+    ]);
+
+    expect(result.candidates).toEqual([expect.objectContaining({ name: "苏禾", sourceLine: 2 })]);
+  });
+
+  it("falls back to free-text parsing when the sheet has no recognizable header", () => {
+    const result = parseExcelWorkbookRows([
+      ["林舟", "北京大学", "北京"],
+      ["苏禾", "浙江大学", "杭州"],
+    ]);
+
+    expect(result.headerRowIndex).toBeUndefined();
+    expect(result.candidates).toHaveLength(2);
+  });
 });

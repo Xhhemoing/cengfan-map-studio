@@ -118,6 +118,7 @@ export function SearchCombobox({
       id={listId}
       className={`search-combobox__list${portal ? " search-combobox__list--portal" : ""}`}
       role="listbox"
+      aria-label={`${label}建议`}
       style={portal ? portalStyle ?? undefined : undefined}
     >
       {displayOptions.map((option, index) => (
@@ -144,9 +145,10 @@ export function SearchCombobox({
         ref={inputRef}
         aria-label={label}
         aria-autocomplete="list"
+        aria-haspopup="listbox"
         aria-controls={listId}
-        aria-expanded={isOpen && options.length > 0}
-        aria-activedescendant={activeIndex >= 0 ? `${listId}-option-${activeIndex}` : undefined}
+        aria-expanded={isOpen && displayOptions.length > 0}
+        aria-activedescendant={isOpen && activeIndex >= 0 ? `${listId}-option-${activeIndex}` : undefined}
         role="combobox"
         value={value}
         placeholder={placeholder}

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { solveCardLayout, type CardLayoutResult } from "../../lib/card-layout";
 import { cardLayoutCache } from "../../lib/card-layout-cache";
+import { isCardLayoutWorkerResponse } from "../../lib/card-layout-worker-protocol";
 import type {
   CardLayoutWorkerMessage,
+  CardLayoutWorkerRequest,
   CardLayoutWorkerResponse,
 } from "../../lib/card-layout-worker-protocol";
-import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
 
 export type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
 
@@ -93,9 +94,19 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
     if (!worker.onmessage) {
       worker.onmessage = (event: MessageEvent<CardLayoutWorkerResponse>) => {
         const response = event.data;
-        if (response.type !== "result"
+        if (!isCardLayoutWorkerResponse(response)
           || response.requestId !== requestIdRef.current
           || response.key !== activeKeyRef.current) return;
+        // The worker reported it could not solve this request; keep the canvas
+        // moving by solving it here instead of leaving the state pending.
+        if (response.type === "error") {
+          const pendingRequest = requestRef.current;
+          if (!pendingRequest || pendingRequest.key !== response.key) return;
+          const result = solveCardLayout(pendingRequest.cards, pendingRequest.bounds, pendingRequest.options);
+          cardLayoutCache.set(pendingRequest.key, result);
+          setState({ key: pendingRequest.key, result, pending: false });
+          return;
+        }
         cardLayoutCache.set(response.key, response.result);
         setState({ key: response.key, result: response.result, pending: false });
       };

@@ -143,6 +143,19 @@ describe("DataUploadWorkspace", () => {
     expect(onUpdateStudent).toHaveBeenCalledWith("student-1", { province: "火星省" });
   });
 
+  it("tags every quality row with a stable issue id so the UI can locate it", () => {
+    const { container } = renderWorkspace({
+      issues: [
+        { id: "unresolved-location:student-1", studentId: "student-1", studentName: "林舟", kind: "unresolved-location", detail: "无法定位城市：火星市", severity: "warning" },
+        // An issue without an explicit id still gets the same derived identifier.
+        { studentId: "student-1", studentName: "林舟", kind: "duplicate", detail: "与其他记录一致", severity: "warning" },
+      ],
+    });
+
+    const ids = Array.from(container.querySelectorAll("[data-issue-id]")).map((row) => row.getAttribute("data-issue-id"));
+    expect(ids).toEqual(["unresolved-location:student-1", "duplicate:student-1"]);
+  });
+
   it("shows an empty state when all locations and provinces are resolved", () => {
     const { container } = renderWorkspace();
 

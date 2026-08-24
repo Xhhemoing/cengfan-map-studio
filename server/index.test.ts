@@ -116,7 +116,56 @@ describe("unified application server", () => {
     });
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { code: path === "/api/ai/explain" ? "AI_VALIDATION_ERROR" : "VALIDATION_ERROR" } });
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: path === "/api/ai/explain" ? "AI_VALIDATION_ERROR" : "VALIDATION_ERROR" },
+      requestId: expect.any(String),
+    });
+  });
+
+  it("returns a stable 4xx envelope for every JSON route when the body is not an object or misses fields", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-json-validation-"));
+    directories.push(dataDir);
+    const server = createAiServer({ dataDir, workspaceApiToken: "workspace-test-token" });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "initial" }, "owner");
+    const roomToken = created.access.accessToken;
+    const routes: Array<{ method: "POST" | "PUT"; path: string; headers?: Record<string, string>; ai?: boolean }> = [
+      { method: "PUT", path: "/api/workspace", headers: { Authorization: "Bearer workspace-test-token" } },
+      { method: "POST", path: "/api/rooms" },
+      { method: "POST", path: `/api/rooms/${created.room.id}/invitations`, headers: roomHeaders(roomToken) },
+      { method: "POST", path: `/api/rooms/${created.room.id}/join` },
+      { method: "POST", path: `/api/rooms/${created.room.id}/transactions`, headers: roomHeaders(roomToken) },
+      { method: "POST", path: `/api/rooms/${created.room.id}/members`, headers: roomHeaders(roomToken) },
+      { method: "POST", path: `/api/rooms/${created.room.id}/leave`, headers: roomHeaders(roomToken) },
+      { method: "POST", path: `/api/rooms/${created.room.id}/access`, headers: roomHeaders(roomToken) },
+      { method: "POST", path: "/api/ai/agent", ai: true },
+      { method: "POST", path: "/api/ai/parse-data", ai: true },
+      { method: "POST", path: "/api/ai/propose-edits", ai: true },
+      { method: "POST", path: "/api/ai/explain", ai: true },
+    ];
+    const invalidBodies: unknown[] = [null, [], "", {}];
+
+    for (const [routeIndex, route] of routes.entries()) {
+      for (const [bodyIndex, body] of invalidBodies.entries()) {
+        const requestId = `invalid-${routeIndex}-${bodyIndex}`;
+        const response = await fetch(`${origin}${route.path}`, {
+          method: route.method,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Request-Id": requestId,
+            ...route.headers,
+          },
+          body: JSON.stringify(body),
+        });
+        expect(response.status, `${route.method} ${route.path} body ${JSON.stringify(body)}`).toBeGreaterThanOrEqual(400);
+        expect(response.status).toBeLessThan(500);
+        await expect(response.json()).resolves.toMatchObject({
+          error: { code: route.ai ? "AI_VALIDATION_ERROR" : "VALIDATION_ERROR" },
+          requestId,
+        });
+      }
+    }
   });
 
   it("rejects an array transaction body before attempting to find the room", async () => {
@@ -229,6 +278,27 @@ describe("unified application server", () => {
     });
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "AI_VALIDATION_ERROR" } });
+  });
+
+  it("rejects non-string AI message roles without invoking the agent", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const response = await fetch(`${origin}/api/ai/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Request-Id": "invalid-message-type" },
+      body: JSON.stringify({
+        userMessage: "测试",
+        digest: {},
+        messages: [{ role: 42, content: "错误类型" }],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "AI_VALIDATION_ERROR" },
+      requestId: "invalid-message-type",
+    });
   });
 
   it("uses the local agent fallback when no AI key is configured and preserves request ids", async () => {
@@ -735,6 +805,7 @@ describe("unified application server", () => {
     const reader = events.body!.getReader();
     try {
       expect(events.headers.get("content-type")).toContain("text/event-stream");
+      expect(events.headers.get("x-content-type-options")).toBe("nosniff");
       await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
         method: "POST",
         headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
@@ -765,6 +836,36 @@ describe("unified application server", () => {
     expect(edited.status).toBe(200);
     const denied = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, { method: "POST", headers: roomHeaders(viewer.access.accessToken, { "Content-Type": "application/json" }), body: JSON.stringify({ txId: "viewer-1", clientId: "viewer", baseVersion: 1, snapshot: { title: "forbidden" } }) });
     expect(denied.status).toBe(403);
+  });
+
+  it("rejects a duplicate client join with a conflict response", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "initial" });
+    const createInvitation = (role: "editor" | "viewer") => fetch(
+      `${origin}/api/rooms/${created.room.id}/invitations`,
+      {
+        method: "POST",
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ role }),
+      },
+    ).then((response) => response.json()) as Promise<{ token: string }>;
+    const firstInvite = await createInvitation("editor");
+    const secondInvite = await createInvitation("viewer");
+    const join = (inviteToken: string) => fetch(`${origin}/api/rooms/${created.room.id}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken, clientId: "same-client", displayName: "同一客户端" }),
+    });
+
+    expect((await join(firstInvite.token)).status).toBe(200);
+    const duplicate = await join(secondInvite.token);
+    expect(duplicate.status).toBe(409);
+    await expect(duplicate.json()).resolves.toMatchObject({
+      error: { code: "ALREADY_JOINED" },
+      requestId: expect.any(String),
+    });
   });
 
   it("returns the full snapshot when an authorized member reconnects from a stale version", async () => {
@@ -879,6 +980,14 @@ describe("unified application server", () => {
     });
     expect(heartbeatOnClosed.status).toBe(409);
     await expect(heartbeatOnClosed.json()).resolves.toMatchObject({ error: { code: "ROOM_CLOSED" } });
+
+    const leaveAfterClose = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "client-a" }),
+    });
+    expect(leaveAfterClose.status).toBe(409);
+    await expect(leaveAfterClose.json()).resolves.toMatchObject({ error: { code: "ROOM_CLOSED" } });
   });
 
   it("lets only the owner change access; readonly blocks writes and close blocks joins", async () => {
@@ -898,6 +1007,11 @@ describe("unified application server", () => {
       body: JSON.stringify({ inviteToken: invitation.token, clientId: "editor", displayName: "编辑同学" }),
     });
     const editorAccess = (await joined.json() as { access: { accessToken: string } }).access;
+    const lateInvite = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ role: "viewer" }),
+    }).then((response) => response.json()) as { token: string };
 
     const editorForbidden = await fetch(`${origin}/api/rooms/${created.room.id}/access`, {
       method: "POST",
@@ -949,7 +1063,8 @@ describe("unified application server", () => {
       headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
       body: JSON.stringify({ role: "viewer" }),
     });
-    const lateInvite = await lateInviteResponse.json() as { token: string };
+    expect(lateInviteResponse.status).toBe(409);
+    await expect(lateInviteResponse.json()).resolves.toMatchObject({ error: { code: "ROOM_CLOSED" } });
     const lateJoin = await fetch(`${origin}/api/rooms/${created.room.id}/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

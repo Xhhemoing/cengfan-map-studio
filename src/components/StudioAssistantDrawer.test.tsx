@@ -62,6 +62,25 @@ describe("StudioAssistantDrawer", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("moves focus into the drawer when it opens", async () => {
+    renderDrawer();
+    await act(async () => {});
+
+    expect(document.activeElement).toBe(document.querySelector('button[aria-label="关闭AI 助手"]'));
+  });
+
+  it("closes on Escape", () => {
+    const { onClose } = renderDrawer();
+
+    flushSync(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" }),
+      );
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("returns focus to the opener element after closing", async () => {
     const opener = document.createElement("button");
     document.body.append(opener);

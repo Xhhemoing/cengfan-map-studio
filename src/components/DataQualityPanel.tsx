@@ -1,5 +1,5 @@
 import { CheckCircle2, LocateFixed } from "lucide-react";
-import type { DataIssue, DataIssueKind } from "../lib/data-health";
+import { resolveDataIssueId, type DataIssue, type DataIssueKind } from "../lib/data-health";
 import { CompactButton, PanelHeader } from "./StudioUi";
 
 const issueLabels: Record<DataIssueKind, string> = {
@@ -29,8 +29,13 @@ export function DataQualityPanel({
         </div>
       ) : (
         <div className="data-quality-list" role="list" aria-label="数据质量问题">
-          {issues.map((issue, index) => (
-            <div className={`data-quality-row data-quality-row--${issue.severity}`} key={`${issue.studentId}-${issue.kind}-${index}`} role="listitem">
+          {issues.map((issue) => (
+            <div
+              className={`data-quality-row data-quality-row--${issue.severity}`}
+              key={resolveDataIssueId(issue)}
+              data-issue-id={resolveDataIssueId(issue)}
+              role="listitem"
+            >
               <div className="data-quality-row__content">
                 <strong>{issue.studentName}</strong>
                 <small>{issueLabels[issue.kind]} · {issue.detail}</small>

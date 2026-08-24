@@ -92,6 +92,7 @@ export function confirmImportCandidates(
       name: row.name,
       university: row.university,
       city: row.city,
+      province: row.province,
       locationScope: row.locationScope,
       raw: {
         name: row.name,

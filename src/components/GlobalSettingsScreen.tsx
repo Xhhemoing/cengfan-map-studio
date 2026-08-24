@@ -166,10 +166,13 @@ export function GlobalSettingsScreen({
   const active = allSections.find((section) => section.id === activeSection) ?? allSections[0]!;
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % allSections.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + allSections.length) % allSections.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = allSections.length - 1;
+    if (nextIndex === null) return;
     event.preventDefault();
-    const direction = event.key === "ArrowRight" ? 1 : -1;
-    const nextIndex = (index + direction + allSections.length) % allSections.length;
     const next = allSections[nextIndex];
     if (!next) return;
     setActiveSection(next.id);

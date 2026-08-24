@@ -22,6 +22,12 @@ export type DataIssueKind =
   | "duplicate";
 
 export interface DataIssue {
+  /**
+   * Stable `kind:studentId` identifier so the UI can key, locate and dedupe
+   * rows. Always populated by {@link listDataIssues}; use
+   * {@link resolveDataIssueId} when an issue comes from another source.
+   */
+  id?: string;
   studentId: string;
   studentName: string;
   kind: DataIssueKind;
@@ -29,12 +35,37 @@ export interface DataIssue {
   severity: "warning" | "info";
 }
 
+/** One student produces at most one issue per kind, so this pair is unique. */
+export function dataIssueId(kind: DataIssueKind, studentId: string): string {
+  return `${kind}:${studentId}`;
+}
+
+export function resolveDataIssueId(issue: DataIssue): string {
+  return issue.id ?? dataIssueId(issue.kind, issue.studentId);
+}
+
 function missingFields(student: Student): string[] {
   const fields: string[] = [];
-  if (!student.name.trim()) fields.push("姓名");
-  if (!student.university.trim()) fields.push("院校");
-  if (!student.city.trim()) fields.push("城市");
+  if (!(student.name ?? "").trim()) fields.push("姓名");
+  if (!(student.university ?? "").trim()) fields.push("院校");
+  if (!(student.city ?? "").trim()) fields.push("城市");
   return fields;
+}
+
+function createIssue(
+  student: Student,
+  kind: DataIssueKind,
+  detail: string,
+  severity: DataIssue["severity"],
+): DataIssue {
+  return {
+    id: dataIssueId(kind, student.id),
+    studentId: student.id,
+    studentName: (student.name ?? "").trim() || "未命名学生",
+    kind,
+    detail,
+    severity,
+  };
 }
 
 export function buildDataHealthSummary(project: ProjectDocument): DataHealthSummary {
@@ -81,58 +112,22 @@ export function listDataIssues(project: ProjectDocument): DataIssue[] {
   for (const student of project.students) {
     const fields = missingFields(student);
     if (fields.length > 0) {
-      missing.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "missing-field",
-        detail: `缺少${fields.join("、")}`,
-        severity: "warning",
-      });
+      missing.push(createIssue(student, "missing-field", `缺少${fields.join("、")}`, "warning"));
     }
     if (student.locationScope !== "international" && resolveStudentLocation(student).status === "unresolved") {
-      unresolved.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "unresolved-location",
-        detail: `无法定位城市：${student.city || "未填写"}`,
-        severity: "warning",
-      });
+      unresolved.push(createIssue(student, "unresolved-location", `无法定位城市：${(student.city ?? "").trim() || "未填写"}`, "warning"));
     }
     if (student.province?.trim()) {
-      manualProvince.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "manual-province",
-        detail: `使用省份覆盖：${student.province}`,
-        severity: "info",
-      });
+      manualProvince.push(createIssue(student, "manual-province", `使用省份覆盖：${student.province.trim()}`, "info"));
     }
     if (student.locationScope === "international") {
-      international.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "international",
-        detail: `海外去向：${student.city || "未填写"}`,
-        severity: "info",
-      });
+      international.push(createIssue(student, "international", `海外去向：${(student.city ?? "").trim() || "未填写"}`, "info"));
     }
     if (duplicateIds.has(student.id)) {
-      duplicate.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "duplicate",
-        detail: "姓名、院校、城市和去向类型与其他记录一致",
-        severity: "warning",
-      });
+      duplicate.push(createIssue(student, "duplicate", "姓名、院校、城市和去向类型与其他记录一致", "warning"));
     }
     if (student.visibility === false) {
-      hidden.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "hidden",
-        detail: "记录已隐藏，不会出现在海报中",
-        severity: "info",
-      });
+      hidden.push(createIssue(student, "hidden", "记录已隐藏，不会出现在海报中", "info"));
     }
   }
 

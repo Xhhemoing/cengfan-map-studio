@@ -56,6 +56,10 @@ export function StudioAssistantDrawer({
         <button
           ref={closeButtonRef}
           type="button"
+          // MUI's FocusTrap keeps focus on the drawer paper unless something
+          // inside is already focused when it activates; autoFocus runs during
+          // commit, so the close button reliably receives initial focus.
+          autoFocus
           className="studio-assistant-drawer__close"
           aria-label={`关闭${label}`}
           onClick={onClose}

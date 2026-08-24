@@ -1,6 +1,16 @@
-import { parseStudentText, type TextImportResult } from "./import-data";
+import {
+  candidateFromColumns,
+  detectHeaderColumns,
+  missingRequiredColumns,
+  parseStudentText,
+  STUDENT_HEADER_ALIASES,
+  type RequiredStudentColumn,
+  type StudentColumn,
+  type StudentColumnIndexes,
+  type TextImportResult,
+} from "./import-data";
 
-export type StudentColumn = "name" | "university" | "city" | "locationScope";
+export type { RequiredStudentColumn, StudentColumn } from "./import-data";
 
 export interface ExcelColumnMapping {
   field: StudentColumn;
@@ -13,7 +23,7 @@ export interface ExcelImportResult extends TextImportResult {
   headerRowIndex?: number;
   columnMappings: ExcelColumnMapping[];
   unmappedHeaders: string[];
-  missingRequiredFields: Array<Extract<StudentColumn, "name" | "university" | "city">>;
+  missingRequiredFields: RequiredStudentColumn[];
 }
 
 export interface ImportTemplateSheets {
@@ -33,52 +43,26 @@ export function createImportTemplateSheets(): ImportTemplateSheets {
       ["录取院校", "是", "北京大学"],
       ["城市", "是", "北京市"],
       ["去向类型", "否", "中国去向 / 海外去向"],
-      ["填写说明", "", "去向类型留空时按中国去向处理"],
+      ["省份", "否", "浙江省（留空时按城市自动匹配）"],
+      ["填写说明", "", "去向类型留空时按中国去向处理；海外去向无需填写省份"],
     ],
   };
 }
 
-const REQUIRED_COLUMNS = ["name", "university", "city"] as const;
+const HEADER_SEARCH_DEPTH = 8;
 
-const HEADER_ALIASES: Record<StudentColumn, readonly string[]> = {
-  name: ["姓名", "学生", "学生姓名", "名字", "name", "student", "student name", "full name"],
-  university: [
-    "院校",
-    "录取院校",
-    "录取学校",
-    "大学",
-    "学校",
-    "就读学校",
-    "就读院校",
-    "university",
-    "school",
-    "college",
-    "enrolled university",
-  ],
-  city: ["城市", "所在城市", "目的地城市", "city", "destination city", "location"],
-  locationScope: ["去向类型", "去向", "地区类型", "destination type", "location scope", "scope"],
-};
-
-function normalizeHeader(value: string): string {
-  return value
-    .trim()
-    .toLocaleLowerCase("zh-CN")
-    .replace(/\s|_|-|\(|\)|（|）/g, "");
+/** Trims BOM/whitespace so a CSV-sourced matrix behaves like an XLSX one. */
+function normalizeCell(value: unknown): string {
+  return String(value ?? "").replace(/\uFEFF/g, "").trim();
 }
 
-function findColumnIndexes(header: string[]): Partial<Record<StudentColumn, number>> {
-  const indexes: Partial<Record<StudentColumn, number>> = {};
-  for (const column of Object.keys(HEADER_ALIASES) as StudentColumn[]) {
-    const aliases = HEADER_ALIASES[column].map(normalizeHeader);
-    const index = header.findIndex((cell) => aliases.includes(normalizeHeader(cell)));
-    if (index >= 0) indexes[column] = index;
-  }
-  return indexes;
+function normalizeMatrix(rows: unknown[][]): string[][] {
+  return rows.map((row) => (Array.isArray(row) ? row : []).map(normalizeCell));
 }
 
 function matrixToText(rows: string[][]): string {
   return rows
-    .map((row) => row.map((cell) => String(cell ?? "").trim()).filter(Boolean).join("\t"))
+    .map((row) => row.filter(Boolean).join("\t"))
     .filter((line) => line.length > 0)
     .join("\n");
 }
@@ -91,18 +75,25 @@ function emptyMetadata(): Pick<ExcelImportResult, "columnMappings" | "unmappedHe
   };
 }
 
-function findHeaderRow(rows: string[][]): { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>> } | null {
-  const candidates = rows
-    .map((row, rowIndex) => ({
-      rowIndex,
-      headers: row.map((cell) => String(cell ?? "").trim()),
-    }))
-    .filter(({ headers }) => headers.some(Boolean))
-    .slice(0, 8);
+interface DetectedHeader {
+  rowIndex: number;
+  headers: string[];
+  indexes: StudentColumnIndexes;
+}
 
-  let best: { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>>; score: number } | null = null;
+/**
+ * Scans the first rows for the best header: the one mapping the most student
+ * columns. Leading title/notes rows are therefore skipped automatically.
+ */
+function findHeaderRow(rows: string[][]): DetectedHeader | null {
+  const candidates = rows
+    .map((headers, rowIndex) => ({ rowIndex, headers }))
+    .filter(({ headers }) => headers.some(Boolean))
+    .slice(0, HEADER_SEARCH_DEPTH);
+
+  let best: (DetectedHeader & { score: number }) | null = null;
   for (const candidate of candidates) {
-    const indexes = findColumnIndexes(candidate.headers);
+    const indexes = detectHeaderColumns(candidate.headers);
     const score = Object.keys(indexes).length;
     if (score < 2 || (best && score <= best.score)) continue;
     best = { ...candidate, indexes, score };
@@ -112,16 +103,16 @@ function findHeaderRow(rows: string[][]): { rowIndex: number; headers: string[];
 
 function createMetadata(
   rows: string[][],
-  header: { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>> },
+  header: DetectedHeader,
 ): Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {
   const mappedIndexes = new Set<number>();
-  const columnMappings = (Object.keys(HEADER_ALIASES) as StudentColumn[]).flatMap((field) => {
+  const columnMappings = (Object.keys(STUDENT_HEADER_ALIASES) as StudentColumn[]).flatMap((field) => {
     const columnIndex = header.indexes[field];
     if (columnIndex === undefined) return [];
     mappedIndexes.add(columnIndex);
     const samples = rows
       .slice(header.rowIndex + 1)
-      .map((row) => row[columnIndex]?.trim() ?? "")
+      .map((row) => row[columnIndex] ?? "")
       .filter(Boolean)
       .slice(0, 2);
     return [{
@@ -131,21 +122,12 @@ function createMetadata(
       samples,
     }];
   });
-  const unmappedHeaders = header.headers.filter((value, index) => value && !mappedIndexes.has(index));
-  const missingRequiredFields = REQUIRED_COLUMNS.filter((field) => header.indexes[field] === undefined);
   return {
     headerRowIndex: header.rowIndex,
     columnMappings,
-    unmappedHeaders,
-    missingRequiredFields: [...missingRequiredFields],
+    unmappedHeaders: header.headers.filter((value, index) => value && !mappedIndexes.has(index)),
+    missingRequiredFields: missingRequiredColumns(header.indexes),
   };
-}
-
-function parseLocationScope(value: string | undefined): "international" | undefined {
-  const normalized = value?.trim().toLocaleLowerCase("zh-CN") ?? "";
-  return normalized.includes("海外") || normalized.includes("international") || normalized.includes("overseas")
-    ? "international"
-    : undefined;
 }
 
 export function parseExcelArrayBuffer(input: ArrayBuffer | string[][]): ExcelImportResult {
@@ -155,7 +137,14 @@ export function parseExcelArrayBuffer(input: ArrayBuffer | string[][]): ExcelImp
   return { ...parseStudentText(""), ...emptyMetadata() };
 }
 
-export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
+export function parseExcelWorkbookRows(input: unknown[][]): ExcelImportResult {
+  const rows = normalizeMatrix(input ?? []);
+  // An empty sheet (or one holding only blank cells) is not an error: report
+  // nothing recognized instead of pretending a header was found.
+  if (!rows.some((row) => row.some(Boolean))) {
+    return { candidates: [], unparsed: [], ...emptyMetadata() };
+  }
+
   const header = findHeaderRow(rows);
   if (!header) return { ...parseStudentText(matrixToText(rows)), ...emptyMetadata() };
 
@@ -165,19 +154,9 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
   }
 
   const candidates = rows.slice(header.rowIndex + 1).flatMap((row, rowIndex) => {
-    const name = row[header.indexes.name!]?.trim() ?? "";
-    const university = row[header.indexes.university!]?.trim() ?? "";
-    const city = row[header.indexes.city!]?.trim() ?? "";
-    if (!name || !university || !city) return [];
-    const locationScope = parseLocationScope(row[header.indexes.locationScope!]);
-    return [{
-      name,
-      university,
-      city,
-      ...(locationScope ? { locationScope } : {}),
-      sourceLine: header.rowIndex + rowIndex + 2,
-      rawLine: row.map((cell) => cell.trim()).filter(Boolean).join("\t"),
-    }];
+    const rawLine = row.filter(Boolean).join("\t");
+    const candidate = candidateFromColumns(row, header.indexes, header.rowIndex + rowIndex + 2, rawLine);
+    return candidate ? [candidate] : [];
   });
 
   return {

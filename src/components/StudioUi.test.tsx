@@ -39,7 +39,10 @@ describe("StudioUi primitives", () => {
     expect(container.querySelector(".panel-heading small")?.textContent).toBe("2 自定义");
     expect(container.querySelector("[data-test-section='province']")?.getAttribute("aria-label")).toBe("省份外观");
     expect(Array.from(container.querySelectorAll(".workspace-nav button")).map((button) => button.textContent)).toEqual(["数据", "设计"]);
-    expect(container.querySelector('.workspace-nav button[aria-selected="true"]')?.textContent).toBe("数据");
+    expect(container.querySelector('.workspace-nav button[aria-current="page"]')?.textContent).toBe("数据");
+    // Only the active workspace carries aria-current; buttons must not use aria-selected.
+    expect(container.querySelectorAll('.workspace-nav button[aria-current="page"]')).toHaveLength(1);
+    expect(container.querySelector(".workspace-nav button[aria-selected]")).toBeNull();
     expect(container.querySelector('.segmented-nav button[aria-pressed="true"]')?.textContent).toBe("卡片");
     const action = container.querySelector<HTMLButtonElement>(".wide-button")!;
     flushSync(() => action.dispatchEvent(new MouseEvent("click", { bubbles: true })));

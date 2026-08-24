@@ -116,6 +116,51 @@ describe("student data", () => {
     });
   });
 
+  it("keys duplicate warnings on name and university, not on the name alone", () => {
+    const sameSchool = buildStudentRecords([
+      { name: "林舟", university: "北京大学", city: "北京市" },
+      { name: "林舟", university: "北京大学", city: "北京市" },
+    ]);
+    const differentSchools = buildStudentRecords([
+      { name: "林舟", university: "北京大学", city: "北京市" },
+      { name: "林舟", university: "浙江大学", city: "杭州市" },
+    ]);
+
+    expect(sameSchool.issues.filter((issue) => issue.code === "duplicate_name")).toEqual([
+      expect.objectContaining({ level: "warning", message: "存在重复学生记录：林舟 · 北京大学" }),
+    ]);
+    expect(differentSchools.issues.some((issue) => issue.code === "duplicate_name")).toBe(false);
+  });
+
+  it("keeps a manual province and treats the record as located", () => {
+    const result = buildStudentRecords([
+      { name: "林舟", university: "火星学院", city: "火星城", province: "火星省" },
+    ]);
+
+    expect(result.students[0]).toMatchObject({ city: "火星城", province: "火星省" });
+    expect(result.issues.some((issue) => issue.code === "unresolved_city")).toBe(false);
+  });
+
+  it("does not require or keep a Chinese province for an overseas destination", () => {
+    const result = buildStudentRecords([
+      { name: "周晴", university: "哈佛大学", city: "美国·波士顿", province: "马萨诸塞州", locationScope: "international" },
+    ]);
+
+    expect(result.students[0]).toMatchObject({ city: "美国·波士顿", locationScope: "international" });
+    expect(result.students[0]).not.toHaveProperty("province");
+    expect(result.issues).toEqual([]);
+  });
+
+  it("still reports an unresolved China city when no province override is given", () => {
+    const result = buildStudentRecords([
+      { name: "林舟", university: "火星学院", city: "火星城" },
+    ]);
+
+    expect(result.issues).toEqual([
+      expect.objectContaining({ code: "unresolved_city", studentIndex: 0 }),
+    ]);
+  });
+
   it("trims confirmed fields without persisting source-only input", () => {
     const result = buildStudentRecords([
       {

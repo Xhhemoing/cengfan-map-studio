@@ -528,6 +528,74 @@ describe("DataWorkspace", () => {
     expect(onUpdateStudent).toHaveBeenCalledWith("student-1", expect.objectContaining({ locationScope: undefined }));
   });
 
+  it("reveals the province field again when an overseas record is switched back to China", () => {
+    const container = render(
+      <DataWorkspace
+        students={[{ ...students[0]!, locationScope: "international", city: "美国·波士顿" }]}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    expect(container.querySelector('input[aria-label="编辑省份"]')).toBeNull();
+
+    const locationScope = container.querySelector<HTMLSelectElement>('select[aria-label="编辑学生去向类型"]')!;
+    flushSync(() => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(locationScope, "china");
+      locationScope.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(container.querySelector('input[aria-label="编辑省份"]')).not.toBeNull();
+  });
+
+  it("refuses to save an edited record whose name is only whitespace", () => {
+    const onUpdateStudent = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={onUpdateStudent}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, "   ");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+
+    expect(onUpdateStudent).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("学生姓名、就读院校和城市不能为空");
+  });
+
+  it("rejects a draft that only has a city and explains which field is missing", () => {
+    const onAppendStudents = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(getInput(container, "城市"), "杭州市");
+    click(container.querySelector<HTMLButtonElement>(".draft-form .wide-button")!);
+
+    expect(onAppendStudents).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("学生名称不能为空");
+  });
+
   it("keeps pasted OCR text parsing available without advertising image OCR", () => {
     const container = render(
       <DataWorkspace
@@ -543,6 +611,113 @@ describe("DataWorkspace", () => {
 
     expect(container.textContent).toContain("识别 OCR 文本");
     expect(container.textContent).not.toContain("选择名单图片");
+  });
+
+  it("says in plain words that OCR only reads pasted text, never an image", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    const note = container.querySelector("[data-import-ocr-note]");
+    expect(note?.textContent).toContain("只解析文本，不读取图片");
+    expect(note?.textContent).toContain("先用 OCR 工具转成文字");
+    expect(container.querySelector('button[aria-label="识别粘贴的 OCR 文本"]')).not.toBeNull();
+  });
+
+  it("offers no image upload control at all, so nothing can silently do nothing", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    const fileInputs = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+    expect(fileInputs).toHaveLength(1);
+    expect(fileInputs[0]!.accept).toBe(".xlsx,.xls,.csv,text/csv");
+    expect(fileInputs[0]!.accept).not.toContain("image");
+    expect(container.textContent).not.toContain("图片识别");
+    expect(container.textContent).not.toContain("上传图片");
+  });
+
+  it("parses pasted OCR text locally into reviewable candidates", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "1. 苏禾 | 浙江大学 | 杭州\n2. 陈宁 | 清华大学 | 北京");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="识别粘贴的 OCR 文本"]')!);
+
+    expect(container.textContent).toContain("从OCR 文本识别到 2 条候选");
+    expect(container.querySelector(".import-review")?.textContent).toContain("苏禾");
+  });
+
+  it("imports an aliased header roster including its province column", () => {
+    const onAppendStudents = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "城市,名字,学校,省\n火星城,苏禾,火星学院,火星省");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "识别文本")!);
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    expect(onAppendStudents).toHaveBeenCalledWith([
+      expect.objectContaining({ name: "苏禾", university: "火星学院", city: "火星城", province: "火星省" }),
+    ]);
+  });
+
+  it("imports an overseas row without demanding a Chinese province", () => {
+    const onAppendStudents = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={[]}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "姓名,院校,城市,去向类型\n周晴,哈佛大学,美国·波士顿,海外");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "识别文本")!);
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    const [appended] = onAppendStudents.mock.calls[0]! as [Array<Record<string, unknown>>];
+    expect(appended[0]).toMatchObject({ name: "周晴", city: "美国·波士顿", locationScope: "international" });
+    expect(appended[0]).not.toHaveProperty("province");
+    expect(container.textContent).not.toContain("未匹配城市");
   });
 
   it("appends accepted candidates without replacing the existing records", async () => {

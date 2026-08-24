@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Loader2, Upload } from "lucide-react";
 import { fileMatchesAccept } from "../lib/file-accept";
 
@@ -133,6 +133,15 @@ export function FileDropzone({
     ? <Loader2 size={16} className="spin" aria-hidden />
     : (icon ?? <Upload size={16} aria-hidden />);
 
+  // The native input is visually hidden, so the label itself carries focus and
+  // keyboard activation; pointer users still get the label's implicit click.
+  const onKeyDown = (event: KeyboardEvent<HTMLLabelElement>) => {
+    if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+    event.preventDefault();
+    if (inactive) return;
+    inputRef.current?.click();
+  };
+
   return (
     <div className="file-dropzone-wrap">
       <label
@@ -140,7 +149,12 @@ export function FileDropzone({
         htmlFor={inputId}
         className={classes}
         data-file-dropzone=""
+        role="button"
+        tabIndex={inactive ? -1 : 0}
+        aria-label={busy ? busyLabel : label}
         aria-disabled={inactive || undefined}
+        aria-describedby={error ? `${inputId}-error` : undefined}
+        onKeyDown={onKeyDown}
       >
         <span className="file-dropzone__icon">{displayIcon}</span>
         <span className="file-dropzone__body">
@@ -162,7 +176,7 @@ export function FileDropzone({
         />
       </label>
       {error ? (
-        <p className="file-dropzone__error" role="status">
+        <p className="file-dropzone__error" id={`${inputId}-error`} role="status">
           {error}
         </p>
       ) : null}

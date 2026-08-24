@@ -61,6 +61,18 @@ export function ResizablePanelDivider({
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Escape") {
+      const drag = dragRef.current;
+      if (!drag) return;
+      // Cancel an in-progress pointer drag and restore the starting width.
+      event.preventDefault();
+      event.currentTarget.releasePointerCapture?.(drag.pointerId);
+      dragRef.current = null;
+      setIsDragging(false);
+      onChange(clamp(drag.startValue, min, max));
+      onResizeEnd?.();
+      return;
+    }
     let nextValue: number | null = null;
     if (event.key === "Home") nextValue = min;
     if (event.key === "End") nextValue = max;
@@ -82,6 +94,7 @@ export function ResizablePanelDivider({
       aria-valuemin={min}
       aria-valuemax={max}
       aria-valuenow={value}
+      aria-valuetext={`${value} 像素`}
       onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

@@ -1,61 +1,25 @@
-import { Check, Download, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Eye, EyeOff, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
-  applyUniversityAutoLocation,
   confirmImportCandidates,
   createEmptyStudentDraft,
-  updateStudentDraft,
-  type ImportReviewRow,
   type StudentDraft,
 } from "../lib/data-workspace";
-import { parseStudentText } from "../lib/import-data";
-import {
-  createImportTemplateSheets,
-  parseExcelWorkbookRows,
-  parseOcrLikeText,
-  type ExcelImportResult,
-  type StudentColumn,
-} from "../lib/binary-import";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
-import { findDuplicateStudentGroups } from "../lib/data-duplicate";
-import { searchCities, searchProvinces, searchUniversities } from "../lib/search-catalog";
-import { SearchCombobox, type SearchComboboxOption } from "./SearchCombobox";
-import { FileDropzone } from "./FileDropzone";
-import { UniversityEmblem } from "./UniversityEmblem";
-import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, SegmentedControl } from "./StudioUi";
+import { ActionGroup, CompactButton, PanelHeader, SegmentedControl } from "./StudioUi";
+import { DataWorkspaceDraftForm } from "./data-workspace-draft-form";
+import { DataWorkspaceImportPanel } from "./data-workspace-import-panel";
+import { useRosterImport } from "./data-workspace-import-state";
+import { DataWorkspaceStudentTable } from "./data-workspace-student-table";
 
-function universityOptions(query: string): SearchComboboxOption[] {
-  return searchUniversities(query).map((university) => ({
-    value: university.name,
-    label: university.name,
-    detail: university.city,
-  }));
-}
-
-function cityOptions(query: string): SearchComboboxOption[] {
-  return searchCities(query).map((city) => ({
-    value: city.name,
-    label: city.name,
-    detail: city.province,
-  }));
-}
-
-function provinceOptions(query: string): SearchComboboxOption[] {
-  return searchProvinces(query).map((province) => ({
-    value: province,
-    label: province,
-  }));
-}
-
-const studentColumnLabels: Record<StudentColumn, string> = {
-  name: "学生姓名",
-  university: "录取院校",
-  city: "城市",
-  locationScope: "去向类型",
-};
-
+/**
+ * Composer of the student data workspace: owns roster editing state (draft,
+ * inline edits, filter) and lays out the draft form, the import panel and the
+ * roster table. Import ingest lives in `useRosterImport`, and the panels are
+ * presentational siblings in `data-workspace-*.tsx`.
+ */
 export function DataWorkspace({
   students,
   onReplaceStudents,
@@ -99,13 +63,18 @@ export function DataWorkspace({
   const [provinceEditingId, setProvinceEditingId] = useState<string | null>(null);
   const [provinceDraft, setProvinceDraft] = useState("");
   const [filter, setFilter] = useState("");
-  const [importText, setImportText] = useState("");
-  const [reviewRows, setReviewRows] = useState<ImportReviewRow[]>([]);
-  const [excelRecognition, setExcelRecognition] = useState<Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> | null>(null);
   const [message, setMessage] = useState("");
-  const [isAiParsing, setIsAiParsing] = useState(false);
-  const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
-  const [unparsedCount, setUnparsedCount] = useState(0);
+  const [showImport, setShowImport] = useState(!compactRosterControls);
+  const [showNewStudent, setShowNewStudent] = useState(!compactRosterControls);
+
+  const roster = useRosterImport({
+    students,
+    onAppendStudents,
+    onReplaceStudents,
+    requestAiParse,
+    confirmReplace,
+    onMessage: setMessage,
+  });
 
   const filteredStudents = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
@@ -125,56 +94,6 @@ export function DataWorkspace({
     () => filteredStudents.filter((student) => student.visibility !== false).length,
     [filteredStudents],
   );
-  const candidateSummary = useMemo(() => {
-    const duplicateIds = new Set(findDuplicateStudentGroups(reviewRows.map((row, index) => ({
-      id: `${row.sourceLine}-${index}`,
-      name: row.name,
-      university: row.university,
-      city: row.city,
-      locationScope: row.locationScope,
-    }))).flatMap((group) => group.studentIds));
-    const valid = reviewRows.filter((row) => row.name.trim() && row.university.trim() && row.city.trim());
-    return {
-      valid: valid.length,
-      missing: reviewRows.length - valid.length,
-      duplicate: reviewRows.filter((_, index) => duplicateIds.has(`${reviewRows[index]!.sourceLine}-${index}`)).length,
-    };
-  }, [reviewRows]);
-
-
-  const [showImport, setShowImport] = useState(!compactRosterControls);
-  const [showNewStudent, setShowNewStudent] = useState(!compactRosterControls);
-
-  const setCandidates = (
-    candidates: Array<{
-      name: string;
-      university: string;
-      city: string;
-      locationScope?: "china" | "international";
-      sourceLine: number;
-      rawLine: string;
-    }>,
-    unparsedCount: number,
-    sourceLabel: string,
-    recognition?: Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields">,
-  ) => {
-    setExcelRecognition(recognition?.headerRowIndex !== undefined ? recognition : null);
-    setUnparsedCount(unparsedCount);
-    if (candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入数据`);
-      setReviewRows([]);
-      return;
-    }
-    setReviewRows(
-      candidates.map((candidate) => ({
-        ...candidate,
-        accepted: true,
-      })),
-    );
-    setMessage(
-      `从${sourceLabel}识别到 ${candidates.length} 条候选${unparsedCount ? `，另有 ${unparsedCount} 行未识别` : ""}`,
-    );
-  };
 
   const addDraftStudent = () => {
     const result = confirmImportCandidates([
@@ -230,147 +149,28 @@ export function DataWorkspace({
     setMessage(`已更新 ${next.name}`);
   };
 
-  const prepareImport = () => {
-    const parsed = parseStudentText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "文本");
-  };
-
-  const downloadImportTemplate = async () => {
-    try {
-      const XLSX = await import("xlsx");
-      const template = createImportTemplateSheets();
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(template.data), "学生数据");
-      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(template.guide), "填写说明");
-      XLSX.writeFile(workbook, "蹭饭图-学生数据导入模板.xlsx");
-      setMessage("已下载学生数据导入模板");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "模板下载失败");
-    }
-  };
-
-  const prepareOcrImport = () => {
-    const parsed = parseOcrLikeText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "OCR 文本");
-  };
-
-  const prepareAiImport = async () => {
-    if (!importText.trim()) {
-      setMessage("请先粘贴需要智能识别的名单");
-      return;
-    }
-    setIsAiParsing(true);
-    try {
-      const parsed = await requestAiParse({ text: importText, source: "paste" });
-      setCandidates(parsed.candidates, parsed.unparsed.length, `智能识别（${parsed.provider}）`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "智能识别失败");
-    } finally {
-      setIsAiParsing(false);
-    }
-  };
-
-  const handleExcelFile = async (file: File | null) => {
-    if (!file) return;
-    setExcelRecognition(null);
-    try {
-      const XLSX = await import("xlsx");
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) {
-        setMessage("Excel 中没有工作表");
-        return;
-      }
-      const sheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, {
-        header: 1,
-        defval: "",
-      });
-      const matrix = rows.map((row) =>
-        (Array.isArray(row) ? row : []).map((cell) => String(cell ?? "").trim()),
-      );
-      const parsed = parseExcelWorkbookRows(matrix);
-      setCandidates(parsed.candidates, parsed.unparsed.length, `Excel（${file.name}）`, parsed);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Excel 解析失败");
-    }
-  };
-
-  const applyImport = (mode: "append" | "replace") => {
-    const result = confirmImportCandidates(reviewRows);
-    const next = result.students;
-    if (next.length === 0) {
-      setMessage(`没有可导入的有效记录，${result.issues.length} 条校验问题`);
-      return;
-    }
-    if (mode === "replace") {
-      const confirmation = { currentCount: students.length, nextCount: next.length };
-      setReplaceConfirmation(confirmation);
-      if (!confirmReplace(confirmation)) return;
-    } else onAppendStudents(next);
-    if (mode === "replace") onReplaceStudents(next);
-    setReviewRows([]);
-    setExcelRecognition(null);
-    setUnparsedCount(0);
-    setImportText("");
-    setMessage(`已${mode === "replace" ? "替换" : "追加"} ${next.length} 条学生数据`);
-  };
-
-  const importDirectly = async () => {
-    if (!importText.trim()) {
-      setMessage("请先粘贴名单");
-      return;
-    }
-    setExcelRecognition(null);
-    setIsAiParsing(true);
-    let parsed;
-    let sourceLabel: string;
-    try {
-      const aiParsed = await requestAiParse({ text: importText, source: "paste" });
-      parsed = { candidates: aiParsed.candidates, unparsed: aiParsed.unparsed };
-      sourceLabel = `智能识别（${aiParsed.provider}）`;
-    } catch {
-      parsed = parseStudentText(importText);
-      sourceLabel = "本地文本识别";
-    } finally {
-      setIsAiParsing(false);
-    }
-    if (parsed.candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入的学生记录`);
-      return;
-    }
-    const result = confirmImportCandidates(parsed.candidates.map((c) => ({ ...c, accepted: true })));
-    if (result.students.length === 0) {
-      setMessage("识别结果无法转换为有效记录");
-      return;
-    }
-    onAppendStudents(result.students);
-    setReviewRows([]);
-    setImportText("");
-    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录`);
-  };
-
   return (
     <div className={`data-workspace${compactRosterControls ? " data-workspace--roster" : ""}`}>
       <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />
 
-      {!hideDataExpression && <section className="data-expression" aria-labelledby="data-expression-title">
-        <PanelHeader id="data-expression-title" title="地图呈现方式" meta="同一份名单，实时切换" />
-        <SegmentedControl
-          label="地图呈现方式"
-          activeId={dataView}
-          items={[
-            { id: "pins", label: "图钉", ariaLabel: "切换为地图图钉" },
-            { id: "province", label: "省份", ariaLabel: "切换为省份汇总" },
-            { id: "city", label: "城市", ariaLabel: "切换为城市汇总" },
-            { id: "university", label: "学校", ariaLabel: "切换为学校汇总" },
-            { id: "heat", label: "热力", ariaLabel: "切换为人数热力" },
-          ]}
-          onChange={onChangeDataView}
-          className="data-expression__control"
-        />
-      </section>}
+      {!hideDataExpression && (
+        <section className="data-expression" aria-labelledby="data-expression-title">
+          <PanelHeader id="data-expression-title" title="地图呈现方式" meta="同一份名单，实时切换" />
+          <SegmentedControl
+            label="地图呈现方式"
+            activeId={dataView}
+            items={[
+              { id: "pins", label: "图钉", ariaLabel: "切换为地图图钉" },
+              { id: "province", label: "省份", ariaLabel: "切换为省份汇总" },
+              { id: "city", label: "城市", ariaLabel: "切换为城市汇总" },
+              { id: "university", label: "学校", ariaLabel: "切换为学校汇总" },
+              { id: "heat", label: "热力", ariaLabel: "切换为人数热力" },
+            ]}
+            onChange={onChangeDataView}
+            className="data-expression__control"
+          />
+        </section>
+      )}
 
       <div className="data-summary">
         <div>
@@ -393,188 +193,41 @@ export function DataWorkspace({
         )}
       </div>
 
-      <section className="data-workspace__new-student">
-        {compactRosterControls && (
-          <button
-            type="button"
-            className="data-workspace__section-toggle"
-            aria-label={showNewStudent ? "收起新增学生" : "展开新增学生"}
-            aria-expanded={showNewStudent}
-            onClick={() => setShowNewStudent((current) => !current)}
-          >
-            <Plus size={15} aria-hidden />
-            <span>新增学生</span>
-          </button>
-        )}
-        {showNewStudent && <div className="draft-form">
-          <label>
-            去向类型
-            <select aria-label="新增学生去向类型" value={draft.locationScope ?? "china"} onChange={(event) => setDraft(updateStudentDraft(draft, "locationScope", event.target.value))}>
-              <option value="china">中国去向</option>
-              <option value="international">海外去向</option>
-            </select>
-          </label>
-          <label>
-            学生名称
-            <input
-              value={draft.name}
-              onChange={(event) => setDraft(updateStudentDraft(draft, "name", event.target.value))}
-              placeholder="林舟"
-            />
-          </label>
-          <label>
-            就读院校
-            <SearchCombobox
-              label="就读院校"
-              value={draft.university}
-              onChange={(value) => setDraft(applyUniversityAutoLocation(draft, value))}
-              placeholder="北京大学"
-              searchOptions={universityOptions}
-            />
-          </label>
-          <label>
-            {draft.locationScope === "international" ? "国家/地区与城市" : "城市"}
-            <SearchCombobox
-              label="城市"
-              value={draft.city}
-              allowFreeInput
-              onChange={(value) => setDraft(updateStudentDraft(draft, "city", value))}
-              placeholder={draft.locationScope === "international" ? "美国·波士顿" : "北京"}
-              searchOptions={draft.locationScope === "international" ? () => [] : cityOptions}
-            />
-          </label>
-          {draft.locationScope !== "international" && (
-            <label>
-              省份
-              <SearchCombobox
-                label="新增省份"
-                value={draft.province ?? ""}
-                allowFreeInput
-                onChange={(value) => setDraft(updateStudentDraft(draft, "province", value))}
-                placeholder="浙江省"
-                searchOptions={provinceOptions}
-              />
-            </label>
-          )}
-          <ActionButton onClick={addDraftStudent}>
-            <Plus size={16} /> 新增学生
-          </ActionButton>
-        </div>}
-      </section>
+      <DataWorkspaceDraftForm
+        draft={draft}
+        onChangeDraft={setDraft}
+        onAddStudent={addDraftStudent}
+        collapsible={compactRosterControls}
+        expanded={showNewStudent}
+        onToggleExpanded={() => setShowNewStudent((current) => !current)}
+      />
 
-      <div className="import-box">
-        <button
-          type="button"
-          className="wide-button secondary import-toggle"
-          aria-label={showImport ? "收起导入名单" : "展开导入名单"}
-          aria-expanded={showImport}
-          onClick={() => setShowImport((current) => !current)}
-        >
-          {showImport ? "收起导入" : "展开导入 / OCR / Excel"}
-        </button>
-        {showImport && (
-          <>
-            <PanelHeader title="导入文本" meta="可粘贴 OCR 识别文字；学生姓名 · 就读院校 · 城市 · 去向类型（可选：海外）" />
-            <textarea
-              value={importText}
-              onChange={(event) => setImportText(event.target.value)}
-              placeholder={"林舟 北京大学 北京\n周晴，哈佛大学，美国·波士顿，海外"}
-              rows={5}
-            />
-            <ActionGroup label="导入处理" className="review-actions">
-              <CompactButton icon={<FileUp size={14} aria-hidden />} onClick={prepareImport}>识别文本</CompactButton>
-              <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing}>
-                {isAiParsing ? "智能识别中..." : "智能识别名单"}
-              </CompactButton>
-              <CompactButton variant="secondary" onClick={prepareOcrImport}>识别 OCR 文本</CompactButton>
-              <ActionButton onClick={importDirectly} disabled={isAiParsing}>
-                {isAiParsing ? "识别并导入中..." : "一键识别并导入"}
-              </ActionButton>
-            </ActionGroup>
-            <div className="file-import-row">
-              <FileDropzone
-                id="data-excel-upload"
-                label="导入 Excel"
-                hint="XLSX / CSV · 点击或拖拽"
-                accept=".xlsx,.xls,.csv"
-                variant="secondary"
-                icon={<FileUp size={16} aria-hidden />}
-                onFile={(file) => { void handleExcelFile(file); }}
-              />
-              {!hideTemplateDownload && <CompactButton
-                variant="secondary"
-                aria-label="下载学生数据 XLSX 模板"
-                icon={<Download size={16} aria-hidden />}
-                onClick={() => { void downloadImportTemplate(); }}
-              >
-                下载 XLSX 模板
-              </CompactButton>}
-            </div>
-          </>
-        )}
-      </div>
+      <DataWorkspaceImportPanel
+        importText={roster.importText}
+        onChangeImportText={roster.setImportText}
+        expanded={showImport}
+        onToggleExpanded={() => setShowImport((current) => !current)}
+        isAiParsing={roster.isAiParsing}
+        onParseText={roster.parseText}
+        onParseOcrText={roster.parseOcrText}
+        onParseWithAi={() => { void roster.parseWithAi(); }}
+        onImportDirectly={() => { void roster.importDirectly(); }}
+        onSelectWorkbook={(file) => { void roster.selectWorkbook(file); }}
+        onDownloadTemplate={() => { void roster.downloadTemplate(); }}
+        hideTemplateDownload={hideTemplateDownload}
+        excelRecognition={roster.excelRecognition}
+        reviewRows={roster.reviewRows}
+        onToggleReviewRow={roster.toggleReviewRow}
+        candidateSummary={roster.candidateSummary}
+        unparsedCount={roster.unparsedCount}
+        onApplyImport={roster.applyImport}
+      />
 
-      {excelRecognition?.headerRowIndex !== undefined && (
-        <section className="import-recognition" aria-label="Excel 表头识别结果">
-          <PanelHeader title="表头识别" meta={`第 ${excelRecognition.headerRowIndex + 1} 行`} />
-          <div className="import-recognition__grid">
-            {excelRecognition.columnMappings.map((mapping) => (
-              <div key={mapping.field} className="import-recognition__row">
-                <span>{mapping.sourceHeader}</span>
-                <strong>{studentColumnLabels[mapping.field]}</strong>
-                <small>{mapping.samples.length > 0 ? mapping.samples.join("、") : "暂无代表数据"}</small>
-              </div>
-            ))}
-          </div>
-          {excelRecognition.unmappedHeaders.length > 0 && (
-            <p className="import-recognition__note">未使用：{excelRecognition.unmappedHeaders.join("、")}</p>
-          )}
-          {excelRecognition.missingRequiredFields.length > 0 && (
-            <p className="import-recognition__warning">缺少必填列：{excelRecognition.missingRequiredFields.map((field) => studentColumnLabels[field]).join("、")}</p>
-          )}
-        </section>
+      {roster.replaceConfirmation && (
+        <p className="panel-note data-message">
+          替换摘要：当前 {roster.replaceConfirmation.currentCount} 条，新 {roster.replaceConfirmation.nextCount} 条
+        </p>
       )}
-
-      {reviewRows.length > 0 && (
-        <div className="import-review">
-          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedCount} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}`} />
-          <div className="review-list">
-            {reviewRows.map((row, index) => (
-              <label key={`${row.sourceLine}-${index}`} className="review-row">
-                <input
-                  type="checkbox"
-                  checked={row.accepted}
-                  onChange={(event) => {
-                    setReviewRows((current) =>
-                      current.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? { ...item, accepted: event.target.checked }
-                          : item,
-                      ),
-                    );
-                  }}
-                />
-                <span>
-                  <strong>{row.name}</strong>
-                  <small>
-                    {row.university} · {row.city}
-                  </small>
-                </span>
-              </label>
-            ))}
-          </div>
-          <ActionGroup label="确认导入" className="review-actions">
-            <ActionButton onClick={() => applyImport("append")}>
-              追加导入
-            </ActionButton>
-            <CompactButton variant="secondary" onClick={() => applyImport("replace")}>
-              替换全部
-            </CompactButton>
-          </ActionGroup>
-        </div>
-      )}
-
-      {replaceConfirmation && <p className="panel-note data-message">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</p>}
       {message && <p className="panel-note data-message">{message}</p>}
 
       <div className="student-actions">
@@ -597,109 +250,40 @@ export function DataWorkspace({
         </ActionGroup>
       </div>
 
-      <div className="data-list data-table-wrap">
-        <table className="student-table" aria-label="学生数据表">
-          <thead>
-            <tr>
-              <th>学生</th>
-              <th>学校</th>
-              <th>城市</th>
-              <th>省份 / 去向</th>
-              <th aria-label="操作">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredStudents.map((student) => {
-              const isEditing = editingStudentId === student.id;
-              const isVisible = student.visibility !== false;
-              const location = resolveStudentLocation(student);
-              const selectRow = () => onSelectStudent(student.id);
-              return (
-                <tr
-                  key={student.id}
-                  data-student-row={student.id}
-                  data-editing={isEditing || undefined}
-                  className={`${isVisible ? "" : "is-hidden"} ${selectedStudentId === student.id ? "is-selected" : ""}`}
-                  onClick={selectRow}
-                  onDoubleClick={() => startEditing(student)}
-                >
-                  {isEditing ? (
-                    <>
-                      <td><input aria-label="编辑学生名称" value={editingDraft.name} placeholder="姓名" onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "name", event.target.value))} /></td>
-                      <td><input aria-label="编辑就读院校" value={editingDraft.university} placeholder="就读院校" onChange={(event) => setEditingDraft(applyUniversityAutoLocation(editingDraft, event.target.value))} /></td>
-                      <td><SearchCombobox label="编辑城市" value={editingDraft.city} allowFreeInput portal onChange={(value) => setEditingDraft(updateStudentDraft(editingDraft, "city", value))} searchOptions={cityOptions} /></td>
-                      <td>
-                        <select aria-label="编辑学生去向类型" value={editingDraft.locationScope ?? "china"} onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "locationScope", event.target.value))}>
-                          <option value="china">中国</option>
-                          <option value="international">海外</option>
-                        </select>
-                        {editingDraft.locationScope !== "international" && <SearchCombobox label="编辑省份" value={editingDraft.province ?? ""} allowFreeInput portal onChange={(value) => setEditingDraft(updateStudentDraft(editingDraft, "province", value))} searchOptions={provinceOptions} />}
-                      </td>
-                      <td><div className="student-row__buttons">
-                        <IconButton label={`保存 ${student.name}`} icon={<Check size={14} />} onClick={(event) => { event.stopPropagation(); saveEditing(student); }} />
-                        <IconButton label={`取消编辑 ${student.name}`} icon={<X size={14} />} variant="ghost" onClick={(event) => { event.stopPropagation(); setEditingStudentId(null); }} />
-                      </div></td>
-                    </>
-                  ) : (
-                    <>
-                      <td><span className="student-name-cell"><UniversityEmblem university={student.university} size={22} alt={`${student.university || "未知学校"}校徽`} /><span className="student-name-text">{student.name}</span></span></td>
-                      <td>{student.university}</td>
-                      <td>{student.city}</td>
-                      <td className={student.locationScope === "international" ? "" : location.status === "unresolved" ? "is-unresolved" : ""}>
-                        {student.locationScope === "international" ? "海外" : provinceEditingId === student.id ? (
-                          <div className="student-province-editor">
-                            <SearchCombobox
-                              label={`编辑 ${student.name} 的省份`}
-                              value={provinceDraft}
-                              allowFreeInput
-                              portal
-                              onChange={setProvinceDraft}
-                              searchOptions={provinceOptions}
-                            />
-                            <IconButton label={`保存 ${student.name} 省份`} icon={<Check size={14} />} onClick={(event) => {
-                              event.stopPropagation();
-                              onUpdateStudent(student.id, { province: provinceDraft.trim() || undefined });
-                              setProvinceEditingId(null);
-                              setProvinceDraft("");
-                            }} />
-                            <IconButton label={`取消编辑 ${student.name} 省份`} icon={<X size={14} />} variant="ghost" onClick={(event) => {
-                              event.stopPropagation();
-                              setProvinceEditingId(null);
-                              setProvinceDraft("");
-                            }} />
-                          </div>
-                        ) : (
-                          <span className="student-province-value">
-                            {student.province || location.province || "未匹配"}
-                            <button
-                              type="button"
-                              className="student-province-edit"
-                              aria-label={`修改 ${student.name} 省份`}
-                              title="修改省份（支持自定义省份名）"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setProvinceDraft(student.province ?? "");
-                                setProvinceEditingId(student.id);
-                              }}
-                            >
-                              <Pencil size={11} aria-hidden />
-                            </button>
-                          </span>
-                        )}
-                      </td>
-                      <td><div className="student-row__buttons">
-                        <IconButton label={`编辑 ${student.name}`} icon={<Pencil size={14} />} onClick={(event) => { event.stopPropagation(); startEditing(student); }} />
-                        <IconButton label={`${isVisible ? "隐藏" : "显示"} ${student.name}`} icon={isVisible ? <EyeOff size={14} /> : <Eye size={14} />} onClick={(event) => { event.stopPropagation(); onToggleVisibility(student.id); }} />
-                        <IconButton label={`删除 ${student.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={(event) => { event.stopPropagation(); if (confirmDelete(student)) onDeleteStudent(student.id); }} />
-                      </div></td>
-                    </>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <DataWorkspaceStudentTable
+        students={filteredStudents}
+        selectedStudentId={selectedStudentId}
+        onSelectStudent={onSelectStudent}
+        onToggleVisibility={onToggleVisibility}
+        onDeleteStudent={onDeleteStudent}
+        confirmDelete={confirmDelete}
+        editing={{
+          studentId: editingStudentId,
+          draft: editingDraft,
+          onChangeDraft: setEditingDraft,
+          onStart: startEditing,
+          onSave: saveEditing,
+          onCancel: () => setEditingStudentId(null),
+        }}
+        provinceEditing={{
+          studentId: provinceEditingId,
+          draft: provinceDraft,
+          onChangeDraft: setProvinceDraft,
+          onStart: (student) => {
+            setProvinceDraft(student.province ?? "");
+            setProvinceEditingId(student.id);
+          },
+          onSave: (student) => {
+            onUpdateStudent(student.id, { province: provinceDraft.trim() || undefined });
+            setProvinceEditingId(null);
+            setProvinceDraft("");
+          },
+          onCancel: () => {
+            setProvinceEditingId(null);
+            setProvinceDraft("");
+          },
+        }}
+      />
     </div>
   );
 }
