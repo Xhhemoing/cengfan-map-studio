@@ -196,6 +196,55 @@ describe("ProjectMenu collaboration state", () => {
 
       expect(container.querySelector("[data-collaboration-persist]")).toBeNull();
     });
+
+    /**
+     * 被裁剪的房间会挺过服务端重启:快照与版本都还在,丢的只是最近的增量历史。对这样一间房
+     * 说"重启后将无法恢复"是假话,而裁剪如今才是常见的降级形态——房里的人会因为一句假话
+     * 做出多余的决定(解散房间重建),或者反过来不再相信这条提示。
+     */
+    describe("trimmed rooms", () => {
+      const TRIM_COPY = "该房间体量超过服务器持久化上限，重启后房间会恢复，但最近的增量历史会丢失，长时间离线的成员需要重新加载完整快照，建议导出备份";
+
+      it("tells a trimmed room it survives the restart without its recent history", () => {
+        const container = renderMenu({ roomPersistenceDegraded: true, roomPersistenceKind: "trimmed" });
+
+        const notice = container.querySelector('[data-collaboration-persist="degraded"]');
+        expect(notice?.textContent).toContain(TRIM_COPY);
+        expect(notice?.getAttribute("data-collaboration-persist-kind")).toBe("trimmed");
+        // 裁剪不是死亡:那句"服务器重启后将无法恢复"一个字都不能出现。
+        expect(notice?.textContent).not.toContain("服务器重启后将无法恢复");
+        expect(notice?.getAttribute("role")).toBe("status");
+        expect(notice?.querySelector("button")).toBeNull();
+      });
+
+      it("keeps the death copy for a skipped room and for a boolean-only server", () => {
+        const skipped = renderMenu({ roomPersistenceDegraded: true, roomPersistenceKind: "skipped" });
+        expect(skipped.querySelector("[data-collaboration-persist]")?.textContent).toContain(PERSIST_COPY);
+        expect(skipped.querySelector("[data-collaboration-persist]")?.getAttribute("data-collaboration-persist-kind")).toBe("skipped");
+
+        // 只认布尔的服务端没说是哪一种降级:沿用原来的说法,不替它把死亡降级成裁剪。
+        const booleanOnly = renderMenu({ roomPersistenceDegraded: true });
+        expect(booleanOnly.querySelector("[data-collaboration-persist]")?.textContent).toContain(PERSIST_COPY);
+        expect(booleanOnly.querySelector("[data-collaboration-persist]")?.getAttribute("data-collaboration-persist-kind")).toBeNull();
+      });
+
+      it("says nothing for a room the server reports as persisted", () => {
+        const container = renderMenu({ roomPersistenceDegraded: false, roomPersistenceKind: "persisted" });
+
+        expect(container.querySelector("[data-collaboration-persist]")).toBeNull();
+      });
+
+      it("still yields to the terminal and offline notices", () => {
+        const closed = renderMenu({ roomPersistenceDegraded: true, roomPersistenceKind: "trimmed", roomClosed: true });
+        expect(closed.querySelector("[data-collaboration-persist]")).toBeNull();
+
+        const expired = renderMenu({ roomPersistenceDegraded: true, roomPersistenceKind: "trimmed", roomExpired: true });
+        expect(expired.querySelector("[data-collaboration-persist]")).toBeNull();
+
+        const offline = renderMenu({ roomPersistenceDegraded: true, roomPersistenceKind: "trimmed", collaborationOffline: true });
+        expect(offline.querySelector("[data-collaboration-persist]")).toBeNull();
+      });
+    });
   });
 
   it("reports both processes on the join form when there is no room yet", () => {

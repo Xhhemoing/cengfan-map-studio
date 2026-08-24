@@ -77,6 +77,52 @@ describe("collaboration client", () => {
     await expect(fetchRoom("abc123", "member-token", request)).resolves.not.toHaveProperty("persistedAtLastFlush");
   });
 
+  it("carries the additive persistence outcome out of create, join and snapshot responses", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "owner-token" }, persistedAtLastFlush: false, persistence: { outcome: "trimmed", at: 1_764_000_000_000 } }, 201))
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "member-token" }, persistedAtLastFlush: false, persistence: { outcome: "skipped", at: null } }, 200))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistedAtLastFlush: true, persistence: { outcome: "persisted", at: 1_764_000_000_001 } }));
+
+    const created = await createRoom({ clientId: "c1", displayName: "创建者", request });
+    const joined = await joinRoom({ roomId: "abc123", inviteToken: "invite", clientId: "c2", displayName: "成员", request });
+    const room = await fetchRoom("abc123", "member-token", request);
+
+    // 布尔位对裁剪和跳过一视同仁,两者后果不同(裁剪的房间重启后还在,只是历史没了),
+    // 区别只能从同级的 outcome 上读出来。
+    expect(created.persistence).toEqual({ outcome: "trimmed", at: 1_764_000_000_000 });
+    expect(created.persistedAtLastFlush).toBe(false);
+    expect(joined.persistence).toEqual({ outcome: "skipped", at: null });
+    expect(joined.persistedAtLastFlush).toBe(false);
+    expect(room.persistence).toEqual({ outcome: "persisted", at: 1_764_000_000_001 });
+  });
+
+  it("only trusts the three known outcomes for the persistence object", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "owner-token" }, persistence: { outcome: "TRIMMED", at: 1 } }, 201))
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "member-token" }, persistence: { outcome: "purged", at: 1 } }, 200))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistence: "trimmed" }))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistence: { at: 1 } }))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistence: null }));
+
+    // 布尔位那把尺子同样量这里:只有三个已知字面量算数。网关塞进来的大小写变体、服务端将来
+    // 新增的第四种处置、被压成字符串的对象,一旦被当成"有说法",面板就会凭响应形状挑文案。
+    await expect(createRoom({ clientId: "c1", displayName: "创建者", request })).resolves.not.toHaveProperty("persistence");
+    await expect(joinRoom({ roomId: "abc123", inviteToken: "invite", clientId: "c2", displayName: "成员", request })).resolves.not.toHaveProperty("persistence");
+    await expect(fetchRoom("abc123", "member-token", request)).resolves.not.toHaveProperty("persistence");
+    await expect(fetchRoom("abc123", "member-token", request)).resolves.not.toHaveProperty("persistence");
+    await expect(fetchRoom("abc123", "member-token", request)).resolves.not.toHaveProperty("persistence");
+  });
+
+  it("keeps a known outcome when the flush timestamp is unusable", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistence: { outcome: "trimmed", at: "1764000000000" } }))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistence: { outcome: "trimmed" } }));
+
+    // `at` 只是提示落盘时刻的装饰位,读不出数字就当"不知道";结论本身不该跟着一起丢。
+    await expect(fetchRoom("abc123", "member-token", request)).resolves.toMatchObject({ persistence: { outcome: "trimmed", at: null } });
+    await expect(fetchRoom("abc123", "member-token", request)).resolves.toMatchObject({ persistence: { outcome: "trimmed", at: null } });
+  });
+
   it("creates an initializing room without serializing an initial snapshot", async () => {
     const request = vi.fn(() => ok({ room: { id: "FAST01", version: 0, ready: false }, access: { accessToken: "owner-token" } }, 201));
 
