@@ -50,7 +50,8 @@
 | 27 | 已完成 | 混编 ×5 | 协作版本 UI、对话持久化裁剪、嘉宾头像失败反馈、分区复查 |
 | 28 | 已完成 | opus ×5 | 上游失败假 finish、未就绪房间拒增量、校徽内联导出、CSV GBK、嘉宾键盘 |
 | 29 | 已完成 | 混编 ×5 | 无效凭证不续命、资源包字体 remap、分区复查 |
-| 30 | 进行中 | opus ×5 | 只读熔断回声、SSE 版本跳变、导出剔除编辑态、文本拖拽预览、导入 warnings |
+| 30 | 已完成 | opus ×5 | 只读熔断回声、SSE 版本跳变、导出剔除编辑态、文本拖拽预览、导入 warnings |
+| 31 | 进行中 | opus ×5 | 模板 scene 预算、项目库损坏可见、导出体积预警、复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -88,6 +89,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 30 轮只读熔断、SSE 连续、导出剔除、文本预览、warnings 已合入；启动第 31 轮。
 - 2026-08-24：第 29 轮 peek 不续命、资源包字体 remap 已合入；启动第 30 轮。
 - 2026-08-24：第 28 轮假 finish、未就绪拒增量、校徽内联、CSV GBK、嘉宾键盘已合入；启动第 29 轮。
 - 2026-08-24：第 27 轮 roomVersion、对话裁剪、嘉宾头像反馈已合入；启动第 28 轮。
@@ -462,6 +464,24 @@
 | 导出剔除编辑态 | `src/lib/export-poster.ts` 及测试。补 data-resize-handles 等选择器。 |
 | 文本拖拽预览 | `src/components/canvas/TextLayer.tsx` 及测试。照搬 DecorationLayer schedulePreview。 |
 | 导入 warnings | `ProjectWorkbench.tsx`、`usePosterExport.ts` 及测试。展示 pack.warnings，入库前剥掉该字段。不改 App.tsx。 |
+
+## 第 30 轮已合入
+
+- 只读熔断跳过末尾回声；assistant 轮次按任务段计。
+- SSE 增量要求版本连续，跳变走快照或补齐。
+- 导出剔除缩放手柄与省份编辑层。
+- 文本拖拽实时预览。
+- 工程包 warnings 展示且不入库。
+
+## 第 31 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 模板 scene 预算 | `src/lib/project-package.ts`、`src/lib/template-store.ts` 及测试。模板内嵌图走同一套剥离。 |
+| 项目库损坏可见 | `src/lib/project-store.ts`、`ProjectWorkbench.tsx` 及测试。解析失败保留降级条目，播种按原始记录数。 |
+| 导出体积预警 | `src/components/ExportProjectDialog.tsx`、`src/lib/resource-pack.ts` 及测试。导出前对照 24MB 上限提示。不要改 project-package.ts（归模板切片）。 |
+| 剩余复查 A | 只读。避开本轮落地文件。 |
+| 剩余复查 B | 只读。避开本轮落地文件。 |
 
 ## 第 2 轮已合入
 

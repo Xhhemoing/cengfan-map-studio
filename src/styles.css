@@ -3229,6 +3229,11 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   border-radius: 5px;
   font-size: 13px;
 }
+.workbench-error--notice {
+  color: var(--editor-ink);
+  background: color-mix(in srgb, var(--editor-accent, #245d57) 10%, var(--editor-surface-raised, #ffffff));
+  border-color: color-mix(in srgb, var(--editor-accent, #245d57) 35%, var(--editor-line, #d3dce2));
+}
 .workbench-loading { max-width: 1080px; margin: 0 auto; padding: 48px 16px; color: var(--editor-ink-muted); font-size: 14px; text-align: center; }
 .workbench-loading .brand { justify-content: center; }
 .workbench-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; max-width: 1080px; margin: 0 auto; }
