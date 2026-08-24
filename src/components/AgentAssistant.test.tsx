@@ -525,10 +525,12 @@ describe("AgentAssistant", () => {
     expect(container.querySelector('button[aria-label="确认应用"]')).toBeNull();
     // 已应用对话本身保持终态（无可再选步骤），但输入新需求后仍可「开始规划」
     // 开启下一个任务（I-14-02），不再永久禁用。
-    const runButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("开始规划") || button.textContent?.includes("继续对话"));
-    expect(runButton).toBeDefined();
-    expect(runButton?.textContent).toContain("开始规划");
-    expect(runButton?.disabled).toBe(false);
+    await vi.waitFor(() => {
+      const runButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("开始规划") || button.textContent?.includes("继续对话"));
+      expect(runButton).toBeDefined();
+      expect(runButton?.textContent).toContain("开始规划");
+      expect(runButton?.disabled).toBe(false);
+    });
     root.unmount();
   });
 

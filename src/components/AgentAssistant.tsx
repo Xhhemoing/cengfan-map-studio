@@ -291,6 +291,8 @@ export function AgentAssistant({
       const nextActiveId = nextConversations.some((conversation) => conversation.id === activeId) ? activeId : nextConversations[nextConversations.length - 1]?.id ?? null;
       setConversations(nextConversations);
       if (nextActiveId !== activeId) setActiveId(nextActiveId);
+      // 换到另一个项目（key 变化）时输入框草稿也不带过去：新项目是干净的新对话（I-14-01）。
+      if (conversations.some((conversation) => conversation.projectKey !== projectKey)) setMessage("");
       onPreview?.(null);
       const changedStorage = browserStorage();
       if (changedStorage) saveAssistantConversationState(changedStorage, project, { mode, activeId: nextActiveId, conversations: nextConversations.map(persistedConversation) }, projectKey);
@@ -321,7 +323,7 @@ export function AgentAssistant({
         persistTimerRef.current = null;
       }
     };
-  }, [activeId, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, projectKey, setActiveId, setConversations]);
+  }, [activeId, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, projectKey, setActiveId, setConversations, setMessage]);
 
   useEffect(() => () => {
     if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);

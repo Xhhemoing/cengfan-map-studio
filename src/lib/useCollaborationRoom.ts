@@ -113,6 +113,19 @@ export function loadCollaborationClientId(createClientId: () => string = () => c
 }
 
 /**
+ * 清除某房间的本机凭证与最近房间标记（I-14-03）：房间关闭或凭证失效后调用，
+ * 刷新时不再回填死房间。纯 localStorage 操作，声明在 hook 之外供各关房路径复用。
+ */
+function forgetRoomAccess(id: string): void {
+  try {
+    window.localStorage.removeItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`);
+    if (window.localStorage.getItem(ROOM_LAST_ACTIVE_KEY) === id) window.localStorage.removeItem(ROOM_LAST_ACTIVE_KEY);
+  } catch {
+    // Local project data is intentionally untouched when credentials cannot be cleared.
+  }
+}
+
+/**
  * 刷新回连回填（I-13-02）：返回本机仍保有凭证的最近房间码。优先取最近一次
  * 建房/加入时记下的房间；老数据没有该标记时退回扫描已存凭证。回填后用户
  * 点「加入」即可回连，不必凭记忆重输 12 位房间码。
@@ -277,15 +290,6 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       window.localStorage.setItem(ROOM_LAST_ACTIVE_KEY, id);
     } catch {
       // The active connection remains usable when browser storage is unavailable.
-    }
-  };
-
-  const forgetRoomAccess = (id: string) => {
-    try {
-      window.localStorage.removeItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`);
-      if (window.localStorage.getItem(ROOM_LAST_ACTIVE_KEY) === id) window.localStorage.removeItem(ROOM_LAST_ACTIVE_KEY);
-    } catch {
-      // Local project data is intentionally untouched when credentials cannot be cleared.
     }
   };
 
