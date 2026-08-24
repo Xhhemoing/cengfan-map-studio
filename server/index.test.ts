@@ -2451,28 +2451,32 @@ describe("unified application server", () => {
     const created = await createCollaborationRoom(origin, { title: "初始" });
     const token = created.access.accessToken;
 
+    // 没有连击时整个 lastFailureAt 键不出现：ack 的既有形状一个字都不变。
     const healthy = await postRoomTransaction(origin, "ACKROOM", token, {
       txId: "ack-healthy", clientId: "client-a", baseVersion: 0, snapshot: { title: "磁盘还好" },
     });
-    expect(healthy.persistence).toBeUndefined();
-    expect(healthy.persistedAtLastFlush).toBeUndefined();
+    expect(healthy.persistence).toEqual({ outcome: "persisted", at: succeededAt });
+    expect(healthy.persistedAtLastFlush).toBe(true);
 
     outcome = { ...outcome, lastFailure: { at: failedAt, message: "EROFS: read-only file system" } };
+    const streaking: RoomPersistenceField = { outcome: "persisted", at: succeededAt, lastFailureAt: failedAt };
 
-    // 创建/加入/快照都会报连击，唯独这条 ack 不报：SSE 对落盘一言不发，
-    // 而正在编辑的成员稳态下只会反复收到 ack，中途开始的失败连击永远追不上他。
+    // 正在编辑的成员稳态下只会反复收到 ack，SSE 对落盘一言不发，创建/加入/快照
+    // 那三个报落盘的响应他一次也不会再取：ack 不报，中途开始的失败连击就永远追不上他。
     const full = await postRoomTransaction(origin, "ACKROOM", token, {
       txId: "ack-full", clientId: "client-a", baseVersion: 1, snapshot: { title: "磁盘坏了" },
     });
-    expect(full.persistence).toBeUndefined();
-    expect(full.persistedAtLastFlush).toBeUndefined();
+    expect(full.persistence).toEqual(streaking);
+    // 布尔兼容位说的仍是上一次成功落盘的处置，不因失败连击翻面。
+    expect(full.persistedAtLastFlush).toBe(true);
 
     const minimal = await postRoomTransaction(origin, "ACKROOM", token, {
       txId: "ack-minimal", clientId: "client-a", baseVersion: 2, snapshot: { title: "还是坏的" },
     }, true);
+    // 最小 ack 省的是快照，不是事故。
     expect(minimal.snapshot).toBeUndefined();
-    expect(minimal.persistence).toBeUndefined();
-    expect(minimal.persistedAtLastFlush).toBeUndefined();
+    expect(minimal.persistence).toEqual(streaking);
+    expect(minimal.persistedAtLastFlush).toBe(true);
   });
 
   it("drops the failure trace from the transaction acknowledgement after the next successful flush", async () => {
@@ -2493,15 +2497,22 @@ describe("unified application server", () => {
     );
 
     await server.flushRooms!();
-    expect((await acknowledge("ack-after-success")).persistence).toBeUndefined();
+    expect((await acknowledge("ack-after-success")).persistence).toEqual({ outcome: "persisted", at: expect.any(Number) });
 
     failing = true;
     await expect(server.flushRooms!()).rejects.toThrow(/read-only file system/);
-    expect((await acknowledge("ack-during-streak")).persistence).toBeUndefined();
+    const degraded = await acknowledge("ack-during-streak");
+    expect(degraded.persistence).toEqual({
+      outcome: "persisted",
+      at: expect.any(Number),
+      lastFailureAt: expect.any(Number),
+    });
+    expect(degraded.persistence!.lastFailureAt!).toBeGreaterThanOrEqual(degraded.persistence!.at!);
 
     failing = false;
     await server.flushRooms!();
-    expect((await acknowledge("ack-after-heal")).persistence).toBeUndefined();
+    // 磁盘恢复后连击结束：ack 上再报失败，就是把一个已经不成立的事故一直贴给正在编辑的人。
+    expect((await acknowledge("ack-after-heal")).persistence).toEqual({ outcome: "persisted", at: expect.any(Number) });
   });
 
   it("reports no flush timestamp on /api/health before the first successful persist", async () => {
@@ -2526,7 +2537,8 @@ describe("unified application server", () => {
     expect(await readLastFlush()).toEqual({
       skippedIds: [],
       trimmedIds: [],
-      at: 0,
+      at: null,
+      // 失败连击原样透传：健康检查改写的只有那个假时刻。
       lastFailure: { at: expect.any(Number), message: "EROFS: read-only file system" },
     });
 
