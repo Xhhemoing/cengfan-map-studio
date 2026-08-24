@@ -87,8 +87,22 @@ type Listener = (room: CollaborationRoom) => void;
 export type LifecycleEvent = { kind: "members"; room: CollaborationRoom; members: RoomMember[] } | { kind: "access"; room: CollaborationRoom; members: RoomMember[] } | { kind: "closed"; room: CollaborationRoom; members: RoomMember[] };
 type LifecycleListener = (event: LifecycleEvent) => void;
 type InvitationRecord = { role: Exclude<CollaborationRole, "owner">; expiresAt: number };
+type OperationHistoryEntry = { version: number; operations: CollaborationOperation[] };
+export interface RoomStoreSnapshot {
+  version: 1;
+  rooms: Array<{
+    room: CollaborationRoom;
+    accessRecords: Array<{ tokenHash: string; participant: RoomParticipant }>;
+    invitations: Array<{ tokenHash: string; role: Exclude<CollaborationRole, "owner">; expiresAt: number }>;
+    transactionIds: string[];
+    operationHistory: OperationHistoryEntry[];
+    lastActivity: number;
+    legacy: boolean;
+  }>;
+}
 const MAX_TRACKED_TRANSACTIONS = 256;
 const MAX_OPERATION_HISTORY = 256;
+const DEFAULT_PERSIST_INTERVAL_MS = 30_000;
 
 function defaultRoomId(): string {
   return randomBytes(9).toString("hex").slice(0, 12).toUpperCase();
@@ -103,7 +117,11 @@ function hashSecret(secret: string): string {
 }
 
 function publicParticipant(participant: RoomParticipant): RoomParticipant {
-  return { ...participant };
+  return {
+    id: participant.id,
+    displayName: participant.displayName,
+    role: participant.role,
+  };
 }
 
 export interface RoomStoreOptions {
@@ -114,6 +132,9 @@ export interface RoomStoreOptions {
   roomTtlMs?: number;
   invitationTtlMs?: number;
   now?: () => number;
+  restore?: RoomStoreSnapshot;
+  persist?: (snapshot: RoomStoreSnapshot) => void | Promise<void>;
+  persistIntervalMs?: number;
 }
 
 export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): RoomStore {
@@ -125,18 +146,29 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const roomTtlMs = options.roomTtlMs ?? 30 * 60 * 1000;
   const invitationTtlMs = options.invitationTtlMs ?? 24 * 60 * 60 * 1000;
   const now = options.now ?? Date.now;
+  const persist = options.persist;
   const rooms = new Map<string, CollaborationRoom>();
   const listeners = new Map<string, Set<Listener>>();
   const lifecycleListeners = new Map<string, Set<LifecycleListener>>();
   const transactions = new Map<string, Set<string>>();
-  const operationHistory = new Map<string, Array<{ version: number; operations: CollaborationOperation[] }>>();
+  const operationHistory = new Map<string, OperationHistoryEntry[]>();
   const lastActivity = new Map<string, number>();
   const accessRecords = new Map<string, Map<string, RoomParticipant>>();
   const invitations = new Map<string, Map<string, InvitationRecord>>();
   const legacyRoomIds = new Set<string>();
+  let mutationVersion = 0;
+  let persistedVersion = 0;
+  let persistQueue = Promise.resolve();
+
+  const markDirty = () => {
+    mutationVersion += 1;
+  };
 
   const touch = (id: string) => {
-    lastActivity.set(id, now());
+    const activity = now();
+    if (lastActivity.get(id) === activity) return;
+    lastActivity.set(id, activity);
+    markDirty();
   };
 
   const copyRoom = <T>(room: CollaborationRoom<T>): CollaborationRoom<T> => ({ ...room });
@@ -187,9 +219,86 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
         invitations.delete(id);
         legacyRoomIds.delete(id);
       }
+      markDirty();
       purging = false;
     }
   };
+
+  const restored = options.restore;
+  if (restored?.version === 1 && Array.isArray(restored.rooms)) {
+    const threshold = now() - roomTtlMs;
+    for (const record of restored.rooms) {
+      const restoredRoom = record?.room;
+      if (
+        !restoredRoom
+        || typeof restoredRoom.id !== "string"
+        || !restoredRoom.id
+        || !Number.isInteger(restoredRoom.version)
+        || restoredRoom.version < 0
+        || !Array.isArray(restoredRoom.members)
+        || !Number.isFinite(record.lastActivity)
+        || record.lastActivity <= threshold
+        || rooms.size >= maxRooms
+      ) {
+        markDirty();
+        continue;
+      }
+      const id = restoredRoom.id.toUpperCase();
+      if (rooms.has(id)) {
+        markDirty();
+        continue;
+      }
+      const restoredAccess = new Map<string, RoomParticipant>();
+      for (const access of record.accessRecords ?? []) {
+        if (!/^[a-f0-9]{64}$/.test(access.tokenHash)) {
+          markDirty();
+          continue;
+        }
+        if (
+          !access.participant
+          || typeof access.participant.id !== "string"
+          || typeof access.participant.displayName !== "string"
+          || !["owner", "editor", "viewer"].includes(access.participant.role)
+        ) {
+          markDirty();
+          continue;
+        }
+        restoredAccess.set(access.tokenHash, publicParticipant(access.participant));
+      }
+      const restoredInvitations = new Map<string, InvitationRecord>();
+      for (const invitation of record.invitations ?? []) {
+        if (
+          !/^[a-f0-9]{64}$/.test(invitation.tokenHash)
+          || (invitation.role !== "editor" && invitation.role !== "viewer")
+          || !Number.isFinite(invitation.expiresAt)
+        ) {
+          markDirty();
+          continue;
+        }
+        restoredInvitations.set(invitation.tokenHash, {
+          role: invitation.role,
+          expiresAt: invitation.expiresAt,
+        });
+      }
+      const restoredHistory = (record.operationHistory ?? [])
+        .filter((entry) => Number.isInteger(entry.version) && entry.version > 0 && areValidCollaborationOperations(entry.operations))
+        .slice(-MAX_OPERATION_HISTORY)
+        .map((entry) => ({ version: entry.version, operations: structuredClone(entry.operations) }));
+      if (restoredHistory.length !== (record.operationHistory ?? []).length) markDirty();
+      const restoredTransactions = (record.transactionIds ?? [])
+        .filter((txId) => typeof txId === "string" && txId.length > 0)
+        .slice(-MAX_TRACKED_TRANSACTIONS);
+      if (restoredTransactions.length !== (record.transactionIds ?? []).length) markDirty();
+
+      rooms.set(id, structuredClone({ ...restoredRoom, id }));
+      accessRecords.set(id, restoredAccess);
+      invitations.set(id, restoredInvitations);
+      transactions.set(id, new Set(restoredTransactions));
+      operationHistory.set(id, restoredHistory);
+      lastActivity.set(id, record.lastActivity);
+      if (record.legacy) legacyRoomIds.add(id);
+    }
+  }
 
   const get = (id: string) => {
     purgeExpired();
@@ -284,6 +393,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const token = generateSecret();
     const expiresAtMs = now() + invitationTtlMs;
     invitations.get(key)?.set(hashSecret(token), { role, expiresAt: expiresAtMs });
+    markDirty();
     return { token, role, expiresAt: new Date(expiresAtMs).toISOString() };
   };
 
@@ -301,7 +411,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const invitation = roomInvitations?.get(invitationHash);
     if (!invitation) throw new CollaborationError("INVITATION_INVALID", "邀请凭证无效或已被使用");
     if (invitation.expiresAt <= now()) {
-      roomInvitations?.delete(invitationHash);
+      if (roomInvitations?.delete(invitationHash)) markDirty();
       throw new CollaborationError("INVITATION_EXPIRED", "邀请凭证已过期");
     }
     // Consume before generating access or mutating the roster. Since join is
@@ -322,6 +432,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       ? { ...room, members: room.members.map((member) => member.clientId === input.clientId ? { ...member, lastSeenAt: seenAt } : member) }
       : { ...room, members: [...room.members, { clientId: input.clientId, role: invitation.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
     rooms.set(key, nextRoom);
+    markDirty();
     touch(key);
     notifyLifecycle(key, "members", nextRoom);
     return {
@@ -393,6 +504,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     else history.length = 0;
     if (history.length > MAX_OPERATION_HISTORY) history.splice(0, history.length - MAX_OPERATION_HISTORY);
     operationHistory.set(key, history);
+    markDirty();
     listeners.get(key)?.forEach((listener) => listener(copyRoom(next)));
     return copyRoom(next);
   };
@@ -449,6 +561,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       ? { ...room, members: room.members.map((member) => member.clientId === memberClientId ? { ...member, lastSeenAt: seenAt } : member) }
       : { ...room, members: [...room.members, { clientId: memberClientId, role: participant.role, joinedAt: seenAt, lastSeenAt: seenAt }] };
     rooms.set(key, nextRoom);
+    markDirty();
     touch(key);
     notifyLifecycle(key, "members", nextRoom);
     return { id: room.id, version: nextRoom.version, members: membersOf(nextRoom) };
@@ -465,6 +578,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     }
     const nextRoom = { ...room, members: room.members.filter((member) => member.clientId !== leavingClientId) };
     rooms.set(key, nextRoom);
+    markDirty();
     touch(key);
     notifyLifecycle(key, "members", nextRoom);
     return { id: room.id, version: nextRoom.version, members: membersOf(nextRoom) };
@@ -482,6 +596,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       ? { ...room, readonly: !room.readonly, updatedAt }
       : { ...room, closed: true, updatedAt };
     rooms.set(key, nextRoom);
+    markDirty();
     touch(key);
     notifyLifecycle(key, action === "close" ? "closed" : "access", nextRoom);
     return { id: room.id, version: nextRoom.version, readonly: nextRoom.readonly === true, closed: nextRoom.closed === true };
@@ -524,7 +639,51 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     };
   };
 
-  return { create, get, createInvitation, join, authorize, apply, subscribe, listParticipants, refreshMember, leave, setAccess, getOperations, subscribeLifecycle } as RoomStore;
+  const snapshot = (): RoomStoreSnapshot => ({
+    version: 1,
+    rooms: Array.from(rooms, ([id, room]) => ({
+      room: structuredClone(room),
+      accessRecords: Array.from(accessRecords.get(id) ?? [], ([tokenHash, participant]) => ({
+        tokenHash,
+        participant: publicParticipant(participant),
+      })),
+      invitations: Array.from(invitations.get(id) ?? [], ([tokenHash, invitation]) => ({
+        tokenHash,
+        ...invitation,
+      })),
+      transactionIds: Array.from(transactions.get(id) ?? []),
+      operationHistory: (operationHistory.get(id) ?? []).map((entry) => ({
+        version: entry.version,
+        operations: structuredClone(entry.operations),
+      })),
+      lastActivity: lastActivity.get(id) ?? now(),
+      legacy: legacyRoomIds.has(id),
+    })),
+  });
+
+  const flush = async (): Promise<void> => {
+    purgeExpired();
+    if (!persist) return;
+    const persistedMutationVersion = mutationVersion;
+    const persistedSnapshot = snapshot();
+    const operation = persistQueue.catch(() => undefined).then(async () => {
+      await persist(persistedSnapshot);
+      persistedVersion = Math.max(persistedVersion, persistedMutationVersion);
+    });
+    persistQueue = operation;
+    await operation;
+  };
+
+  const persistIntervalMs = options.persistIntervalMs ?? DEFAULT_PERSIST_INTERVAL_MS;
+  if (persist && Number.isFinite(persistIntervalMs) && persistIntervalMs > 0) {
+    const timer = setInterval(() => {
+      if (persistedVersion === mutationVersion) return;
+      void flush().catch(() => undefined);
+    }, persistIntervalMs);
+    timer.unref();
+  }
+
+  return { create, get, createInvitation, join, authorize, apply, subscribe, listParticipants, refreshMember, leave, setAccess, getOperations, subscribeLifecycle, flush } as RoomStore;
 }
 
 export interface RoomStore {
@@ -547,4 +706,5 @@ export interface RoomStore {
   setAccess: (id: string, accessToken: string, clientId: string, action: "set-readonly" | "close") => { id: string; version: number; readonly: boolean; closed: boolean };
   getOperations: (id: string, accessToken: string, afterVersion: number) => { version: number; operations: CollaborationOperation[] };
   subscribeLifecycle: (id: string, accessToken: string, listener: LifecycleListener) => () => void;
+  flush: () => Promise<void>;
 }

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 import { createRoomStore } from "./collaboration";
+import type { RoomStoreSnapshot } from "./collaboration";
 import type { CollaborationOperation } from "../src/lib/collaboration-operations";
 
 const authorizeBench = process.env.COLLAB_AUTH_BENCH === "1" ? it : it.skip;
@@ -43,6 +44,123 @@ authorizeBench("benchmarks authorize with 50 participants", () => {
 });
 
 describe("collaboration room store", () => {
+  it("restores authorization, invitations, versions, and operation history without persisting raw secrets", async () => {
+    let now = 1_000;
+    let persisted: RoomStoreSnapshot | undefined;
+    const secrets = ["owner-access-raw", "editor-invite-raw", "editor-access-raw", "viewer-invite-raw"];
+    const first = createRoomStore({
+      generateId: () => "PERSIST1",
+      generateSecret: () => secrets.shift()!,
+      now: () => now,
+      persist: async (snapshot) => {
+        persisted = snapshot;
+      },
+    });
+    const owner = first.create({ count: 0 }, { clientId: "owner", displayName: "Owner" });
+    const editorInvitation = first.createInvitation("PERSIST1", owner.access.accessToken, "editor");
+    const editor = first.join("PERSIST1", {
+      inviteToken: editorInvitation.token,
+      clientId: "editor",
+      displayName: "Editor",
+    });
+    const viewerInvitation = first.createInvitation("PERSIST1", owner.access.accessToken, "viewer");
+    const opA: CollaborationOperation = { type: "set", path: ["count"], value: 1 };
+    const opB: CollaborationOperation = { type: "set", path: ["title"], value: "restored" };
+    now = 1_100;
+    first.apply("PERSIST1", editor.access.accessToken, {
+      txId: "persist-op-1",
+      clientId: "editor",
+      baseVersion: 0,
+      operations: [opA],
+    });
+    first.apply("PERSIST1", editor.access.accessToken, {
+      txId: "persist-op-2",
+      clientId: "editor",
+      baseVersion: 1,
+      operations: [opB],
+    });
+
+    await first.flush();
+
+    expect(persisted).toBeDefined();
+    const serialized = JSON.stringify(persisted);
+    for (const rawSecret of ["owner-access-raw", "editor-invite-raw", "editor-access-raw", "viewer-invite-raw"]) {
+      expect(serialized).not.toContain(rawSecret);
+    }
+
+    const restored = createRoomStore({
+      now: () => now,
+      restore: persisted,
+      generateSecret: () => "viewer-access-after-restore",
+    });
+    expect(restored.authorize("PERSIST1", owner.access.accessToken, "invite")).toMatchObject({ id: "owner", role: "owner" });
+    expect(restored.authorize("PERSIST1", editor.access.accessToken, "write")).toMatchObject({ id: "editor", role: "editor" });
+    expect(restored.get("PERSIST1")).toMatchObject({
+      version: 2,
+      snapshot: { count: 1, title: "restored" },
+      lastTxId: "persist-op-2",
+    });
+    expect(restored.getOperations("PERSIST1", owner.access.accessToken, 0)).toEqual({
+      version: 2,
+      operations: [opA, opB],
+    });
+    expect(restored.join("PERSIST1", {
+      inviteToken: viewerInvitation.token,
+      clientId: "viewer",
+      displayName: "Viewer",
+    }).access).toMatchObject({ role: "viewer", accessToken: "viewer-access-after-restore" });
+  });
+
+  it("does not resurrect a room whose persisted last activity is beyond the TTL", async () => {
+    let now = 0;
+    let persisted: RoomStoreSnapshot | undefined;
+    const first = createRoomStore({
+      generateId: () => "PERSIST2",
+      generateSecret: () => "owner-access",
+      roomTtlMs: 100,
+      now: () => now,
+      persist: (snapshot) => {
+        persisted = snapshot;
+      },
+    });
+    first.create({}, { clientId: "owner", displayName: "Owner" });
+    await first.flush();
+
+    now = 101;
+    const restored = createRoomStore({
+      restore: persisted,
+      roomTtlMs: 100,
+      now: () => now,
+    });
+
+    expect(restored.get("PERSIST2")).toBeUndefined();
+    expect(() => restored.authorize("PERSIST2", "owner-access", "read"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_NOT_FOUND" }));
+  });
+
+  it("persists dirty room state on the configured interval", async () => {
+    vi.useFakeTimers();
+    try {
+      const persist = vi.fn();
+      const store = createRoomStore({
+        generateId: () => "PERSIST3",
+        persist,
+        persistIntervalMs: 25,
+      });
+      store.create({}, "owner");
+
+      expect(persist).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(persist).toHaveBeenCalledTimes(1);
+      expect(persist).toHaveBeenCalledWith(expect.objectContaining({
+        version: 1,
+        rooms: [expect.objectContaining({ room: expect.objectContaining({ id: "PERSIST3" }) })],
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("creates a room with the owner as its first member", () => {
     const secrets = ["owner-access"];
     const store = createRoomStore({ generateId: () => "MEM001", generateSecret: () => secrets.shift()! });
