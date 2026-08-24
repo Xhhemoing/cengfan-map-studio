@@ -19,11 +19,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import {
-  loadInitialProject,
-  loadBrowserState,
-  loadBrowserValue,
-} from "./lib/app-initialization";
+import { loadInitialProject, loadBrowserState } from "./lib/app-initialization";
 import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
 import {
   provinceNames,
@@ -53,11 +49,8 @@ import {
 import { createEditorLibraryActions } from "./lib/editor-library-actions";
 import { buildAssetUsageLabels } from "./lib/resource-library";
 import { createEditorNavigationActions } from "./lib/editor-navigation-actions";
-import {
-  loadStoredRenderSettings,
-  mountUserFontFaces,
-  nextWorkspaceSession,
-} from "./lib/editor-chrome";
+import { loadStoredRenderSettings } from "./lib/editor-chrome";
+import { useEditorChromeEffects } from "./lib/editor-chrome-effects";
 import { resolveRenderedTemplate } from "./lib/rendered-template";
 import { editorProjectStore } from "./lib/editor-project-store";
 import {
@@ -93,7 +86,7 @@ import {
 } from "./lib/workflow-stages";
 import { deriveStageOverviewModel } from "./lib/stage-overview";
 import { STAGE_METADATA } from "./lib/stage-metadata";
-import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
+import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession } from "./lib/workspace-session";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { SkinSelector } from "./components/SkinSelector";
 import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
@@ -106,7 +99,6 @@ import {
 } from "./lib/editor-commands";
 import {
   applyTransaction,
-  createProjectDocument,
   redoTransaction,
   undoTransaction,
   type ProjectDocument,
@@ -119,40 +111,29 @@ import {
   loadCustomTemplates,
   type CustomTemplateRecord,
 } from "./lib/template-store";
-import { captureCustomTemplate, withCapturedTemplate } from "./lib/template-capture";
+import { createTemplateCaptureAction } from "./lib/editor-template-capture-action";
+import { createProjectResetActions } from "./lib/editor-project-reset-actions";
 import { PosterCanvas } from "./components/canvas/PosterCanvas";
 import { type ProvinceAppearance, type SceneSelection } from "./lib/scene-document";
 
 import { InspectorPanel } from "./components/inspector/InspectorPanel";
 import { MapInspector } from "./components/inspector/MapInspector";
-import {
-  ensureUserFontsLoaded,
-  loadUserFonts,
-  type UserFont,
-} from "./lib/fonts";
+import { loadUserFonts, type UserFont } from "./lib/fonts";
 import {
   loadUserAssets,
   type UserAsset,
 } from "./lib/assets";
-import {
-  createProjectPackageEnvelope,
-  restoreProjectPackage,
-  type ProjectPackage,
-} from "./lib/project-package";
 import { usePosterExport } from "./lib/usePosterExport";
 import {
   loadStudioSkin,
   loadThemeMode,
   resolveTheme,
-  saveStudioSkin,
-  saveThemeMode,
   type ThemeMode,
 } from "./lib/theme";
 import {
   getPanelWidthBounds,
   normalizeEditorPanelLayout,
   readEditorPanelLayout,
-  writeEditorPanelLayout,
   type EditorPanelLayout,
   type PanelSide,
 } from "./lib/editor-layout";
@@ -171,25 +152,11 @@ import {
   loadBrowserWorkspaceMirror,
 } from "./lib/browser-workspace-store";
 import type { LocalWorkspaceOverwriteState } from "./lib/incremental-workspace-sync";
-import {
-  createWorkspaceSync,
-  describeForceSaveOutcome,
-  loadAdoptableWorkspace,
-  loadStoredProject,
-  shouldSaveOnPageLeave,
-  subscribePageLeave,
-} from "./lib/editor-workspace-persistence";
-import {
-  applyWorkspacePackage,
-  collaborationPackage,
-  mergeSharedProject,
-  restoredSceneSelection,
-} from "./lib/editor-workspace-state";
-import {
-  armCollaborationSend,
-  createCollaborationHealTracker,
-} from "./lib/collaboration-send";
-import { useCollaborationRoom, type UseCollaborationRoomRefs } from "./lib/useCollaborationRoom";
+import { useEditorProjectRecord } from "./lib/editor-project-record";
+import { useWorkspaceSaveLifecycle } from "./lib/editor-save-lifecycle";
+import { useEditorWorkspaceHydration } from "./lib/editor-workspace-hydration";
+import { restoredSceneSelection } from "./lib/editor-workspace-state";
+import { useEditorCollaboration } from "./lib/editor-collaboration-wiring";
 
 function StudioApp({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
@@ -236,46 +203,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [zoomPercent, setZoomPercent] = useState(100);
   const [collaborationClientId] = useState(() => createId("collab-client"));
 
-  const projectIdRef = useRef<string | null>(projectId ?? null);
-  const projectNameRef = useRef<string | null>(null);
-  const projectCreatedAtRef = useRef<string>(new Date(0).toISOString());
-  const projectRecordSaveErrorRef = useRef<string | null>(null);
-  const backNavigatingRef = useRef(false);
-  const hasLocalWorkspaceEditsRef = useRef(false);
-  // saveLocal 只在事件处理器(强制保存按钮)经 LocalWorkspaceOverwrite.drain() 触发,属于渲染期之后;
-  // 此处 ref 读取发生在保存时刻而非渲染期,react-hooks/refs 无法穿透类间接层,故按行豁免。
-  // eslint-disable-next-line react-hooks/refs
-  const [workspaceSync] = useState(() => createWorkspaceSync({
+  const { record: projectRecord, workspaceSync } = useEditorProjectRecord({
+    projectId,
     stores: browserStores,
     projectStore: editorProjectStore,
-    record: {
-      idRef: projectIdRef,
-      nameRef: projectNameRef,
-      createdAtRef: projectCreatedAtRef,
-      saveErrorRef: projectRecordSaveErrorRef,
-    },
     onStateChange: setSyncState,
-  }));
-  const latestWorkspaceRef = useRef({ project, assets: userAssets, fonts: userFonts, customTemplates, renderSettings });
-  const workspaceStateInitializedRef = useRef(false);
-  const workspaceHydratedRef = useRef(false);
-  const skipNextWorkspacePendingRef = useRef(false);
-  const collaborationBaselineRef = useRef<ProjectPackage | null>(null);
-  const collaborationVersionRef = useRef(0);
-  const collaborationRoomRef = useRef<string | null>(null);
-  const collaborationAccessTokenRef = useRef<string | null>(null);
-  const suppressCollaborationSendRef = useRef(false);
-  const backfillInFlightRef = useRef(false);
-  // 房间控制器与送出侧共享同一组 ref:两边各持一份的话,基线与版本会立刻分叉。
-  const collaborationRefs: UseCollaborationRoomRefs = {
-    baselineRef: collaborationBaselineRef,
-    versionRef: collaborationVersionRef,
-    roomRef: collaborationRoomRef,
-    accessTokenRef: collaborationAccessTokenRef,
-    suppressSendRef: suppressCollaborationSendRef,
-    backfillInFlightRef,
-  };
-
+  });
   const posterRef = useRef<SVGSVGElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel>(() => WORKFLOW_STAGE_TO_LEGACY_PANEL[workspaceSession.stage] ?? "roster");
@@ -296,13 +229,20 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [resizingPanel, setResizingPanel] = useState<PanelSide | null>(null);
 
   const resolvedRenderInterval = renderIntervalMs(renderSettings);
+  const resolvedTheme = resolveTheme(themeMode, prefersDark);
+  useEditorChromeEffects({
+    workspaceSession,
+    activeStage,
+    selection,
+    themeMode,
+    skin,
+    resolvedTheme,
+    panelLayout,
+    userFonts,
+    setPrefersDark,
+    setPanelLayout,
+  });
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const storage = loadBrowserValue(() => window.localStorage, null);
-    if (!storage) return;
-    saveWorkspaceSession(storage, nextWorkspaceSession(workspaceSession, { stage: activeStage, selection }));
-  }, [activeStage, selection, workspaceSession]);
   const dataHealth = useMemo(() => buildDataHealthSummary(project), [project]);
   const dataIssues = useMemo(() => listDataIssues(project), [project]);
   const exportWarnings = useMemo(() => listStudentWarnings(project), [project]);
@@ -310,7 +250,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     () => listResourceHealthIssues(project, userAssets, userFonts),
     [project, userAssets, userFonts],
   );
-  const resolvedTheme = resolveTheme(themeMode, prefersDark);
   const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
   const sidebarBounds = getPanelWidthBounds("sidebar", viewportWidth, panelLayout.inspectorWidth);
   const inspectorBounds = getPanelWidthBounds("inspector", viewportWidth, panelLayout.sidebarWidth);
@@ -318,45 +257,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     "--sidebar-width": `${panelLayout.sidebarWidth}px`,
     "--inspector-width": `${panelLayout.inspectorWidth}px`,
   } as CSSProperties;
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => setPrefersDark(media.matches);
-    media.addEventListener?.("change", onChange);
-    return () => media.removeEventListener?.("change", onChange);
-  }, []);
-
-  useEffect(() => {
-    saveThemeMode(themeMode);
-  }, [themeMode]);
-
-  useEffect(() => {
-    saveStudioSkin(skin);
-  }, [skin]);
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const root = document.documentElement;
-    root.dataset.editorTheme = resolvedTheme;
-    root.dataset.editorSkin = skin;
-    root.style.colorScheme = resolvedTheme === "dark" ? "dark" : "light";
-  }, [resolvedTheme, skin]);
-
-  useEffect(() => {
-    try {
-      writeEditorPanelLayout(window.localStorage, panelLayout, window.innerWidth);
-    } catch {
-      // Panel sizing remains usable when browser storage is unavailable.
-    }
-  }, [panelLayout]);
-
-  useEffect(() => {
-    const onResize = () => {
-      setPanelLayout((current) => normalizeEditorPanelLayout(current, window.innerWidth));
-    };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
 
   const updatePanelWidth = (side: PanelSide, value: number) => {
     setPanelLayout((current) => normalizeEditorPanelLayout({
@@ -364,14 +264,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
       [side === "sidebar" ? "sidebarWidth" : "inspectorWidth"]: value,
     }, viewportWidth));
   };
-
-  useEffect(() => {
-    mountUserFontFaces(userFonts);
-  }, [userFonts]);
-
-  useEffect(() => {
-    void ensureUserFontsLoaded(userFonts);
-  }, [userFonts]);
 
   const renderProject = useMemo(() => {
     if (agentPreview) return agentPreview;
@@ -391,135 +283,50 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const summary = buildProvinceSummary(students);
   const resolvedTemplate = useMemo(() => resolveRenderedTemplate(renderProject), [renderProject]);
 
-  useEffect(() => {
-    latestWorkspaceRef.current = { project, assets: userAssets, fonts: userFonts, customTemplates, renderSettings };
-    if (!workspaceStateInitializedRef.current) {
-      workspaceStateInitializedRef.current = true;
-      return;
-    }
-    if (skipNextWorkspacePendingRef.current) {
-      skipNextWorkspacePendingRef.current = false;
-      return;
-    }
-    if (!workspaceHydratedRef.current) hasLocalWorkspaceEditsRef.current = true;
-    workspaceSync.markPending();
-  }, [customTemplates, project, renderSettings, userAssets, userFonts, workspaceSync]);
-
-  const applyRestoredWorkspace = (restored: ProjectPackage) => {
-    workspaceHydratedRef.current = true;
-    skipNextWorkspacePendingRef.current = true;
-    applyWorkspacePackage({
+  const { readWorkspace, hasLocalEdits } = useEditorWorkspaceHydration({
+    project,
+    assets: userAssets,
+    fonts: userFonts,
+    customTemplates,
+    renderSettings,
+    projectId,
+    browserStores,
+    initialExportedAt: initialWorkspace?.exportedAt,
+    projectStore: editorProjectStore,
+    record: projectRecord,
+    workspaceSync,
+    sink: {
       setProject,
       setUserAssets,
       setUserFonts,
       setCustomTemplates,
       setRenderSettings,
       clearPreviewCommands: () => setPreviewCommands([]),
-    }, restored);
-  };
+      setSyncState,
+      setProjectMissing,
+      setProjectLoading,
+      reportStatus: setStatusMessage,
+    },
+  });
 
-  useEffect(() => {
-    if (projectId) return; // 项目模式以 IndexedDB 中的项目为准,不覆盖浏览器本地镜像
-    let cancelled = false;
-    void loadAdoptableWorkspace({
-      stores: browserStores,
-      initialExportedAt: initialWorkspace?.exportedAt,
-      hasLocalEdits: () => hasLocalWorkspaceEditsRef.current,
-    }).then((pack) => {
-      if (cancelled || !pack) return;
-      applyRestoredWorkspace(restoreProjectPackage(pack));
-      setSyncState({ status: "saved", savedAt: pack.exportedAt });
-      setStatusMessage("已从浏览器本地完整工作区恢复");
-    }).catch(() => undefined).finally(() => {
-      workspaceHydratedRef.current = true;
-    });
-    return () => { cancelled = true; };
-  }, [browserStores, initialWorkspace, projectId]);
-
-  useEffect(() => {
-    if (!projectId) return;
-    let cancelled = false;
-    projectIdRef.current = projectId;
-    void loadStoredProject(editorProjectStore, projectId).then((outcome) => {
-      if (cancelled) return;
-      // 渲染期已重置缺失状态;此处仅收尾加载状态(渲染期 setState 也会在加载完成前触发重渲染)。
-      setProjectMissing(null);
-      setProjectLoading(false);
-      if (outcome.status === "missing") {
-        setProjectMissing(outcome.observation);
-        return;
-      }
-      projectNameRef.current = outcome.record.name;
-      projectCreatedAtRef.current = outcome.record.createdAt;
-      applyRestoredWorkspace(outcome.restored);
-      setStatusMessage(`已打开项目「${outcome.record.name}」`);
-    });
-    return () => { cancelled = true; };
-  }, [projectId]);
-
-  const currentCollaborationPackage = (exportedAt = new Date().toISOString()): ProjectPackage =>
-    collaborationPackage(latestWorkspaceRef.current, exportedAt);
-
-  const applySharedPackage = (pack: ProjectPackage, _version: number): ProjectPackage => {
-    const restored = restoreProjectPackage(pack);
-    applyWorkspacePackage({
-      setProject: () => setProject((current) => mergeSharedProject(current, restored.project)),
+  const collaboration = useEditorCollaboration({
+    clientId: collaborationClientId,
+    project,
+    assets: userAssets,
+    fonts: userFonts,
+    customTemplates,
+    renderSettings,
+    readWorkspace,
+    workspaceSync,
+    sink: {
+      setProject,
       setUserAssets,
       setUserFonts,
       setCustomTemplates,
       setRenderSettings,
       clearPreviewCommands: () => setPreviewCommands([]),
-    }, restored);
-    workspaceSync.markPending();
-    return restored;
-  };
-
-  const collaboration = useCollaborationRoom({
-    clientId: collaborationClientId,
-    currentPackage: currentCollaborationPackage,
-    applyPackage: applySharedPackage,
-    ...collaborationRefs,
+    },
   });
-
-  /**
-   * 卸载之后 ref 还活着,但组件已经不在树上:在途上传的回执既不能改基线,也不能再
-   * 对着卸载的树 setState。StrictMode 会先卸载再重挂,所以每次挂载都要重新置位。
-   */
-  const collaborationMountedRef = useRef(true);
-  useEffect(() => {
-    collaborationMountedRef.current = true;
-    return () => {
-      collaborationMountedRef.current = false;
-    };
-  }, []);
-
-  // 愈合探测只置位标记、不额外触发渲染:它的两个信号同时也是送出 effect 的依赖,而
-  // effect 按声明顺序执行,标记在同一次 commit 里先于送出 effect 就绪。
-  const [collaborationHeal] = useState(createCollaborationHealTracker);
-  useEffect(() => {
-    collaborationHeal.observe({
-      roomId: collaboration.roomId,
-      connectionHealCount: collaboration.connectionHealCount,
-      roomVersion: collaboration.roomVersion,
-    });
-  }, [collaborationHeal, collaboration.connectionHealCount, collaboration.roomId, collaboration.roomVersion]);
-
-  useEffect(() => armCollaborationSend({
-    clientId: collaborationClientId,
-    room: collaboration,
-    refs: { ...collaborationRefs, mountedRef: collaborationMountedRef },
-    heal: collaborationHeal,
-    controller: collaboration,
-    currentPackage: currentCollaborationPackage,
-    applyPackage: applySharedPackage,
-    // Depend on the individual room fields rather than the whole controller
-    // object so the debounce only re-arms when the room or workspace changes.
-    // connectionHealCount/roomVersion are the heal signals: without them a diff
-    // stranded by a partition waits for the next user edit. The offline flag
-    // itself is deliberately not a dependency — the send path now raises it, and
-    // re-arming on the raise would retry a doomed upload during the partition.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [collaborationClientId, customTemplates, project, renderSettings, collaboration.connectionHealCount, collaboration.roomAccessToken, collaboration.roomId, collaboration.roomRole, collaboration.roomReadonly, collaboration.roomClosed, collaboration.roomExpired, collaboration.roomVersion, userAssets, userFonts]);
 
   const commitProject = (next: ProjectDocument) => {
     if (!collaboration.canEdit) {
@@ -652,51 +459,16 @@ function StudioApp({ projectId }: { projectId?: string }) {
     resizeMapImage,
   } = canvasActions;
 
-  const saveWorkspaceNow = async (): Promise<void> => {
-    const pack = createProjectPackageEnvelope(latestWorkspaceRef.current);
-    await workspaceSync.overwrite(pack);
-  };
-
-  // 项目模式下离开页面(切换/关闭标签)的自动保存采用 latest-ref 模式:
-  // ref 在每次渲染后的 effect 中同步(lint 禁止渲染期写 ref),初始值即真实保存管线,
-  // 覆盖首帧事件窗口;projectLifecycleRef 同样在 effect 中同步加载/缺失状态。
-  const saveWorkspaceNowRef = useRef<() => Promise<void>>(saveWorkspaceNow);
-  const projectLifecycleRef = useRef({ loading: projectLoading, missing: projectMissing });
-  useEffect(() => {
-    saveWorkspaceNowRef.current = saveWorkspaceNow;
-    projectLifecycleRef.current = { loading: projectLoading, missing: projectMissing };
+  const { backToWorkbench, overwriteBrowserStorage } = useWorkspaceSaveLifecycle({
+    projectId,
+    projectLoading,
+    projectMissing: Boolean(projectMissing),
+    record: projectRecord,
+    workspaceSync,
+    readWorkspace,
+    hasLocalEdits,
+    reportStatus: setStatusMessage,
   });
-
-  const handleBackToWorkbench = async () => {
-    if (backNavigatingRef.current) return;
-    backNavigatingRef.current = true;
-    if (projectIdRef.current && !projectLoading && !projectMissing) {
-      await saveWorkspaceNow();
-    }
-    window.location.hash = "#/";
-  };
-
-  // 仅项目模式注册:visibilitychange/pagehide 时若存在未保存编辑,尽力保存到
-  // 本地草稿镜像(localStorage,同步落盘)+ IndexedDB 项目记录。
-  useEffect(() => {
-    if (!projectId) return;
-    return subscribePageLeave(() => {
-      const pending = shouldSaveOnPageLeave({
-        projectId: projectIdRef.current,
-        loading: projectLifecycleRef.current.loading,
-        missing: Boolean(projectLifecycleRef.current.missing),
-        navigatingBack: backNavigatingRef.current,
-        syncStatus: workspaceSync.getState().status,
-        hasLocalEdits: hasLocalWorkspaceEditsRef.current,
-      });
-      if (pending) void saveWorkspaceNowRef.current();
-    });
-  }, [projectId, workspaceSync]);
-
-  const overwriteBrowserStorage = async () => {
-    await saveWorkspaceNow();
-    setStatusMessage(describeForceSaveOutcome(workspaceSync.getState().status, projectRecordSaveErrorRef.current));
-  };
 
   const {
     addUserAsset,
@@ -757,40 +529,23 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildProjectLayoutHealthInput(project)), [project]);
 
-  const saveCurrentTemplate = () => {
-    const name = window.prompt("自定义模板名称", "我的地图版式");
-    if (!name?.trim()) return;
-    const scope = window.confirm("点击“确定”保存视觉样式；点击“取消”保存布局倾向（含卡片分组）")
-      ? "visual"
-      : "layout";
-    const record = captureCustomTemplate({ name, scope, project });
-    setCustomTemplates(withCapturedTemplate(customTemplates, record));
-    setStatusMessage(`已保存模板：${record.name}`);
-  };
+  const saveCurrentTemplate = createTemplateCaptureAction({
+    project,
+    customTemplates,
+    setCustomTemplates,
+    reportStatus: setStatusMessage,
+  });
 
-  const createNewProject = () => {
-    if (!window.confirm("新建项目会清空当前未保存修改，是否继续？")) return;
-    const next = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
-    setProject(next);
-    setPreviewCommands([]);
-    setSelection({ type: "canvas" });
-    setSelectedStudentId(null);
-    setActivePanel("roster");
-    setActiveWorkflowStep("roster");
-    setActiveStage("data");
-    setStatusMessage("已新建空项目");
-  };
-
-  const restoreLocalProject = () => {
-    const next = loadInitialProject();
-    setProject(next);
-    setPreviewCommands([]);
-    setSelection({ type: "canvas" });
-    setActivePanel("roster");
-    setActiveWorkflowStep("roster");
-    setActiveStage("data");
-    setStatusMessage("已恢复本机最近项目");
-  };
+  const { createNewProject, restoreLocalProject } = createProjectResetActions({
+    setProject,
+    clearPreviewCommands: () => setPreviewCommands([]),
+    setSelection,
+    setSelectedStudentId,
+    setActivePanel,
+    setActiveWorkflowStep,
+    setActiveStage,
+    reportStatus: setStatusMessage,
+  });
 
   const dataWorkspaceProps = {
     students: project.students,
@@ -943,7 +698,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const projectActionsNode = (
     <>
-      {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+      {projectId && <WorkbenchBackButton onClick={() => void backToWorkbench()} />}
       {projectExportActions}
       <ToolbarGroup label="界面主题" className="topbar-action-group--theme">
         <SkinSelector skin={skin} onChange={setSkin} />
@@ -1013,7 +768,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={changeWorkflowStage} />
           </div>
           <div className="topbar-actions">
-            {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+            {projectId && <WorkbenchBackButton onClick={() => void backToWorkbench()} />}
           </div>
         </header>
         <GlobalSettingsScreen
@@ -1314,7 +1069,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           </div>
         </div>
         <div className="topbar-actions">
-          {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
+          {projectId && <WorkbenchBackButton onClick={() => void backToWorkbench()} />}
           <ToolbarGroup label="历史与缩放">
             <ToolbarButton
               label={undoLabel}
