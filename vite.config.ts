@@ -55,6 +55,7 @@ export default defineConfig(({ mode }) => {
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx", "server/**/*.test.ts", "scripts/**/*.test.ts"],
+    setupFiles: ["./src/test/leaked-root-guard.ts"],
     testTimeout: 20_000,
   },
   };
