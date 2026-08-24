@@ -117,6 +117,7 @@ async function runBurst(): Promise<BurstResult> {
       const request: CardLayoutWorkerMessage = {
         type: "solve",
         requestId: index,
+        generation: index,
         key: `burst-${index}`,
         cards,
         bounds,

@@ -10,11 +10,13 @@ export interface CardLayoutWorkerRequest {
 export interface CardLayoutWorkerMessage extends CardLayoutWorkerRequest {
   type: "solve";
   requestId: number;
+  generation: number;
 }
 
 export interface CardLayoutWorkerResponse {
   type: "result";
   requestId: number;
+  generation: number;
   key: string;
   result: CardLayoutResult;
 }
