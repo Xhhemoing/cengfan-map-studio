@@ -84,13 +84,6 @@ function conflictFor(
   return new WorkspaceStoreConflictError(scope, expectedExportedAt, storedExportedAt);
 }
 
-export function createLocalStorageMirror(storage: Storage = localStorage): SyncWorkspaceStore {
-  return {
-    get: () => storage.getItem(MIRROR_KEY),
-    set: (value) => storage.setItem(MIRROR_KEY, value),
-  };
-}
-
 export function createSafeLocalStorageMirror(): SyncWorkspaceStore {
   return {
     get: () => {
@@ -198,9 +191,7 @@ export function createBrowserWorkspaceStores(): BrowserWorkspaceStores {
   };
 }
 
-export function loadBrowserWorkspaceMirror(
-  mirror: SyncWorkspaceStore = createLocalStorageMirror(),
-): ProjectPackage | null {
+export function loadBrowserWorkspaceMirror(mirror: SyncWorkspaceStore): ProjectPackage | null {
   try {
     const raw = mirror.get();
     return raw ? parsePackage(JSON.parse(raw)) : null;
