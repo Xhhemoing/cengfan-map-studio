@@ -36,6 +36,16 @@ function record(project: ReturnType<typeof createProjectDocument>, overrides: Pa
   };
 }
 
+function bulkyRecord(project: ReturnType<typeof createProjectDocument>, id: string, stepCount: number): AssistantConversationRecord {
+  const steps = Array.from({ length: stepCount }, (_, index) => ({
+    id: `${id}-step-${index}`,
+    name: "update_map",
+    arguments: { patch: { scale: 0.9 } },
+    risk: "low" as const,
+  }));
+  return record(project, { id, steps, selectedStepIds: steps.map((step) => step.id) });
+}
+
 function state(conversations: AssistantConversationRecord[]): AssistantConversationState {
   return { mode: "conservative", activeId: conversations[0]?.id ?? null, conversations };
 }
@@ -446,6 +456,55 @@ describe("agent-conversation-store", () => {
     const throwing = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
     expect(loadAssistantConversationState(throwing, project)).toBeNull();
     expect(() => saveAssistantConversationState(throwing, project, state([]))).not.toThrow();
+  });
+
+  it("evicts the oldest conversations instead of failing the whole save when over the byte budget", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const target = storage();
+    const conversations = Array.from({ length: 4 }, (_, index) => bulkyRecord(project, `conversation-${index}`, 800));
+    const source: AssistantConversationState = { mode: "conservative", activeId: "conversation-0", conversations };
+
+    saveAssistantConversationState(target, project, source);
+
+    const serialized = target.value()!;
+    expect(new TextEncoder().encode(serialized).byteLength).toBeLessThanOrEqual(256 * 1024);
+    const loaded = loadAssistantConversationState(target, project);
+    const ids = loaded?.conversations.map((conversation) => conversation.id);
+    expect(loaded?.activeId).toBe("conversation-0");
+    expect(ids).toContain("conversation-0");
+    expect(ids).toContain("conversation-3");
+    expect(ids).not.toContain("conversation-1");
+    expect(loaded?.conversations.find((conversation) => conversation.id === "conversation-0")?.steps).toHaveLength(800);
+  });
+
+  it("keeps saving after an oversized conversation once older ones are evicted", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const target = storage();
+    saveAssistantConversationState(target, project, state([record(project, { id: "kept" })]));
+
+    saveAssistantConversationState(target, project, {
+      mode: "conservative",
+      activeId: "fresh",
+      conversations: [bulkyRecord(project, "bulky", 2500), record(project, { id: "kept" }), record(project, { id: "fresh" })],
+    });
+
+    expect(target.setItem).toHaveBeenCalledTimes(2);
+    const loaded = loadAssistantConversationState(target, project);
+    expect(loaded?.conversations.map((conversation) => conversation.id)).toEqual(["kept", "fresh"]);
+    expect(loaded?.activeId).toBe("fresh");
+  });
+
+  it("clears steps and snapshot of a single oversized conversation rather than skipping the write", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const target = storage();
+    const source: AssistantConversationState = { mode: "conservative", activeId: "oversized", conversations: [bulkyRecord(project, "oversized", 3000)] };
+
+    saveAssistantConversationState(target, project, source);
+
+    expect(target.setItem).toHaveBeenCalledWith(ASSISTANT_CONVERSATION_STORAGE_KEY, expect.any(String));
+    const loaded = loadAssistantConversationState(target, project);
+    expect(loaded?.activeId).toBe("oversized");
+    expect(loaded?.conversations[0]).toMatchObject({ id: "oversized", status: "failed", steps: [], selectedStepIds: [], snapshot: null });
   });
 
   it("rejects non-integer and negative persisted step limits", () => {

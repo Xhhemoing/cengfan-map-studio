@@ -88,6 +88,10 @@ function isSafeJson(value: unknown, depth = 0): boolean {
   return isRecord(value) && Object.keys(value).length <= 1_000 && Object.values(value).every((item) => isSafeJson(item, depth + 1));
 }
 
+function serializedBytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
 function digestFor(project: ProjectDocument): string {
   return fingerprintProject(project);
 }
@@ -243,7 +247,7 @@ function parseState(value: unknown): PersistedState | null {
 export function loadAssistantConversationState(storage: StorageLike, project: ProjectDocument): AssistantConversationState | null {
   try {
     const raw = storage.getItem(ASSISTANT_CONVERSATION_STORAGE_KEY);
-    if (!raw || new TextEncoder().encode(raw).byteLength > MAX_SERIALIZED_BYTES) return null;
+    if (!raw || serializedBytes(raw) > MAX_SERIALIZED_BYTES) return null;
     const persisted = parseState(JSON.parse(raw));
     if (!persisted) return null;
     const currentDigest = digestFor(project);
@@ -280,7 +284,7 @@ export function loadAssistantConversationState(storage: StorageLike, project: Pr
 
 export function saveAssistantConversationState(storage: StorageLike, project: ProjectDocument, state: AssistantConversationState): void {
   try {
-    const conversations = state.conversations.slice(-MAX_CONVERSATIONS).map((conversation) => {
+    const conversations: AssistantConversationRecord[] = state.conversations.slice(-MAX_CONVERSATIONS).map((conversation) => {
       if (conversation.title.length > MAX_STRING_LENGTH || conversation.request.length > MAX_STRING_LENGTH || conversation.summary.length > MAX_STRING_LENGTH || conversation.error.length > MAX_STRING_LENGTH) throw new Error("持久化字段过大");
       const normalized = genericRecord(conversation, project);
       return {
@@ -292,16 +296,29 @@ export function saveAssistantConversationState(storage: StorageLike, project: Pr
         snapshot: normalized.snapshot ? structuredClone(normalized.snapshot) : null,
       };
     });
-    const safeConversations = conversations.filter((conversation): conversation is NonNullable<typeof conversation> => conversation !== null);
-    const persisted: PersistedState = {
+    const projectDigest = digestFor(project);
+    const preferredId = conversations.some((conversation) => conversation.id === state.activeId) ? state.activeId : conversations[0]?.id ?? null;
+    const persistedFor = (records: AssistantConversationRecord[]): PersistedState => ({
       schemaVersion: SCHEMA_VERSION,
-      projectDigest: digestFor(project),
+      projectDigest,
       mode: state.mode,
-      activeId: safeConversations.some((conversation) => conversation.id === state.activeId) ? state.activeId : safeConversations[0]?.id ?? null,
-      conversations: safeConversations,
-    };
-    const serialized = JSON.stringify(persisted);
-    if (new TextEncoder().encode(serialized).byteLength > MAX_SERIALIZED_BYTES) return;
+      activeId: records.some((conversation) => conversation.id === preferredId) ? preferredId : records[0]?.id ?? null,
+      conversations: records,
+    });
+
+    // MAX_CONVERSATIONS 只限条数，长会话仍能撑爆字节预算。超预算就从最旧的一条开始逐条丢弃并重新
+    // 序列化，activeId 指向的会话留到最后：否则一旦越界，之后每次保存都会被整体丢弃。
+    let records = conversations;
+    let serialized = JSON.stringify(persistedFor(records));
+    while (serializedBytes(serialized) > MAX_SERIALIZED_BYTES && records.length > 0) {
+      const evictIndex = records.findIndex((conversation) => conversation.id !== preferredId);
+      if (evictIndex >= 0) records = [...records.slice(0, evictIndex), ...records.slice(evictIndex + 1)];
+      else if (records.some((conversation) => conversation.steps.length > 0 || conversation.snapshot !== null)) {
+        records = records.map((conversation) => ({ ...conversation, steps: [], selectedStepIds: [], snapshot: null }));
+      } else records = [];
+      serialized = JSON.stringify(persistedFor(records));
+    }
+    if (serializedBytes(serialized) > MAX_SERIALIZED_BYTES) return;
     storage.setItem(ASSISTANT_CONVERSATION_STORAGE_KEY, serialized);
   } catch {
     // Browser storage is optional and must never interrupt editing.
