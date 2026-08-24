@@ -68,6 +68,21 @@ interface Harness {
   unmount: () => void;
 }
 
+/**
+ * R7-7 的兜底网:钩子挂着 SSE 订阅、在途 fetch 与退避定时器,断言一旦在 `unmount()` 那一行
+ * 之前抛出,这个根就会在这一轮剩下的用例里继续跑,直到撞上 jsdom 拆掉的 `window`。所以每个根
+ * 都登记下来,在 `afterEach` 里兜底卸载;用例里原有的 `unmount()` 保留,卸载是幂等的。
+ */
+const mountedRoots: { root: Root; container: HTMLDivElement }[] = [];
+
+function unmountRoot(entry: { root: Root; container: HTMLDivElement }): void {
+  const index = mountedRoots.indexOf(entry);
+  if (index < 0) return;
+  mountedRoots.splice(index, 1);
+  flushSync(() => entry.root.unmount());
+  entry.container.remove();
+}
+
 function mountHook(initial: ProjectPackage): Harness {
   const refs = {
     baselineRef: { current: null as ProjectPackage | null },
@@ -98,15 +113,14 @@ function mountHook(initial: ProjectPackage): Harness {
   const container = document.createElement("div");
   document.body.append(container);
   const root: Root = createRoot(container);
+  const entry = { root, container };
+  mountedRoots.push(entry);
   flushSync(() => root.render(<Harnessed />));
   return {
     controller: () => controller!,
     refs,
     applied,
-    unmount: () => {
-      flushSync(() => root.unmount());
-      container.remove();
-    },
+    unmount: () => unmountRoot(entry),
   };
 }
 
@@ -205,6 +219,8 @@ describe("useCollaborationRoom", () => {
   });
 
   afterEach(() => {
+    // 先卸载再拆桩:卸载会中止在途请求、关掉订阅,那一步仍然需要用例装好的 fetch/EventSource。
+    for (const entry of [...mountedRoots]) unmountRoot(entry);
     vi.unstubAllGlobals();
     vi.useRealTimers();
     globalThis.EventSource = originalEventSource;
@@ -962,6 +978,164 @@ describe("useCollaborationRoom", () => {
       harness.controller().startRoom();
       await vi.waitFor(() => expect(harness.controller().roomId).toBe(ROOM_ID));
       expect(harness.controller().roomPersistenceKind).toBe("persisted");
+      harness.unmount();
+    });
+  });
+
+  /**
+   * 三态说的是"上一次**成功**落盘怎么处置了这个房间"。磁盘正在坏掉的那一段时间里它只会重复
+   * 上一次成功,于是 `persisted` + 一个旧时刻——响应与一切正常长得一模一样。这是所有降级里
+   * 后果最重的一种(服务端此刻挂掉,房间就没了),却是唯一没有任何成员侧说法的一种。R8-2 把
+   * 连击放进了 `persistence.lastFailureAt`,这里把它变成一份能渲染的状态,同样是纯展示态。
+   */
+  describe("roomPersistFailureAt", () => {
+    const FAILED_AT = 1_764_000_000_900;
+
+    it("surfaces the streak reported by the join handshake without touching the other verdicts", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({
+          persistedAtLastFlush: true,
+          persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: FAILED_AT },
+        })),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoomWithInvite(harness);
+      await vi.waitFor(() => expect(harness.refs.versionRef.current).toBe(1));
+
+      expect(harness.controller().roomPersistFailureAt).toBe(FAILED_AT);
+      // 连击不改上一次成功落盘的说法:三态与布尔位照旧,这间房上一次确实被完整写下过。
+      expect(harness.controller().roomPersistenceKind).toBe("persisted");
+      expect(harness.controller().roomPersistenceDegraded).toBe(false);
+      // 纯展示态:不碰离线、终局与连接状态。
+      expect(harness.controller().collaborationOffline).toBe(false);
+      expect(harness.controller().roomExpired).toBe(false);
+      expect(harness.controller().collaborationStatus).toBe("connected");
+      harness.unmount();
+    });
+
+    it("reports a streak that arrives on the create response", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        create: () => json(createdRoomBody({
+          persistedAtLastFlush: false,
+          persistence: { outcome: "trimmed", at: null, lastFailureAt: FAILED_AT },
+        }), 201),
+      });
+      const harness = mountHook(samplePackage());
+      harness.controller().startRoom();
+
+      await vi.waitFor(() => expect(harness.controller().roomPersistFailureAt).toBe(FAILED_AT));
+      // 两件事可以同时成立:这间房上一次被裁剪,而且此刻磁盘写不进去。
+      expect(harness.controller().roomPersistenceKind).toBe("trimmed");
+      expect(harness.controller().roomPersistenceDegraded).toBe(true);
+      harness.unmount();
+    });
+
+    it("has no streak for a healthy server or one that never reports the field", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({ persistedAtLastFlush: true, persistence: { outcome: "persisted", at: 1_764_000_000_000 } })),
+      });
+      const healthy = mountHook(samplePackage());
+      await joinRoomWithInvite(healthy);
+      await vi.waitFor(() => expect(healthy.refs.versionRef.current).toBe(1));
+      expect(healthy.controller().roomPersistFailureAt).toBeNull();
+      healthy.unmount();
+
+      // 只认布尔位的旧服务端根本不会提这件事:不能替它宣布磁盘坏了。
+      FakeEventSource.instances = [];
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({ persistedAtLastFlush: false })),
+      });
+      const legacy = mountHook(samplePackage());
+      await joinRoomWithInvite(legacy);
+      await vi.waitFor(() => expect(legacy.controller().roomPersistenceDegraded).toBe(true));
+      expect(legacy.controller().roomPersistFailureAt).toBeNull();
+      legacy.unmount();
+    });
+
+    it("lets a later response end the streak, but keeps it when that response says nothing", async () => {
+      let snapshots = 0;
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({
+          persistedAtLastFlush: true,
+          persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: FAILED_AT },
+        })),
+        // 快照只带布尔位:这条响应没提落盘处置,不代表磁盘忽然好了。
+        room: () => {
+          snapshots += 1;
+          return json({ id: ROOM_ID, version: 1, ready: true, snapshot: samplePackage(), role: "editor", members: [], persistedAtLastFlush: true });
+        },
+      });
+      const kept = mountHook(samplePackage());
+      await joinRoomWithInvite(kept);
+      await vi.waitFor(() => expect(snapshots).toBeGreaterThan(0));
+      await vi.waitFor(() => expect(kept.refs.versionRef.current).toBe(1));
+      expect(kept.controller().roomPersistFailureAt).toBe(FAILED_AT);
+      kept.unmount();
+
+      // 服务端给了处置却没给失败时刻,就是明说连击结束了(下一次成功落盘会清掉这一项)。
+      FakeEventSource.instances = [];
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({
+          persistedAtLastFlush: true,
+          persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: FAILED_AT },
+        })),
+        room: () => json({
+          id: ROOM_ID, version: 1, ready: true, snapshot: samplePackage(), role: "editor", members: [],
+          persistedAtLastFlush: true, persistence: { outcome: "persisted", at: 1_764_000_001_000 },
+        }),
+      });
+      const recovered = mountHook(samplePackage());
+      await joinRoomWithInvite(recovered);
+      await vi.waitFor(() => expect(recovered.refs.versionRef.current).toBe(1));
+      expect(recovered.controller().roomPersistFailureAt).toBeNull();
+      recovered.unmount();
+    });
+
+    it("never lets one room's streak stain the next room or the disconnected panel", async () => {
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        join: () => json(joinedRoomBody({
+          persistedAtLastFlush: true,
+          persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: FAILED_AT },
+        })),
+      });
+      const harness = mountHook(samplePackage());
+      await joinRoomWithInvite(harness);
+      await vi.waitFor(() => expect(harness.controller().roomPersistFailureAt).toBe(FAILED_AT));
+
+      flushSync(() => harness.controller().leaveRoom());
+      expect(harness.controller().roomPersistFailureAt).toBeNull();
+
+      FakeEventSource.instances = [];
+      installFetch({
+        snapshotVersion: 1,
+        snapshot: samplePackage(),
+        operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+        create: () => json(createdRoomBody({ persistedAtLastFlush: true, persistence: { outcome: "persisted", at: 1_764_000_001_000 } }), 201),
+      });
+      harness.controller().startRoom();
+      await vi.waitFor(() => expect(harness.controller().roomId).toBe(ROOM_ID));
+      expect(harness.controller().roomPersistFailureAt).toBeNull();
       harness.unmount();
     });
   });
