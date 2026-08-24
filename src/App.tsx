@@ -854,6 +854,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       roomExpired={collaboration.roomExpired}
       roomPersistenceDegraded={collaboration.roomPersistenceDegraded}
       roomPersistenceKind={collaboration.roomPersistenceKind}
+      roomPersistFailureAt={collaboration.roomPersistFailureAt}
       collaborationOffline={collaboration.collaborationOffline}
       invitationToken={collaboration.invitationToken}
       hasStoredRoomAccess={collaboration.hasStoredRoomAccess}
