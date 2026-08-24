@@ -17,7 +17,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | REVIEWED_BLOCKED | T1–T10 | — | Full vitest 1388 pass / 1 skip; fable ACCEPT 9/10; **DataCloneError T5×T10 hotfix required** |
+| 1 | CLOSED | T1–T10 + R2-0 | — | Full suite 1388; DataCloneError hotfix merged (51 tests) |
+| 2 | DISPATCHING | — | — | 10 disjoint tasks from round-1-briefing.md |
 
 ## Round 0 Baseline (pre-optimization)
 
