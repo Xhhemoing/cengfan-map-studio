@@ -35,7 +35,8 @@
 | 12 | 已完成 | 混编 ×5 | 踢人撤令牌、预路由词表、PNG blob、偏好 hook |
 | 13 | 已完成 | fable ×5 | 达标后继续：全仓剩余缺口复查 |
 | 14 | 已完成 | opus ×5 | 按第 13 轮结论落地最高价值切片 |
-| 15 | 进行中 | opus ×5 | 健康检查对齐、SSE 断流、parse-data 字段、AI 草稿、设置反馈 |
+| 15 | 已完成 | opus ×5 | 健康检查对齐、SSE 断流、parse-data 字段、AI 草稿、设置反馈 |
+| 16 | 进行中 | 混编 ×5 | 限流键、parse-data 告知、SSE 重订阅、rail listbox、剩余复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -87,6 +88,7 @@
 - 2026-08-24：启动第 13 轮 5 个只读复查（AI / 画布 / 数据 / 协作与 API / 工作台）。
 - 2026-08-24：第 13 轮五区复查齐；启动第 14 轮 5 个落地子代理。
 - 2026-08-24：第 14 轮落地完成并合入专属分支。启动第 15 轮。
+- 2026-08-24：第 15 轮落地完成并合入专属分支。启动第 16 轮。
 
 ## 第 13 轮结论（5 份只读复查）
 
@@ -125,6 +127,24 @@
 | parse-data 字段 | `server/ai/llm-client.ts`、`server/ai/llm-client.test.ts`、`src/lib/ai-client.ts` |
 | AI 草稿提升 | `src/components/AgentAssistant.tsx`、`src/components/StudioAssistantRail.tsx`、`src/styles.css` 及对应测试 |
 | 设置屏 StatusBar | `src/App.tsx`（全局设置分支）、`src/components/StatusBar.tsx`（若必须）、`src/App.test.tsx` |
+
+## 第 15 轮已合入
+
+- parse-data：LLM 补认行带可选 locationScope/province，非法值只丢字段。
+- 协作：踢人广播 `kicked` 并掐断被踢者 SSE。
+- 助手：草稿与 rail tab 提到 Provider，关抽屉不丢输入。
+- 设置：全局设置挂 StatusBar；模板保存改为可取消对话框。
+- 健康检查：同锚点花束豁免；`allowMapOverlap` 不报卡片压图；map 可用省份多边形精判。
+
+## 第 16 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 限流与 ticket 池 | `server/index.ts`（clientIp、events-ticket）、`server/ai/ai-observability.ts`、对应测试 |
+| parse-data 上送告知 | `src/components/DataImportPanel.tsx` 及测试；必要时 `use-studio-preferences.ts` |
+| SSE 客户端重订阅 | `src/lib/collaboration-client.ts`、`src/lib/useCollaborationRoom.ts` 及测试 |
+| rail listbox a11y | `src/components/StudioAssistantRail.tsx` 及测试 |
+| 剩余缺口复查 | 只读，不改文件 |
 
 ## 第 2 轮已合入
 
