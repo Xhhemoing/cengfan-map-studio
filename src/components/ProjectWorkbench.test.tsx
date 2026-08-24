@@ -3,7 +3,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { ProjectWorkbench } from "./ProjectWorkbench";
 import { createMemoryProjectStore, createSampleProject } from "../lib/project-store";
-import { serializeProjectPackage } from "../lib/project-package";
+import { PROJECT_PACKAGE_FILE_ACCEPT, serializeProjectPackage } from "../lib/project-package";
+import { fileMatchesAccept } from "../lib/file-accept";
 
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
 function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, navigate = vi.fn()) {
@@ -21,6 +22,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+/** Captures the `download` attribute of every anchor the export helper clicks. */
+function stubDownload(): string[] {
+  const downloads: string[] = [];
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:project-package");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+    downloads.push(this.download);
+  });
+  return downloads;
+}
+
+async function clickExportMenuItem(container: HTMLElement) {
+  await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+  container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
+  await vi.waitFor(() => expect(container.textContent).toContain("导出工程包"));
+  Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("导出工程包"))?.click();
+}
 
 describe("ProjectWorkbench", () => {
   it("applies the saved atelier skin tokens on the workbench shell", async () => {
@@ -204,6 +223,35 @@ describe("ProjectWorkbench", () => {
     container.querySelector<HTMLButtonElement>('[aria-label="新建项目"]')?.click();
     await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("创建项目失败"));
     expect(container.querySelector(".workbench-error")?.textContent).toContain("配额不足");
+  });
+
+  it("exports a project package named after the project and the package date", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject(new Date("2026-08-24T09:30:00.000Z"));
+    // updatedAt 故意晚于 pack.exportedAt：文件名日期必须来自工程包本身。
+    await store.put({ ...sample, name: "高三3班/毕业", updatedAt: "2026-09-01T00:00:00.000Z" });
+    const downloads = stubDownload();
+    const { container } = renderWorkbench(store);
+
+    await clickExportMenuItem(container);
+
+    await vi.waitFor(() => expect(downloads).toHaveLength(1));
+    expect(downloads[0]).toBe("高三3班毕业-工程包-2026-08-24.json");
+    expect(fileMatchesAccept(new File(["{}"], downloads[0]!), PROJECT_PACKAGE_FILE_ACCEPT)).toBe(true);
+  });
+
+  it("falls back to the default base name when the project name is blank", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject(new Date("2026-08-24T09:30:00.000Z"));
+    await store.put({ ...sample, name: "   " });
+    const downloads = stubDownload();
+    const { container } = renderWorkbench(store);
+
+    await clickExportMenuItem(container);
+
+    await vi.waitFor(() => expect(downloads).toHaveLength(1));
+    expect(downloads[0]).toBe("我的毕业去向图-工程包-2026-08-24.json");
+    expect(fileMatchesAccept(new File(["{}"], downloads[0]!), PROJECT_PACKAGE_FILE_ACCEPT)).toBe(true);
   });
 
   it("retries seeding after a failed seed", async () => {

@@ -100,7 +100,7 @@ describe("App in project mode", () => {
   it("shows a missing-project screen when the id is unknown", async () => {
     const container = mountApp("no-such-project");
 
-    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error[role='alert']")).not.toBeNull());
     expect(container.textContent).toContain("项目不存在或已删除");
     expect(container.querySelector('button[aria-label="返回项目列表"]')).not.toBeNull();
   });
@@ -193,19 +193,19 @@ describe("App in project mode", () => {
 
   it("recovers when a missing project id is replaced by a valid one", async () => {
     const container = mountApp("no-such-project");
-    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error[role='alert']")).not.toBeNull());
 
     rerenderApp(roots[roots.length - 1], sample.id);
 
     await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
-    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector(".workbench-error[role='alert']")).toBeNull();
   });
 
   it("shows the missing-project screen when the store get rejects", async () => {
     vi.spyOn(editorProjectStore, "get").mockRejectedValueOnce(new Error("boom"));
     const container = mountApp(sample.id);
 
-    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error[role='alert']")).not.toBeNull());
     expect(container.textContent).toContain("项目不存在或已删除");
   });
 

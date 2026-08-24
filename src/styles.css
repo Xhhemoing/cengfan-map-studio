@@ -2482,7 +2482,6 @@ button.data-overview__metric:hover {
   font-family: "Noto Serif SC", serif;
   font-weight: 600;
 }
-.app-shell[data-editor-skin="atelier"] .template-workspace__catalog-heading h2,
 .app-shell[data-editor-skin="atelier"] .delivery-workspace__checks-title,
 .app-shell[data-editor-skin="atelier"] .data-upload-workspace__title strong,
 .app-shell[data-editor-skin="atelier"] .display-frame-editor__heading strong,
@@ -2551,7 +2550,6 @@ button.data-overview__metric:hover {
   background: var(--editor-surface);
   border-right: 1px solid var(--editor-line);
 }
-.studio-stage-shell .template-workspace,
 .studio-stage-shell .data-upload-workspace,
 .studio-stage-shell .map-style-workspace,
 .studio-stage-shell .display-frame-workspace,
@@ -2857,7 +2855,6 @@ button.data-overview__metric:hover {
   .studio-stage-shell__main { overflow: visible; }
   /* 窄屏下左侧 AI/总览栏收起，由顶栏 AI 入口的抽屉替代。 */
   .studio-stage-shell .studio-sidebar { display: none; }
-  .studio-stage-shell .template-workspace,
   .studio-stage-shell .data-upload-workspace,
   .studio-stage-shell .map-style-workspace,
   .studio-stage-shell .display-frame-workspace,
@@ -2878,7 +2875,6 @@ button.data-overview__metric:hover {
 }
 
 /* Atelier stage workbenches inherit the stable workflow rail rather than each rendering a second top-level navigation system. */
-.app-shell[data-editor-skin="atelier"] .studio-stage-shell .template-workspace,
 .app-shell[data-editor-skin="atelier"] .studio-stage-shell .data-upload-workspace,
 .app-shell[data-editor-skin="atelier"] .studio-stage-shell .map-style-workspace,
 .app-shell[data-editor-skin="atelier"] .studio-stage-shell .display-frame-workspace,
@@ -2891,7 +2887,6 @@ button.data-overview__metric:hover {
   height: 100%;
 }
 @media (max-width: 760px) {
-  .app-shell[data-editor-skin="atelier"] .studio-stage-shell .template-workspace,
   .app-shell[data-editor-skin="atelier"] .studio-stage-shell .data-upload-workspace,
   .app-shell[data-editor-skin="atelier"] .studio-stage-shell .map-style-workspace,
   .app-shell[data-editor-skin="atelier"] .studio-stage-shell .display-frame-workspace,

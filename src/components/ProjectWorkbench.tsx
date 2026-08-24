@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEmptyProject, createSampleProject, duplicateStoredProject, type ProjectStore, type StoredProject } from "../lib/project-store";
 import { downloadProjectPackage, parseProjectPackage, projectPackageDisplayName } from "../lib/project-package";
+import { buildExportFileName } from "../lib/export-filename";
 import { createId } from "../lib/ids";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
 import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
@@ -163,7 +164,11 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   };
 
   const exportProject = (project: StoredProject) => {
-    downloadProjectPackage(project.pack, `${project.name}-${project.updatedAt.slice(0, 10)}.json`);
+    downloadProjectPackage(project.pack, buildExportFileName({
+      projectName: project.name,
+      kind: "project",
+      date: project.pack.exportedAt.slice(0, 10),
+    }));
     setOpenMenuId(null);
   };
 

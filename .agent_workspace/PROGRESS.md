@@ -9,8 +9,8 @@
 | 轮次 | 主题 | 状态 |
 |------|------|------|
 | C3-R1 | 收口项初始落地 | completed |
-| C3-R2 | 靶向修复与测试 | in_progress |
-| C3-R3 | SOTA 打磨与验收 | pending |
+| C3-R2 | 靶向修复与测试 | completed |
+| C3-R3 | SOTA 打磨与验收 | in_progress |
 
 ## Cycle 3 Round 1 子代理
 
