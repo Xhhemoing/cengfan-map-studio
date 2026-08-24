@@ -1,7 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { describe, expect, it, vi } from "vitest";
-import { TextLayer } from "./TextLayer";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TextLayer, type TextLayerProps } from "./TextLayer";
 import type { CanvasText } from "../../lib/scene-document";
 
 const text: CanvasText = {
@@ -18,7 +18,52 @@ const text: CanvasText = {
   visibility: true,
 };
 
+/** 挂载一层可拖拽文本,并把 jsdom 缺失的指针捕获 / SVG 坐标换算补齐为恒等变换。 */
+function mountDraggableLayer(props: Partial<TextLayerProps> = {}) {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  flushSync(() => root.render(
+    <svg>
+      <TextLayer textElements={[text]} {...props} />
+    </svg>,
+  ));
+
+  const group = container.querySelector('[data-text-id="text-title"]') as SVGGElement;
+  const svg = container.querySelector("svg") as SVGSVGElement;
+  Object.assign(group, {
+    setPointerCapture: vi.fn(),
+    hasPointerCapture: vi.fn(() => true),
+    releasePointerCapture: vi.fn(),
+  });
+  Object.assign(svg, {
+    createSVGPoint: vi.fn(() => ({
+      x: 0,
+      y: 0,
+      matrixTransform: vi.fn(function (this: { x: number; y: number }) { return { x: this.x, y: this.y }; }),
+    })),
+    getScreenCTM: vi.fn(() => ({ inverse: vi.fn(() => ({})) })),
+  });
+
+  const pointer = (type: string, clientX: number, clientY: number) => {
+    flushSync(() => group.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, clientX, clientY })));
+  };
+
+  return {
+    group,
+    pointer,
+    cleanup: () => {
+      root.unmount();
+      container.remove();
+    },
+  };
+}
+
 describe("TextLayer", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders text properties and selection callback", () => {
     const container = document.createElement("div");
     const root = createRoot(container);
@@ -158,6 +203,115 @@ describe("TextLayer", () => {
     expect(onMoveText).toHaveBeenCalledWith("text-title", 272, 386);
     root.unmount();
     container.remove();
+  });
+
+  it("previews the drag by updating the transform before the pointer is released", () => {
+    vi.useFakeTimers();
+    const onMoveText = vi.fn();
+    const { group, pointer, cleanup } = mountDraggableLayer({ onMoveText, renderIntervalMs: 100 });
+
+    pointer("pointerdown", 100, 140);
+    pointer("pointermove", 300, 400);
+    expect(group.getAttribute("transform")).toBe("translate(72 126)");
+
+    vi.advanceTimersByTime(100);
+    expect(group.getAttribute("transform")).toBe("translate(272 386)");
+    expect(onMoveText).not.toHaveBeenCalled();
+
+    pointer("pointermove", 400, 500);
+    vi.advanceTimersByTime(100);
+    expect(group.getAttribute("transform")).toBe("translate(372 486)");
+    expect(onMoveText).not.toHaveBeenCalled();
+
+    pointer("pointerup", 400, 500);
+    expect(onMoveText).toHaveBeenCalledExactlyOnceWith("text-title", 372, 486);
+
+    cleanup();
+  });
+
+  it("throttles drag previews to one paint per render interval", () => {
+    vi.useFakeTimers();
+    const { group, pointer, cleanup } = mountDraggableLayer({ onMoveText: vi.fn(), renderIntervalMs: 100 });
+    const setAttribute = vi.spyOn(group, "setAttribute");
+
+    pointer("pointerdown", 100, 140);
+    for (let step = 1; step <= 10; step += 1) {
+      pointer("pointermove", 100 + step * 10, 140 + step * 10);
+    }
+    expect(setAttribute).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(100);
+    expect(setAttribute).toHaveBeenCalledExactlyOnceWith("transform", "translate(172 226)");
+
+    setAttribute.mockRestore();
+    cleanup();
+  });
+
+  it("keeps previewing below the drag threshold disabled so a plain click never shifts the text", () => {
+    vi.useFakeTimers();
+    const onMoveText = vi.fn();
+    const { group, pointer, cleanup } = mountDraggableLayer({ onMoveText, renderIntervalMs: 100 });
+
+    pointer("pointerdown", 100, 140);
+    pointer("pointermove", 101, 140);
+    vi.advanceTimersByTime(100);
+    expect(group.getAttribute("transform")).toBe("translate(72 126)");
+
+    pointer("pointerup", 101, 140);
+    expect(onMoveText).not.toHaveBeenCalled();
+    expect(group.getAttribute("transform")).toBe("translate(72 126)");
+
+    cleanup();
+  });
+
+  it("restores the previewed transform when the drag ends back at the original position", () => {
+    vi.useFakeTimers();
+    const onMoveText = vi.fn();
+    const { group, pointer, cleanup } = mountDraggableLayer({ onMoveText, renderIntervalMs: 100 });
+
+    pointer("pointerdown", 100, 140);
+    pointer("pointermove", 300, 400);
+    vi.advanceTimersByTime(100);
+    expect(group.getAttribute("transform")).toBe("translate(272 386)");
+
+    pointer("pointerup", 100, 140);
+    expect(onMoveText).not.toHaveBeenCalled();
+    expect(group.getAttribute("transform")).toBe("translate(72 126)");
+
+    cleanup();
+  });
+
+  it("restores the previewed transform when the drag is cancelled", () => {
+    vi.useFakeTimers();
+    const onMoveText = vi.fn();
+    const { group, pointer, cleanup } = mountDraggableLayer({ onMoveText, renderIntervalMs: 100 });
+
+    pointer("pointerdown", 100, 140);
+    pointer("pointermove", 300, 400);
+    vi.advanceTimersByTime(100);
+    expect(group.getAttribute("transform")).toBe("translate(272 386)");
+
+    pointer("pointercancel", 300, 400);
+    expect(onMoveText).not.toHaveBeenCalled();
+    expect(group.getAttribute("transform")).toBe("translate(72 126)");
+
+    pointer("pointermove", 500, 600);
+    vi.advanceTimersByTime(100);
+    expect(group.getAttribute("transform")).toBe("translate(72 126)");
+
+    cleanup();
+  });
+
+  it("drops a pending preview when the layer unmounts mid-drag", () => {
+    vi.useFakeTimers();
+    const { group, pointer, cleanup } = mountDraggableLayer({ onMoveText: vi.fn(), renderIntervalMs: 100 });
+
+    pointer("pointerdown", 100, 140);
+    pointer("pointermove", 300, 400);
+    cleanup();
+
+    expect(() => vi.advanceTimersByTime(100)).not.toThrow();
+    expect(group.getAttribute("transform")).toBe("translate(72 126)");
   });
 
   it("does not capture a double click so the text itself can be selected", () => {

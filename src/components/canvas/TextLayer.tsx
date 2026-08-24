@@ -1,12 +1,15 @@
-import { useRef, type PointerEvent } from "react";
+import { useEffect, useRef, type PointerEvent } from "react";
 import { resolveFontFamily, type UserFont } from "../../lib/fonts";
 import type { CanvasText } from "../../lib/scene-document";
+import { clearCanvasPreview, createCanvasPreviewScheduler, scheduleCanvasPreview } from "./CanvasDragPreview";
 
 export interface TextLayerProps {
   textElements: CanvasText[];
   selectedTextId?: string | null;
   exportMode?: boolean;
   userFonts?: UserFont[];
+  /** Minimum interval between local drag-preview paints. Final positions always commit immediately. */
+  renderIntervalMs?: number;
   onSelectText?: (id: string) => void;
   onMoveText?: (id: string, x: number, y: number) => void;
 }
@@ -22,6 +25,7 @@ export function TextLayer({
   selectedTextId = null,
   exportMode = false,
   userFonts = [],
+  renderIntervalMs = 0,
   onSelectText,
   onMoveText,
 }: TextLayerProps) {
@@ -30,8 +34,30 @@ export function TextLayer({
     pointerId: number;
     offsetX: number;
     offsetY: number;
+    originX: number;
+    originY: number;
+    element: SVGGElement;
     moved: boolean;
   } | null>(null);
+  const previewScheduler = useRef(createCanvasPreviewScheduler<{ id: string; x: number; y: number }>());
+
+  const applyPreview = (next: { id: string; x: number; y: number }) => {
+    const drag = dragRef.current;
+    if (!drag || drag.id !== next.id) return;
+    drag.element.setAttribute("transform", `translate(${next.x} ${next.y})`);
+  };
+
+  const schedulePreview = (next: { id: string; x: number; y: number }) => {
+    scheduleCanvasPreview(previewScheduler.current, next, renderIntervalMs, applyPreview);
+  };
+
+  /** 未提交的拖拽不会触发 React 重渲染,预览写进 DOM 的 transform 必须自己还原。 */
+  const restorePreview = (drag: { originX: number; originY: number; element: SVGGElement }) => {
+    clearCanvasPreview(previewScheduler.current);
+    drag.element.setAttribute("transform", `translate(${drag.originX} ${drag.originY})`);
+  };
+
+  useEffect(() => () => clearCanvasPreview(previewScheduler.current), []);
 
   const pointFromPointer = (event: PointerEvent<SVGGElement>) => {
     const svg = event.currentTarget.ownerSVGElement;
@@ -71,11 +97,15 @@ export function TextLayer({
               if (!point) return;
               event.currentTarget.setPointerCapture(event.pointerId);
               onSelectText?.(element.id);
+              clearCanvasPreview(previewScheduler.current);
               dragRef.current = {
                 id: element.id,
                 pointerId: event.pointerId,
                 offsetX: point.x - element.x,
                 offsetY: point.y - element.y,
+                originX: element.x,
+                originY: element.y,
+                element: event.currentTarget,
                 moved: false,
               };
             }}
@@ -84,26 +114,39 @@ export function TextLayer({
               if (!drag || drag.id !== element.id || drag.pointerId !== event.pointerId || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
               const point = pointFromPointer(event);
               if (!point) return;
-              if (Math.hypot(point.x - element.x - drag.offsetX, point.y - element.y - drag.offsetY) >= 3) {
+              if (Math.hypot(point.x - drag.originX - drag.offsetX, point.y - drag.originY - drag.offsetY) >= 3) {
                 drag.moved = true;
+              }
+              // 阈值之内的抖动不预览,否则一次纯点击也会让文本轻微漂移再弹回。
+              if (drag.moved) {
+                schedulePreview({ id: drag.id, x: point.x - drag.offsetX, y: point.y - drag.offsetY });
               }
             }}
             onPointerUp={(event) => {
               const drag = dragRef.current;
               if (interactive && drag?.id === element.id && drag.pointerId === event.pointerId && event.currentTarget.hasPointerCapture(event.pointerId)) {
                 const point = pointFromPointer(event);
-                if (drag.moved && point && onMoveText) {
-                  onMoveText(element.id, Math.round(point.x - drag.offsetX), Math.round(point.y - drag.offsetY));
+                const nextX = point ? Math.round(point.x - drag.offsetX) : drag.originX;
+                const nextY = point ? Math.round(point.y - drag.offsetY) : drag.originY;
+                const committable = drag.moved && Boolean(point) && (nextX !== drag.originX || nextY !== drag.originY);
+                dragRef.current = null;
+                clearCanvasPreview(previewScheduler.current);
+                if (committable && onMoveText) {
+                  onMoveText(element.id, nextX, nextY);
+                } else {
+                  restorePreview(drag);
                 }
                 event.currentTarget.releasePointerCapture(event.pointerId);
               }
               dragRef.current = null;
             }}
             onPointerCancel={(event) => {
+              const drag = dragRef.current;
               if (event.currentTarget.hasPointerCapture(event.pointerId)) {
                 event.currentTarget.releasePointerCapture(event.pointerId);
               }
               dragRef.current = null;
+              if (drag) restorePreview(drag);
             }}
           >
             {!exportMode && selected && (
