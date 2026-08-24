@@ -60,7 +60,7 @@
 .delivery-workspace__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; max-width: 1500px; margin: 0 auto; }
 .delivery-workspace__checks { display: grid; align-content: start; gap: 10px; }
 .delivery-workspace__checks-title { margin: 0 0 2px; font-size: 16px; }
-.delivery-workspace__check, .delivery-workspace__controls, .delivery-workspace__error { padding: 14px; background: var(--editor-surface); border: 1px solid var(--editor-line); border-radius: 7px; }
+.delivery-workspace__check, .delivery-workspace__controls, .delivery-workspace__error, .delivery-workspace__result { padding: 14px; background: var(--editor-surface); border: 1px solid var(--editor-line); border-radius: 7px; }
 .delivery-workspace__check header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .delivery-workspace__check header div { display: flex; gap: 8px; align-items: baseline; }
 .delivery-workspace__check small { color: #6b7d83; }
@@ -71,6 +71,9 @@
 .delivery-workspace__controls label { display: flex; justify-content: space-between; gap: 12px; }
 .delivery-workspace__actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
 .delivery-workspace__error { display: grid; gap: 7px; color: #922f26; background: #fff7f5; border-color: #edb4ac; }
+.delivery-workspace__result { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; color: #23604f; background: #f2faf6; border-color: #b8ddcb; }
+.delivery-workspace__result span { overflow-wrap: anywhere; }
+.delivery-workspace__result button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; color: inherit; background: #fff; border: 1px solid #b8ddcb; border-radius: 5px; }
 .delivery-workspace__preview { min-width: 0; padding: 16px; background: var(--editor-surface-muted); border: 1px solid var(--editor-line); border-radius: 8px; }
 .delivery-workspace__preview-heading { display: flex; justify-content: space-between; margin-bottom: 12px; color: var(--editor-ink-muted, #536970); }
 .delivery-workspace__canvas { display: grid; place-items: center; overflow: auto; }

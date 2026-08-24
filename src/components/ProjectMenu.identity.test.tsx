@@ -90,6 +90,13 @@ afterEach(() => {
 });
 
 describe("ProjectMenu collaboration identity", () => {
+  it("makes collaboration discoverable from the project menu trigger", () => {
+    const container = renderMenu();
+
+    const trigger = container.querySelector(".project-menu > summary");
+    expect(trigger?.getAttribute("aria-label")).toBe("打开项目与协作菜单");
+  });
+
   it("shows every member role as text, not only via the crown emoji", () => {
     const container = renderMenu(connectedRoomProps());
 

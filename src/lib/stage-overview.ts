@@ -95,6 +95,9 @@ export function deriveStageOverviewCards(input: StageOverviewInput): StageOvervi
 function dataCards(input: StageOverviewInput): StageOverviewCard[] {
   const h = input.dataHealth;
   const cards: StageOverviewCard[] = [];
+  if (h.total === 0) {
+    cards.push({ id: "data-empty", question: "还没有名单", status: "名单为空，先导入或录入毕业去向名单", severity: "warning", action: { kind: "data-diagnostics" } });
+  }
   if (h.missingRequired > 0) {
     cards.push({ id: "data-missing", question: "补全缺失字段", status: `${h.missingRequired} 条记录缺少姓名/院校/城市`, severity: "warning", action: { kind: "data-diagnostics" } });
   }
@@ -107,7 +110,8 @@ function dataCards(input: StageOverviewInput): StageOverviewCard[] {
   if (h.hidden > 0) {
     cards.push({ id: "data-hidden", question: "隐藏记录", status: `${h.hidden} 条记录已隐藏，不出现在海报`, severity: "info" });
   }
-  if (cards.length === 0) {
+  // 空名单不算健康：data-clean 仅在确有名单且无任何问题卡时出现。
+  if (cards.length === 0 && h.total > 0) {
     cards.push({ id: "data-clean", question: "名单数据健康", status: `${h.visible} 人 · 无缺失、无重复、全部可定位`, severity: "ok" });
   }
   return cards.slice(0, MAX_OVERVIEW_CARDS);

@@ -1778,6 +1778,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               includeResources={posterExport.includeResourcesInProjectExport}
               exportState={posterExport.exportState}
               exportError={posterExport.exportError}
+              lastExportFileName={posterExport.lastExportFileName}
               onPngScaleChange={posterExport.setPngScale}
               onTransparentExportChange={posterExport.setTransparentExport}
               onIncludeResourcesChange={posterExport.setIncludeResourcesInProjectExport}
@@ -1839,6 +1840,27 @@ function StudioApp({ projectId }: { projectId?: string }) {
                 setStatusMessage(`已上传字体：${font.label}`);
               }}
               onDeleteUserFont={deleteUserFont}
+              templates={(["original", "cartoon", "grain", "q", "scenery"] as const).map((templateId) => ({
+                id: templateId,
+                name: createSystemTemplate(templateId).name,
+              }))}
+              currentTemplateId={template}
+              customTemplates={customTemplates.map(({ id, name, scope }) => ({ id, name, scope }))}
+              customTemplateRecords={customTemplates}
+              onApplyTemplate={applySystemTemplate}
+              onApplyCustomTemplate={(record) => {
+                const full = customTemplates.find((item) => item.id === record.id);
+                if (full) applyCustomTemplateRecord(full);
+              }}
+              onSaveTemplate={saveCurrentTemplate}
+              onImportTemplateRecord={(record) => {
+                const { next, dropped } = mergeImportedTemplate(customTemplates, record);
+                setCustomTemplates(next);
+                setStatusMessage(dropped > 0
+                  ? `已导入模板：${record.name}（已达 20 个上限，替换了最旧的模板）`
+                  : `已导入模板：${record.name}`);
+              }}
+              templateAuthor={loadDisplayName()}
             />
           ),
           workspace: (

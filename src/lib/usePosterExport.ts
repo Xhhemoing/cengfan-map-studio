@@ -34,6 +34,8 @@ export interface UsePosterExportResult {
   exportingPng: boolean;
   exportState: DeliveryExportState;
   exportError: string | undefined;
+  /** File name written by the most recent successful export; undefined once a new export starts. */
+  lastExportFileName: string | undefined;
   pngScale: number;
   transparentExport: boolean;
   showProjectExportDialog: boolean;
@@ -65,6 +67,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const [exportingPng, setExportingPng] = useState(false);
   const [exportState, setExportState] = useState<DeliveryExportState>("idle");
   const [exportError, setExportError] = useState<string>();
+  const [lastExportFileName, setLastExportFileName] = useState<string>();
   const lastExportRef = useRef<"png" | "svg" | "project">("png");
   const [pngScale, setPngScale] = useState(1);
   const [transparentExport, setTransparentExport] = useState(false);
@@ -75,12 +78,14 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     lastExportRef.current = "svg";
     setExportState("exporting");
     setExportError(undefined);
+    setLastExportFileName(undefined);
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
       const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "svg" });
       downloadText(source, fileName, "image/svg+xml;charset=utf-8");
+      setLastExportFileName(fileName);
       setExportState("success");
       reportStatus("SVG 已导出");
     } catch (error) {
@@ -100,17 +105,21 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     lastExportRef.current = "project";
     setExportState("exporting");
     setExportError(undefined);
+    setLastExportFileName(undefined);
     try {
       const exportedAssets = includeResourcesInProjectExport ? userAssets : [];
       const exportedFonts = includeResourcesInProjectExport ? userFonts : [];
-      downloadProjectPackage(createProjectPackage({
+      const pack = createProjectPackage({
         project,
         assets: exportedAssets,
         fonts: exportedFonts,
         customTemplates,
         renderSettings,
-      }));
+      });
+      const fileName = `cengfan-project-${pack.exportedAt.slice(0, 10)}.json`;
+      downloadProjectPackage(pack, fileName);
       setShowProjectExportDialog(false);
+      setLastExportFileName(fileName);
       setExportState("success");
       reportStatus(includeResourcesInProjectExport
         ? `完整工程包已导出：${project.students.length} 条名单、${exportedAssets.length} 个素材、${exportedFonts.length} 个字体、${customTemplates.length} 个模板`
@@ -147,6 +156,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     setExportingPng(true);
     setExportState("exporting");
     setExportError(undefined);
+    setLastExportFileName(undefined);
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
@@ -159,6 +169,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       });
       const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "png", scale: pngScale });
       downloadDataUrl(dataUrl, fileName);
+      setLastExportFileName(fileName);
       setExportState("success");
       reportStatus("PNG 已导出");
     } catch (error) {
@@ -181,6 +192,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     exportingPng,
     exportState,
     exportError,
+    lastExportFileName,
     pngScale,
     transparentExport,
     showProjectExportDialog,

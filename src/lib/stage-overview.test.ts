@@ -52,6 +52,19 @@ describe("deriveStageOverviewCards", () => {
     expect(cards[0]).toMatchObject({ id: "data-clean", severity: "ok" });
   });
 
+  it("treats an empty roster as a warning to import, never as healthy", () => {
+    // makeInput 默认 dataHealth.total === 0：空名单不应被判为“名单数据健康”。
+    const cards = deriveStageOverviewCards(makeInput({ stage: "data" }));
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      id: "data-empty",
+      question: "还没有名单",
+      severity: "warning",
+      action: { kind: "data-diagnostics" },
+    });
+    expect(cards.some((c) => c.id === "data-clean")).toBe(false);
+  });
+
   it("flags map-data fit when people cannot be located and surfaces manual province overrides", () => {
     const health: DataHealthSummary = { total: 3, visible: 3, hidden: 0, international: 0, unresolved: 2, missingRequired: 0, duplicate: 0 };
     const manualIssues = [{ studentId: "s1", studentName: "甲", kind: "manual-province", detail: "使用省份覆盖：北京", severity: "info" }] as StageOverviewInput["dataIssues"];

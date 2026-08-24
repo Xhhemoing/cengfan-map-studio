@@ -12,7 +12,9 @@
 
 ## [Unreleased]
 
-暂无。新的用户可见改动合并后先记录在这里，发布时归入版本号。
+### 修复
+
+- **文档纠偏（不涉及代码行为）**：修正 `AGENTS.md`、`DEVELOPER.md` 与数据导入技能文档中残留的 `src/server` 路径（服务端实际位于仓库根目录 `server/`）；数据导入技能文档改为指向前端本地模板生成（`src/lib/binary-import.ts` 的 `createImportTemplateSheets()` 与 `DataWorkspace` 的下载按钮）；`function.md` 技术栈由 React 18 更正为 React 19；`function.md` 与 `DEPLOY-SERVER.md` 中已下线的 `/admin` 管理后台与 `GET /api/admin/visits` 访问统计描述改为「已移除」。
 
 ## [0.1.0] - 2026-08-24
 

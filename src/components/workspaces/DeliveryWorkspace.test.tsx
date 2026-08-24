@@ -89,6 +89,29 @@ describe("DeliveryWorkspace", () => {
     expect(container.querySelector('[role="group"][aria-label="导出操作"]')).not.toBeNull();
   });
 
+  it("shows the exported file name and a re-export button after a successful export", () => {
+    const onRetry = vi.fn();
+    const container = renderWorkspace({ exportState: "success", lastExportFileName: "我的毕业去向图-2x.png", onRetry });
+
+    const result = container.querySelector('[role="status"]');
+    expect(result?.textContent).toContain("已导出");
+    expect(result?.textContent).toContain("我的毕业去向图-2x.png");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="再次导出"]')?.click());
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the success bar readable when the file name is unknown and hides it otherwise", () => {
+    const withoutName = renderWorkspace({ exportState: "success" });
+    const bar = withoutName.querySelector('[role="status"]');
+    expect(bar?.textContent).toContain("已导出");
+    expect(withoutName.querySelector('button[aria-label="再次导出"]')).not.toBeNull();
+
+    expect(renderWorkspace({ exportState: "idle" }).querySelector('[role="status"]')).toBeNull();
+    expect(renderWorkspace({ exportState: "exporting" }).querySelector('[role="status"]')).toBeNull();
+    expect(renderWorkspace({ exportState: "error", exportError: "PNG 导出失败" }).querySelector('[role="status"]')).toBeNull();
+  });
+
   it("shows retry on export error without removing the current configuration", () => {
     const onRetry = vi.fn();
     const container = renderWorkspace({ exportState: "error", exportError: "PNG 导出失败", onRetry });

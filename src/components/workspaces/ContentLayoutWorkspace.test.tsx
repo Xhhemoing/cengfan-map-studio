@@ -29,6 +29,10 @@ function renderWorkspace(onRefreshPositions = vi.fn(), onBackToMap = vi.fn()) {
   roots.push({ root, container });
   const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
   const onPatch = vi.fn();
+  const onApplyTemplate = vi.fn();
+  const onApplyCustomTemplate = vi.fn();
+  const onSaveTemplate = vi.fn();
+  const onImportTemplateRecord = vi.fn();
   flushSync(() => root.render(
     <>
       <StudioTopbar
@@ -70,10 +74,28 @@ function renderWorkspace(onRefreshPositions = vi.fn(), onBackToMap = vi.fn()) {
         onPatch={onPatch}
         onReset={vi.fn()}
         assetPanelProps={{ onApplyBackground: vi.fn() }}
+        templates={[
+          { id: "original", name: "原版" },
+          { id: "cartoon", name: "卡通" },
+        ]}
+        currentTemplateId="original"
+        customTemplates={[{ id: "custom-1", name: "我的版式", scope: "layout" }]}
+        customTemplateRecords={[]}
+        onApplyTemplate={onApplyTemplate}
+        onApplyCustomTemplate={onApplyCustomTemplate}
+        onSaveTemplate={onSaveTemplate}
+        onImportTemplateRecord={onImportTemplateRecord}
+        templateAuthor="小林"
       />
     </>,
   ));
-  return { container, onPatch };
+  return {
+    container,
+    onPatch,
+    onApplyTemplate,
+    onApplyCustomTemplate,
+    onSaveTemplate,
+  };
 }
 
 describe("ContentLayoutWorkspace", () => {
@@ -116,5 +138,36 @@ describe("ContentLayoutWorkspace", () => {
 
     expect(container.querySelector('[aria-label="智能排版控制"]')).toBeNull();
     expect(container.querySelector('[aria-label="排版问题提示"]')).toBeNull();
+  });
+
+  it("offers template picking and file exchange from the live content rail", () => {
+    const {
+      container,
+      onApplyTemplate,
+      onApplyCustomTemplate,
+      onSaveTemplate,
+    } = renderWorkspace();
+    const details = container.querySelector<HTMLDetailsElement>(
+      '.content-layout-workspace__context details[aria-label="整体模板与交换"]',
+    );
+
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector(".template-picker")).not.toBeNull();
+    expect(details?.querySelector('[aria-label="模板文件交换"]')).not.toBeNull();
+    expect(details?.querySelector('input[aria-label="导入模板文件"]')).not.toBeNull();
+
+    const buttons = Array.from(details?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    flushSync(() => buttons.find((button) => button.textContent === "卡通")?.click());
+    flushSync(() => buttons.find((button) => button.textContent?.includes("我的版式"))?.click());
+    flushSync(() => buttons.find((button) => button.textContent === "保存当前整体模板")?.click());
+
+    expect(onApplyTemplate).toHaveBeenCalledWith("cartoon");
+    expect(onApplyCustomTemplate).toHaveBeenCalledWith({
+      id: "custom-1",
+      name: "我的版式",
+      scope: "layout",
+    });
+    expect(onSaveTemplate).toHaveBeenCalledTimes(1);
   });
 });

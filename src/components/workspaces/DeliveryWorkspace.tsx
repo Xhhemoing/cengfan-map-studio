@@ -27,6 +27,8 @@ export interface DeliveryWorkspaceProps {
   includeResources: boolean;
   exportState: DeliveryExportState;
   exportError?: string;
+  /** File name of the most recent successful export, when the pipeline knows it. */
+  lastExportFileName?: string;
   onPngScaleChange: (scale: number) => void;
   onTransparentExportChange: (value: boolean) => void;
   onIncludeResourcesChange: (value: boolean) => void;
@@ -91,6 +93,7 @@ export function DeliveryRail({
   includeResources,
   exportState,
   exportError,
+  lastExportFileName,
   onPngScaleChange,
   onTransparentExportChange,
   onIncludeResourcesChange,
@@ -107,6 +110,7 @@ export function DeliveryRail({
       <CheckSection title="排版问题" issues={layoutIssues.map((issue) => ({ kind: "layout", issue }))} onLocate={onLocate} />
       <CheckSection title="资源缺失" issues={resourceIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
       <CheckSection title="字体问题" issues={fontIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
+      {exportState === "success" && <div className="delivery-workspace__result" role="status"><CheckCircle2 size={16} aria-hidden /><span>{lastExportFileName ? `已导出 ${lastExportFileName}` : "已导出，请到浏览器下载目录查看"}</span><button type="button" aria-label="再次导出" onClick={onRetry}><RotateCcw size={15} aria-hidden /> 再次导出</button></div>}
       {exportState === "error" && <div className="delivery-workspace__error" role="alert"><strong>导出失败</strong><span>{exportError ?? "请检查浏览器下载权限后重试"}</span><button type="button" aria-label="重试导出" onClick={onRetry}><RotateCcw size={15} aria-hidden /> 重试</button></div>}
       <section className="delivery-workspace__controls" aria-label="导出设置">
         <label htmlFor="delivery-png-scale">PNG 倍率<select id="delivery-png-scale" aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option></select></label>

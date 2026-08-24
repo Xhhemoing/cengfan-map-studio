@@ -100,7 +100,7 @@ export function ProjectMenu({
   };
   return (
     <details className="project-menu">
-      <summary className="secondary-button" aria-label="打开项目菜单">
+      <summary className="secondary-button" aria-label="打开项目与协作菜单">
         <FolderOpen size={16} /> <span>项目</span>
       </summary>
       <div className="project-menu__popover">

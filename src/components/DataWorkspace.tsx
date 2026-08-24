@@ -574,8 +574,10 @@ export function DataWorkspace({
         </div>
       )}
 
-      {replaceConfirmation && <p className="panel-note data-message">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</p>}
-      {message && <p className="panel-note data-message">{message}</p>}
+      <div role="status" aria-live="polite" aria-atomic="true" className="panel-note data-message">
+        {replaceConfirmation && <span className="data-message__line">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</span>}
+        {message && <span className="data-message__line">{message}</span>}
+      </div>
 
       <div className="student-actions">
         <input

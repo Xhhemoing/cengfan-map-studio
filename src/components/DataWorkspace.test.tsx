@@ -98,6 +98,68 @@ describe("DataWorkspace", () => {
     expect(container.textContent).toContain("已下载学生数据导入模板");
   });
 
+  it("announces import results in a live region that stays mounted while empty", async () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    const region = container.querySelector('[role="status"].data-message');
+    expect(region).not.toBeNull();
+    expect(region!.getAttribute("aria-live")).toBe("polite");
+    expect(region!.getAttribute("aria-atomic")).toBe("true");
+    expect(region!.textContent).toBe("");
+    expect(container.querySelectorAll('[role="status"]').length).toBe(1);
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="下载学生数据 XLSX 模板"]')!);
+    await vi.waitFor(() => {
+      flushSync(() => {});
+      expect(region!.textContent).toContain("已下载学生数据导入模板");
+    });
+
+    // 同一个节点被复用，说明 region 没有随消息一起挂载/卸载
+    expect(container.querySelector('[role="status"].data-message')).toBe(region);
+  });
+
+  it("keeps the replace summary inside the same live region as the import message", async () => {
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
+      provider: "local-fallback",
+      candidates: [{ name: "苏禾", university: "浙江大学", city: "杭州", sourceLine: 1, rawLine: "苏禾 浙江大学 杭州" }],
+      unparsed: [],
+    }));
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+        confirmReplace={() => true}
+      />,
+    );
+    const region = container.querySelector('[role="status"].data-message')!;
+
+    changeInput(container.querySelector("textarea")!, "苏禾 浙江大学 杭州");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("替换全部"))!);
+
+    expect(region.textContent).toContain("当前 1 条");
+    expect(region.textContent).toContain("已替换 1 条学生数据");
+    expect(container.querySelector('[role="status"].data-message')).toBe(region);
+  });
+
   it("shows Excel header mappings and representative values before review", async () => {
     const container = render(
       <DataWorkspace
