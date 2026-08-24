@@ -41,7 +41,13 @@
   - opus-fast-B → `bc-42165287-40ae-53a9-ab03-be92cc120dc0`
   - gpt-sol-A → `bc-f4e8c95d-f6e1-5205-9eca-12545f81f39d`
   - gpt-sol-B → `bc-7e13aad9-37bd-55ad-9958-4d2031d69a8c`
-- [ ] Cycle 1 Round 3 — SOTA 打磨与交叉核验（派发中）
+- [ ] Cycle 1 Round 3 — SOTA 打磨与交叉核验（进行中，6 子代理并发）
+  - fable-A → `bc-61e49b2a-cf96-5bd2-8fc2-8ad354cd8b6b`
+  - fable-B → `bc-2567d2e8-caa9-5038-84bb-a101e9a57de4`
+  - opus-fast-A → `bc-39a39282-18d4-5b09-b0e1-a38652ba6b58`
+  - opus-fast-B → `bc-fadea826-74a2-5368-9667-5431fcf9b1c7`
+  - gpt-sol-A → `bc-b425589d-0230-58c2-94b8-fd136cbe474b`
+  - gpt-sol-B → `bc-d2683e3c-52ea-50e8-b527-85e5fd822ff8`
 - [ ] Cycle 2 Round 1
 - [ ] Cycle 2 Round 2
 - [ ] Cycle 2 Round 3
