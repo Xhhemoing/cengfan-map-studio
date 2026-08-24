@@ -327,16 +327,83 @@ describe("AppErrorBoundary project-store fallback", () => {
     expect(await projectButtons(container)).toHaveLength(1);
   });
 
-  it("says nothing durable can be exported when the store is degraded to memory", async () => {
+  it("blames the unopenable database instead of claiming the disk is empty when degraded", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const projectStore = fakeProjectStore([], "memory");
 
     const container = mountBoundary(<Boom />, { mirror: memorySyncStore(), projectStore });
     clickExport(container);
 
-    expect(await waitForNote(container, "降级")).toContain("没有找到");
-    expect(structuredLogs(errorSpy)[1]).toMatchObject({ outcome: "store-degraded", storeHealth: "memory" });
+    const note = await waitForNote(container, "无法打开本机项目数据库");
+    expect(note).toContain("没有找到");
+    expect(note).toContain("降级");
+    // 降级后读到的空列表来自内存，磁盘上有没有工程根本无从得知。
+    expect(note).not.toMatch(/磁盘上没有|磁盘上不存在|没有可导出的工程内容/);
+    expect(note).not.toContain("也没有已保存的工程");
+    expect(structuredLogs(errorSpy)[1]).toMatchObject({
+      outcome: "store-degraded",
+      storeHealth: "memory",
+      diskContentsKnown: false,
+    });
     expect(container.querySelector("button[data-project-id]")).toBeNull();
+  });
+
+  it("lists memory-held projects with in-memory-only urgency instead of disk-implying copy", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const projectStore = fakeProjectStore([
+      storedProject("proj-1", "降级期一班", "2026-08-18T08:00:00.000Z"),
+      storedProject("proj-2", "降级期二班", "2026-08-19T08:00:00.000Z"),
+    ], "memory");
+    const downloadPack = vi.fn();
+
+    const container = mountBoundary(<Boom />, { mirror: memorySyncStore(), projectStore, downloadPack });
+    clickExport(container);
+
+    const buttons = await projectButtons(container);
+    expect(buttons).toHaveLength(2);
+    const note = await waitForNote(container, "仅存在于本次会话内存中，请立刻导出");
+    expect(note).not.toMatch(/磁盘上没有|磁盘上不存在|没有持久副本/);
+    expect(structuredLogs(errorSpy)[0]).toMatchObject({ outcome: "mirror-empty" });
+    expect(structuredLogs(infoSpy).at(-1)).toMatchObject({
+      outcome: "store-listed",
+      storeHealth: "memory",
+      projects: 2,
+    });
+
+    buttons[0]?.click();
+    await vi.waitFor(() => expect(downloadPack).toHaveBeenCalledTimes(1));
+    expect(await waitForNote(container, "已导出")).toContain("降级期一班");
+    expect(projectStore.put).not.toHaveBeenCalled();
+    expect(projectStore.remove).not.toHaveBeenCalled();
+  });
+
+  it("does not call a project deleted when the store degraded between listing and export", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const projectStore = fakeProjectStore([storedProject("proj-1", "半途降级", "2026-08-20T08:00:00.000Z")]);
+    const downloadPack = vi.fn();
+
+    const container = mountBoundary(<Boom />, { mirror: memorySyncStore(), projectStore, downloadPack });
+    clickExport(container);
+
+    const buttons = await projectButtons(container);
+    // 列举之后数据库掉线：降级后的空内存副本让 get() 返回 null，这不是“已被删除”。
+    projectStore.health = "memory";
+    projectStore.get.mockResolvedValueOnce(null);
+    buttons[0]?.click();
+
+    const note = await waitForNote(container, "半途降级");
+    expect(note).toContain("降级");
+    expect(note).not.toContain("已经不在本机项目库里");
+    expect(downloadPack).not.toHaveBeenCalled();
+    expect(structuredLogs(errorSpy).at(-1)).toMatchObject({
+      outcome: "project-missing",
+      projectId: "proj-1",
+      storeHealth: "memory",
+      listedHealth: "persistent",
+      degradedDuringRead: true,
+    });
   });
 
   it("reports an empty project store separately from an empty mirror", async () => {
@@ -382,7 +449,12 @@ describe("AppErrorBoundary project-store fallback", () => {
 
     expect(await waitForNote(container, "已经不在本机项目库里")).toContain("已删除工程");
     expect(downloadPack).not.toHaveBeenCalled();
-    expect(structuredLogs(errorSpy).at(-1)).toMatchObject({ outcome: "project-missing", projectId: "proj-1" });
+    expect(structuredLogs(errorSpy).at(-1)).toMatchObject({
+      outcome: "project-missing",
+      projectId: "proj-1",
+      storeHealth: "persistent",
+      degradedDuringRead: false,
+    });
   });
 
   it("leaves the project store untouched when the mirror still has data", async () => {
