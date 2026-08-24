@@ -36,7 +36,34 @@ export interface ProjectListItem extends ProjectMetadata {
   };
 }
 
+/** `"memory"` 表示本次会话的改动不会落到本机磁盘，调用方应提示用户导出备份。 */
+export type ProjectStoreHealth = "persistent" | "memory";
+
+export type ProjectStoreErrorCode =
+  | "unsupported"
+  | "quota-exceeded"
+  | "write-aborted"
+  | "delete-aborted"
+  | "open-failed";
+
+/** 分类过的存储失败：调用方按 code 决定文案与后续动作，message 已是可直接展示的中文。 */
+export class ProjectStoreError extends Error {
+  readonly code: ProjectStoreErrorCode;
+
+  constructor(code: ProjectStoreErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "ProjectStoreError";
+    this.code = code;
+  }
+}
+
+const QUOTA_MESSAGE = "本机存储空间不足，请清理浏览器数据或删除不再需要的项目后重试。";
+const UNSUPPORTED_MESSAGE = "当前浏览器不支持 IndexedDB";
+const OPEN_FAILED_MESSAGE = "无法打开本机项目数据库";
+
 export interface ProjectStore {
+  /** 快照值：降级发生在打开数据库失败之后，需要响应式通知请用 `onHealthChange`。 */
+  readonly health: ProjectStoreHealth;
   list(): Promise<ProjectListItem[]>;
   get(id: string): Promise<StoredProject | null>;
   put(project: StoredProject): Promise<void>;
@@ -112,6 +139,7 @@ function projectListItem(metadata: ProjectMetadata): ProjectListItem {
 export function createMemoryProjectStore(): ProjectStore {
   const records = new Map<string, StoredProject>();
   return {
+    health: "memory",
     async list() {
       return [...records.values()]
         .map((record) => projectListItem(projectMetadata(record)))
@@ -362,6 +390,41 @@ function migrateLegacyWorkspace(db: IDBDatabase): Promise<void> {
   });
 }
 
+/**
+ * 打开连接后补齐缺失的元数据边车行。
+ * 旧标签页（R2-6 之前的代码）只写 projects，不写 project-metadata，这些项目会从列表里消失；
+ * 键集合比对很便宜，只有确实缺边车的行才会被完整读出来投影一次。
+ */
+function reconcileMissingMetadata(db: IDBDatabase): Promise<void> {
+  if (!db.objectStoreNames.contains(STORE_NAME) || !db.objectStoreNames.contains(METADATA_STORE_NAME)) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE_NAME, METADATA_STORE_NAME], "readwrite");
+    const projects = tx.objectStore(STORE_NAME);
+    const metadataStore = tx.objectStore(METADATA_STORE_NAME);
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 元数据校正中止"));
+
+    const metadataKeys = metadataStore.getAllKeys();
+    metadataKeys.onsuccess = () => {
+      const projected = new Set((metadataKeys.result ?? []).map((key) => String(key)));
+      const projectKeys = projects.getAllKeys();
+      projectKeys.onsuccess = () => {
+        for (const key of projectKeys.result ?? []) {
+          if (projected.has(String(key))) continue;
+          const valueRequest = projects.get(key);
+          valueRequest.onsuccess = () => {
+            // 无法解析的行只是不进列表，不删除：用户的数据留在 projects 里等待人工导出。
+            const metadata = metadataFromStoredValue(valueRequest.result);
+            if (metadata) metadataStore.put(metadata, key);
+          };
+        }
+      };
+    };
+  });
+}
+
 function buildMigratedProject(legacyPack: unknown): StoredProject | null {
   try {
     const now = new Date().toISOString();
@@ -426,24 +489,99 @@ function createConnectionPool(open: () => Promise<IDBDatabase>): { run: Transact
   return { run };
 }
 
-export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.indexedDB): ProjectStore {
+/** 配额耗尽在各浏览器里的名字不同，Safari/旧 Firefox 只给出 code 22。 */
+function isQuotaError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { name, code } = error as { name?: unknown; code?: unknown };
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED" || code === 22;
+}
+
+/** 事务中止的分类：配额耗尽要给用户可执行的提示，其余保持通用的中止说明。 */
+function abortFailure(
+  tx: IDBTransaction,
+  requestError: unknown,
+  code: ProjectStoreErrorCode,
+  message: string,
+): ProjectStoreError {
+  const cause = tx.error ?? requestError;
+  if (isQuotaError(tx.error) || isQuotaError(requestError)) {
+    return new ProjectStoreError("quota-exceeded", QUOTA_MESSAGE, { cause });
+  }
+  return new ProjectStoreError(code, message, { cause });
+}
+
+function requestErrorOf(event: Event): unknown {
+  return (event.target as { error?: unknown } | null)?.error ?? null;
+}
+
+const RETRY_DELAY_MS = 120;
+
+export interface IndexedDbProjectStoreOptions {
+  /** 打开失败后的额外重试次数；重试用尽才进入内存降级模式。 */
+  openRetries?: number;
+  retryDelayMs?: number;
+  onHealthChange?: (health: ProjectStoreHealth) => void;
+}
+
+export function createIndexedDbProjectStore(
+  factory: IDBFactory = globalThis.indexedDB,
+  options: IndexedDbProjectStoreOptions = {},
+): ProjectStore {
   if (!factory) {
     return {
+      health: "memory",
       async list() { return []; },
       async get() { return null; },
-      async put() { throw new Error("当前浏览器不支持 IndexedDB"); },
-      async remove() { throw new Error("当前浏览器不支持 IndexedDB"); },
+      async put() { throw new ProjectStoreError("unsupported", UNSUPPORTED_MESSAGE); },
+      async remove() { throw new ProjectStoreError("unsupported", UNSUPPORTED_MESSAGE); },
     };
   }
+  const { openRetries = 1, retryDelayMs = RETRY_DELAY_MS, onHealthChange } = options;
   const { run } = createConnectionPool(async () => {
-    const { db, legacyV1 } = await openDatabase(factory);
-    // 迁移失败不应让整个 store 不可用：连接照常返回，用户仍能读写项目。
-    if (legacyV1) await migrateLegacyWorkspace(db).catch(() => {});
-    return db;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt <= openRetries; attempt += 1) {
+      if (attempt > 0 && retryDelayMs > 0) await new Promise((wake) => setTimeout(wake, retryDelayMs));
+      try {
+        const { db, legacyV1 } = await openDatabase(factory);
+        // 迁移/校正失败不应让整个 store 不可用：连接照常返回，用户仍能读写项目。
+        if (legacyV1) await migrateLegacyWorkspace(db).catch(() => {});
+        await reconcileMissingMetadata(db).catch(() => {});
+        return db;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new ProjectStoreError("open-failed", OPEN_FAILED_MESSAGE, { cause: lastError });
   });
+
+  // 持久层彻底打不开（隐私模式、数据库损坏）时降级到内存：编辑仍可继续，health 变为 "memory"。
+  let fallback: ProjectStore | null = null;
+  const degrade = (): ProjectStore => {
+    if (!fallback) {
+      fallback = createMemoryProjectStore();
+      onHealthChange?.("memory");
+    }
+    return fallback;
+  };
+  const withFallback = async <T>(
+    persistent: () => Promise<T>,
+    degraded: (store: ProjectStore) => Promise<T>,
+  ): Promise<T> => {
+    if (fallback) return degraded(fallback);
+    try {
+      return await persistent();
+    } catch (error) {
+      if (!(error instanceof ProjectStoreError) || error.code !== "open-failed") throw error;
+      return degraded(degrade());
+    }
+  };
+
   return {
+    get health(): ProjectStoreHealth {
+      return fallback ? "memory" : "persistent";
+    },
     async list() {
-      return run(METADATA_STORE_NAME, "readonly", (tx) => new Promise<ProjectListItem[]>((resolve) => {
+      return withFallback(() => run(METADATA_STORE_NAME, "readonly", (tx) => new Promise<ProjectListItem[]>((resolve) => {
         const request = tx.objectStore(METADATA_STORE_NAME).getAll();
         request.onsuccess = () => {
           // 单条元数据损坏只丢弃该条，其余项目必须照常列出。
@@ -455,34 +593,37 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
         };
         request.onerror = () => resolve([]);
         tx.onabort = () => resolve([]);
-      }));
+      })), (store) => store.list());
     },
     async get(id) {
-      return run(STORE_NAME, "readonly", (tx) => new Promise<StoredProject | null>((resolve) => {
+      return withFallback(() => run(STORE_NAME, "readonly", (tx) => new Promise<StoredProject | null>((resolve) => {
         const request = tx.objectStore(STORE_NAME).get(id);
         request.onsuccess = () => resolve(parseStoredProject(request.result));
         request.onerror = () => resolve(null);
         tx.onabort = () => resolve(null);
-      }));
+      })), (store) => store.get(id));
     },
     async put(project) {
-      await run([STORE_NAME, METADATA_STORE_NAME], "readwrite", (tx) => new Promise<void>((resolve, reject) => {
+      await withFallback(() => run([STORE_NAME, METADATA_STORE_NAME], "readwrite", (tx) => new Promise<void>((resolve, reject) => {
+        let requestError: unknown = null;
         tx.objectStore(STORE_NAME).put(structuredClone(project), project.id);
         tx.objectStore(METADATA_STORE_NAME).put(projectMetadata(project), project.id);
         tx.oncomplete = () => resolve();
-        // request error 会先于事务的 terminal abort 触发；由 onabort 统一报告，避免多 store 写入误报为已完成。
-        tx.onerror = () => undefined;
-        tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 写入中止"));
-      }));
+        // request error 会先于事务的 terminal abort 触发；只记下原因（配额耗尽在这里可见），
+        // 由 onabort 统一报告，避免多 store 写入误报为已完成。
+        tx.onerror = (event) => { requestError ??= requestErrorOf(event); };
+        tx.onabort = () => reject(abortFailure(tx, requestError, "write-aborted", "IndexedDB 写入中止"));
+      })), (store) => store.put(project));
     },
     async remove(id) {
-      await run([STORE_NAME, METADATA_STORE_NAME], "readwrite", (tx) => new Promise<void>((resolve, reject) => {
+      await withFallback(() => run([STORE_NAME, METADATA_STORE_NAME], "readwrite", (tx) => new Promise<void>((resolve, reject) => {
+        let requestError: unknown = null;
         tx.objectStore(STORE_NAME).delete(id);
         tx.objectStore(METADATA_STORE_NAME).delete(id);
         tx.oncomplete = () => resolve();
-        tx.onerror = () => undefined;
-        tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 删除中止"));
-      }));
+        tx.onerror = (event) => { requestError ??= requestErrorOf(event); };
+        tx.onabort = () => reject(abortFailure(tx, requestError, "delete-aborted", "IndexedDB 删除中止"));
+      })), (store) => store.remove(id));
     },
   };
 }

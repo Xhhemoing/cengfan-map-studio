@@ -53,6 +53,34 @@ function seedProjectDatabaseWithoutMetadata(factory: IDBFactory): Promise<void> 
   });
 }
 
+/** 模拟旧标签页（或崩溃的写入）只落了 projects 行、没有写元数据边车。 */
+function writeProjectRowOnly(factory: IDBFactory, id: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = factory.open("cengfan-map-studio");
+    request.onsuccess = () => {
+      const db = request.result;
+      const tx = db.transaction("projects", "readwrite");
+      tx.objectStore("projects").put(storedProject(id), id);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onabort = () => { db.close(); reject(tx.error); };
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function readMetadataKeys(factory: IDBFactory): Promise<IDBValidKey[]> {
+  return new Promise((resolve, reject) => {
+    const request = factory.open("cengfan-map-studio");
+    request.onsuccess = () => {
+      const db = request.result;
+      const read = db.transaction("project-metadata", "readonly").objectStore("project-metadata").getAllKeys();
+      read.onsuccess = () => { db.close(); resolve(read.result ?? []); };
+      read.onerror = () => { db.close(); reject(read.error); };
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
 function readWorkspaceKey(factory: IDBFactory, key: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const request = factory.open("cengfan-map-studio");
@@ -120,6 +148,43 @@ describe("project store IndexedDB version upgrade", () => {
       assetCount: 0,
     });
     expect((await store.get("proj-pre-metadata"))?.pack.project.students[0]?.name).toBe("旧工作区学生");
+  });
+
+  it("reconciles a projects row whose metadata sidecar is missing", async () => {
+    const factory = new IDBFactory();
+    const store = createIndexedDbProjectStore(factory);
+    await store.put(storedProject("proj-paired"));
+    // 边车 store 已存在，因此升级期的投影不会再跑：只能靠打开时的校正补上这一行。
+    await writeProjectRowOnly(factory, "proj-orphan");
+
+    const reopened = createIndexedDbProjectStore(factory);
+    const listed = await reopened.list();
+
+    expect(listed.map((project) => project.id).sort()).toEqual(["proj-orphan", "proj-paired"]);
+    expect(listed.find((project) => project.id === "proj-orphan")).toMatchObject({ studentCount: 1, assetCount: 0 });
+    expect((await reopened.get("proj-orphan"))?.pack.project.students[0]?.name).toBe("旧工作区学生");
+    expect((await readMetadataKeys(factory)).sort()).toEqual(["proj-orphan", "proj-paired"]);
+  });
+
+  it("leaves an unparseable projects row out of the reconciled metadata", async () => {
+    const factory = new IDBFactory();
+    const store = createIndexedDbProjectStore(factory);
+    await store.put(storedProject("proj-valid"));
+    await new Promise<void>((resolve, reject) => {
+      const request = factory.open("cengfan-map-studio");
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction("projects", "readwrite");
+        tx.objectStore("projects").put("彻底不是记录", "proj-garbage");
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onabort = () => { db.close(); reject(tx.error); };
+      };
+      request.onerror = () => reject(request.error);
+    });
+
+    const reopened = createIndexedDbProjectStore(factory);
+
+    expect((await reopened.list()).map((project) => project.id)).toEqual(["proj-valid"]);
   });
 
   it("does not re-migrate after the legacy key was consumed", async () => {
