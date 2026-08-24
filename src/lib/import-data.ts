@@ -1,10 +1,13 @@
 import {
+  countExactHeaderCells,
   describeMissingCells,
   detectHeaderColumns,
   isBlankImportCell,
+  isSummaryRow,
   missingRequiredCells,
   missingRequiredColumns,
   readStudentColumn,
+  rowRestatesHeader,
   trimImportCell,
   type StudentColumn,
   type StudentColumnIndexes,
@@ -32,9 +35,12 @@ export interface TextImportResult {
 }
 
 export {
+  countExactHeaderCells,
   describeMissingCells,
   detectHeaderColumns,
   isBlankImportCell,
+  isExactHeaderAlias,
+  isSummaryRow,
   looksLikeStudentHeader,
   missingRequiredCells,
   missingRequiredColumns,
@@ -42,6 +48,7 @@ export {
   readStudentColumn,
   REQUIRED_COLUMN_LABELS,
   REQUIRED_STUDENT_COLUMNS,
+  rowRestatesHeader,
   STUDENT_HEADER_ALIASES,
   trimImportCell,
 } from "./import-headers";
@@ -211,19 +218,38 @@ function parseLabeledCandidate(
 interface TextHeader {
   lineIndex: number;
   delimiter: string | null;
+  cells: string[];
   indexes: StudentColumnIndexes;
 }
 
-/** Detects a header on the first non-empty line only, so data-first pastes keep working. */
+const TEXT_HEADER_SEARCH_DEPTH = 5;
+
+/** A late header must spell this many required columns exactly to be believed. */
+const MIN_LATE_HEADER_EXACT_CELLS = 2;
+
+/**
+ * The first non-empty line is the usual header spot and keeps the two-column
+ * rule, so a partial header still names the columns it does provide.
+ *
+ * A later line is only accepted when it maps every required column and spells
+ * at least two of them exactly: pasted blocks often open with a title or a
+ * "更新时间" line, but a data row must never be mistaken for a header.
+ */
 function detectTextHeader(lines: string[]): TextHeader | null {
-  const first = lines[0];
-  if (!first) return null;
-  const delimiter = detectDelimiter(first);
-  const cells = splitCells(first, delimiter);
-  if (cells.filter(Boolean).length < 2) return null;
-  const indexes = detectHeaderColumns(cells);
-  if (Object.keys(indexes).length < 2) return null;
-  return { lineIndex: 0, delimiter, indexes };
+  for (const [lineIndex, line] of lines.slice(0, TEXT_HEADER_SEARCH_DEPTH).entries()) {
+    const delimiter = detectDelimiter(line);
+    const cells = splitCells(line, delimiter);
+    if (cells.filter(Boolean).length < 2) continue;
+    const indexes = detectHeaderColumns(cells);
+    const header = { lineIndex, delimiter, cells, indexes };
+    if (lineIndex === 0) {
+      if (Object.keys(indexes).length >= 2) return header;
+      continue;
+    }
+    if (missingRequiredColumns(indexes).length > 0) continue;
+    if (countExactHeaderCells(cells, indexes) >= MIN_LATE_HEADER_EXACT_CELLS) return header;
+  }
+  return null;
 }
 
 export function parseDelimitedTable(text: string): ImportCandidate[] {
@@ -239,10 +265,23 @@ export function parseStudentText(text: string): TextImportResult {
 
   lines.forEach((line, index) => {
     if (header && index === header.lineIndex) return;
+    // Titles and notes sitting above the header describe the sheet, not a
+    // student: parsing them positionally would invent a record, so they are
+    // reported as skipped instead.
+    if (header && index < header.lineIndex) {
+      unparsed.push({ sourceLine: index + 1, rawLine: line, reason: "表头之前的内容" });
+      return;
+    }
     let missingReason: string | null = null;
 
     if (headerIsComplete) {
       const cells = splitCells(line, header!.delimiter);
+      // Two exports stacked together repeat the header; it is not a student.
+      if (rowRestatesHeader(cells, header!.indexes, header!.cells)) return;
+      if (isSummaryRow(cells, header!.indexes)) {
+        unparsed.push({ sourceLine: index + 1, rawLine: line, reason: "汇总行" });
+        return;
+      }
       const mapped = candidateFromColumns(cells, header!.indexes, index + 1, line);
       if (mapped) {
         candidates.push(mapped);

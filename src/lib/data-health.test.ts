@@ -67,6 +67,23 @@ describe("project data health", () => {
     ]);
   });
 
+  it("groups records that differ only in punctuation width or middle dot", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "student-1", name: "阿依古丽·买买提", university: "Harvard University", city: "美国·波士顿", locationScope: "international", visibility: true },
+        // The same person retyped: katakana middle dot and full-width Latin.
+        { id: "student-2", name: "阿依古丽・买买提", university: "Ｈａｒｖａｒｄ　Ｕｎｉｖｅｒｓｉｔｙ", city: "美国·波士顿", locationScope: "international", visibility: true },
+        { id: "student-3", name: "林舟", university: "北京大学", city: "北京市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project).duplicate).toBe(2);
+    expect(listDataIssues(project).filter((issue) => issue.kind === "duplicate").map((issue) => issue.studentId))
+      .toEqual(["student-1", "student-2"]);
+  });
+
   it("gives every issue a stable kind:studentId identifier the UI can locate", () => {
     const project = createProjectDocument({
       students: [

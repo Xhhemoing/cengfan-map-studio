@@ -224,6 +224,53 @@ export function missingRequiredColumns(indexes: StudentColumnIndexes): RequiredS
   return REQUIRED_STUDENT_COLUMNS.filter((column) => indexes[column] === undefined);
 }
 
+/** True when a cell is spelled exactly like one of `column`'s own aliases. */
+export function isExactHeaderAlias(column: StudentColumn, value: string): boolean {
+  const normalized = normalizeHeaderCell(value);
+  return normalized !== "" && NORMALIZED_HEADER_ALIASES.get(column)!.has(normalized);
+}
+
+/** How many required columns of a mapped row are spelled exactly like a header. */
+export function countExactHeaderCells(cells: string[], indexes: StudentColumnIndexes): number {
+  return REQUIRED_STUDENT_COLUMNS.filter((column) =>
+    isExactHeaderAlias(column, readStudentColumn(cells, indexes, column)),
+  ).length;
+}
+
+/**
+ * Words a totals row puts in the name column. Rosters end with one often
+ * enough that importing "合计" as a student is a recurring complaint.
+ */
+const SUMMARY_ROW_NAMES = new Set(
+  ["合计", "总计", "小计", "共计", "汇总", "总人数", "total", "subtotal", "sum"].map(normalizeHeaderCell),
+);
+
+/** True when the row is a totals line rather than a student. */
+export function isSummaryRow(cells: string[], indexes: StudentColumnIndexes): boolean {
+  return SUMMARY_ROW_NAMES.has(normalizeHeaderCell(readStudentColumn(cells, indexes, "name")));
+}
+
+/**
+ * True when a data row is the header row stated a second time. Stacking two
+ * exports into one sheet repeats it, and importing that row would create a
+ * student called 姓名. A required cell counts as a repeat when it is spelled
+ * like one of its own column's aliases or exactly like the header cell above
+ * it, so a decorated header ("学生姓名（中文）") is recognized as well.
+ */
+export function rowRestatesHeader(
+  cells: string[],
+  indexes: StudentColumnIndexes,
+  headerCells: readonly string[] = [],
+): boolean {
+  return REQUIRED_STUDENT_COLUMNS.every((column) => {
+    const value = readStudentColumn(cells, indexes, column);
+    if (!value) return false;
+    if (isExactHeaderAlias(column, value)) return true;
+    const headerCell = trimImportCell(headerCells[indexes[column] ?? -1]);
+    return headerCell !== "" && normalizeHeaderCell(value) === normalizeHeaderCell(headerCell);
+  });
+}
+
 /** A row of header cells is only treated as a header when it maps at least two fields. */
 export function looksLikeStudentHeader(cells: string[]): boolean {
   return Object.keys(detectHeaderColumns(cells)).length >= 2;

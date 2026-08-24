@@ -1,4 +1,4 @@
-import { ImageDown, MapPinned, PanelRight, PanelRightClose, Redo2, Undo2 } from "lucide-react";
+import { ImageDown, PanelRight, PanelRightClose, Redo2, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { PosterCanvas } from "../canvas/PosterCanvas";
 import { InspectorPanel } from "../inspector/InspectorPanel";
@@ -25,6 +25,7 @@ import type { StudioChrome } from "../../hooks/use-studio-chrome";
 import { LegacyProjectExportDialog } from "./LegacyProjectExportDialog";
 import { LegacySidebarPanels } from "./LegacySidebarPanels";
 import { SkipToStageLink } from "./SkipToStageLink";
+import { StudioBrand } from "./StudioStatusScreens";
 import { STUDIO_STAGE_TARGET_ID } from "./stage-target";
 import type { StageSlotsContext } from "./stage-slots";
 
@@ -190,12 +191,7 @@ export function LegacyEditorChrome({
     <main className="app-shell" data-editor-theme={chrome.resolvedTheme} data-editor-skin={chrome.skin}>
       <SkipToStageLink />
       <header className="topbar">
-        <div className="brand">
-          <MapPinned size={24} />
-          <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-          <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-          <em>Beta</em>
-        </div>
+        <StudioBrand />
         <div className="topbar-workflow">
           <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={onStageChange} />
           <div className="topbar-workflow__legacy" aria-hidden="true">

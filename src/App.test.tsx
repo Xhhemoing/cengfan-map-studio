@@ -358,8 +358,8 @@ describe("App student editing", () => {
     const request = vi.spyOn(globalThis, "fetch");
     const container = renderApp();
 
-    expect(container.querySelector('[aria-label="增量在线协作"]')).not.toBeNull();
-    click(container.querySelector('[aria-label="增量在线协作"]')!);
+    expect(container.querySelector('[aria-label="增量协作"]')).not.toBeNull();
+    click(container.querySelector('[aria-label="增量协作"]')!);
     expect(container.textContent).toContain("未连接时不会上传或覆盖工程");
     expect(container.textContent).toContain("增量同步");
     expect(request).not.toHaveBeenCalledWith(expect.stringContaining("/api/rooms"), expect.anything());
@@ -384,7 +384,7 @@ describe("App student editing", () => {
     });
     globalThis.fetch = request as typeof fetch;
     try {
-      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      click(container.querySelector('[aria-label="增量协作"]')!);
       changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
       changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作邀请凭证"]')!, "viewer-invite");
       click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
@@ -429,7 +429,7 @@ describe("App student editing", () => {
     });
     globalThis.fetch = request as typeof fetch;
     try {
-      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      click(container.querySelector('[aria-label="增量协作"]')!);
       click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "创建房间")!);
       await vi.waitFor(() => expect(request).toHaveBeenCalledWith("/api/rooms", expect.anything()));
       await vi.waitFor(() => expect(container.textContent).toContain("房间已创建"));
@@ -490,7 +490,7 @@ describe("App student editing", () => {
     });
     globalThis.fetch = request as typeof fetch;
     try {
-      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      click(container.querySelector('[aria-label="增量协作"]')!);
       changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
       changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作邀请凭证"]')!, "editor-invite");
       click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
@@ -541,7 +541,7 @@ describe("App student editing", () => {
     });
     globalThis.fetch = request as typeof fetch;
     try {
-      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      click(container.querySelector('[aria-label="增量协作"]')!);
       changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
       changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作邀请凭证"]')!, "editor-invite");
       click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
@@ -686,7 +686,7 @@ describe("App student editing", () => {
     }
     vi.stubGlobal("FileReader", ImmediateFileReader);
     const container = renderApp();
-    const input = container.querySelector<HTMLInputElement>('input[aria-label="导入完整工程包"]')!;
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="导入工程"]')!;
     Object.defineProperty(input, "files", { configurable: true, value: [new File(["package"], "project.json", { type: "application/json" })] });
 
     flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
@@ -723,7 +723,7 @@ describe("App student editing", () => {
     }
     vi.stubGlobal("FileReader", ImmediateFileReader);
     const container = renderApp();
-    const input = container.querySelector<HTMLInputElement>('input[aria-label="导入完整工程包"]')!;
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="导入工程"]')!;
     Object.defineProperty(input, "files", { configurable: true, value: [new File(["package"], "legacy-project.json", { type: "application/json" })] });
 
     flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
@@ -1531,7 +1531,7 @@ describe("App workflow guidance", () => {
     const container = renderApp();
     const shell = container.querySelector<HTMLElement>(".app-shell")!;
     const poster = container.querySelector<SVGSVGElement>("svg.poster")!;
-    const toggle = container.querySelector<HTMLButtonElement>('[aria-label="切换到暗色模式"]')!;
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="暗色模式"][aria-pressed="false"]')!;
 
     expect(shell.dataset.editorTheme).toBe("light");
     const viewBox = poster.getAttribute("viewBox");

@@ -373,6 +373,84 @@ describe("wide and repetitive headers", () => {
     expect(result.candidates).toEqual([expect.objectContaining({ name: "林舟", city: "北京市" })]);
   });
 
+  it("keeps a duplicated header on its first column and leaves the copy unused", () => {
+    // Merging two exports duplicates whole columns; the first claim wins so the
+    // mapping never depends on which copy the sheet happens to list last.
+    expect(detectHeaderColumns(["姓名", "院校", "城市", "姓名", "城市"])).toEqual({
+      name: 0,
+      university: 1,
+      city: 2,
+    });
+
+    const result = parseStudentText([
+      "姓名,院校,城市,姓名,城市",
+      "林舟,北京大学,北京市,曾用名,旧城市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("skips a header row that a stacked export repeats inside the data", () => {
+    const result = parseStudentText([
+      "学生姓名,录取院校,城市",
+      "林舟,北京大学,北京市",
+      "学生姓名,录取院校,城市",
+      "苏禾,浙江大学,杭州市",
+      // A differently worded repeat still maps to the same three columns.
+      "姓名,院校,城市",
+      "顾言,复旦大学,上海市",
+    ].join("\n"));
+
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["林舟", "苏禾", "顾言"]);
+    // The repeats are headers, not data, so they are not reported as losses.
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("names a totals row instead of importing 合计 as a student", () => {
+    const result = parseStudentText([
+      "姓名,院校,城市",
+      "林舟,北京大学,北京市",
+      "合计,2 所院校,2 个城市",
+    ].join("\n"));
+
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["林舟"]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "合计,2 所院校,2 个城市", reason: "汇总行" },
+    ]);
+  });
+
+  it("finds a header below a title line and reports the skipped preamble", () => {
+    const result = parseStudentText([
+      "2026 届毕业去向统计",
+      "更新时间,2026-06-30",
+      "姓名,录取院校,城市",
+      "苏禾,浙江大学,杭州市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市", sourceLine: 4 }),
+    ]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 1, rawLine: "2026 届毕业去向统计", reason: "表头之前的内容" },
+      { sourceLine: 2, rawLine: "更新时间,2026-06-30", reason: "表头之前的内容" },
+    ]);
+  });
+
+  it("never promotes a data line to a header just because it fills three columns", () => {
+    // 林舟's row maps nothing exactly, so the paste stays positional instead of
+    // losing its first record to a made-up header.
+    const result = parseStudentText([
+      "毕业名单",
+      "林舟,北京大学,北京市",
+      "苏禾,浙江大学,杭州市",
+    ].join("\n"));
+
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["林舟", "苏禾"]);
+  });
+
   it("maps a very wide sheet by header instead of by position", () => {
     const headers = Array.from({ length: 200 }, (_, index) => `扩展字段${index + 1}`);
     headers[3] = "学生姓名";

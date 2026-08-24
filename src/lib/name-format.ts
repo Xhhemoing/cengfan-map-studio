@@ -59,10 +59,49 @@ export interface SurnameSplit {
   given: string;
 }
 
+/** Zero-width characters survive `trim()` and would fake a longer name. */
+const INVISIBLE_NAME_CHARS = /[\uFEFF\u200b-\u200d\u2060]/g;
+
+/** Every middle dot a transliterated name arrives with, unified to `·`. */
+const NAME_MIDDLE_DOTS = /[·・･•‧∙⋅]/g;
+
+/** A space between two Chinese characters is alignment padding, not a word break. */
+const PADDED_CJK_SPACE = /([\u3400-\u9fff])\s+(?=[\u3400-\u9fff])/g;
+
+/** Cleans up copy/paste decoration but keeps the spaces that separate words. */
+function normalizeNameSpacing(value: unknown): string {
+  return String(value ?? "")
+    .replace(INVISIBLE_NAME_CHARS, "")
+    .replace(NAME_MIDDLE_DOTS, "·")
+    .replace(/\s+/g, " ")
+    .replace(/\s*·\s*/g, "·")
+    .trim();
+}
+
+/**
+ * Roster-facing name cleanup, applied on import and before formatting:
+ * zero-width characters go, every middle-dot variant becomes `·`, repeated or
+ * full-width spaces collapse, and the padding spaces a spreadsheet uses to
+ * align a two-character name ("林 舟") disappear. Spaces between Latin words
+ * stay, because they separate the surname from the given name.
+ */
+export function normalizeStudentName(value: unknown): string {
+  return normalizeNameSpacing(value).replace(PADDED_CJK_SPACE, "$1");
+}
+
 export function splitSurname(name: string): SurnameSplit {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length >= 2) return { surname: words[0] ?? "", given: words.slice(1).join(" ") };
-  const characters = Array.from(name.trim());
+  // A middle dot is the explicit separator of a transliterated name and beats
+  // both the space rule and the compound-surname table.
+  const spaced = normalizeNameSpacing(name);
+  const dot = spaced.indexOf("·");
+  if (dot > 0) {
+    return { surname: normalizeStudentName(spaced.slice(0, dot)), given: normalizeStudentName(spaced.slice(dot + 1)) };
+  }
+  const words = spaced.split(" ").filter(Boolean);
+  if (words.length >= 2) {
+    return { surname: normalizeStudentName(words[0]), given: normalizeStudentName(words.slice(1).join(" ")) };
+  }
+  const characters = Array.from(normalizeStudentName(spaced));
   if (characters.length >= 3 && COMPOUND_SURNAMES.has(characters.slice(0, 2).join(""))) {
     return { surname: characters.slice(0, 2).join(""), given: characters.slice(2).join("") };
   }
@@ -102,9 +141,14 @@ function givenInitials(value: string): string {
   return (words.length > 1 ? words.map((word) => Array.from(word)[0] ?? "") : Array.from(trimmed).slice(0, 1)).join("").toUpperCase();
 }
 
+/** A template typed with a Chinese IME arrives with full-width braces. */
+function normalizeTemplateSource(template: unknown): string {
+  return typeof template === "string" ? template.replace(/｛/g, "{").replace(/｝/g, "}").trim() : "";
+}
+
 export function formatStudentName(name: string, template: string): string {
-  const trimmed = name.trim();
-  const source = typeof template === "string" ? template.trim() : "";
+  const trimmed = normalizeStudentName(name);
+  const source = normalizeTemplateSource(template);
   if (!trimmed || !source || source === DEFAULT_NAME_FORMAT) return trimmed;
   const { surname, given } = splitSurname(trimmed);
   const characters = Array.from(trimmed);
@@ -128,9 +172,10 @@ export function formatStudentName(name: string, template: string): string {
 }
 
 export function normalizeNameFormat(value: unknown): string {
-  if (typeof value !== "string" || !value.trim()) return DEFAULT_NAME_FORMAT;
-  if (BUILT_IN_NAME_FORMATS.has(value.trim())) return value.trim();
-  const placeholders = [...value.matchAll(NAME_PLACEHOLDER_PATTERN)].map((match) => match[1] ?? "");
+  const source = normalizeTemplateSource(value);
+  if (!source) return DEFAULT_NAME_FORMAT;
+  if (BUILT_IN_NAME_FORMATS.has(source)) return source;
+  const placeholders = [...source.matchAll(NAME_PLACEHOLDER_PATTERN)].map((match) => match[1] ?? "");
   if (placeholders.some((placeholder) => !SUPPORTED_NAME_PLACEHOLDERS.has(placeholder))) return DEFAULT_NAME_FORMAT;
-  return value.trim();
+  return source;
 }

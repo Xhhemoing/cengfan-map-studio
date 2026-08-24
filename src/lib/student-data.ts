@@ -2,6 +2,7 @@ import type { Student } from "./project-data";
 import { resolveCity, resolveProvinceName } from "./search-catalog";
 import { createId } from "./ids";
 import { trimImportCell } from "./import-data";
+import { normalizeStudentName } from "./name-format";
 
 export interface StudentInput {
   name: string;
@@ -129,7 +130,9 @@ export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult 
       });
     }
 
-    const name = trimImportCell(input.name);
+    // Names arrive padded ("林 舟") or with a stray middle-dot variant; the
+    // record keeps the cleaned spelling so cards and duplicate detection agree.
+    const name = normalizeStudentName(input.name);
     const university = trimImportCell(input.university);
     const key = duplicateKey(name, university);
     const entry = duplicateCounts.get(key) ?? { name, university, count: 0 };

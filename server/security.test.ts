@@ -2,6 +2,7 @@
 import { request as httpRequest } from "node:http";
 import type http from "node:http";
 import type { AddressInfo } from "node:net";
+import { createConnection } from "node:net";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,7 @@ async function rawRequest(
   path: string,
   method = "GET",
   body?: Buffer,
+  headers: http.OutgoingHttpHeaders = {},
 ): Promise<RawResponse> {
   const target = new URL(origin);
   return new Promise((resolve, reject) => {
@@ -33,9 +35,10 @@ async function rawRequest(
       port: target.port,
       path,
       method,
-      headers: body
-        ? { "Content-Type": "application/json", "Content-Length": body.byteLength }
-        : undefined,
+      headers: {
+        ...(body ? { "Content-Type": "application/json", "Content-Length": body.byteLength } : {}),
+        ...headers,
+      },
     }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
@@ -47,6 +50,18 @@ async function rawRequest(
     });
     request.on("error", reject);
     request.end(body);
+  });
+}
+
+async function rawHttpExchange(origin: string, request: string): Promise<string> {
+  const target = new URL(origin);
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host: target.hostname, port: Number(target.port) });
+    const chunks: Buffer[] = [];
+    socket.on("connect", () => socket.end(request));
+    socket.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("error", reject);
   });
 }
 
@@ -118,7 +133,6 @@ describe("server request security", () => {
 
   it.each([
     ["POST", "/api/health", "GET, OPTIONS"],
-    ["GET", "/api/ai/explain", "POST, OPTIONS"],
     ["PATCH", "/api/rooms", "POST, OPTIONS"],
   ])("returns 405 for %s %s", async (method, path, allow) => {
     const server = createAiServer();
@@ -130,6 +144,103 @@ describe("server request security", () => {
     expect(response.status).toBe(405);
     expect(response.headers.allow).toBe(allow);
     expect(JSON.parse(response.body)).toMatchObject({ error: { code: "METHOD_NOT_ALLOWED" } });
+  });
+
+  it.each([
+    "/api/ai/agent",
+    "/api/ai/parse-data",
+    "/api/ai/propose-edits",
+    "/api/ai/explain",
+  ])("rejects every non-preflight method on AI route %s", async (path) => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+
+    for (const method of ["GET", "PUT", "PATCH", "DELETE"]) {
+      const response = await rawRequest(origin, path, method);
+      expect(response.status, method).toBe(405);
+      expect(response.headers.allow, method).toBe("POST, OPTIONS");
+      expect(JSON.parse(response.body), method).toMatchObject({ error: { code: "METHOD_NOT_ALLOWED" } });
+    }
+    const head = await rawRequest(origin, path, "HEAD");
+    expect(head.status).toBe(405);
+    expect(head.headers.allow).toBe("POST, OPTIONS");
+    expect(head.body).toBe("");
+  });
+
+  it.each([
+    ["HEAD", "/api/health", 405],
+    ["HEAD", "/api/rooms", 405],
+    ["OPTIONS", "/api/health", 204],
+    ["OPTIONS", "/api/ai/agent", 204],
+    ["OPTIONS", "/api/rooms", 204],
+  ])("handles %s consistently on existing route %s", async (method, path, status) => {
+    const server = createAiServer({ corsOrigins: ["https://studio.example"] });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawRequest(origin, path, method, undefined, {
+      Origin: "https://studio.example",
+      "Access-Control-Request-Method": method === "OPTIONS" ? "POST" : "GET",
+    });
+
+    expect(response.status).toBe(status);
+    expect(response.body).toBe("");
+    if (method === "OPTIONS") {
+      expect(response.headers["access-control-allow-origin"]).toBe("https://studio.example");
+    }
+  });
+
+  it("keeps absolute-form API targets inside the API namespace", async () => {
+    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-absolute-url-"));
+    directories.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<main>SPA</main>");
+    const server = createAiServer({ staticDir });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawHttpExchange(origin, [
+      "GET http://attacker.example/api/not-found HTTP/1.1",
+      "Host: studio.example",
+      "Connection: close",
+      "",
+      "",
+    ].join("\r\n"));
+
+    expect(response).toMatch(/^HTTP\/1\.1 404 /);
+    expect(response).toContain('"code":"NOT_FOUND"');
+    expect(response).not.toContain("<main>SPA</main>");
+  });
+
+  it("rejects HTTP/1.1 requests without Host", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawHttpExchange(origin, [
+      "GET /api/health HTTP/1.1",
+      "Connection: close",
+      "",
+      "",
+    ].join("\r\n"));
+
+    expect(response).toMatch(/^HTTP\/1\.1 400 /);
+  });
+
+  it("rejects an oversized request target at the HTTP parser", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawHttpExchange(origin, [
+      `GET /${"a".repeat(17 * 1024)} HTTP/1.1`,
+      "Host: studio.example",
+      "Connection: close",
+      "",
+      "",
+    ].join("\r\n"));
+
+    expect(response).toMatch(/^HTTP\/1\.1 431 /);
   });
 
   it("returns 405 for unsupported methods on static resources", async () => {

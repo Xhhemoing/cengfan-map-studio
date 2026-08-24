@@ -3,9 +3,11 @@ import {
   describeMissingCells,
   detectHeaderColumns,
   isBlankImportCell,
+  isSummaryRow,
   missingRequiredCells,
   missingRequiredColumns,
   parseStudentText,
+  rowRestatesHeader,
   STUDENT_HEADER_ALIASES,
   trimImportCell,
   type RequiredStudentColumn,
@@ -195,6 +197,13 @@ export function parseExcelWorkbookRows(input: unknown[][], options: ExcelParseOp
   rows.slice(header.rowIndex + 1).forEach((row, rowIndex) => {
     const sourceLine = header.rowIndex + rowIndex + 2;
     const rawLine = row.filter(Boolean).join("\t");
+    // Sheets built by stacking two exports repeat the header mid-table; that
+    // row is a header, not a student called 姓名.
+    if (rowRestatesHeader(row, header.indexes, header.headers)) return;
+    if (isSummaryRow(row, header.indexes)) {
+      unparsed.push({ sourceLine, rawLine, reason: "汇总行" });
+      return;
+    }
     const candidate = candidateFromColumns(row, header.indexes, sourceLine, rawLine);
     if (candidate) {
       candidates.push(candidate);
@@ -211,6 +220,119 @@ export function parseExcelWorkbookRows(input: unknown[][], options: ExcelParseOp
     unparsed,
     ...metadata,
   };
+}
+
+/**
+ * Copying a table out of a browser (a web page, or a spreadsheet that runs in
+ * one) puts an HTML `<table>` on the clipboard next to a plain-text flavour
+ * that usually keeps neither the row structure nor the empty cells. These
+ * helpers read the markup flavour instead.
+ *
+ * The markup is scanned rather than parsed into a DOM: the result must be the
+ * same in a worker or a test, and clipboard markup is never inserted into the
+ * document, so no untrusted node is ever created.
+ */
+const HTML_NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  lt: "<",
+  nbsp: " ",
+  quot: '"',
+};
+
+const MAX_HTML_SPAN = 512;
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi, (match, entity: string) => {
+    if (!entity.startsWith("#")) return HTML_NAMED_ENTITIES[entity.toLowerCase()] ?? match;
+    const codePoint = entity[1]?.toLowerCase() === "x"
+      ? Number.parseInt(entity.slice(2), 16)
+      : Number.parseInt(entity.slice(1), 10);
+    if (!Number.isFinite(codePoint) || codePoint <= 0 || codePoint > 0x10ffff) return match;
+    return String.fromCodePoint(codePoint);
+  });
+}
+
+/** Cell text: markup and comments out, entities in, whitespace collapsed. */
+function htmlCellText(cell: string): string {
+  const text = cell
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, "")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]*>/g, " ");
+  return trimImportCell(decodeHtmlEntities(text).replace(/\s+/g, " "));
+}
+
+function readSpan(attributes: string, name: "colspan" | "rowspan"): number {
+  const match = new RegExp(`\\b${name}\\s*=\\s*["']?\\s*(\\d+)`, "i").exec(attributes);
+  const span = match ? Number(match[1]) : 1;
+  return Number.isInteger(span) && span > 0 ? Math.min(span, MAX_HTML_SPAN) : 1;
+}
+
+/**
+ * Turns clipboard markup into the same row matrix a workbook produces, or
+ * null when the clipboard carries no table at all. `colspan`/`rowspan` are
+ * filled across the block they cover, exactly like a merged workbook cell.
+ */
+export function parseHtmlTableRows(html: string): string[][] | null {
+  if (!/<table[\s>]/i.test(html)) return null;
+  const source = html.replace(/<!--[\s\S]*?-->/g, "").replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, "");
+  const rows: string[][] = [];
+  const carried = new Map<number, { value: string; remaining: number }>();
+
+  for (const rowMatch of source.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/gi)) {
+    const row: string[] = [];
+    let column = 0;
+    const consumeCarried = (index: number) => {
+      const carry = carried.get(index);
+      if (!carry) return false;
+      row[index] = carry.value;
+      carry.remaining -= 1;
+      if (carry.remaining <= 0) carried.delete(index);
+      return true;
+    };
+    /** A rowspan from an earlier row still occupies this column in this row. */
+    const takeCarried = () => {
+      while (consumeCarried(column)) column += 1;
+    };
+    for (const cellMatch of (rowMatch[1] ?? "").matchAll(/<(td|th)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi)) {
+      takeCarried();
+      const value = htmlCellText(cellMatch[3] ?? "");
+      const rowspan = readSpan(cellMatch[2] ?? "", "rowspan");
+      for (let span = readSpan(cellMatch[2] ?? "", "colspan"); span > 0; span -= 1) {
+        row[column] = value;
+        if (rowspan > 1) carried.set(column, { value, remaining: rowspan - 1 });
+        column += 1;
+      }
+    }
+    takeCarried();
+    // A rowspan further right than this row's own cells still belongs to it.
+    for (const index of [...carried.keys()].filter((key) => key > column).sort((left, right) => left - right)) {
+      consumeCarried(index);
+    }
+    rows.push(Array.from(row, (cell) => cell ?? ""));
+  }
+
+  return rows.length > 0 ? rows : null;
+}
+
+/** Reads a pasted `<table>` with the same header engine as a workbook. */
+export function parseHtmlTable(html: string): ExcelImportResult {
+  const rows = parseHtmlTableRows(html);
+  if (!rows) return { candidates: [], unparsed: [], ...emptyMetadata() };
+  return parseExcelWorkbookRows(rows);
+}
+
+/**
+ * Renders a matrix as the tab-separated text a spreadsheet paste carries, so
+ * the recognized table is still visible (and re-parsable) in the paste box.
+ * Empty cells are kept: dropping them would shift every later column.
+ */
+export function rowsToTabText(rows: string[][]): string {
+  const lines = rows.map((row) => row.join("\t").replace(/\t+$/, ""));
+  while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
+  return lines.join("\n");
 }
 
 export function parseOcrLikeText(text: string): TextImportResult {

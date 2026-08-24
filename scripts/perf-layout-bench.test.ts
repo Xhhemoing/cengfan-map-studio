@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_LAYOUT_BENCH_MODES,
+  makeClusteredAnchorBenchmarkFixture,
   makeDensePolygonBenchmarkFixture,
   makeLayoutBenchmarkCards,
   runLayoutBenchmark,
@@ -25,6 +26,15 @@ describe("layout performance benchmark", () => {
       - Math.min(...fixture.cards.map(({ anchorX }) => anchorX))).toBeLessThanOrEqual(36);
     expect(Math.max(...fixture.cards.map(({ anchorY }) => anchorY))
       - Math.min(...fixture.cards.map(({ anchorY }) => anchorY))).toBeLessThanOrEqual(36);
+  });
+
+  it("keeps the single-province fixture clustered without timing it in CI", () => {
+    const fixture = makeClusteredAnchorBenchmarkFixture();
+    expect(fixture).toEqual(makeClusteredAnchorBenchmarkFixture());
+    expect(fixture.province).toBe("北京市");
+    expect(fixture.cards).toHaveLength(70);
+    expect(new Set(fixture.cards.map(({ anchorX, anchorY }) => `${anchorX},${anchorY}`)))
+      .toEqual(new Set([`${fixture.anchor.x},${fixture.anchor.y}`]));
   });
 
   it("keeps the small layout matrix below the pathological-regression budget", () => {

@@ -180,6 +180,33 @@ describe("student data", () => {
     expect(built.students[1]?.name).toBe("林舟");
   });
 
+  it("stores the cleaned spelling of a padded or dotted imported name", () => {
+    const result = buildStudentRecords([
+      { name: "林  舟", university: "北京大学", city: "北京市" },
+      { name: "苏\u00a0禾", university: "浙江大学", city: "杭州市" },
+      { name: "阿依古丽・买买提", university: "新疆大学", city: "乌鲁木齐市" },
+      { name: "Wang  Xiao Ming", university: "北京大学", city: "北京市" },
+    ]);
+
+    expect(result.students.map((student) => student.name)).toEqual([
+      "林舟",
+      "苏禾",
+      "阿依古丽·买买提",
+      "Wang Xiao Ming",
+    ]);
+  });
+
+  it("treats names that differ only in padding as the same duplicate record", () => {
+    const result = buildStudentRecords([
+      { name: "林舟", university: "北京大学", city: "北京市" },
+      { name: "林 舟", university: "北京大学", city: "北京市" },
+    ]);
+
+    expect(result.issues.filter((issue) => issue.code === "duplicate_name")).toEqual([
+      expect.objectContaining({ message: "存在重复学生记录：林舟 · 北京大学" }),
+    ]);
+  });
+
   it("keeps a city-only input as an error-flagged record naming both gaps", () => {
     const result = buildStudentRecords([{ name: "  ", university: "", city: "杭州市" }]);
 

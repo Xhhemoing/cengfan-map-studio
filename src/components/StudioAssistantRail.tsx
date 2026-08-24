@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { AgentAssistant } from "./AgentAssistant";
 import { StageOverviewPanel } from "./StageOverviewPanel";
 import type { StageOverviewAction, StageOverviewModel } from "../lib/stage-overview";
@@ -98,10 +98,18 @@ export function StudioAssistantRail({
 }: StudioAssistantRailProps) {
   const [activeTab, setActiveTab] = useState<RailTab>("ai");
   const [advancedView, setAdvancedView] = useState<"operations" | "elements">("operations");
+  // 元素列表 listbox 的 roving tabindex：null 表示还没有键盘焦点，回落到当前选中项。
+  const [elementFocusIndex, setElementFocusIndex] = useState<number | null>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const activateTab = (tab: RailTab) => {
     setActiveTab(tab);
     if (tab === "advanced") setAdvancedView("operations");
+  };
+
+  const openElementsView = () => {
+    setAdvancedView("elements");
+    setElementFocusIndex(null);
   };
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -130,6 +138,24 @@ export function StudioAssistantRail({
       label: item.label,
     })),
   ], [project.assetElements, project.textElements]);
+
+  const selectedOutlineIndex = outline.findIndex((item) => sameSelection(selection, item.selection));
+  const optionTabStopIndex = Math.min(
+    elementFocusIndex ?? Math.max(selectedOutlineIndex, 0),
+    outline.length - 1,
+  );
+
+  const onOptionKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown") nextIndex = Math.min(index + 1, outline.length - 1);
+    if (event.key === "ArrowUp") nextIndex = Math.max(index - 1, 0);
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = outline.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    setElementFocusIndex(nextIndex);
+    optionRefs.current[nextIndex]?.focus();
+  };
 
   return (
     <div className="studio-assistant-rail">
@@ -177,7 +203,7 @@ export function StudioAssistantRail({
             onAction={(action) => {
               if (action.kind === "elements") {
                 setActiveTab("advanced");
-                setAdvancedView("elements");
+                openElementsView();
                 return;
               }
               onStageOverviewAction(action);
@@ -201,15 +227,20 @@ export function StudioAssistantRail({
                 </div>
                 <section className="studio-advanced__group" aria-label="画布元素">
                   <div className="studio-advanced__section-heading"><h3>画布元素</h3><small>{outline.length} 个</small></div>
+                  {/* 规范 listbox：单一 Tab 停靠点（roving tabindex），方向键在选项间移动焦点。 */}
                   <div className="studio-advanced__element-list" role="listbox" aria-label="内容对象列表">
-                    {outline.map(({ selection: itemSelection, label }) => (
+                    {outline.map(({ selection: itemSelection, label }, index) => (
                       <button
                         key={`${itemSelection.type}-${"id" in itemSelection ? itemSelection.id : ""}-${"province" in itemSelection ? itemSelection.province : ""}`}
+                        ref={(node) => { optionRefs.current[index] = node; }}
                         type="button"
                         role="option"
                         aria-selected={sameSelection(selection, itemSelection)}
+                        tabIndex={index === optionTabStopIndex ? 0 : -1}
                         className={sameSelection(selection, itemSelection) ? "is-active" : undefined}
                         onClick={() => onSelectElement(itemSelection)}
+                        onKeyDown={(event) => onOptionKeyDown(event, index)}
+                        onFocus={() => setElementFocusIndex(index)}
                       >
                         <span>{label}</span><small>{selectionLabel(itemSelection)}</small>
                       </button>
@@ -225,7 +256,7 @@ export function StudioAssistantRail({
             <section className="studio-advanced__group" aria-label="元素查看">
               <h3>元素查看</h3>
               <p className="studio-advanced__hint">定位画布、地图、数据框、文字和素材。</p>
-              <button type="button" className="studio-advanced__action" aria-label="打开元素查看" onClick={() => setAdvancedView("elements")}>
+              <button type="button" className="studio-advanced__action" aria-label="打开元素查看" onClick={openElementsView}>
                 <span>打开元素查看</span><small>画布元素 · 排版问题</small>
               </button>
             </section>

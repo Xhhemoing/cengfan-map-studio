@@ -1,7 +1,13 @@
 import { useMemo, useState } from "react";
 import { confirmImportCandidates, type ImportReviewRow } from "../lib/data-workspace";
 import { findDuplicateStudentGroups } from "../lib/data-duplicate";
-import { createImportTemplateSheets, parseExcelWorkbookRows, parseOcrLikeText } from "../lib/binary-import";
+import {
+  createImportTemplateSheets,
+  parseExcelWorkbookRows,
+  parseHtmlTableRows,
+  parseOcrLikeText,
+  rowsToTabText,
+} from "../lib/binary-import";
 import { parseStudentText, type ImportCandidate, type UnparsedLine } from "../lib/import-data";
 import type { ParseDataResult } from "../lib/ai-client";
 import type { Student } from "../lib/project-data";
@@ -77,6 +83,26 @@ export function useRosterImport({
   const parseOcrText = () => {
     const parsed = parseOcrLikeText(importText);
     setCandidates(parsed.candidates, parsed.unparsed, "OCR 文本");
+  };
+
+  /**
+   * A table copied from a web page (or from a spreadsheet running in one)
+   * reaches the clipboard as markup next to a plain-text flavour that often
+   * loses the empty cells and the row structure. When the markup holds a
+   * table it is read with the workbook engine instead, and the tab-separated
+   * rendering is kept in the paste box so the user still sees what arrived.
+   *
+   * Returns whether the table was taken over, so the caller can suppress the
+   * browser's own plain-text paste only when there is something better.
+   */
+  const pasteHtmlTable = (html: string): boolean => {
+    const rows = parseHtmlTableRows(html);
+    const text = rows ? rowsToTabText(rows) : "";
+    if (!rows || !text.trim()) return false;
+    setImportText((current) => (current.trim() ? `${current.replace(/\s+$/, "")}\n${text}` : text));
+    const parsed = parseExcelWorkbookRows(rows);
+    setCandidates(parsed.candidates, parsed.unparsed, "网页表格", parsed);
+    return true;
   };
 
   const parseWithAi = async () => {
@@ -211,6 +237,7 @@ export function useRosterImport({
     parseText,
     parseOcrText,
     parseWithAi,
+    pasteHtmlTable,
     importDirectly,
     selectWorkbook,
     downloadTemplate,

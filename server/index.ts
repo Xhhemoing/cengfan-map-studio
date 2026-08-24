@@ -201,7 +201,7 @@ export function createAiServer(options: AiServerOptions = {}) {
     }
   };
 
-  const server = http.createServer(async (request, response) => {
+  const server = http.createServer({ maxHeaderSize: 16 * 1024, requireHostHeader: true }, async (request, response) => {
     const url = request.url || "/";
     const pathname = new URL(url, "http://localhost").pathname;
     const requestId = requestIdFor(request);
@@ -310,7 +310,7 @@ export function createAiServer(options: AiServerOptions = {}) {
 
       if (await aiRouter({ request, response, pathname, requestId, sendAi })) return;
 
-      if (url.startsWith("/api/")) {
+      if (pathname.startsWith("/api/")) {
         send( 404, {
           error: { code: "NOT_FOUND", message: "接口不存在" },
         });

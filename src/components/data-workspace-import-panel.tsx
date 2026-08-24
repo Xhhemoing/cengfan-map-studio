@@ -35,6 +35,7 @@ export function DataWorkspaceImportPanel({
   onParseText,
   onParseOcrText,
   onParseWithAi,
+  onPasteHtmlTable,
   onImportDirectly,
   onSelectWorkbook,
   onDownloadTemplate,
@@ -55,6 +56,8 @@ export function DataWorkspaceImportPanel({
   onParseText: () => void;
   onParseOcrText: () => void;
   onParseWithAi: () => void;
+  /** Reads a `<table>` off the clipboard; returns whether it took the paste over. */
+  onPasteHtmlTable: (html: string) => boolean;
   onImportDirectly: () => void;
   onSelectWorkbook: (file: File) => void;
   onDownloadTemplate: () => void;
@@ -89,9 +92,16 @@ export function DataWorkspaceImportPanel({
             <p className="panel-note" data-import-ocr-note>
               可粘贴 OCR 软件识别出的文字。本工具只解析文本，不读取图片；名单在图片里请先用 OCR 工具转成文字再粘贴。
             </p>
+            <p className="panel-note" data-import-html-note>
+              从网页或在线表格里直接复制整张表格粘贴进来，会按表格的行列识别，合并单元格也会自动补齐。
+            </p>
             <textarea
               value={importText}
               onChange={(event) => onChangeImportText(event.target.value)}
+              onPaste={(event) => {
+                const html = event.clipboardData?.getData("text/html") ?? "";
+                if (html && onPasteHtmlTable(html)) event.preventDefault();
+              }}
               placeholder={"林舟 北京大学 北京\n周晴，哈佛大学，美国·波士顿，海外"}
               rows={5}
             />

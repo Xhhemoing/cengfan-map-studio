@@ -1,0 +1,409 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-24T17:06:55.870Z",
+  "runtime": {
+    "node": "v22.14.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "seed": 7,
+  "warmupIterations": 2,
+  "iterations": 12,
+  "counts": [
+    16,
+    24,
+    36,
+    60,
+    100,
+    200,
+    400
+  ],
+  "modes": [
+    "quadrant",
+    "radial",
+    "right-stack",
+    "grid"
+  ],
+  "invariantChecks": {
+    "finiteNumbers": true,
+    "canvasBounds": true,
+    "placementCount": true,
+    "overlaps": "solved-results"
+  },
+  "results": [
+    {
+      "count": 16,
+      "mode": "quadrant",
+      "p50Ms": 1.458,
+      "p95Ms": 2.587,
+      "minMs": 1.355,
+      "maxMs": 2.587,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 16,
+      "mode": "radial",
+      "p50Ms": 1.091,
+      "p95Ms": 1.307,
+      "minMs": 1.059,
+      "maxMs": 1.307,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 16,
+      "mode": "right-stack",
+      "p50Ms": 4.014,
+      "p95Ms": 4.35,
+      "minMs": 3.925,
+      "maxMs": 4.35,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 16,
+      "mode": "grid",
+      "p50Ms": 5.424,
+      "p95Ms": 5.768,
+      "minMs": 5.243,
+      "maxMs": 5.768,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 24,
+      "mode": "quadrant",
+      "p50Ms": 13.067,
+      "p95Ms": 13.628,
+      "minMs": 12.841,
+      "maxMs": 13.628,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 24,
+      "mode": "radial",
+      "p50Ms": 10.259,
+      "p95Ms": 11.788,
+      "minMs": 10.169,
+      "maxMs": 11.788,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 24,
+      "mode": "right-stack",
+      "p50Ms": 13.965,
+      "p95Ms": 14.467,
+      "minMs": 13.581,
+      "maxMs": 14.467,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 24,
+      "mode": "grid",
+      "p50Ms": 8.405,
+      "p95Ms": 8.944,
+      "minMs": 7.951,
+      "maxMs": 8.944,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "quadrant",
+      "p50Ms": 14.406,
+      "p95Ms": 14.724,
+      "minMs": 14.138,
+      "maxMs": 14.724,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "radial",
+      "p50Ms": 14.414,
+      "p95Ms": 14.658,
+      "minMs": 14.019,
+      "maxMs": 14.658,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "right-stack",
+      "p50Ms": 14.654,
+      "p95Ms": 14.843,
+      "minMs": 14.166,
+      "maxMs": 14.843,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "grid",
+      "p50Ms": 9.208,
+      "p95Ms": 9.568,
+      "minMs": 8.97,
+      "maxMs": 9.568,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "quadrant",
+      "p50Ms": 0.405,
+      "p95Ms": 0.802,
+      "minMs": 0.176,
+      "maxMs": 0.802,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "radial",
+      "p50Ms": 0.176,
+      "p95Ms": 0.363,
+      "minMs": 0.169,
+      "maxMs": 0.363,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "right-stack",
+      "p50Ms": 0.161,
+      "p95Ms": 0.179,
+      "minMs": 0.157,
+      "maxMs": 0.179,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "grid",
+      "p50Ms": 0.163,
+      "p95Ms": 0.217,
+      "minMs": 0.157,
+      "maxMs": 0.217,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "quadrant",
+      "p50Ms": 0.341,
+      "p95Ms": 0.565,
+      "minMs": 0.316,
+      "maxMs": 0.565,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "radial",
+      "p50Ms": 0.335,
+      "p95Ms": 0.697,
+      "minMs": 0.319,
+      "maxMs": 0.697,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "right-stack",
+      "p50Ms": 0.302,
+      "p95Ms": 0.484,
+      "minMs": 0.281,
+      "maxMs": 0.484,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "grid",
+      "p50Ms": 0.302,
+      "p95Ms": 0.633,
+      "minMs": 0.284,
+      "maxMs": 0.633,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "quadrant",
+      "p50Ms": 1.075,
+      "p95Ms": 2.026,
+      "minMs": 0.975,
+      "maxMs": 2.026,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "radial",
+      "p50Ms": 1.419,
+      "p95Ms": 1.733,
+      "minMs": 1.392,
+      "maxMs": 1.733,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "right-stack",
+      "p50Ms": 1.4,
+      "p95Ms": 1.7,
+      "minMs": 1.387,
+      "maxMs": 1.7,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "grid",
+      "p50Ms": 1.412,
+      "p95Ms": 2.396,
+      "minMs": 1.39,
+      "maxMs": 2.396,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "quadrant",
+      "p50Ms": 3.775,
+      "p95Ms": 5.218,
+      "minMs": 3.694,
+      "maxMs": 5.218,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "radial",
+      "p50Ms": 3.728,
+      "p95Ms": 4.253,
+      "minMs": 3.699,
+      "maxMs": 4.253,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "right-stack",
+      "p50Ms": 3.717,
+      "p95Ms": 3.957,
+      "minMs": 3.695,
+      "maxMs": 3.957,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "grid",
+      "p50Ms": 3.711,
+      "p95Ms": 4.139,
+      "minMs": 3.678,
+      "maxMs": 4.139,
+      "fallbackRuns": 12
+    }
+  ],
+  "adversarialFixture": {
+    "fixture": "dense-overlap-many-polygons",
+    "description": "70 cards in a 36px anchor cluster against 96 vector-map polygons",
+    "seed": 20260824,
+    "cardCount": 70,
+    "polygonCount": 96,
+    "verticesPerPolygon": 16,
+    "warmupIterations": 1,
+    "iterations": 6,
+    "modes": [
+      "quadrant",
+      "radial",
+      "right-stack",
+      "grid"
+    ],
+    "results": [
+      {
+        "count": 70,
+        "mode": "quadrant",
+        "p50Ms": 161.979,
+        "p95Ms": 163.308,
+        "minMs": 160.84,
+        "maxMs": 163.308,
+        "fallbackRuns": 6
+      },
+      {
+        "count": 70,
+        "mode": "radial",
+        "p50Ms": 161.829,
+        "p95Ms": 163.102,
+        "minMs": 161.289,
+        "maxMs": 163.102,
+        "fallbackRuns": 6
+      },
+      {
+        "count": 70,
+        "mode": "right-stack",
+        "p50Ms": 159.972,
+        "p95Ms": 160.605,
+        "minMs": 159.447,
+        "maxMs": 160.605,
+        "fallbackRuns": 6
+      },
+      {
+        "count": 70,
+        "mode": "grid",
+        "p50Ms": 99.192,
+        "p95Ms": 101.392,
+        "minMs": 99.051,
+        "maxMs": 101.392,
+        "fallbackRuns": 6
+      }
+    ]
+  },
+  "clusteredAnchorFixture": {
+    "fixture": "clustered-anchor-single-province",
+    "description": "70 cards sharing the exact Beijing province anchor",
+    "province": "北京市",
+    "seed": 20260824,
+    "cardCount": 70,
+    "anchor": {
+      "x": 860,
+      "y": 300
+    },
+    "warmupIterations": 1,
+    "iterations": 6,
+    "modes": [
+      "quadrant",
+      "radial",
+      "right-stack",
+      "grid"
+    ],
+    "results": [
+      {
+        "count": 70,
+        "mode": "quadrant",
+        "p50Ms": 28.411,
+        "p95Ms": 29.316,
+        "minMs": 28.069,
+        "maxMs": 29.316,
+        "fallbackRuns": 6
+      },
+      {
+        "count": 70,
+        "mode": "radial",
+        "p50Ms": 27.853,
+        "p95Ms": 28.106,
+        "minMs": 27.785,
+        "maxMs": 28.106,
+        "fallbackRuns": 6
+      },
+      {
+        "count": 70,
+        "mode": "right-stack",
+        "p50Ms": 27.188,
+        "p95Ms": 27.808,
+        "minMs": 26.917,
+        "maxMs": 27.808,
+        "fallbackRuns": 6
+      },
+      {
+        "count": 70,
+        "mode": "grid",
+        "p50Ms": 6.392,
+        "p95Ms": 6.479,
+        "minMs": 6.251,
+        "maxMs": 6.479,
+        "fallbackRuns": 6
+      }
+    ]
+  },
+  "workerMessageOverhead": {
+    "methodology": "worker_threads request and placement-shaped response; solver excluded",
+    "count": 24,
+    "startupIterations": 7,
+    "warmupIterations": 2,
+    "iterations": 30,
+    "startupP50Ms": 20.958,
+    "startupP95Ms": 23.873,
+    "warmP50Ms": 0.062,
+    "warmP95Ms": 0.074
+  }
+}

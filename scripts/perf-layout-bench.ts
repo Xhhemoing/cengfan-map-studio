@@ -3,7 +3,7 @@
  *
  * Run: npm run perf:layout
  * Save machine-readable output:
- * npx tsx scripts/perf-layout-bench.ts > .agent_workspace/round3/perf-baseline.json
+ * npx tsx scripts/perf-layout-bench.ts > .agent_workspace/round4/perf-baseline.json
  */
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
@@ -79,12 +79,18 @@ export interface WorkerMessageBenchmarkResult {
 
 export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
   adversarialFixture: AdversarialLayoutBenchmarkReport;
+  clusteredAnchorFixture: ClusteredAnchorLayoutBenchmarkReport;
   workerMessageOverhead: WorkerMessageBenchmarkResult;
 }
 
 export interface DensePolygonBenchmarkFixture {
   cards: CardLayoutInput[];
   bounds: CardLayoutBounds;
+}
+
+export interface ClusteredAnchorBenchmarkFixture extends DensePolygonBenchmarkFixture {
+  province: "北京市";
+  anchor: { x: number; y: number };
 }
 
 export interface AdversarialLayoutBenchmarkReport {
@@ -94,6 +100,19 @@ export interface AdversarialLayoutBenchmarkReport {
   cardCount: number;
   polygonCount: number;
   verticesPerPolygon: number;
+  warmupIterations: number;
+  iterations: number;
+  modes: CardLayoutMode[];
+  results: LayoutBenchmarkResult[];
+}
+
+export interface ClusteredAnchorLayoutBenchmarkReport {
+  fixture: "clustered-anchor-single-province";
+  description: string;
+  province: "北京市";
+  seed: number;
+  cardCount: number;
+  anchor: { x: number; y: number };
   warmupIterations: number;
   iterations: number;
   modes: CardLayoutMode[];
@@ -133,6 +152,35 @@ export function makeLayoutBenchmarkBounds(): CardLayoutBounds {
     map: { x: 350, y: 120, width: 800, height: 690 },
     margin: 32,
     gap: 14,
+  };
+}
+
+/**
+ * Isolates the contention caused when every destination resolves to one
+ * province anchor. Card dimensions vary deterministically, but all anchor
+ * coordinates are exactly equal.
+ */
+export function makeClusteredAnchorBenchmarkFixture(
+  seed = 20260824,
+): ClusteredAnchorBenchmarkFixture {
+  let state = seed >>> 0;
+  const random = () => {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+    return state / 0x1_0000_0000;
+  };
+  const anchor = { x: 860, y: 300 };
+  const cards = Array.from({ length: 70 }, (_, index) => ({
+    id: `beijing-card-${index}`,
+    anchorX: anchor.x,
+    anchorY: anchor.y,
+    width: 122 + Math.round(random() * 18),
+    height: 52 + Math.round(random() * 10),
+  }));
+  return {
+    province: "北京市",
+    anchor,
+    cards,
+    bounds: makeLayoutBenchmarkBounds(),
   };
 }
 
@@ -441,6 +489,40 @@ export function runDensePolygonBenchmark(
   };
 }
 
+export function runClusteredAnchorBenchmark(
+  config: AdversarialLayoutBenchmarkConfig = {},
+): ClusteredAnchorLayoutBenchmarkReport {
+  const modes = [...(config.modes ?? DEFAULT_LAYOUT_BENCH_MODES)];
+  const warmupIterations = positiveInteger(
+    config.warmupIterations ?? 1,
+    "clustered-anchor warmupIterations",
+  );
+  const iterations = positiveInteger(config.iterations ?? 6, "clustered-anchor iterations");
+  const seed = config.seed ?? 20260824;
+  if (!Number.isInteger(seed)) throw new Error("clustered-anchor seed must be an integer");
+  if (modes.length === 0) throw new Error("clustered-anchor modes must not be empty");
+  const fixture = makeClusteredAnchorBenchmarkFixture(seed);
+
+  return {
+    fixture: "clustered-anchor-single-province",
+    description: "70 cards sharing the exact Beijing province anchor",
+    province: fixture.province,
+    seed,
+    cardCount: fixture.cards.length,
+    anchor: fixture.anchor,
+    warmupIterations,
+    iterations,
+    modes,
+    results: runBenchmarkCases(
+      fixture.cards,
+      fixture.bounds,
+      modes,
+      warmupIterations,
+      iterations,
+    ),
+  };
+}
+
 const isDirectRun = process.argv[1] !== undefined
   && import.meta.url === pathToFileURL(process.argv[1]).href;
 
@@ -448,6 +530,7 @@ if (isDirectRun) {
   const report: LayoutBenchmarkCliReport = {
     ...runLayoutBenchmark(),
     adversarialFixture: runDensePolygonBenchmark(),
+    clusteredAnchorFixture: runClusteredAnchorBenchmark(),
     workerMessageOverhead: await runWorkerMessageBenchmark(),
   };
   console.log(JSON.stringify(report, null, 2));

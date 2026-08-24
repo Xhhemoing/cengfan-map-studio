@@ -26,6 +26,19 @@ import type { UsePosterExportResult } from "../../lib/usePosterExport";
 import type { WorkflowStageId } from "../../lib/workflow-stages";
 
 /**
+ * 名单工作台 props 的精确形状：App 必定提供选中学生与数据呈现回调
+ * （比 DataWorkspace 的可选 props 更严格，全局设置页依赖这些字段必填）。
+ */
+export type StudioDataWorkspaceProps = Omit<
+  ComponentProps<typeof DataWorkspace>,
+  "selectedStudentId" | "onSelectStudent" | "onChangeDataView"
+> & {
+  selectedStudentId: string | null;
+  onSelectStudent: (id: string | null) => void;
+  onChangeDataView: (view: DataViewId) => void;
+};
+
+/**
  * 阶段槽位的依赖契约：App 组合出的文档状态、派生检查结果与命令回调。
  * `buildStageSlots` 与 LegacyEditorChrome 共用同一份上下文，
  * App 只负责构造一次并保持各回调语义不变。
@@ -46,7 +59,7 @@ export interface StageSlotsContext {
   resourceIssues: ResourceHealthIssue[];
   fontIssues: ResourceHealthIssue[];
   /** 名单工作台完整 props（数据阶段与旧版名单面板共用）。 */
-  dataWorkspaceProps: ComponentProps<typeof DataWorkspace>;
+  dataWorkspaceProps: StudioDataWorkspaceProps;
   /** 素材面板共享 props（内容/地图/数据阶段与旧版素材面板共用）。 */
   assetPanelProps: ContentAssetPanelProps;
   posterExport: UsePosterExportResult;

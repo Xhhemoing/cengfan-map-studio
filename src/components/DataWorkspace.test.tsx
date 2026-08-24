@@ -47,6 +47,16 @@ function changeInput(input: HTMLInputElement | HTMLTextAreaElement, value: strin
   });
 }
 
+/** Dispatches a paste carrying the given clipboard flavours. */
+function pasteInto(target: HTMLElement, flavours: Record<string, string>): Event {
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", {
+    value: { getData: (type: string) => flavours[type] ?? "" },
+  });
+  flushSync(() => target.dispatchEvent(event));
+  return event;
+}
+
 function getInput(container: HTMLDivElement, label: string): HTMLInputElement {
   return container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
 }
@@ -132,6 +142,64 @@ describe("DataWorkspace", () => {
     expect(container.querySelector(".import-recognition")?.textContent).toContain("苏禾");
     expect(container.querySelector(".import-recognition")?.textContent).toContain("录取学校");
     expect(container.querySelector(".import-recognition")?.textContent).toContain("未使用");
+  });
+
+  it("reads a table pasted from a web page instead of its flattened text", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+    const textarea = container.querySelector("textarea")!;
+
+    const pasted = pasteInto(textarea, {
+      "text/html": [
+        "<table><tbody>",
+        "<tr><th>学生姓名</th><th>录取院校</th><th>城市</th></tr>",
+        "<tr><td>苏禾</td><td>浙江大学</td><td>杭州市</td></tr>",
+        "<tr><td>周晴</td><td>哈佛大学</td><td>美国·波士顿</td></tr>",
+        "</tbody></table>",
+      ].join(""),
+      // Copying a table gives a plain-text flavour that has lost the columns.
+      "text/plain": "学生姓名 录取院校 城市 苏禾 浙江大学 杭州市 周晴 哈佛大学 美国·波士顿",
+    });
+
+    // The markup flavour was used, so the browser's own paste is suppressed.
+    expect(pasted.defaultPrevented).toBe(true);
+    expect(textarea.value).toBe("学生姓名\t录取院校\t城市\n苏禾\t浙江大学\t杭州市\n周晴\t哈佛大学\t美国·波士顿");
+    expect(container.textContent).toContain("从网页表格识别到 2 条候选");
+    expect(container.querySelector(".import-recognition")?.textContent).toContain("学生姓名");
+    expect(container.querySelector(".review-list")?.textContent).toContain("苏禾");
+    expect(container.querySelector(".review-list")?.textContent).toContain("周晴");
+  });
+
+  it("leaves a plain-text paste to the browser", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+    const textarea = container.querySelector("textarea")!;
+
+    const plain = pasteInto(textarea, { "text/plain": "林舟 北京大学 北京" });
+    // Rich text without a table has nothing better to offer than the text.
+    const richText = pasteInto(textarea, { "text/html": "<p>林舟 北京大学 北京</p>" });
+
+    expect(plain.defaultPrevented).toBe(false);
+    expect(richText.defaultPrevented).toBe(false);
+    expect(container.querySelector(".review-list")).toBeNull();
   });
 
   it("clears stale Excel recognition after one-click text import", async () => {

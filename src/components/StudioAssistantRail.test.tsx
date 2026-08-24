@@ -185,6 +185,38 @@ describe("StudioAssistantRail", () => {
     expect(container.textContent).toContain("工程状态");
   });
 
+  it("keeps the element listbox on a single tab stop and moves focus with arrow keys", () => {
+    const { container } = renderRail();
+    click(container.querySelector('[role="tab"]:last-child')!);
+    click(container.querySelector('button[aria-label="打开元素查看"]')!);
+
+    const options = [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(options.length).toBeGreaterThanOrEqual(4);
+    // selection = canvas → the selected first option is the only tab stop (roving tabindex).
+    expect(options[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(options.map((option) => option.tabIndex)).toEqual(options.map((_, index) => (index === 0 ? 0 : -1)));
+
+    const press = (target: HTMLElement, key: string) =>
+      flushSync(() => target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key })));
+
+    options[0]!.focus();
+    press(options[0]!, "ArrowDown");
+    expect(document.activeElement).toBe(options[1]);
+    // The tab stop follows keyboard focus.
+    expect(options[1]!.tabIndex).toBe(0);
+    expect(options[0]!.tabIndex).toBe(-1);
+
+    const last = options[options.length - 1]!;
+    press(options[1]!, "End");
+    expect(document.activeElement).toBe(last);
+    press(last, "ArrowDown");
+    expect(document.activeElement).toBe(last); // clamps at the end, no wrap
+    press(last, "Home");
+    expect(document.activeElement).toBe(options[0]);
+    press(options[0]!, "ArrowUp");
+    expect(document.activeElement).toBe(options[0]); // clamps at the start, no wrap
+  });
+
   it("opens the element view straight from the stage overview elements card", () => {
     const onStageOverviewAction = vi.fn();
     const { container } = renderRail({

@@ -231,6 +231,7 @@ export function DataWorkspace({
         onParseText={roster.parseText}
         onParseOcrText={roster.parseOcrText}
         onParseWithAi={() => { void roster.parseWithAi(); }}
+        onPasteHtmlTable={roster.pasteHtmlTable}
         onImportDirectly={() => { void roster.importDirectly(); }}
         onSelectWorkbook={(file) => { void roster.selectWorkbook(file); }}
         onDownloadTemplate={() => { void roster.downloadTemplate(); }}

@@ -12,6 +12,7 @@
 | Round 1 | complete | 2026-08-24 | 2026-08-24 | 拆 God 组件 / 布局求解 / 导入诚实 / API 4xx / a11y / 性能基线 |
 | Round 2 | complete | 2026-08-24 | 2026-08-24 | App 再拆 −747 行；连接线搜索复活；hidden 卡清零；leave 撤 token |
 | Round 3 | complete | 2026-08-24 | 2026-08-24 | 协作 hook 化；搜索短路；筛选深链；grid p95 −43%；API 405/路径 |
+| Round 4 | complete | 2026-08-24 | 2026-08-24 | App 331 行；布局模块全 ≤400；ThemeToggle a11y；HTML 粘贴表 |
 
 ## Round 1 结论摘要
 
@@ -47,15 +48,19 @@
 
 详见 [round3/BRIEF.md](round3/BRIEF.md)。集成：**tsc 绿、174×1484 tests 绿、无 unhandled error**。
 
-## 全局成果（三轮合计）
+## Round 4 结论简报
+
+详见 [round4/BRIEF.md](round4/BRIEF.md)。集成：**tsc 绿、177×1542 tests 绿**。App.tsx **331 行**。
+
+## 全局成果（四轮合计）
 
 | 指标 | main 基线 | Round 3 结束 |
 | --- | ---: | ---: |
-| App.tsx 行数 | 2466 | **798** |
+| App.tsx 行数 | 2466 | **331** |
 | card-layout 门面 | 1297 | 模块化 + 搜索短路 |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **400** |
-| 测试 | （基线已有大量单测） | **1484 passed / 174 files** |
+| 测试 | （基线已有大量单测） | **1542 passed / 177 files** |
 
 ## 回滚
 
