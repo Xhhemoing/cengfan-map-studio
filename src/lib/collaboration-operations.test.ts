@@ -211,6 +211,21 @@ describe("collaboration operations", () => {
     ]);
   });
 
+  it("diffs every path to a changed object shared by multiple siblings", () => {
+    const beforeShared = { value: "旧" };
+    const afterShared = { value: "新" };
+    const before = { left: beforeShared, right: beforeShared };
+    const after = { left: afterShared, right: afterShared };
+
+    const operations = diffCollaborationDocument(before, after);
+
+    expect(operations).toEqual([
+      { type: "set", path: ["left", "value"], value: "新" },
+      { type: "set", path: ["right", "value"], value: "新" },
+    ]);
+    expect(applyCollaborationOperations(before, operations)).toEqual(after);
+  });
+
   it("never emits blocked prototype-related path segments", () => {
     const before = JSON.parse('{"safe":1,"__proto__":{"old":true},"constructor":{"old":true}}') as unknown;
     const after = JSON.parse(

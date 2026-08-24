@@ -56,6 +56,10 @@ function objectPairWasSeen(left: object, right: object, seen: SeenObjectPairs): 
   return false;
 }
 
+function forgetObjectPair(left: object, right: object, seen: SeenObjectPairs): void {
+  seen.get(left)?.delete(right);
+}
+
 /**
  * Compares JSON-shaped values in one traversal without materializing strings.
  * Revisited object pairs are treated as equal so circular input terminates.
@@ -112,13 +116,13 @@ function indexIdQualifiedObjectArray(value: unknown): Map<string, IdQualifiedIte
 
 export function diffCollaborationDocument(before: unknown, after: unknown): CollaborationOperation[] {
   const operations: CollaborationOperation[] = [];
-  const visitedRecordPairs: SeenObjectPairs = new WeakMap();
+  const activeRecordPairs: SeenObjectPairs = new WeakMap();
 
   const visit = (left: unknown, right: unknown, path: string[]) => {
     if (Object.is(left, right)) return;
     if (isRecord(left) && isRecord(right)) {
       // A repeated pair is a circular edge already covered by an ancestor.
-      if (objectPairWasSeen(left, right, visitedRecordPairs)) return;
+      if (objectPairWasSeen(left, right, activeRecordPairs)) return;
       const keys = Array.from(new Set([...Object.keys(left), ...Object.keys(right)])).sort();
       for (const key of keys) {
         if (BLOCKED_PATH_PARTS.has(key)) continue;
@@ -130,6 +134,7 @@ export function diffCollaborationDocument(before: unknown, after: unknown): Coll
           visit(left[key], right[key], [...path, key]);
         }
       }
+      forgetObjectPair(left, right, activeRecordPairs);
       return;
     }
     if (Array.isArray(left) && Array.isArray(right)) {
