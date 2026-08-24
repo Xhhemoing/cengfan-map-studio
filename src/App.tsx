@@ -145,6 +145,7 @@ import {
   mergeResourcePack,
   parseResourcePack,
 } from "./lib/resource-pack";
+import { applyFontIdRemap } from "./lib/apply-font-remap";
 import {
   createProjectPackageEnvelope,
   restoreProjectPackage,
@@ -1004,7 +1005,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const { pack, assetCount, fontCount } = parseResourcePack(String(reader.result || ""));
+        const parsed = parseResourcePack(String(reader.result || ""));
+        const { pack, assetCount, fontCount } = parsed;
         const merged = mergeResourcePack({
           existingAssets: userAssets,
           existingFonts: userFonts,
@@ -1012,7 +1014,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
         });
         setUserAssets(merged.assets);
         setUserFonts(merged.fonts);
-        setStatusMessage(`资源包已导入：新增 ${merged.addedAssets}/${assetCount} 素材，${merged.addedFonts}/${fontCount} 字体`);
+        // 去重掉的字体不会进库，工程里指向它们的引用必须改写到留下的那份，否则文字静默回落默认字体。
+        // 读文件是异步的，以 ref 里的最新工程为准，避免盖掉选文件之后的编辑。
+        const remapped = applyFontIdRemap(latestWorkspaceRef.current.project, {
+          ...parsed.fontIdRemap,
+          ...merged.fontIdRemap,
+        });
+        if (remapped.rewritten > 0) commitProject(remapped.project);
+        const rewriteNote = remapped.rewritten > 0 && collaboration.canEdit
+          ? `，已改写 ${remapped.rewritten} 处重复字体引用`
+          : "";
+        setStatusMessage(`资源包已导入：新增 ${merged.addedAssets}/${assetCount} 素材，${merged.addedFonts}/${fontCount} 字体${rewriteNote}`);
       } catch (error) {
         setStatusMessage(error instanceof Error ? error.message : "资源包导入失败");
       }

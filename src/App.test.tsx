@@ -15,6 +15,7 @@ import { layoutHealthCache } from "./lib/layout-health-cache";
 import { buildHealthInput } from "./lib/render-health";
 import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { createProjectDocument, serializeProjectDocument } from "./lib/project-document";
+import { DRAFT_KEY } from "./lib/app-constants";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
 import { sampleStudents } from "./lib/project-data";
 import { createProjectPackage } from "./lib/project-package";
@@ -83,6 +84,65 @@ function studentProject(name: string): ReturnType<typeof createProjectDocument> 
 
 function readWorkspaceMirror(): string {
   return window.localStorage.getItem(WORKSPACE_MIRROR_KEY) ?? "";
+}
+
+const USER_FONTS_KEY = "cengfan-map-studio:user-fonts";
+const STORED_FONT_SRC = "data:font/ttf;base64,QUJDREVGRw==";
+
+/**
+ * 工程里的标题指向 `font-pack`，本地字体库里只有同样字节、另一个 id 的 `font-stored`：
+ * 资源包导入时 `font-pack` 会被去重丢掉，正是引用需要跟着改写的场景。
+ */
+function renderAppReferencingPackFont(): HTMLDivElement {
+  window.localStorage.clear();
+  window.localStorage.setItem(DRAFT_KEY, serializeProjectDocument(createProjectDocument({
+    students: [sampleStudents[0]],
+    templateId: "original",
+    dataView: "province",
+    textElements: [{ id: "text-title", content: "毕业去向", x: 120, y: 80, fontSize: 28, color: "#1f2a44", fontId: "font-pack" }],
+  })));
+  window.localStorage.setItem(USER_FONTS_KEY, JSON.stringify([{
+    id: "font-stored",
+    label: "库中字体",
+    family: "StoredHand",
+    src: STORED_FONT_SRC,
+    format: "truetype",
+    source: "user",
+  }]));
+  const container = renderLegacyApp({ clearStorage: false });
+  click(container.querySelector<HTMLButtonElement>('.topbar .workflow-stepper button[aria-label="素材"]')!);
+  return container;
+}
+
+function titleFontFamily(container: HTMLElement): string | null {
+  return container.querySelector('[data-text-id="text-title"] text')?.getAttribute("font-family") ?? null;
+}
+
+function packWithFont(id: string, family: string, src: string): string {
+  return JSON.stringify({
+    kind: "cengfan-resource-pack",
+    exportedAt: "2026-08-24T00:00:00.000Z",
+    assets: [],
+    fonts: [{ id, label: "包内字体", family, src, format: "truetype", source: "user" }],
+  });
+}
+
+function importResourcePack(container: HTMLElement, pack: string): void {
+  class ImmediateFileReader {
+    result: string | ArrayBuffer | null = null;
+    onload: null | (() => void) = null;
+    readAsText() {
+      this.result = pack;
+      this.onload?.();
+    }
+  }
+  vi.stubGlobal("FileReader", ImmediateFileReader);
+  const input = container.querySelector<HTMLInputElement>("#asset-pack-import")!;
+  Object.defineProperty(input, "files", {
+    configurable: true,
+    value: [new File([pack], "资源包.json", { type: "application/json" })],
+  });
+  flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
 }
 
 function forceSaveLocally(container: HTMLElement): void {
@@ -1089,6 +1149,30 @@ describe("App student editing", () => {
     expect(image).not.toBeUndefined();
     expect(container.querySelector("[data-resize-handles]")).not.toBeNull();
     expect(container.textContent).toContain("已导入画布：校徽");
+    vi.stubGlobal("FileReader", originalFileReader);
+  });
+
+  it("moves project font references onto the stored copy when the imported pack duplicates it", () => {
+    const originalFileReader = globalThis.FileReader;
+    const container = renderAppReferencingPackFont();
+    expect(titleFontFamily(container)).toBeNull();
+
+    importResourcePack(container, packWithFont("font-pack", "PackHand", STORED_FONT_SRC));
+
+    expect(titleFontFamily(container)).toBe('"StoredHand"');
+    expect(container.textContent).toContain("已改写 1 处重复字体引用");
+    vi.stubGlobal("FileReader", originalFileReader);
+  });
+
+  it("leaves project font references alone when the imported pack has nothing to deduplicate", () => {
+    const originalFileReader = globalThis.FileReader;
+    const container = renderAppReferencingPackFont();
+
+    importResourcePack(container, packWithFont("font-other", "OtherHand", "data:font/ttf;base64,WllZWQ=="));
+
+    expect(titleFontFamily(container)).toBeNull();
+    expect(container.textContent).toContain("资源包已导入");
+    expect(container.textContent).not.toContain("已改写");
     vi.stubGlobal("FileReader", originalFileReader);
   });
 
