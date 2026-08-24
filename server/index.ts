@@ -537,10 +537,13 @@ export function createAiServer(options: AiServerOptions = {}) {
     return { outcome: "persisted", at };
   };
   /**
-   * 房间是否在上一次成功落盘里被完整写下。保留给只认布尔的旧客户端：被跳过或被裁掉历史的
-   * 房间同样报 false，两者的区别要看同级的 persistence.outcome。
+   * 创建/加入/快照三个响应共用的落盘字段。`persistedAtLastFlush` 保留给只认布尔的旧客户端：
+   * 被跳过或被裁掉历史的房间同样报 false，两者的区别要看同级的 `persistence.outcome`。
    */
-  const persistedAtLastFlush = (roomId: string): boolean => roomPersistence(roomId).outcome === "persisted";
+  const roomPersistenceFields = (roomId: string) => {
+    const persistence = roomPersistence(roomId);
+    return { persistedAtLastFlush: persistence.outcome === "persisted", persistence };
+  };
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
   const maxRoomEventBytes = positiveBytes(
@@ -778,8 +781,7 @@ export function createAiServer(options: AiServerOptions = {}) {
           ...room,
           role: participant.role,
           participants: roomStore.listParticipants(room.id, accessToken),
-          persistedAtLastFlush: persistedAtLastFlush(room.id),
-          persistence: roomPersistence(room.id),
+          ...roomPersistenceFields(room.id),
         };
       };
 
@@ -796,11 +798,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         }
         try {
           const created = roomStore.create(body.snapshot, { clientId: body.clientId, displayName: body.displayName.trim() });
-          send(201, {
-            ...created,
-            persistedAtLastFlush: persistedAtLastFlush(created.room.id),
-            persistence: roomPersistence(created.room.id),
-          });
+          send(201, { ...created, ...roomPersistenceFields(created.room.id) });
         } catch (error) {
           if (error instanceof CollaborationError) {
             sendRoomError(error);
@@ -866,11 +864,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         }
         try {
           const joined = roomStore.join(joinMatch[1]!, { inviteToken: body.inviteToken, clientId: body.clientId, displayName: body.displayName });
-          send(200, {
-            ...joined,
-            persistedAtLastFlush: persistedAtLastFlush(joined.room.id),
-            persistence: roomPersistence(joined.room.id),
-          });
+          send(200, { ...joined, ...roomPersistenceFields(joined.room.id) });
         } catch (error) {
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;
