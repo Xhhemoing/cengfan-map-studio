@@ -124,6 +124,10 @@ function setDrawerMessage(value: string): void {
   });
 }
 
+function drawerMessage(): string | undefined {
+  return document.querySelector<HTMLTextAreaElement>('textarea[aria-label="描述 AI 修改需求"]')?.value;
+}
+
 function clickDrawerText(text: string): void {
   const button = Array.from(document.querySelectorAll<HTMLButtonElement>(".agent-assistant--docked button")).find((candidate) => candidate.textContent?.includes(text));
   if (!button) throw new Error(`button missing: ${text}`);
@@ -170,6 +174,26 @@ describe("StudioAssistantDrawer integration", () => {
     renderDrawer(false);
     await act(async () => {});
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("keeps the unsent draft when the drawer closes and reopens", async () => {
+    window.localStorage.clear();
+    const { renderDrawer } = renderDrawerBelowProvider();
+    await act(async () => {});
+    setDrawerMessage("先写一半，关了抽屉再回来");
+    expect(drawerMessage()).toBe("先写一半，关了抽屉再回来");
+
+    // MUI Drawer 走完退出过渡才卸载 children，等助手真的离开 DOM 才算关闭。
+    renderDrawer(false);
+    await vi.waitFor(() => expect(document.querySelector('textarea[aria-label="描述 AI 修改需求"]')).toBeNull());
+
+    renderDrawer(true);
+    await act(async () => {});
+    expect(drawerMessage()).toBe("先写一半，关了抽屉再回来");
+
+    // 草稿只在内存里：刷新页面不该把没发出去的需求捞回来。
+    const persisted = Object.keys(window.localStorage).map((key) => window.localStorage.getItem(key) ?? "");
+    expect(persisted.some((value) => value.includes("先写一半"))).toBe(false);
   });
 
   it("does not cancel a running AI session when the drawer closes", async () => {

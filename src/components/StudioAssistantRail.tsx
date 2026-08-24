@@ -1,5 +1,5 @@
-import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { AgentAssistant } from "./AgentAssistant";
+import { useId, useMemo, useRef, type KeyboardEvent } from "react";
+import { AgentAssistant, useAssistantRailState, type RailTabId } from "./AgentAssistant";
 import { StageOverviewPanel } from "./StageOverviewPanel";
 import type { StageOverviewAction, StageOverviewModel } from "../lib/stage-overview";
 import type { UserAsset } from "../lib/assets";
@@ -51,8 +51,6 @@ const COLLABORATION_LABELS: Record<CollaborationStatus, string> = {
   closed: "房间已关闭",
 };
 
-type RailTabId = "ai" | "stage" | "advanced";
-
 const RAIL_TABS: ReadonlyArray<{ id: RailTabId; label: string }> = [
   { id: "ai", label: "AI 助手" },
   { id: "stage", label: "本阶段" },
@@ -96,18 +94,14 @@ export function StudioAssistantRail({
   stageOverview,
   onStageOverviewAction,
 }: StudioAssistantRailProps) {
-  const [activeTab, setActiveTab] = useState<RailTabId>("ai");
-  const [advancedView, setAdvancedView] = useState<"operations" | "elements">("operations");
-  // 桌面常驻栏与移动端抽屉会同时挂载同一个 rail，静态 id 会在文档里重复。
+  // 页签状态归 AssistantConversationProvider：桌面常驻栏与抽屉是同一份 rail 的两个副本，
+  // 各自持有 state 会让抽屉打开时停在另一套页签上。
+  const { activeTab, advancedView, selectTab, setAdvancedView } = useAssistantRailState();
+  // 但 id 必须按实例区分：两个副本同时在文档里，静态 id 会重复。
   const instanceId = useId();
   const tabId = (tab: RailTabId) => `${instanceId}-${tab}-tab`;
   const panelId = (tab: RailTabId) => `${instanceId}-${tab}-panel`;
   const tabRefs = useRef(new Map<RailTabId, HTMLButtonElement>());
-
-  const selectTab = (tab: RailTabId) => {
-    setActiveTab(tab);
-    if (tab === "advanced") setAdvancedView("operations");
-  };
 
   const nextTabIndex = (key: string, index: number): number | null => {
     switch (key) {
@@ -196,8 +190,7 @@ export function StudioAssistantRail({
               : COLLABORATION_LABELS[collaboration.status]}
             onAction={(action) => {
               if (action.kind === "elements") {
-                setActiveTab("advanced");
-                setAdvancedView("elements");
+                selectTab("advanced", "elements");
                 return;
               }
               onStageOverviewAction(action);

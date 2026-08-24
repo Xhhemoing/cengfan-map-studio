@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type ReactNode, type SetStateAction } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type ReactNode, type SetStateAction } from "react";
 import { AlertTriangle, Check, LoaderCircle, Plus, ShieldCheck, Sparkles } from "lucide-react";
 import { AgentSession, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
 import type { UserAsset } from "../lib/assets";
@@ -154,6 +154,10 @@ function createConversation(project: ProjectDocument, mode: Mode, assets: UserAs
   };
 }
 
+/** 左栏页签。桌面侧栏与移动端抽屉挂载同一份 rail，页签状态必须共享。 */
+export type RailTabId = "ai" | "stage" | "advanced";
+export type RailAdvancedView = "operations" | "elements";
+
 type AssistantConversationState = {
   mode: Mode;
   setMode: Dispatch<SetStateAction<Mode>>;
@@ -163,6 +167,14 @@ type AssistantConversationState = {
   setActiveId: Dispatch<SetStateAction<string | null>>;
   hydrated: boolean;
   hydrate: (project: ProjectDocument, assets: UserAsset[]) => void;
+  // 未发送的输入框草稿，按对话 id 存。归属 Provider 而非某个 AgentAssistant 实例：
+  // 关抽屉会卸载助手，草稿留在实例 state 里就会丢。只在内存，不进 localStorage。
+  drafts: Record<string, string>;
+  setDraft: (conversationId: string, value: string) => void;
+  railTab: RailTabId;
+  railAdvancedView: RailAdvancedView;
+  selectRailTab: (tab: RailTabId, view?: RailAdvancedView) => void;
+  setRailAdvancedView: Dispatch<SetStateAction<RailAdvancedView>>;
   // 进行中的会话归属 Provider 而非某个 AgentAssistant 实例：移动端抽屉关闭会卸载助手，
   // 但会话必须继续跑完并把结果写回共享状态。
   activeRunRef: MutableRefObject<AgentSession | null>;
@@ -182,6 +194,9 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
   const [conversations, setConversations] = useState<AssistantConversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [railTab, setRailTab] = useState<RailTabId>("ai");
+  const [railAdvancedView, setRailAdvancedView] = useState<RailAdvancedView>("operations");
   const hydratedRef = useRef(false);
   const activeRunRef = useRef<AgentSession | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
@@ -223,7 +238,29 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
     }
     setHydrated(true);
   };
-  return <AssistantConversationContext.Provider value={{ mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef, latestProjectRef, observeProject }}>{children}</AssistantConversationContext.Provider>;
+  const setDraft = (conversationId: string, value: string) => {
+    setDrafts((current) => current[conversationId] === value ? current : { ...current, [conversationId]: value });
+  };
+  const selectRailTab = (tab: RailTabId, view: RailAdvancedView = "operations") => {
+    setRailTab(tab);
+    if (tab === "advanced") setRailAdvancedView(view);
+  };
+  return <AssistantConversationContext.Provider value={{ mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, drafts, setDraft, railTab, railAdvancedView, selectRailTab, setRailAdvancedView, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef, latestProjectRef, observeProject }}>{children}</AssistantConversationContext.Provider>;
+}
+
+/**
+ * 左栏页签状态。桌面常驻栏与移动端抽屉同时挂载同一份 rail，页签留在实例 state 里
+ * 会让两份副本各走各的；提到 Provider 后两边始终看到同一个页签与高级功能子视图。
+ */
+export function useAssistantRailState() {
+  const state = useContext(AssistantConversationContext);
+  if (!state) throw new Error("useAssistantRailState must be called inside AssistantConversationProvider");
+  return {
+    activeTab: state.railTab,
+    advancedView: state.railAdvancedView,
+    selectTab: state.selectRailTab,
+    setAdvancedView: state.setRailAdvancedView,
+  };
 }
 
 /**
@@ -270,14 +307,16 @@ export function AgentAssistant({
 }) {
   const state = useContext(AssistantConversationContext);
   if (!state) throw new Error("AgentAssistant must be rendered inside AssistantConversationProvider");
-  const { mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef, latestProjectRef } = state;
-  const [message, setMessage] = useState("");
+  const { mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, drafts, setDraft, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef, latestProjectRef } = state;
+  // 同一份助手会同时挂在桌面侧栏和抽屉里，静态 radio name 会在文档级重名。
+  const instanceId = useId();
   const mountedRef = useRef(false);
   const hasMountedRef = useRef(false);
   const projectDigestRef = useRef<string | null>(null);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const active = conversations.find((conversation) => conversation.id === activeId) ?? null;
+  const activeDraft = active ? drafts[active.id] ?? "" : "";
   // 助手挂载时也走同一条登记路径；卸载后由编辑器里的调用接力，两边幂等。
   const currentProjectDigest = useAssistantProjectSync(project);
   const projectIsCurrent = active === null || active.projectDigest === currentProjectDigest;
@@ -387,7 +426,7 @@ export function AgentAssistant({
     const conversation = createConversation(project, mode, assets);
     setConversations((current) => [...current, conversation]);
     setActiveId(conversation.id);
-    setMessage("");
+    setDraft(conversation.id, "");
     onPreview?.(null);
   };
 
@@ -398,7 +437,8 @@ export function AgentAssistant({
       onPreview?.(null);
       return;
     }
-    setMessage(conversation.request);
+    // 已有草稿优先：用户在这个对话里敲了一半的输入不该被历史需求覆盖。
+    if (drafts[conversation.id] === undefined) setDraft(conversation.id, conversation.request);
     if (conversation.selectedStepIds.length === 0) {
       onPreview?.(null);
       return;
@@ -408,8 +448,8 @@ export function AgentAssistant({
   };
 
   const run = async () => {
-    if (!mountedRef.current || !active || !projectIsCurrent || !message.trim() || active.status === "running") return;
-    const request = message.trim();
+    if (!mountedRef.current || !active || !projectIsCurrent || !activeDraft.trim() || active.status === "running") return;
+    const request = activeDraft.trim();
     const runProjectDigest = currentProjectDigest;
     const runProjectGeneration = projectGenerationRef.current;
     // 回写归属：Provider 仍在，且这一路仍是该对话的当前会话。助手自己卸载不改变归属。
@@ -544,6 +584,8 @@ export function AgentAssistant({
     updateConversation(active.id, (conversation) => ({ ...conversation, status: "applied", selectedStepIds: [] }));
   };
 
+  const draftFor = (conversation: AssistantConversation) => drafts[conversation.id] ?? "";
+
   const renderConversation = (conversation: AssistantConversation) => (
     <>
       <div className="agent-assistant-history" aria-label="对话历史">
@@ -559,15 +601,15 @@ export function AgentAssistant({
       </div>
       <div className="agent-assistant-body">
         <div className="agent-mode-control" role="radiogroup" aria-label="AI 执行模式">
-          <label><input type="radio" name={`agent-mode-${conversation.id}`} value="conservative" checked={conversation.mode === "conservative"} disabled={conversation.status !== "draft"} onChange={() => { setMode("conservative"); updateConversation(conversation.id, (item) => ({ ...item, mode: "conservative" })); }} />保守模式</label>
-          <label><input type="radio" name={`agent-mode-${conversation.id}`} value="smart" checked={conversation.mode === "smart"} disabled={conversation.status !== "draft"} onChange={() => { setMode("smart"); updateConversation(conversation.id, (item) => ({ ...item, mode: "smart" })); }} />智能模式</label>
+          <label><input type="radio" name={`agent-mode-${instanceId}-${conversation.id}`} value="conservative" checked={conversation.mode === "conservative"} disabled={conversation.status !== "draft"} onChange={() => { setMode("conservative"); updateConversation(conversation.id, (item) => ({ ...item, mode: "conservative" })); }} />保守模式</label>
+          <label><input type="radio" name={`agent-mode-${instanceId}-${conversation.id}`} value="smart" checked={conversation.mode === "smart"} disabled={conversation.status !== "draft"} onChange={() => { setMode("smart"); updateConversation(conversation.id, (item) => ({ ...item, mode: "smart" })); }} />智能模式</label>
         </div>
         {conversation.request && <p className="agent-assistant-request">需求：{conversation.request}</p>}
-        <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="描述你的需求" aria-label="描述 AI 修改需求" disabled={conversation.status === "running"} />
+        <textarea value={draftFor(conversation)} onChange={(event) => setDraft(conversation.id, event.target.value)} rows={3} placeholder="描述你的需求" aria-label="描述 AI 修改需求" disabled={conversation.status === "running"} />
         {conversation.status === "running" ? (
           <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
         ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && (conversation.budgetExpired || conversation.status === "completed") ? (!conversation.budgetExpired && conversation.session.canContinue ? "继续对话" : "新开任务") : "开始规划"}</button>
+          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !draftFor(conversation).trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && (conversation.budgetExpired || conversation.status === "completed") ? (!conversation.budgetExpired && conversation.session.canContinue ? "继续对话" : "新开任务") : "开始规划"}</button>
         )}
         {projectIsCurrent && conversation.budgetExpired && <p className="panel-note" role="status">会话预算已过期或已被占用，发送新需求会新开一个 AI 任务。</p>}
         {projectIsCurrent && conversation.status === "completed" && !conversation.session.canContinue && <p className="panel-note" role="status">历史会话已只读恢复，发送新需求会新开一个 AI 任务。</p>}

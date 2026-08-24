@@ -65,6 +65,23 @@ function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
   return { container, root, props };
 }
 
+/** 桌面常驻栏与移动端抽屉挂载的是同一份 rail，两份副本共存于文档中。 */
+function renderTwoRails() {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  mounted.push({ root, container: host });
+  const props = railProps();
+  flushSync(() => root.render(
+    <AssistantConversationProvider>
+      <StudioAssistantRail {...props} />
+      <StudioAssistantRail {...props} />
+    </AssistantConversationProvider>,
+  ));
+  const rails = Array.from(host.querySelectorAll<HTMLElement>(".studio-assistant-rail"));
+  return { host, rails };
+}
+
 afterEach(() => {
   mounted.splice(0).forEach(({ root, container }) => {
     flushSync(() => root.unmount());
@@ -203,17 +220,7 @@ describe("StudioAssistantRail", () => {
   });
 
   it("derives unique tab and panel ids so desktop and drawer copies never collide", () => {
-    const host = document.createElement("div");
-    document.body.append(host);
-    const root = createRoot(host);
-    mounted.push({ root, container: host });
-    const props = railProps();
-    flushSync(() => root.render(
-      <AssistantConversationProvider>
-        <StudioAssistantRail {...props} />
-        <StudioAssistantRail {...props} />
-      </AssistantConversationProvider>,
-    ));
+    const { host } = renderTwoRails();
 
     const ids = Array.from(host.querySelectorAll('[role="tab"], [role="tabpanel"]')).map((node) => node.id);
     expect(ids).toHaveLength(8);
@@ -224,5 +231,32 @@ describe("StudioAssistantRail", () => {
       expect(panel?.getAttribute("aria-labelledby")).toBe(tab.id);
     }
 
+  });
+
+  it("shares the active tab and the advanced sub-view between both mounted copies", () => {
+    const { rails } = renderTwoRails();
+    expect(rails).toHaveLength(2);
+    expect(rails.map((rail) => selectedTab(rail))).toEqual(["ai", "ai"]);
+
+    click(rails[0]!.querySelector('[role="tab"][data-rail-tab="advanced"]'));
+    expect(rails.map((rail) => selectedTab(rail))).toEqual(["advanced", "advanced"]);
+    expect(rails[1]!.textContent).toContain("工程状态");
+
+    // 抽屉那份切到元素查看，桌面那份不该还停在操作列表上。
+    click(rails[1]!.querySelector('button[aria-label="打开元素查看"]'));
+    expect(rails[0]!.querySelector(".studio-advanced__element-list")).not.toBeNull();
+    expect(rails[1]!.querySelector(".studio-advanced__element-list")).not.toBeNull();
+  });
+
+  it("scopes the assistant mode radio group to each copy so names never collide", () => {
+    const { host } = renderTwoRails();
+    const names = Array.from(host.querySelectorAll<HTMLInputElement>('.agent-mode-control input[type="radio"]')).map((input) => input.name);
+
+    expect(names).toHaveLength(4);
+    expect(names.every((name) => name.length > 0)).toBe(true);
+    // 每份副本内部两个单选按钮同名（同一组），两份副本之间必须不同名。
+    expect(new Set(names).size).toBe(2);
+    expect(names[0]).toBe(names[1]);
+    expect(names[2]).toBe(names[3]);
   });
 });
