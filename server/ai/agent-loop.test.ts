@@ -364,6 +364,43 @@ describe("runAgentTurn", () => {
     expect(outcome.kind).toBe("tool-call");
   });
 
+  it("still brakes when parseAgentRequest appended the user echo after the read-only rounds", async () => {
+    stubReply(calls(["inspect_project", { path: "cards.padding" }]));
+    // HTTP 路径每轮都会在末尾补一条本轮用户消息的回声，倒序扫描不摘掉它就会立刻 break，只读熔断永不触发。
+    const messages: ChatMessage[] = [
+      { role: "user", content: "广东有几人" },
+      ...readOnlyRounds(MAX_READ_ONLY_STREAK, () => ({ path: "cards.padding" })),
+      { role: "user", content: "广东有几人" },
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "广东有几人", digest: {}, messages });
+    expect(outcome.kind).toBe("finish");
+    if (outcome.kind === "finish") expect(outcome.summary).toContain("无进展");
+  });
+
+  it("keeps paging past the echo because each offset is still a different read-only round", async () => {
+    stubReply(calls(["query_students", { offset: 250 }]));
+    const messages: ChatMessage[] = [
+      { role: "user", content: "把所有学生按城市分组" },
+      ...readOnlyRounds(5, (index) => ({ offset: index * 50 }), "query_students"),
+      { role: "user", content: "把所有学生按城市分组" },
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "把所有学生按城市分组", digest: {}, messages });
+    expect(outcome.kind).toBe("tool-call");
+  });
+
+  it("still calls the model when the user repeats a sentence that stalled on read-only rounds", async () => {
+    stubReply(calls(["update_map", { patch: { scale: 0.85 } }]));
+    // 末尾这条前面是 assistant 文本收尾，属于用户新提的真起点而非回声，摘掉它会把上一段的空转算进新一轮。
+    const messages: ChatMessage[] = [
+      { role: "user", content: "广东有几人" },
+      ...readOnlyRounds(MAX_READ_ONLY_STREAK, () => ({ path: "cards.padding" })),
+      { role: "assistant", content: "连续多轮只读未动手，任务无进展，已交回当前结论。" },
+      { role: "user", content: "广东有几人" },
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "广东有几人", digest: {}, messages });
+    expect(outcome.kind).toBe("tool-call");
+  });
+
   it("charges only the fresh prompt tokens so a growing conversation stays linear", async () => {
     const promptTokensPerRound = [1_000, 2_000, 3_000];
     let round = 0;
@@ -481,6 +518,36 @@ describe("runAgentTurn", () => {
     const messages: ChatMessage[] = Array.from({ length: MAX_TURNS }, () => calls(["update_map", { patch: { width: 1 } }]));
     const outcome = await runAgentTurn(CONFIG, { userMessage: "x", digest: {}, messages });
     expect(outcome.kind).toBe("finish");
+  });
+
+  it("still stops at the turn limit inside one task segment that carries the echo", async () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "重排整版" },
+      ...Array.from({ length: MAX_TURNS }, () => [
+        calls(["update_map", { patch: { width: 1 } }]),
+        { role: "tool" as const, tool_call_id: "call-0", content: "{}" },
+      ]).flat(),
+      { role: "user", content: "重排整版" },
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "重排整版", digest: {}, messages });
+    expect(outcome.kind).toBe("finish");
+    if (outcome.kind === "finish") expect(outcome.summary).toContain("轮上限");
+  });
+
+  it("still calls the model when the turns belong to an earlier task in the same conversation", async () => {
+    stubReply(calls(["update_map", { patch: { scale: 0.85 } }]));
+    // 上一段用满轮次不该让续聊的第一句在不调模型的情况下直接被判上限。
+    const messages: ChatMessage[] = [
+      { role: "user", content: "重排整版" },
+      ...Array.from({ length: MAX_TURNS }, () => [
+        calls(["update_map", { patch: { width: 1 } }]),
+        { role: "tool" as const, tool_call_id: "call-0", content: "{}" },
+      ]).flat(),
+      { role: "assistant", content: "已达轮次上限，先交付已完成的部分。" },
+      { role: "user", content: "地图小一点" },
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "地图小一点", digest: {}, messages });
+    expect(outcome.kind).toBe("tool-call");
   });
 });
 

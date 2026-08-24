@@ -51,8 +51,14 @@ const SYSTEM_PROMPT = `你是“蹭饭图”毕业去向海报编辑器的 AI �
 6. 全部完成后调用 finish，summary 使用中文。
 7. 未知补丁属性被拒后，按返回的 availableProps 修正，最多重试两次。`;
 
-function assistantTurnCount(messages: ChatMessage[]): number {
-  return messages.filter((message) => message.role === "assistant").length;
+/**
+ * 轮次上限只算当前任务段内的 assistant 回合：上一段用满 20 轮之后，续聊的第一句会在
+ * 不调模型的情况下直接被判「已达上限」，用户只能新开会话。段内仍是硬闸，跨段预算由
+ * budget.rounds 兜底。边界找不到时退回全量口径，与 rejectedCount 一致。
+ * 回滚：把 from 参数删掉、改回 messages.filter 全量统计即可。
+ */
+function assistantTurnCount(messages: ChatMessage[], from: number): number {
+  return messages.slice(from).filter((message) => message.role === "assistant").length;
 }
 
 function canonicalValue(value: unknown): unknown {
@@ -90,8 +96,28 @@ function readOnlyCallSignature(message: ChatMessage): string | null {
     .join("|");
 }
 
-/** 只累计与上一只读回合签名完全相同的回合；参数不同（例如 query_students 递增 offset）说明仍在推进，不计入。 */
-function readOnlyStreak(messages: ChatMessage[]): number {
+/**
+ * parseAgentRequest 在末尾不是本轮用户消息时会补一条回声，倒序扫描的判定必须先把它摘掉。
+ * 只有「末尾是本轮 userMessage 且前一条不是 assistant 文本」才算回声：前一条是 assistant
+ * 文本时那是上一段的收尾总结，末尾这条是用户新提的真起点，不能摘。
+ */
+function withoutTrailingEcho(messages: ChatMessage[], userMessage: string): ChatMessage[] {
+  const last = messages.length - 1;
+  const echoed = last > 0
+    && messages[last]!.role === "user"
+    && messages[last]!.content === userMessage
+    && messages[last - 1]!.role !== "assistant";
+  return echoed ? messages.slice(0, last) : messages;
+}
+
+/**
+ * 只累计与上一只读回合签名完全相同的回合；参数不同（例如 query_students 递增 offset）说明仍在推进，不计入。
+ * 扫描前必须摘掉末尾回声：HTTP 路径每轮都带着补写的 user 消息进来，倒序第一条就 break，
+ * 只读熔断会恒为 0 而永不触发。
+ * 回滚：去掉 withoutTrailingEcho 包裹即可（熔断会退回 HTTP 路径下的死代码状态）。
+ */
+function readOnlyStreak(rawMessages: ChatMessage[], userMessage: string): number {
+  const messages = withoutTrailingEcho(rawMessages, userMessage);
   let streak = 0;
   let previousSignature: string | null = null;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -118,10 +144,8 @@ function readOnlyStreak(messages: ChatMessage[]): number {
  * 回滚：改回 findIndex 即可（会退回「同一句话连问两轮被上一段毒化」的老行为）。
  */
 export function currentTaskStart(messages: ChatMessage[], userMessage: string): number {
-  const isTaskStart = (message: ChatMessage) => message.role === "user" && message.content === userMessage;
-  const last = messages.length - 1;
-  const echoed = last > 0 && isTaskStart(messages[last]!) && messages[last - 1]!.role !== "assistant";
-  return (echoed ? messages.slice(0, last) : messages).findLastIndex(isTaskStart);
+  return withoutTrailingEcho(messages, userMessage)
+    .findLastIndex((message) => message.role === "user" && message.content === userMessage);
 }
 
 /**
@@ -318,13 +342,14 @@ export async function runAgentTurn(
   if (budget.rounds >= budget.maxRounds || budget.usedTokens >= budget.maxTokens) {
     return { kind: "finish", summary: "已达到 AI 任务预算，保留当前预览结果。", budget };
   }
-  if (assistantTurnCount(request.messages) >= MAX_TURNS) {
+  const taskStart = Math.max(0, currentTaskStart(request.messages, request.userMessage));
+  if (assistantTurnCount(request.messages, taskStart) >= MAX_TURNS) {
     return { kind: "finish", summary: `已达 ${MAX_TURNS} 轮上限，先交付已完成的部分。`, budget };
   }
-  if (readOnlyStreak(request.messages) >= MAX_READ_ONLY_STREAK) {
+  if (readOnlyStreak(request.messages, request.userMessage) >= MAX_READ_ONLY_STREAK) {
     return { kind: "finish", summary: "连续多轮只读未动手，任务无进展，已交回当前结论。" };
   }
-  if (rejectedCount(request.messages, Math.max(0, currentTaskStart(request.messages, request.userMessage))) >= MAX_TOOL_REJECTIONS) {
+  if (rejectedCount(request.messages, taskStart) >= MAX_TOOL_REJECTIONS) {
     return { kind: "finish", summary: "工具参数多次校验失败，已停止继续尝试。" };
   }
 
