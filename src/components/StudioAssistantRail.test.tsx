@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { StudioAssistantRail, type StudioAssistantRailProps } from "./StudioAssistantRail";
 import { AssistantConversationProvider } from "./AgentAssistant";
 import { createProjectDocument } from "../lib/project-document";
+
+const roots: Root[] = [];
 
 function click(element: Element | null): void {
   if (!element) throw new Error(`element missing; text=${document.body.textContent?.slice(0, 120)}`);
@@ -13,6 +15,7 @@ function click(element: Element | null): void {
 function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
   const container = document.createElement("div");
   const root = createRoot(container);
+  roots.push(root);
   const props: StudioAssistantRailProps = {
     project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
     assets: [],
@@ -48,6 +51,11 @@ function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
 }
 
 afterEach(() => {
+  // AssistantConversationProvider can arm a persist timeout; leave the root mounted
+  // and jsdom teardown races React's scheduler against a missing `window`.
+  flushSync(() => {
+    for (const root of roots.splice(0)) root.unmount();
+  });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
