@@ -16,7 +16,8 @@ import {
   polygonBounds,
   rectangleIntersectsPolygon,
 } from "./card-layout-geometry";
-import { normalizeBounds, protectedZones, RectIndex } from "./card-layout-space";
+import { RectIndex } from "./card-layout-index";
+import { normalizeBounds, protectedZones } from "./card-layout-space";
 import {
   EPSILON,
   type CardArea,

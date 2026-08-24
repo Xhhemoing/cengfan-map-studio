@@ -2,10 +2,13 @@
  * Side assignment and order-preserving side packing.
  *
  * These are the "shape" strategies: which side of the map a card belongs to
- * (quadrant / radial / right-stack) and how a side's cards are packed along
- * its primary axis without reordering them.
+ * (quadrant / radial / right-stack), how a side's cards are packed along its
+ * primary axis without reordering them, and — in {@link packSides} — how the
+ * four sides are packed in turn so that cards a full side rejects overflow to a
+ * neighbour instead of being lost.
  */
-import { centerOf, clamp } from "./card-layout-geometry";
+import { centerOf, clamp, overlaps } from "./card-layout-geometry";
+import { containFree, stackAtMargin } from "./card-layout-pack";
 import { PlacementIndex, type LayoutSpace } from "./card-layout-space";
 import {
   MIN_GAP,
@@ -20,14 +23,15 @@ export interface SideAssignment {
   cards: CardLayoutInput[];
 }
 
-const SIDE_PACK_ORDER: CardSide[] = ["left", "right", "top", "bottom"];
+/** Order the four sides appear in every {@link SideAssignment} list. */
+const ASSIGNMENT_ORDER: CardSide[] = ["left", "right", "top", "bottom"];
 
 function emptySides(): Record<CardSide, CardLayoutInput[]> {
   return { left: [], right: [], top: [], bottom: [] };
 }
 
 function toAssignments(sides: Record<CardSide, CardLayoutInput[]>): SideAssignment[] {
-  return SIDE_PACK_ORDER.map((side) => ({ side, cards: sides[side] }));
+  return ASSIGNMENT_ORDER.map((side) => ({ side, cards: sides[side] }));
 }
 
 /**
@@ -248,4 +252,71 @@ export function neighborSide(side: CardSide): CardSide {
   if (side === "left") return "top";
   if (side === "top") return "left";
   return "right";
+}
+
+/** Order sides are packed in; earlier sides claim space first. */
+const SIDE_PACK_ORDER: CardSide[] = ["right", "left", "top", "bottom"];
+const MAX_OVERFLOW_ROUNDS = 4;
+
+/**
+ * Pack each side once, collecting only cards that land in a valid,
+ * non-overlapping spot. Cards that don't fit their side overflow to a
+ * neighbour side and are re-packed there next round.
+ */
+export function packSides(
+  cards: CardLayoutInput[],
+  space: LayoutSpace,
+  mode: "quadrant" | "radial" | "right-stack",
+  options: CardLayoutOptions,
+): CardPlacement[] {
+  const placed = PlacementIndex.forSpace(space);
+  let pending: SideAssignment[] = classifySides(cards, space, mode, options)
+    .map((assignment) => ({ ...assignment, cards: [...assignment.cards] }));
+
+  for (let round = 0; round < MAX_OVERFLOW_ROUNDS && pending.some((a) => a.cards.length > 0); round += 1) {
+    for (const side of SIDE_PACK_ORDER) {
+      const assignment = pending.find((a) => a.side === side);
+      if (!assignment || assignment.cards.length === 0) continue;
+      const packed = placeSide(assignment, space, placed);
+      const accepted: CardPlacement[] = [];
+      const rejected: CardLayoutInput[] = [];
+      // Accept packed cards in order while they stay valid; once one fails,
+      // reject the rest so the side stays a contiguous block.
+      let blockBroken = false;
+      for (let index = 0; index < packed.length; index += 1) {
+        const placement = packed[index]!;
+        const valid = space.inside(placement)
+          && !space.blocked(placement)
+          && !placed.hits(placement, space.gap)
+          && !accepted.some((other) => overlaps(other, placement, space.gap));
+        if (valid && !blockBroken) accepted.push(placement);
+        else {
+          blockBroken = true;
+          rejected.push(assignment.cards[index]!);
+        }
+      }
+      for (const placement of accepted) placed.add(placement);
+      const neighbor = neighborSide(side);
+      pending = pending.map((entry) => {
+        if (entry.side === side) return { ...entry, cards: [] };
+        if (entry.side === neighbor) return { ...entry, cards: [...entry.cards, ...rejected] };
+        return entry;
+      });
+    }
+  }
+
+  // Any cards still unplaced get a contained free spot (non-overlapping scan).
+  // Once one scan comes up empty the canvas is saturated, so the rest skip
+  // straight to the stacked last resort instead of rescanning a full canvas.
+  const placedIds = new Set(placed.items.map((placement) => placement.id));
+  let saturated = false;
+  for (const card of cards) {
+    if (placedIds.has(card.id)) continue;
+    const probe: CardPlacement = { ...card, x: space.margin, y: space.margin, side: "right" };
+    const placement = saturated ? stackAtMargin(probe, space, placed) : containFree(probe, space, placed);
+    if (!saturated && (space.blocked(placement) || placed.hits(placement, space.gap))) saturated = true;
+    placed.add(placement);
+    placedIds.add(card.id);
+  }
+  return placed.items;
 }
