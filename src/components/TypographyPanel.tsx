@@ -1,5 +1,6 @@
 import { Trash2, Type } from "lucide-react";
 import { useState } from "react";
+import { findFontUsage, isFontInUse, type FontUsage } from "../lib/catalog-usage";
 import type { ProjectDocument } from "../lib/project-document";
 import type { CardFontField } from "../lib/scene-document";
 import {
@@ -7,7 +8,6 @@ import {
   DEFAULT_FONT_ID,
   findExistingFont,
   formatFontBytes,
-  listFonts,
   MAX_USER_FONT_BYTES,
   validateFontFile,
   type UserFont,
@@ -18,6 +18,7 @@ import { DeferredInput } from "./DeferredInput";
 import { FileDropzone } from "./FileDropzone";
 import { FontEditor } from "./FontEditor";
 import { RangeNumberControl } from "./RangeNumberControl";
+import { ConfirmDialog } from "./workbench/ConfirmDialog";
 
 const cardFontTargets: Array<{ field: CardFontField; label: string }> = [
   { field: "name", label: "人员姓名" },
@@ -25,6 +26,21 @@ const cardFontTargets: Array<{ field: CardFontField; label: string }> = [
   { field: "city", label: "城市" },
   { field: "title", label: "名单板块标题" },
 ];
+
+function describeFontUsage(usage: FontUsage): string {
+  const cardFieldLabel = (field: CardFontField) =>
+    cardFontTargets.find((target) => target.field === field)?.label ?? field;
+  const groups: Array<[string, string[]]> = [
+    ["省份名称", usage.provinceLabels],
+    ["人员名单", usage.cardFields.map(cardFieldLabel)],
+    ["特邀嘉宾", usage.guestTexts],
+    ["画布文本", usage.texts.map((text) => text.content || "空白文本")],
+  ];
+  return groups
+    .filter(([, items]) => items.length > 0)
+    .map(([group, items]) => `${group}（${items.join("、")}）`)
+    .join("；");
+}
 
 export function TypographyPanel({
   project,
@@ -43,7 +59,6 @@ export function TypographyPanel({
   onUploadFont?: (font: UserFont) => void;
   onDeleteUserFont?: (fontId: string) => void;
 }) {
-  const fonts = listFonts(userFonts);
   const [province, setProvince] = useState(provinces[0] ?? "");
   const [provinceAll, setProvinceAll] = useState(false);
   const [guestId, setGuestId] = useState(project.guests.people[0]?.id ?? "");
@@ -51,7 +66,7 @@ export function TypographyPanel({
   const [textId, setTextId] = useState(project.textElements[0]?.id ?? "");
   const [textAll, setTextAll] = useState(false);
   const [cardField, setCardField] = useState<CardFontField>("name");
-
+  const [pendingFontDeletion, setPendingFontDeletion] = useState<UserFont | null>(null);
 
   const provinceFontId = project.map.provinceStyles?.[province]?.labelFontId
     ?? project.map.provinceLabelFontId
@@ -89,6 +104,16 @@ export function TypographyPanel({
     reader.readAsDataURL(file);
   };
 
+  const deleteFont = (font: UserFont) => {
+    onDeleteUserFont?.(font.id);
+    setMessage(`已从字体库删除：${font.label}`);
+    setPendingFontDeletion(null);
+  };
+
+  const pendingFontUsage = pendingFontDeletion && isFontInUse(project, pendingFontDeletion.id)
+    ? describeFontUsage(findFontUsage(project, pendingFontDeletion.id))
+    : "";
+
   return (
     <section className="property-panel typography-panel">
       <header><div><h2>字体工具</h2><p className="property-panel__hint">集中设置画布中的各类文字。</p></div></header>
@@ -111,10 +136,10 @@ export function TypographyPanel({
       <fieldset>
         <legend>字体库</legend>
         <FileDropzone id="typography-font-upload" label="上传字体文件" hint={`TTF / OTF / WOFF · 单个不超过 ${formatFontBytes(MAX_USER_FONT_BYTES)} · 点击或拖拽`} accept=".ttf,.otf,.woff,.woff2" icon={<Type size={16} aria-hidden />} onFile={handleFontUpload} />
-        {fonts.filter((font) => font.source === "user").map((font) => (
+        {userFonts.map((font) => (
           <div key={font.id} className="asset-panel__font-row">
             <span className="asset-panel__font-preview" style={{ fontFamily: `\"${font.family}\"` }}>{font.label}</span>
-            <button type="button" aria-label={`删除字体 ${font.label}`} title="删除字体" onClick={() => onDeleteUserFont?.(font.id)}><Trash2 size={14} /></button>
+            <button type="button" aria-label={`删除字体 ${font.label}`} title="删除字体" onClick={() => setPendingFontDeletion(font)}><Trash2 size={14} /></button>
           </div>
         ))}
         {message && <p className="property-panel__hint" role="status">{message}</p>}
@@ -243,6 +268,20 @@ export function TypographyPanel({
           应用到全部同类画布文本
         </label>
       </fieldset>
+
+      {/* 上传的字体删掉就找不回来，画布上引用它的文字也只会静默回落默认字体，未被引用也要过一次确认。 */}
+      {pendingFontDeletion && (
+        <ConfirmDialog
+          title={`从字体库删除「${pendingFontDeletion.label}」？`}
+          description={pendingFontUsage
+            ? `使用中 · ${pendingFontUsage}。删除后这些文字会回落到默认字体，且需要重新上传才能恢复。`
+            : "当前没有文字使用它，删除后需要重新上传才能恢复。"}
+          confirmLabel="删除字体"
+          tone="danger"
+          onConfirm={() => deleteFont(pendingFontDeletion)}
+          onCancel={() => setPendingFontDeletion(null)}
+        />
+      )}
     </section>
   );
 }

@@ -44,6 +44,16 @@ function setSelect(select: HTMLSelectElement, value: string) {
   });
 }
 
+function clickDeleteFont(container: HTMLElement) {
+  const button = container.querySelector<HTMLButtonElement>(`[aria-label="删除字体 ${userFont.label}"]`)!;
+  flushSync(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+function clickButton(scope: Element, label: string) {
+  const button = Array.from(scope.querySelectorAll("button")).find((node) => node.textContent === label)!;
+  flushSync(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
 describe("TypographyPanel", () => {
   it("groups province, guest, personnel-list and free-text font controls in one tool", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
@@ -210,6 +220,70 @@ describe("TypographyPanel", () => {
 
     flushSync(() => root.unmount());
     vi.unstubAllGlobals();
+  });
+
+  it("summarises where a font is used before deleting it, and only deletes after confirming", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.map.provinceStyles = { 陕西省: { labelFontId: userFont.id } };
+    project.cards.fieldFonts = { name: userFont.id };
+    project.guests.people = [{ id: "guest-1", name: "张老师", visibility: true, fontId: userFont.id }];
+    project.textElements = project.textElements.map((text) =>
+      text.id === "text-title" ? { ...text, fontId: userFont.id } : text,
+    );
+    const onDeleteUserFont = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <TypographyPanel project={project} provinces={["陕西省"]} userFonts={[userFont]} onApplyFont={vi.fn()} onPatch={vi.fn()} onDeleteUserFont={onDeleteUserFont} />,
+    ));
+
+    clickDeleteFont(container);
+    expect(onDeleteUserFont).not.toHaveBeenCalled();
+
+    const dialog = container.querySelector("[role=dialog]")!;
+    expect(dialog.textContent).toContain(`从字体库删除「${userFont.label}」？`);
+    expect(dialog.textContent).toContain("省份名称（陕西省）");
+    expect(dialog.textContent).toContain("人员名单（人员姓名）");
+    expect(dialog.textContent).toContain("特邀嘉宾（张老师）");
+    expect(dialog.textContent).toContain("画布文本（");
+    expect(dialog.textContent).toContain("回落到默认字体");
+
+    clickButton(dialog, "删除字体");
+    expect(onDeleteUserFont).toHaveBeenCalledWith(userFont.id);
+    expect(container.querySelector("[role=dialog]")).toBeNull();
+    expect(container.querySelector("[role=status]")?.textContent).toContain(`已从字体库删除：${userFont.label}`);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("still confirms an unused font and keeps it when the dialog is cancelled or dismissed with Esc", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const onDeleteUserFont = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <TypographyPanel project={project} provinces={["陕西省"]} userFonts={[userFont]} onApplyFont={vi.fn()} onPatch={vi.fn()} onDeleteUserFont={onDeleteUserFont} />,
+    ));
+
+    clickDeleteFont(container);
+    const dialog = container.querySelector("[role=dialog]")!;
+    expect(dialog.textContent).toContain("当前没有文字使用它");
+
+    clickButton(dialog, "取消");
+    expect(onDeleteUserFont).not.toHaveBeenCalled();
+    expect(container.querySelector("[role=dialog]")).toBeNull();
+
+    clickDeleteFont(container);
+    flushSync(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(onDeleteUserFont).not.toHaveBeenCalled();
+    expect(container.querySelector("[role=dialog]")).toBeNull();
+    expect(container.textContent).toContain(userFont.label);
+
+    flushSync(() => root.unmount());
+    container.remove();
   });
 
   it("writes the global line-height multiplier to canvas settings", () => {
