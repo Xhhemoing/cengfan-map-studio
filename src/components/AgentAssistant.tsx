@@ -132,14 +132,14 @@ function replayFailureReason(content: string): string {
 }
 
 /**
- * 落地被整体放弃时给用户的解释：哪一步失败、为什么，以及 applyTransaction 仍会写入的空历史记录
- * (project-document 已知行为)，否则用户只看到一次“什么都没发生”的版本号跳动。
+ * 落地被整体放弃时给用户的解释：哪一步失败、为什么，否则用户只看到一次“什么都没发生”。
+ * project-document 的拒绝契约保证工程文档原样返回，无需再提醒用户清理历史。
  */
 function landingFailureMessage(failure: AgentReplayFailure, steps: AgentStep[]): string {
   const step = steps.find((candidate) => candidate.id === failure.stepId);
   const label = step ? stepLabel(step) : failure.name;
   return `未能应用：「${label}」在当前工程上已无法执行（${replayFailureReason(failure.content)}）。`
-    + "为避免只落地一半，本次全部改动都已放弃，画布内容没有变化；撤销栈里会多出一条空操作，可直接撤销。"
+    + "为避免只落地一半，本次全部改动都已放弃，画布内容与历史记录都没有变化。"
     + "请取消该步骤或重新规划后再次确认应用。";
 }
 

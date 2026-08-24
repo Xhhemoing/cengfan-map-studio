@@ -91,16 +91,18 @@ describe("AgentAssistant landing failures", () => {
     const landingAlert = alerts.find((text) => text.includes("未能应用")) ?? "";
     expect(landingAlert).toContain("manage_students");
     expect(landingAlert).toContain("找不到指定学生");
-    expect(landingAlert).toContain("撤销");
+    expect(landingAlert).toContain("历史记录都没有变化");
+    expect(landingAlert).not.toContain("空操作");
     expect(container.textContent).not.toContain("已应用");
 
     const landed = landings[0]!;
     expect(landed.students).toEqual(live.students);
     expect(landed.map).toEqual(live.map);
     expect(landed.cards).toEqual(live.cards);
-    // project-document 拥有的已知 T5 行为：被拒的重放仍会写入一次空历史与版本号自增。
-    expect(landed.version).toBe(live.version + 1);
-    expect(landed.history.past).toHaveLength(live.history.past.length + 1);
+    // 被拒的重放走 project-document 的拒绝契约：文档原样返回，版本与撤销栈都不动。
+    expect(landed).toBe(live);
+    expect(landed.version).toBe(live.version);
+    expect(landed.history.past).toHaveLength(live.history.past.length);
 
     const checkboxes = Array.from(container.querySelectorAll<HTMLInputElement>('.agent-assistant-window input[type="checkbox"]'));
     expect(checkboxes).toHaveLength(2);

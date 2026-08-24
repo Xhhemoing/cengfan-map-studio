@@ -553,7 +553,7 @@ describe("AgentSession", () => {
     expect(() => structuredClone(landed)).not.toThrow();
   });
 
-  it("leaves the document unchanged apart from a no-op history entry when applyTransaction lands a rejected replay", async () => {
+  it("leaves the document untouched when applyTransaction lands a rejected replay", async () => {
     const base = createProjectDocument({
       students: [
         { id: "A", name: "甲", university: "大学", city: "广州", province: "广东", visibility: true },
@@ -580,12 +580,12 @@ describe("AgentSession", () => {
     expect(landed.students).toEqual(live.students);
     expect(landed.cards).toEqual(live.cards);
     expect(session.lastReplayFailure).toMatchObject({ stepId: "call-fact", name: "manage_students" });
-    // Known T5 behaviour, owned by project-document: a refused replay still burns a version bump
-    // and a no-op history entry. Asserted so the cosmetic undo-stack pollution stays visible.
-    expect(landed.version).toBe(live.version + 1);
-    expect(landed.history.past).toHaveLength(live.history.past.length + 1);
-    expect(landed.history.past.at(-1)).toMatchObject({ id: transaction.id, source: "ai" });
-    expect(landed.history.past.at(-1)?.snapshot.students).toEqual(live.students);
+    // The refusal reaches project-document as the input document returned by identity, so the
+    // commit is skipped entirely: no version bump and no no-op entry on the undo stack.
+    expect(landed).toBe(live);
+    expect(landed.version).toBe(live.version);
+    expect(landed.history.past).toHaveLength(live.history.past.length);
+    expect(landed.history.past.at(-1)?.id).not.toBe(transaction.id);
   });
 
   it("clones a project whose history is a proxy instead of throwing DataCloneError", () => {
