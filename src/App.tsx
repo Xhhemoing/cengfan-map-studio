@@ -27,7 +27,6 @@ import {
 } from "./lib/app-initialization";
 import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
 import {
-  RENDER_SETTINGS_KEY,
   provinceNames,
   dataViews,
   type ActivePanel,
@@ -49,6 +48,45 @@ import {
   type StudentPatch,
 } from "./lib/student-transactions";
 import { createId } from "./lib/ids";
+import {
+  addAssetElementTransaction,
+  addNoteElementTransaction,
+  addTextElementTransaction,
+  applyBackgroundAssetTransaction,
+  applyCustomTemplateTransaction,
+  applyFontTransaction,
+  applySystemTemplateTransaction,
+  deleteAssetElementTransaction,
+  deleteTextElementTransaction,
+  duplicateAssetElementTransaction,
+  moveCardTransaction,
+  refreshDisplayFramePositionsTransaction,
+  replaceAssetElementSourceTransaction,
+  sceneResetPatch,
+} from "./lib/canvas-edit-transactions";
+import {
+  addAssetToLibrary,
+  buildAssetUsageLabels,
+  describeAssetRemoval,
+  describeFontRemoval,
+  EMPTY_ASSET_MESSAGE,
+  mergeImportedResourcePack,
+  prepareResourcePackExport,
+  replaceAssetInLibrary,
+} from "./lib/resource-library";
+import {
+  resolveDeliveryIssueNavigation,
+  resolveLayoutIssueSelection,
+  resolveWorkflowPanelNavigation,
+  resolveWorkflowStageNavigation,
+  styleLayerSelection,
+} from "./lib/editor-navigation";
+import {
+  loadStoredRenderSettings,
+  mountUserFontFaces,
+  nextWorkspaceSession,
+} from "./lib/editor-chrome";
+import { resolveRenderedTemplate } from "./lib/rendered-template";
 import { editorProjectStore } from "./lib/editor-project-store";
 import {
   resolveMissingProjectNotice,
@@ -76,7 +114,6 @@ import { CardsInspector } from "./components/inspector/CardsInspector";
 import { ZoomControls } from "./components/ZoomControls";
 import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
 import {
-  LEGACY_PANEL_TO_WORKFLOW_STAGE,
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
   deriveWorkflowStageProgress,
   type WorkflowStageId,
@@ -84,12 +121,12 @@ import {
 import { deriveStageOverviewModel, type StageOverviewAction } from "./lib/stage-overview";
 import { STAGE_METADATA } from "./lib/stage-metadata";
 import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
-import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { SkinSelector } from "./components/SkinSelector";
 import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
 import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
 import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
+import { describeHistoryActions, matchEditorHistoryShortcut } from "./lib/editor-history";
 import {
   previewEditorCommands,
   type EditorCommand,
@@ -103,19 +140,13 @@ import {
   type ProjectTransaction,
 } from "./lib/project-document";
 import {
-  applyDataViewChange,
-  findAssetUsage,
-
-  isAssetInUse,
-
   removeUserAsset,
   removeUserFont,
   STYLE_LAYER_TARGETS,
 } from "./lib/catalog-usage";
 
-import { createSystemTemplate, mergeTemplateDocuments } from "./lib/template-document";
+import { createSystemTemplate } from "./lib/template-document";
 import {
-  applyCustomTemplateToProject,
   loadCustomTemplates,
   type CustomTemplateRecord,
 } from "./lib/template-store";
@@ -126,13 +157,12 @@ import {
   duplicateAssetElement,
 } from "./lib/asset-elements";
 import { PosterCanvas } from "./components/canvas/PosterCanvas";
-import { createDefaultScene, type ProvinceAppearance, type SceneSelection } from "./lib/scene-document";
+import { type ProvinceAppearance, type SceneSelection } from "./lib/scene-document";
 
-import { createProvinceThemeTransaction, createSceneTransaction, deleteAsset, deleteText } from "./lib/inspector-operations";
+import { createProvinceThemeTransaction, createSceneTransaction } from "./lib/inspector-operations";
 import { InspectorPanel } from "./components/inspector/InspectorPanel";
 import { MapInspector } from "./components/inspector/MapInspector";
 import {
-  buildFontFaceCss,
   ensureUserFontsLoaded,
   loadUserFonts,
   type UserFont,
@@ -142,19 +172,14 @@ import {
   type StudioAsset,
   type UserAsset,
 } from "./lib/assets";
-import {
-  createResourcePack,
-  downloadResourcePack,
-  mergeResourcePack,
-  parseResourcePack,
-} from "./lib/resource-pack";
+import { downloadResourcePack } from "./lib/resource-pack";
 import {
   createProjectPackageEnvelope,
   restoreProjectPackage,
   type ProjectPackage,
 } from "./lib/project-package";
 import { usePosterExport } from "./lib/usePosterExport";
-import { applyTypographyFont, type TypographyTarget } from "./lib/typography";
+import { type TypographyTarget } from "./lib/typography";
 import type { ImageThemeResult } from "./lib/image-color";
 import {
   loadStudioSkin,
@@ -181,12 +206,7 @@ import {
   fitZoomPercent,
   snapPoint,
 } from "./lib/grid";
-import {
-  DEFAULT_RENDER_SETTINGS,
-  normalizeRenderSettings,
-  renderIntervalMs,
-  type RenderSettings,
-} from "./lib/render-settings";
+import { renderIntervalMs, type RenderSettings } from "./lib/render-settings";
 import {
   createBrowserWorkspaceStores,
   loadBrowserWorkspaceMirror,
@@ -250,15 +270,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
   );
   const [showGrid] = useState(false);
   const [gridSize] = useState(DEFAULT_GRID_SIZE);
-  const [renderSettings, setRenderSettings] = useState<RenderSettings>(() => {
-    if (initialWorkspace) return initialWorkspace.renderSettings;
-    if (typeof window === "undefined") return { ...DEFAULT_RENDER_SETTINGS };
-    try {
-      return normalizeRenderSettings(JSON.parse(window.localStorage.getItem(RENDER_SETTINGS_KEY) ?? "null"));
-    } catch {
-      return { ...DEFAULT_RENDER_SETTINGS };
-    }
-  });
+  const [renderSettings, setRenderSettings] = useState<RenderSettings>(() => initialWorkspace
+    ? initialWorkspace.renderSettings
+    : loadStoredRenderSettings(() => typeof window === "undefined" ? null : window.localStorage));
   const [zoomPercent, setZoomPercent] = useState(100);
   const [collaborationClientId] = useState(() => createId("collab-client"));
 
@@ -326,16 +340,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     if (typeof window === "undefined") return;
     const storage = loadBrowserValue(() => window.localStorage, null);
     if (!storage) return;
-    const selectedProvince = selection.type === "province" ? selection.province : undefined;
-    const selectedObject = selection.type === "asset" ? selection.id : selection.type === "cards" || selection.type === "guests" ? selection.type : undefined;
-    const { selectedProvince: _savedProvince, selectedObject: _savedObject, ...sessionBase } = workspaceSession;
-    saveWorkspaceSession(storage, {
-      ...sessionBase,
-      stage: activeStage,
-      ...(selectedProvince ? { selectedProvince } : {}),
-      ...(selectedObject ? { selectedObject } : {}),
-      savedAt: new Date().toISOString(),
-    });
+    saveWorkspaceSession(storage, nextWorkspaceSession(workspaceSession, { stage: activeStage, selection }));
   }, [activeStage, selection, workspaceSession]);
   const dataHealth = useMemo(() => buildDataHealthSummary(project), [project]);
   const dataIssues = useMemo(() => listDataIssues(project), [project]);
@@ -400,15 +405,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   };
 
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    const styleId = "cengfan-user-fonts";
-    let style = document.getElementById(styleId) as HTMLStyleElement | null;
-    if (!style) {
-      style = document.createElement("style");
-      style.id = styleId;
-      document.head.appendChild(style);
-    }
-    style.textContent = buildFontFaceCss(userFonts);
+    mountUserFontFaces(userFonts);
   }, [userFonts]);
 
   useEffect(() => {
@@ -429,37 +426,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const dataView = renderProject.dataView;
   const students = renderProject.students;
 
-  const style = renderProject.style;
   const selectedTextId = selection.type === "text" ? selection.id : null;
   const summary = buildProvinceSummary(students);
-  const resolvedTemplate = useMemo(() => {
-    const base = createSystemTemplate(template);
-    return mergeTemplateDocuments(base, {
-      background: {
-        ...base.background,
-        color: renderProject.canvas.backgroundColor || base.background.color,
-        imageSrc: renderProject.canvas.backgroundImageSrc,
-        type: renderProject.canvas.backgroundImageSrc ? "image" : "color",
-      },
-      map: {
-        ...base.map,
-        scale: renderProject.map.scale,
-        edgeColor: renderProject.map.edgeColor,
-        edgeStyle: renderProject.map.edgeStyle ?? "solid",
-        edgeWidth: renderProject.map.edgeWidth ?? 1,
-        landColor: renderProject.map.landColor,
-        activeColor: renderProject.map.activeColor,
-        showProvinceLabels: renderProject.map.showProvinceLabels,
-        provinceStyles: renderProject.map.provinceStyles ?? {},
-      },
-      cards: {
-        ...base.cards,
-        preset: renderProject.cards.preset,
-      },
-      visibleFields: renderProject.cards.visibleFields,
-      regionalAssets: style.regionalAssets,
-    });
-  }, [renderProject, style, template]);
+  const resolvedTemplate = useMemo(() => resolveRenderedTemplate(renderProject), [renderProject]);
 
   useEffect(() => {
     latestWorkspaceRef.current = { project, assets: userAssets, fonts: userFonts, customTemplates, renderSettings };
@@ -631,14 +600,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     reportStatus: setStatusMessage,
   });
 
-  const canUndo = project.history.past.length > 0;
-  const canRedo = project.history.future.length > 0;
-  const undoLabel = canUndo
-    ? `撤销：${project.history.past[project.history.past.length - 1]?.label ?? "上一步"}`
-    : "暂无可撤销操作";
-  const redoLabel = canRedo
-    ? `重做：${project.history.future[0]?.label ?? "下一步"}`
-    : "暂无可重做操作";
+  const { canUndo, canRedo, undoLabel, redoLabel } = describeHistoryActions(project);
 
   const handleUndo = () => {
     if (!canUndo) return;
@@ -672,23 +634,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select" || target?.isContentEditable) {
-        return;
-      }
-      const key = event.key.toLowerCase();
-      const mod = event.metaKey || event.ctrlKey;
-      if (!mod) return;
-      if (key === "z" && !event.shiftKey) {
-        event.preventDefault();
-        handleUndo();
-        return;
-      }
-      if ((key === "z" && event.shiftKey) || key === "y") {
-        event.preventDefault();
-        handleRedo();
-      }
+      const action = matchEditorHistoryShortcut(event);
+      if (!action) return;
+      event.preventDefault();
+      if (action === "undo") handleUndo();
+      else handleRedo();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -707,12 +657,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     if (typeof window !== "undefined" && Object.keys(project.cards.positions ?? {}).length > 0
       && !window.confirm("刷新展示框位置会重新按当前地图计算数据框位置，是否继续？")) return;
     resolvedCardPositionsRef.current = null;
-    commitProjectTransaction({
-      id: createId("tx-display-frame-position-refresh"),
-      label: "刷新展示框位置",
-      source: "manual",
-      apply: (current) => ({ ...current, cards: { ...current.cards, positions: {} } }),
-    });
+    commitProjectTransaction(refreshDisplayFramePositionsTransaction());
     setStatusMessage("已刷新展示框位置");
   };
   const patchScene = (target: SceneSelection, patch: Record<string, unknown>) => {
@@ -731,22 +676,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
   };
 
   const applyFont = (target: TypographyTarget, fontId: string, applyToAll: boolean) => {
-    commitProjectTransaction({
-      id: createId("tx-typography"),
-      label: applyToAll ? "应用字体到全部同类文本" : "修改字体",
-      source: "manual",
-      apply: (current) => applyTypographyFont(current, target, fontId, applyToAll),
-    });
+    commitProjectTransaction(applyFontTransaction(target, fontId, applyToAll));
   };
 
   const resetSceneTarget = (target: Extract<SceneSelection, { type: "canvas" | "map" | "cards" }>) => {
-    const defaults = createDefaultScene(project.templateId);
-    const patch = target.type === "canvas"
-      ? defaults.canvas
-      : target.type === "map"
-        ? defaults.map
-        : defaults.cards;
-    patchScene(target, { ...patch } as Record<string, unknown>);
+    patchScene(target, sceneResetPatch(project.templateId, target.type));
   };
 
   const saveWorkspaceNow = async (): Promise<void> => {
@@ -797,117 +731,59 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const addUserAsset = (asset: UserAsset) => {
     if (!asset?.src) {
-      setStatusMessage("素材内容为空，未保存");
+      setStatusMessage(EMPTY_ASSET_MESSAGE);
       return;
     }
     setUserAssets((current) => {
-      if (current.some((item) => item.id === asset.id || item.src === asset.src && item.kind === asset.kind && JSON.stringify(item.provinceIds) === JSON.stringify(asset.provinceIds))) {
-        setStatusMessage(`素材库已有相同素材：${asset.label}`);
-        return current;
-      }
-      const next = [...current, asset];
-      setStatusMessage(`已加入素材库：${asset.label}`);
-      return next;
+      const outcome = addAssetToLibrary(current, asset);
+      setStatusMessage(outcome.message);
+      return outcome.assets;
     });
   };
 
   const replaceUserAsset = (assetId: string, replacement: UserAsset) => {
-    setUserAssets((current) => current.map((asset) => asset.id === assetId ? replacement : asset));
-    commitProject(
-      applyTransaction(project, {
-        id: createId(`tx-asset-replace-${assetId}`),
-        label: `更新素材：${replacement.label}`,
-        source: "manual",
-        apply: (current) => ({
-          ...current,
-          assetElements: current.assetElements.map((element) =>
-            element.assetId === assetId ? { ...element, src: replacement.src, label: replacement.label } : element,
-          ),
-        }),
-      }),
-    );
+    setUserAssets((current) => replaceAssetInLibrary(current, assetId, replacement));
+    commitProject(applyTransaction(project, replaceAssetElementSourceTransaction(assetId, replacement)));
     setStatusMessage(`已更新素材：${replacement.label}`);
   };
 
   const deleteUserAsset = (assetId: string) => {
-    const asset = userAssets.find((item) => item.id === assetId);
-    setUserAssets((current) => {
-      const next = removeUserAsset(current, assetId);
-      return next;
-    });
-    setStatusMessage(asset ? `已从素材库删除：${asset.label}` : "已从素材库删除素材");
+    const message = describeAssetRemoval(userAssets, assetId);
+    setUserAssets((current) => removeUserAsset(current, assetId));
+    setStatusMessage(message);
   };
 
   const deleteUserFont = (fontId: string) => {
-    const font = userFonts.find((item) => item.id === fontId);
-    setUserFonts((current) => {
-      const next = removeUserFont(current, fontId);
-      return next;
-    });
-    setStatusMessage(font ? `已删除字体：${font.label}` : "已删除字体");
+    const message = describeFontRemoval(userFonts, fontId);
+    setUserFonts((current) => removeUserFont(current, fontId));
+    setStatusMessage(message);
   };
 
-  const assetUsageById = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const asset of userAssets) {
-      if (!isAssetInUse(project, asset.id, asset) && asset.src !== project.canvas.backgroundImageSrc) continue;
-      const usage = findAssetUsage(project, asset.id);
-      const parts: string[] = [];
-      if (usage.provinces.length) parts.push(usage.provinces.map((name) => name.replace(/(特别行政区|维吾尔自治区|壮族自治区|回族自治区|自治区|省|市)$/, "")).join("/"));
-      if (usage.instances.length) parts.push(`${usage.instances.length} 个实例`);
-      if (asset.src === project.canvas.backgroundImageSrc) parts.push("背景");
-      map[asset.id] = parts.length ? `使用中 · ${parts.join(" · ")}` : "使用中";
-    }
-    return map;
-  }, [project, userAssets]);
-
+  const assetUsageById = useMemo(() => buildAssetUsageLabels(project, userAssets), [project, userAssets]);
 
   const selectStyleLayer = (target: (typeof STYLE_LAYER_TARGETS)[number]) => {
-    if (target.type === "text") {
-      setSelection({ type: "text", id: target.id });
-      return;
-    }
-    if (target.type === "map") {
-      setSelection({ type: "map" });
-      return;
-    }
-    if (target.type === "canvas") {
-      setSelection({ type: "canvas" });
-      return;
-    }
-    if (target.type === "guests") {
-      setSelection({ type: "guests" });
-      return;
-    }
-    setSelection({ type: "cards" });
+    setSelection(styleLayerSelection(target));
   };
 
   const exportResourcePack = () => {
-    if (userAssets.length === 0 && userFonts.length === 0) {
-      setStatusMessage("本地素材库为空，请先上传图片或字体");
-      return;
-    }
-    const pack = createResourcePack({ assets: userAssets, fonts: userFonts });
-    downloadResourcePack(pack);
-    setStatusMessage(`已导出资源包：${userAssets.length} 个素材，${userFonts.length} 个字体`);
+    const outcome = prepareResourcePackExport({ assets: userAssets, fonts: userFonts });
+    if (outcome.pack) downloadResourcePack(outcome.pack);
+    setStatusMessage(outcome.message);
   };
 
   const importResourcePack = (file: File) => {
     const reader = new FileReader();
     reader.onload = () => {
-      try {
-        const { pack, assetCount, fontCount } = parseResourcePack(String(reader.result || ""));
-        const merged = mergeResourcePack({
-          existingAssets: userAssets,
-          existingFonts: userFonts,
-          incoming: pack,
-        });
-        setUserAssets(merged.assets);
-        setUserFonts(merged.fonts);
-        setStatusMessage(`资源包已导入：新增 ${merged.addedAssets}/${assetCount} 素材，${merged.addedFonts}/${fontCount} 字体`);
-      } catch (error) {
-        setStatusMessage(error instanceof Error ? error.message : "资源包导入失败");
+      const outcome = mergeImportedResourcePack({
+        text: String(reader.result || ""),
+        existingAssets: userAssets,
+        existingFonts: userFonts,
+      });
+      if (outcome.merged) {
+        setUserAssets(outcome.merged.assets);
+        setUserFonts(outcome.merged.fonts);
       }
+      setStatusMessage(outcome.message);
     };
     reader.readAsText(file);
   };
@@ -918,47 +794,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
   };
 
   const locateLayoutIssue = (issue: { id: string }) => {
-    const target = issue.id.split(":").find((id) => (
-      id === "map"
-      || id === "cards"
-      || id === "guests"
-      || Boolean(project.cards.positions?.[id])
-      || project.textElements.some((text) => text.id === id)
-      || project.assetElements.some((asset) => asset.id === id)
-    ));
-    if (!target) return;
-    if (target === "map") setSelection({ type: "map" });
-    else if (target === "cards" || project.cards.positions?.[target]) setSelection({ type: "cards" });
-    else if (target === "guests") setSelection({ type: "guests" });
-    else if (project.textElements.some((text) => text.id === target)) setSelection({ type: "text", id: target });
-    else if (project.assetElements.some((asset) => asset.id === target)) setSelection({ type: "asset", id: target });
+    const next = resolveLayoutIssueSelection(project, issue);
+    if (next) setSelection(next);
   };
 
   const locateDeliveryIssue = (item: DeliveryIssue) => {
-    if (item.kind === "data") {
-      setSelectedStudentId(item.issue.studentId);
-      setActiveStage("data");
-      setActivePanel("roster");
-      return;
-    }
-    if (item.kind === "layout") {
-      locateLayoutIssue(item.issue);
-      setActiveStage("content");
-      setActivePanel("content");
-      return;
-    }
-    const target = item.issue.target;
-    const location = resolveDeliveryIssueLocation(target);
-    if (!location) return;
-    if (location.selectionKind === "map") setSelection({ type: "map" });
-    else if (location.selectionKind === "province") setSelection({ type: "province", province: location.province! });
-    else if (location.selectionKind === "guests") setSelection({ type: "guests" });
-    else if (location.selectionKind === "cards") setSelection({ type: "cards" });
-    else if (location.selectionKind === "text" || location.selectionKind === "asset") {
-      setSelection({ type: location.selectionKind, id: location.id! });
-    }
-    setActiveStage(location.stage);
-    setActivePanel(location.stage === "frame" ? "layout" : location.stage === "map" ? "map" : "content");
+    const navigation = resolveDeliveryIssueNavigation(project, item);
+    if (!navigation) return;
+    if (navigation.studentId !== undefined) setSelectedStudentId(navigation.studentId);
+    if (navigation.selection) setSelection(navigation.selection);
+    setActiveStage(navigation.stage);
+    setActivePanel(navigation.panel);
   };
 
   const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildProjectLayoutHealthInput(project)), [project]);
@@ -972,48 +818,23 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const addText = () => {
     const element = createTextElement("给未来的一封信", 720, 870);
-    commitProject(
-      applyTransaction(project, {
-        id: createId("tx-text"),
-        label: "添加文本框",
-        source: "manual",
-        apply: (current) => ({
-          ...current,
-          textElements: [...current.textElements, element],
-        }),
-      }),
-    );
+    commitProject(applyTransaction(project, addTextElementTransaction(element)));
     setSelection({ type: "text", id: element.id });
   };
 
   const addNote = () => {
     const element = createNoteElement("山高水长，来日再聚", 745, 905);
-    commitProject(applyTransaction(project, {
-      id: createId("tx-note"),
-      label: "添加特别备注",
-      source: "manual",
-      apply: (current) => ({ ...current, textElements: [...current.textElements, element] }),
-    }));
+    commitProject(applyTransaction(project, addNoteElementTransaction(element)));
     setSelection({ type: "text", id: element.id });
   };
 
   const removeText = (id: string) => {
-    commitProject(applyTransaction(project, {
-      id: `tx-text-delete-${id}`,
-      label: "删除文本",
-      source: "manual",
-      apply: (current) => deleteText(current, id),
-    }));
+    commitProject(applyTransaction(project, deleteTextElementTransaction(id)));
     setSelection({ type: "canvas" });
   };
 
   const removeAsset = (id: string) => {
-    commitProject(applyTransaction(project, {
-      id: `tx-asset-delete-${id}`,
-      label: "删除素材实例",
-      source: "manual",
-      apply: (current) => deleteAsset(current, id),
-    }));
+    commitProject(applyTransaction(project, deleteAssetElementTransaction(id)));
     setSelection({ type: "canvas" });
   };
 
@@ -1021,12 +842,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     const source = project.assetElements.find((asset) => asset.id === id);
     if (!source) return;
     const copy = duplicateAssetElement(source);
-    commitProject(applyTransaction(project, {
-      id: `tx-asset-duplicate-${id}`,
-      label: "复制素材实例",
-      source: "manual",
-      apply: (current) => ({ ...current, assetElements: [...current.assetElements, copy] }),
-    }));
+    commitProject(applyTransaction(project, duplicateAssetElementTransaction(id, copy)));
     setSelection({ type: "asset", id: copy.id });
   };
 
@@ -1037,39 +853,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
   };
 
   const applySystemTemplate = (templateId: MapTemplateId) => {
-    const scene = createDefaultScene(templateId);
-    commitProject(applyTransaction(project, {
-      id: createId(`tx-template-${templateId}`),
-      label: `应用内置模板：${createSystemTemplate(templateId).name}`,
-      source: "manual",
-      apply: (current) => ({
-        ...current,
-        templateId,
-        canvas: scene.canvas,
-        map: scene.map,
-        cards: scene.cards,
-        textElements: scene.textElements,
-        assetElements: scene.assetElements,
-        style: {
-          ...current.style,
-          cardPreset: scene.cards.preset,
-          mapScale: scene.map.scale,
-          backgroundColor: scene.canvas.backgroundColor,
-          visibleFields: [...scene.cards.visibleFields],
-        },
-      }),
-    }));
+    commitProject(applyTransaction(project, applySystemTemplateTransaction(templateId)));
   };
 
   const applyCustomTemplateRecord = (record: CustomTemplateRecord) => {
-    commitProject(
-      applyTransaction(project, {
-        id: `tx-custom-${record.id}`,
-        label: `应用自定义模板：${record.name}`,
-        source: "manual",
-        apply: (current) => applyCustomTemplateToProject(current, record),
-      }),
-    );
+    commitProject(applyTransaction(project, applyCustomTemplateTransaction(record)));
   };
 
   const saveCurrentTemplate = () => {
@@ -1123,10 +911,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
       openGlobalData();
       return;
     }
-    const legacyPanel = WORKFLOW_STAGE_TO_LEGACY_PANEL[stage];
-    if (!legacyPanel) return;
-    setActivePanel(legacyPanel);
-    setActiveWorkflowStep(stage === "map" ? "presentation" : stage === "frame" ? "layout" : stage === "export" ? "export" : "local");
+    const navigation = resolveWorkflowStageNavigation(stage);
+    if (!navigation) return;
+    setActivePanel(navigation.panel);
+    setActiveWorkflowStep(navigation.step);
   };
 
   const dataWorkspaceProps = {
@@ -1148,18 +936,71 @@ function StudioApp({ projectId }: { projectId?: string }) {
       x: project.canvas.width - 180,
       y: project.canvas.height - 180,
     });
-    commitProject(
-      applyTransaction(project, {
-        id: createId("tx-decoration"),
-        label: `添加装饰：${asset.label}`,
-        source: "manual",
-        apply: (current) => ({
-          ...current,
-          assetElements: [...current.assetElements, element],
-        }),
-      }),
-    );
+    commitProject(applyTransaction(project, addAssetElementTransaction("tx-decoration", `添加装饰：${asset.label}`, element)));
     setSelection({ type: "asset", id: element.id });
+  };
+
+  const handleCreateLandmark = (asset: StudioAsset) => {
+    const selectedProvince = selection.type === "province" ? selection.province : "";
+    const element = createLandmarkElement(asset, selectedProvince || "全国", {
+      x: project.map.x + project.map.width / 2 - 60,
+      y: project.map.y + project.map.height / 2 - 60,
+    });
+    commitProject(applyTransaction(project, addAssetElementTransaction("tx-landmark", `添加地标：${asset.label}`, element)));
+    setSelection({ type: "asset", id: element.id });
+  };
+
+  const applyBackgroundAsset = (asset: StudioAsset) => {
+    commitProject(applyTransaction(project, applyBackgroundAssetTransaction(asset)));
+  };
+
+  const applyProvinceThemes = (themes: Record<string, ImageThemeResult>) => {
+    const entries = Object.entries(themes);
+    if (entries.length === 0) return;
+    const transaction = createProvinceThemeTransaction(themes);
+    commitProjectTransaction({
+      ...transaction,
+      apply: (current) => ({ ...transaction.apply(current), cards: freezeCardPositionsForMapChange(current) }),
+    });
+    setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
+  };
+
+  const moveCard = (id: string, x: number, y: number) => {
+    commitProject(applyTransaction(project, moveCardTransaction(id, maybeSnap(x, y))));
+  };
+
+  const moveText = (id: string, x: number, y: number) => {
+    commitProject(applyTransaction(project, createSceneTransaction({ type: "text", id }, maybeSnap(x, y))));
+  };
+
+  const moveGuests = (x: number, y: number) => {
+    commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, maybeSnap(x, y))));
+  };
+
+  const moveAsset = (id: string, x: number, y: number) => {
+    const point = maybeSnap(x, y);
+    const current = project.assetElements.find((asset) => asset.id === id);
+    if (!current || (current.x === point.x && current.y === point.y)) return;
+    commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, point)));
+  };
+
+  const resizeAsset = (id: string, x: number, y: number, width: number, height: number) => {
+    const point = maybeSnap(x, y);
+    const current = project.assetElements.find((asset) => asset.id === id);
+    if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
+    commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height })));
+  };
+
+  const moveProvinceTexture = (province: string, offsetX: number, offsetY: number) => {
+    const appearance = project.map.provinceStyles?.[province]?.appearance;
+    if (!appearance || appearance.kind === "manual-color") return;
+    patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
+  };
+
+  const resizeMapImage = (alignment: { x: number; y: number; width: number; height: number; rotation: number }) => {
+    const source = project.map.renderSource;
+    if (source?.kind !== "image" || !source.alignment) return;
+    patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
   };
 
   const mapStyleAssetPanelProps: ContentAssetPanelProps = {
@@ -1174,18 +1015,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     posterBackground: project.canvas.backgroundColor,
     userAssets,
     assetUsageById,
-    onApplyBackground: (asset) => {
-      commitProject(applyTransaction(project, {
-        id: createId("tx-bg"),
-        label: `应用背景：${asset.label}`,
-        source: "manual",
-        apply: (current) => ({
-          ...current,
-          canvas: { ...current.canvas, backgroundImageSrc: asset.src },
-          style: { ...current.style, backgroundImageSrc: asset.src },
-        }),
-      }));
-    },
+    onApplyBackground: applyBackgroundAsset,
     onSelectInstance: (id) => setSelection({ type: "asset", id }),
     onPatchProvinceTextureUniformSize: (next) => patchScene({ type: "map" }, { provinceTextureUniformSize: next }),
     onApplyProvinceAppearance: (province, appearance, fill) => {
@@ -1193,16 +1023,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       patchScene({ type: "province", province }, { appearance, ...(fill ? { fill } : {}) });
       setStatusMessage(`已应用到地图：${province}`);
     },
-    onApplyProvinceThemes: (themes) => {
-      const entries = Object.entries(themes);
-      if (entries.length === 0) return;
-      const transaction = createProvinceThemeTransaction(themes);
-      commitProjectTransaction({
-        ...transaction,
-        apply: (current) => ({ ...transaction.apply(current), cards: freezeCardPositionsForMapChange(current) }),
-      });
-      setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
-    },
+    onApplyProvinceThemes: applyProvinceThemes,
     onResetProvinceAppearance: (province) => {
       setSelection({ type: "province", province });
       patchScene({ type: "province", province }, { appearance: undefined, fill: undefined, textureSrc: undefined });
@@ -1216,21 +1037,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
   };
 
   const handleWorkflowStepChange = (id: WorkflowPanelId) => {
-    const nextStage = LEGACY_PANEL_TO_WORKFLOW_STAGE[id];
-    setActiveStage(nextStage);
+    const navigation = resolveWorkflowPanelNavigation(id);
+    setActiveStage(navigation.stage);
     if (id === "roster") {
       openGlobalData();
       return;
     }
     setActivePanel(id);
-    const workflowId: WorkflowStepId = id === "map"
-      ? "presentation"
-      : id === "layout"
-        ? "layout"
-        : id === "deliver"
-          ? "export"
-          : "local";
-    setActiveWorkflowStep(workflowId);
+    setActiveWorkflowStep(navigation.step);
   };
 
   const openStudioSettings = () => {
@@ -1563,16 +1377,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
             onPatchProvince={(province, patch) => patchScene({ type: "province", province }, patch as Record<string, unknown>)}
             onCardPositionsResolved={captureCardPositions}
             onSelect={handleSceneSelect}
-            onMoveProvinceTexture={(province, offsetX, offsetY) => {
-              const appearance = project.map.provinceStyles?.[province]?.appearance;
-              if (!appearance || appearance.kind === "manual-color") return;
-              patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
-            }}
-            onResizeMapImage={(alignment) => {
-              const source = project.map.renderSource;
-              if (source?.kind !== "image" || !source.alignment) return;
-              patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
-            }}
+            onMoveProvinceTexture={moveProvinceTexture}
+            onResizeMapImage={resizeMapImage}
             onAddUserAsset={addUserAsset}
             onUndo={handleUndo}
             onRedo={handleRedo}
@@ -1710,46 +1516,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
               setStatusMessage(`已上传字体：${font.label}`);
             }}
             onDeleteUserFont={deleteUserFont}
-            onMoveText={(id, x, y) => {
-              const point = maybeSnap(x, y);
-              commitProject(applyTransaction(project, createSceneTransaction({ type: "text", id }, point)));
-            }}
-            onMoveAsset={(id, x, y) => {
-              const point = maybeSnap(x, y);
-              const current = project.assetElements.find((asset) => asset.id === id);
-              if (!current || (current.x === point.x && current.y === point.y)) return;
-              commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, point)));
-            }}
-            onResizeAsset={(id, x, y, width, height) => {
-              const point = maybeSnap(x, y);
-              const current = project.assetElements.find((asset) => asset.id === id);
-              if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
-              commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height })));
-            }}
-            onMoveProvinceTexture={(province, offsetX, offsetY) => {
-              const appearance = project.map.provinceStyles?.[province]?.appearance;
-              if (!appearance || appearance.kind === "manual-color") return;
-              patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
-            }}
-            onResizeMapImage={(alignment) => {
-              const source = project.map.renderSource;
-              if (source?.kind !== "image" || !source.alignment) return;
-              patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
-            }}
+            onMoveText={moveText}
+            onMoveAsset={moveAsset}
+            onResizeAsset={resizeAsset}
+            onMoveProvinceTexture={moveProvinceTexture}
+            onResizeMapImage={resizeMapImage}
             onCardPositionsResolved={captureCardPositions}
-            onMoveCard={(id, x, y) => {
-              const point = maybeSnap(x, y);
-              commitProject(applyTransaction(project, {
-                id: createId(`tx-card-position-${id}`),
-                label: "调整数据框位置",
-                source: "manual",
-                apply: (current) => ({ ...current, cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } } }),
-              }));
-            }}
-            onMoveGuests={(x, y) => {
-              const point = maybeSnap(x, y);
-              commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, point)));
-            }}
+            onMoveCard={moveCard}
+            onMoveGuests={moveGuests}
           />
           ),
         };
@@ -1907,7 +1681,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
                 label="地图表达"
                 activeId={dataView}
                 items={dataViews.map((view) => ({ id: view.id, label: view.name.replace("卡片", ""), ariaLabel: `${view.name}：${view.description}` }))}
-                onChange={(view) => commitProjectTransaction({ id: createId(`tx-data-view-${view}`), label: `切换数据呈现：${view}`, source: "manual", apply: (current) => applyDataViewChange(current, view) })}
+                onChange={(view) => commitProjectTransaction(changeDataViewTransaction(view))}
                 className="workflow-data-views"
               />
               <MapInspector map={project.map} mode="global" collapsible onPatch={(patch) => patchScene({ type: "map" }, patch)} onReset={() => resetSceneTarget({ type: "map" })} />
@@ -1995,63 +1769,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
                   }
                 }}
                 onSelectInstance={(id) => setSelection({ type: "asset", id })}
-                onApplyBackground={(asset) => {
-                  commitProject(
-                    applyTransaction(project, {
-                      id: createId("tx-bg"),
-                      label: `应用背景：${asset.label}`,
-                      source: "manual",
-                      apply: (current) => ({
-                        ...current,
-                        canvas: {
-                          ...current.canvas,
-                          backgroundImageSrc: asset.src,
-                        },
-                        style: {
-                          ...current.style,
-                          backgroundImageSrc: asset.src,
-                        },
-                      }),
-                    }),
-                  );
-                }}
-                onCreateLandmark={(asset) => {
-                  const selectedProvince = selection.type === "province" ? selection.province : "";
-                  const element = createLandmarkElement(asset, selectedProvince || "全国", {
-                    x: project.map.x + project.map.width / 2 - 60,
-                    y: project.map.y + project.map.height / 2 - 60,
-                  });
-                  commitProject(
-                    applyTransaction(project, {
-                      id: createId("tx-landmark"),
-                      label: `添加地标：${asset.label}`,
-                      source: "manual",
-                      apply: (current) => ({
-                        ...current,
-                        assetElements: [...current.assetElements, element],
-                      }),
-                    }),
-                  );
-                  setSelection({ type: "asset", id: element.id });
-                }}
-                onCreateDecoration={(asset) => {
-                  const element = createDecorationElement(asset, {
-                    x: project.canvas.width - 180,
-                    y: project.canvas.height - 180,
-                  });
-                  commitProject(
-                    applyTransaction(project, {
-                      id: createId("tx-decoration"),
-                      label: `添加装饰：${asset.label}`,
-                      source: "manual",
-                      apply: (current) => ({
-                        ...current,
-                        assetElements: [...current.assetElements, element],
-                      }),
-                    }),
-                  );
-                  setSelection({ type: "asset", id: element.id });
-                }}
+                onApplyBackground={applyBackgroundAsset}
+                onCreateLandmark={handleCreateLandmark}
+                onCreateDecoration={handleCreateDecoration}
                 onApplyProvinceAppearance={(province, appearance: ProvinceAppearance, fill?: string) => {
                   try {
                     setSelection({ type: "province", province });
@@ -2062,16 +1782,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
                     setStatusMessage(error instanceof Error ? error.message : "应用省份贴图失败");
                   }
                 }}
-                onApplyProvinceThemes={(themeResults: Record<string, ImageThemeResult>) => {
-                  const entries = Object.entries(themeResults);
-                  if (entries.length === 0) return;
-                  const transaction = createProvinceThemeTransaction(themeResults);
-                  commitProjectTransaction({
-                    ...transaction,
-                    apply: (current) => ({ ...transaction.apply(current), cards: freezeCardPositionsForMapChange(current) }),
-                  });
-                  setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
-                }}
+                onApplyProvinceThemes={applyProvinceThemes}
                 onResetProvinceAppearance={(province) => {
                   try {
                     setSelection({ type: "province", province });
@@ -2191,62 +1902,17 @@ function StudioApp({ projectId }: { projectId?: string }) {
                   gridSize={gridSize}
                   renderIntervalMs={resolvedRenderInterval}
                   onSelect={handleLegacySceneSelect}
-                  onMoveText={(id, x, y) => {
-                    const point = maybeSnap(x, y);
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "text", id }, point)),
-                    );
-                  }}
-                  onMoveAsset={(id, x, y) => {
-                    const point = maybeSnap(x, y);
-                    const current = project.assetElements.find((asset) => asset.id === id);
-                    if (!current || (current.x === point.x && current.y === point.y)) return;
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "asset", id }, point)),
-                    );
-                  }}
-                  onResizeAsset={(id, x, y, width, height) => {
-                    const point = maybeSnap(x, y);
-                    const current = project.assetElements.find((asset) => asset.id === id);
-                    if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height })),
-                    );
-                  }}
+                  onMoveText={moveText}
+                  onMoveAsset={moveAsset}
+                  onResizeAsset={resizeAsset}
                   mapSelected={selection.type === "map"}
-                  onMoveProvinceTexture={(province, offsetX, offsetY) => {
-                    const appearance = project.map.provinceStyles?.[province]?.appearance;
-                    if (!appearance || appearance.kind === "manual-color") return;
-                    patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
-                  }}
-                  onResizeMapImage={(alignment) => {
-                    const rs = project.map.renderSource;
-                    if (rs?.kind !== "image" || !rs.alignment) return;
-                    patchScene({ type: "map" }, { renderSource: { ...rs, alignment: { ...rs.alignment, ...alignment } } });
-                  }}
+                  onMoveProvinceTexture={moveProvinceTexture}
+                  onResizeMapImage={resizeMapImage}
                   onCardPositionsResolved={captureCardPositions}
                   selectedStudentId={selectedStudentId}
                   onSelectStudent={setSelectedStudentId}
-                  onMoveCard={(id, x, y) => {
-                    const point = maybeSnap(x, y);
-                    commitProject(
-                      applyTransaction(project, {
-                        id: createId(`tx-card-position-${id}`),
-                        label: "调整数据框位置",
-                        source: "manual",
-                        apply: (current) => ({
-                          ...current,
-                          cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } },
-                        }),
-                      }),
-                    );
-                  }}
-                  onMoveGuests={(x, y) => {
-                    const point = maybeSnap(x, y);
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "guests" }, point)),
-                    );
-                  }}
+                  onMoveCard={moveCard}
+                  onMoveGuests={moveGuests}
                 />
               </div>
             </div>
