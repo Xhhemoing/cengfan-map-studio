@@ -196,7 +196,7 @@ function preparePolygon(polygon: CardPolygon): PreparedPolygon {
   return prepared;
 }
 
-/** Winding/​on-edge test for one flattened ring. */
+/** Winding/on-edge test for one flattened ring. */
 function ringContains(ring: PreparedRing, x: number, y: number): boolean {
   const { points, count } = ring;
   let inside = false;

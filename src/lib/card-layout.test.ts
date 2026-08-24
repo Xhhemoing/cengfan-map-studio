@@ -3,10 +3,13 @@ import {
   clampCardPosition,
   layoutCards,
   solveCardLayout,
+  type CardArea,
   type CardLayoutBounds,
   type CardLayoutInput,
   type CardLayoutMode,
   type CardPlacement,
+  type CardPoint,
+  type CardPolygon,
 } from "./card-layout";
 import { buildConnectorGeometry, connectorGeometriesIntersect } from "./connector-geometry";
 
@@ -420,5 +423,537 @@ describe("card layout", () => {
       card.y + card.height / 2 - card.anchorY,
     ), 0);
     expect(totalDistance).toBeLessThan(2400);
+  });
+});
+
+// ----- Hard-constraint oracle -----
+//
+// A deliberately naive, object-allocating rectangle/polygon test kept
+// independent of the solver's own broad-phase implementation, so the property
+// fuzz below cannot pass by agreeing with a bug in the fast path.
+
+const ORACLE_EPSILON = 1e-7;
+
+function oracleOrientation(a: CardPoint, b: CardPoint, c: CardPoint): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function oraclePointOnSegment(point: CardPoint, start: CardPoint, end: CardPoint): boolean {
+  return Math.abs(oracleOrientation(start, end, point)) <= ORACLE_EPSILON
+    && point.x >= Math.min(start.x, end.x) - ORACLE_EPSILON
+    && point.x <= Math.max(start.x, end.x) + ORACLE_EPSILON
+    && point.y >= Math.min(start.y, end.y) - ORACLE_EPSILON
+    && point.y <= Math.max(start.y, end.y) + ORACLE_EPSILON;
+}
+
+function oracleSegmentsIntersect(a: CardPoint, b: CardPoint, c: CardPoint, d: CardPoint): boolean {
+  const abC = oracleOrientation(a, b, c);
+  const abD = oracleOrientation(a, b, d);
+  const cdA = oracleOrientation(c, d, a);
+  const cdB = oracleOrientation(c, d, b);
+  if (((abC > ORACLE_EPSILON && abD < -ORACLE_EPSILON) || (abC < -ORACLE_EPSILON && abD > ORACLE_EPSILON))
+    && ((cdA > ORACLE_EPSILON && cdB < -ORACLE_EPSILON) || (cdA < -ORACLE_EPSILON && cdB > ORACLE_EPSILON))) return true;
+  return oraclePointOnSegment(c, a, b)
+    || oraclePointOnSegment(d, a, b)
+    || oraclePointOnSegment(a, c, d)
+    || oraclePointOnSegment(b, c, d);
+}
+
+function oraclePointInRing(point: CardPoint, ring: CardPoint[]): boolean {
+  let inside = false;
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
+    const start = ring[previous]!;
+    const end = ring[index]!;
+    if (oraclePointOnSegment(point, start, end)) return true;
+    if ((start.y > point.y) !== (end.y > point.y)) {
+      const x = start.x + (point.y - start.y) * (end.x - start.x) / (end.y - start.y);
+      if (x >= point.x - ORACLE_EPSILON) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function oraclePointInPolygon(point: CardPoint, polygon: CardPolygon): boolean {
+  const [shell, ...holes] = polygon.rings;
+  return Boolean(shell && oraclePointInRing(point, shell) && !holes.some((hole) => oraclePointInRing(point, hole)));
+}
+
+function oraclePolygonBounds(polygon: CardPolygon): CardArea | null {
+  if (polygon.bounds) return polygon.bounds;
+  const points = polygon.rings.flat();
+  if (points.length < 3) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function oracleRectHitsPolygon(card: CardArea, polygon: CardPolygon, gap: number): boolean {
+  const expanded = {
+    x: card.x - gap,
+    y: card.y - gap,
+    width: card.width + gap * 2,
+    height: card.height + gap * 2,
+  };
+  // A ring that cannot enclose an area is not an obstacle, and a card that only
+  // touches the polygon's bounding box exactly (the rail coordinates the solver
+  // emits) counts as clear — both are load-bearing contract details.
+  const polygonArea = oraclePolygonBounds(polygon);
+  if (!polygonArea || !overlapsWithGap(expanded, polygonArea, 0)) return false;
+  const corners: CardPoint[] = [
+    { x: expanded.x, y: expanded.y },
+    { x: expanded.x + expanded.width, y: expanded.y },
+    { x: expanded.x + expanded.width, y: expanded.y + expanded.height },
+    { x: expanded.x, y: expanded.y + expanded.height },
+  ];
+  if (corners.some((corner) => oraclePointInPolygon(corner, polygon))) return true;
+  const shell = polygon.rings[0] ?? [];
+  if (shell.some((point) => point.x >= expanded.x - ORACLE_EPSILON
+    && point.x <= expanded.x + expanded.width + ORACLE_EPSILON
+    && point.y >= expanded.y - ORACLE_EPSILON
+    && point.y <= expanded.y + expanded.height + ORACLE_EPSILON)) return true;
+  const rectangleEdges = corners.map((corner, index) => [corner, corners[(index + 1) % corners.length]!] as const);
+  return polygon.rings.some((ring) => ring.some((point, index) => {
+    const next = ring[(index + 1) % ring.length];
+    return Boolean(next && rectangleEdges.some(([start, end]) => oracleSegmentsIntersect(point, next, start, end)));
+  }));
+}
+
+function overlapsWithGap(left: CardArea, right: CardArea, gap: number): boolean {
+  return left.x < right.x + right.width + gap
+    && left.x + left.width + gap > right.x
+    && left.y < right.y + right.height + gap
+    && left.y + left.height + gap > right.y;
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+const FUZZ_MODES: CardLayoutMode[] = ["quadrant", "radial", "right-stack", "grid"];
+
+function fuzzScenario(seed: number) {
+  const random = seededRandom(seed);
+  const width = 700 + Math.round(random() * 1200);
+  const height = 500 + Math.round(random() * 900);
+  const margin = 10 + Math.round(random() * 40);
+  const gap = Math.round(random() * 18);
+  const map = {
+    x: margin + random() * width * 0.2,
+    y: margin + random() * height * 0.2,
+    width: width * (0.3 + random() * 0.4),
+    height: height * (0.3 + random() * 0.4),
+  };
+  const polygons: CardPolygon[] = [];
+  const polygonCount = Math.floor(random() * 7);
+  for (let index = 0; index < polygonCount; index += 1) {
+    const cx = map.x + random() * map.width;
+    const cy = map.y + random() * map.height;
+    const radiusX = 10 + random() * 110;
+    const radiusY = 10 + random() * 110;
+    // 2-vertex rings are intentionally reachable so degenerate geometry is fuzzed too.
+    const vertices = 2 + Math.floor(random() * 22);
+    const ring: CardPoint[] = [];
+    for (let step = 0; step < vertices; step += 1) {
+      const angle = (step / vertices) * Math.PI * 2;
+      ring.push({
+        x: cx + Math.cos(angle) * radiusX * (0.6 + random() * 0.8),
+        y: cy + Math.sin(angle) * radiusY * (0.6 + random() * 0.8),
+      });
+    }
+    if (random() < 0.5) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const point of ring) {
+        minX = Math.min(minX, point.x);
+        minY = Math.min(minY, point.y);
+        maxX = Math.max(maxX, point.x);
+        maxY = Math.max(maxY, point.y);
+      }
+      polygons.push({ rings: [ring], bounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY } });
+    } else {
+      polygons.push({ rings: [ring] });
+    }
+  }
+  const occupiedAreas = Array.from({ length: Math.floor(random() * 4) }, () => ({
+    x: margin + random() * (width - margin * 2) * 0.7,
+    y: margin + random() * (height - margin * 2) * 0.7,
+    width: 40 + random() * 220,
+    height: 40 + random() * 180,
+  }));
+  const layoutBounds: CardLayoutBounds = {
+    width,
+    height,
+    map,
+    margin,
+    gap,
+    ...(random() < 0.75 ? { occupiedAreas } : {}),
+    ...(polygons.length ? { occupiedPolygons: polygons } : {}),
+    ...(random() < 0.2 ? { allowMapOverlap: true } : {}),
+  };
+  const cards: CardLayoutInput[] = Array.from({ length: 1 + Math.floor(random() * 13) }, (_, index) => ({
+    id: `fuzz-${index}`,
+    anchorX: random() * width,
+    anchorY: random() * height,
+    width: 50 + Math.round(random() * 180),
+    height: 30 + Math.round(random() * 110),
+  }));
+  return {
+    cards,
+    bounds: layoutBounds,
+    options: {
+      mode: FUZZ_MODES[Math.floor(random() * FUZZ_MODES.length)]!,
+      autoBalance: random() < 0.5,
+      connectorStyle: (["straight", "elbow", "curve"] as const)[Math.floor(random() * 3)]!,
+      connectorWidth: random() * 4,
+    },
+  };
+}
+
+describe("card layout hard-constraint properties", () => {
+  it("never violates margin, card spacing or polygon obstacles on any solved layout", () => {
+    for (let seed = 1; seed <= 180; seed += 1) {
+      const { cards, bounds: layoutBounds, options } = fuzzScenario(seed);
+      const context = `seed=${seed} mode=${options.mode} cards=${cards.length}`;
+      const result = solveCardLayout(cards, layoutBounds, options);
+
+      expect(result.placements, context).toHaveLength(cards.length);
+      expect(result.placements.map((placement) => placement.id), context)
+        .toEqual(cards.map((card) => card.id));
+      if (result.status !== "solved") continue;
+
+      const gap = layoutBounds.gap;
+      for (const placement of result.placements) {
+        expect(placement.x, `${context} left margin`).toBeGreaterThanOrEqual(layoutBounds.margin - 1e-6);
+        expect(placement.y, `${context} top margin`).toBeGreaterThanOrEqual(layoutBounds.margin - 1e-6);
+        expect(placement.x + placement.width, `${context} right margin`)
+          .toBeLessThanOrEqual(layoutBounds.width - layoutBounds.margin + 1e-6);
+        expect(placement.y + placement.height, `${context} bottom margin`)
+          .toBeLessThanOrEqual(layoutBounds.height - layoutBounds.margin + 1e-6);
+        for (const zone of layoutBounds.occupiedAreas ?? []) {
+          expect(overlapsWithGap(placement, zone, gap), `${context} zone ${JSON.stringify(zone)}`).toBe(false);
+        }
+        for (const polygon of layoutBounds.occupiedPolygons ?? []) {
+          expect(oracleRectHitsPolygon(placement, polygon, gap), `${context} polygon`).toBe(false);
+        }
+      }
+      for (let left = 0; left < result.placements.length; left += 1) {
+        for (let right = left + 1; right < result.placements.length; right += 1) {
+          expect(
+            overlapsWithGap(result.placements[left]!, result.placements[right]!, gap),
+            `${context} pair ${left}/${right}`,
+          ).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("matches the naive oracle on every rectangle/polygon obstacle decision", () => {
+    // `clampCardPosition` returns the requested position unchanged exactly when
+    // the polygon test says it is free, so it is a direct probe of the broad-
+    // phase predicate. The canvas is far larger than the polygon, so a free
+    // rail always exists and the "nothing fits" fallback never masks a result.
+    const spacious: Omit<CardLayoutBounds, "occupiedPolygons"> = {
+      width: 2000,
+      height: 1400,
+      map: { x: 700, y: 500, width: 400, height: 300 },
+      margin: 20,
+      gap: 0,
+      occupiedAreas: [],
+    };
+    let blocked = 0;
+    let free = 0;
+    for (let seed = 1; seed <= 1400; seed += 1) {
+      const random = seededRandom(seed * 7919 + 13);
+      const cx = 500 + random() * 900;
+      const cy = 400 + random() * 600;
+      const radiusX = 20 + random() * 200;
+      const radiusY = 20 + random() * 200;
+      const vertices = 3 + Math.floor(random() * 26);
+      const ring: CardPoint[] = [];
+      for (let step = 0; step < vertices; step += 1) {
+        const angle = (step / vertices) * Math.PI * 2;
+        // Strong radial wobble produces concave rings whose edges cut the card
+        // rectangle without ever putting a vertex or a corner inside it.
+        const wobble = 0.25 + random() * 1.4;
+        ring.push({ x: cx + Math.cos(angle) * radiusX * wobble, y: cy + Math.sin(angle) * radiusY * wobble });
+      }
+      const polygon: CardPolygon = random() < 0.5
+        ? { rings: [ring] }
+        : { rings: [ring], bounds: undefined };
+      const layoutBounds: CardLayoutBounds = { ...spacious, occupiedPolygons: [polygon] };
+      const position = {
+        x: 400 + random() * 1100,
+        y: 300 + random() * 800,
+        width: 40 + Math.round(random() * 320),
+        height: 30 + Math.round(random() * 220),
+      };
+      const origin = {
+        x: clamp(position.x, layoutBounds.margin, layoutBounds.width - layoutBounds.margin - position.width),
+        y: clamp(position.y, layoutBounds.margin, layoutBounds.height - layoutBounds.margin - position.height),
+        width: position.width,
+        height: position.height,
+      };
+      const expectedFree = !oracleRectHitsPolygon(origin, polygon, 0);
+      const clamped = clampCardPosition(position, layoutBounds);
+      const actualFree = clamped.x === origin.x && clamped.y === origin.y;
+      expect(actualFree, `seed=${seed} vertices=${vertices} rect=${JSON.stringify(origin)}`).toBe(expectedFree);
+      if (expectedFree) free += 1; else blocked += 1;
+    }
+    // Guard the guard: both outcomes must be well represented.
+    expect(free).toBeGreaterThan(200);
+    expect(blocked).toBeGreaterThan(200);
+  });
+
+  it("matches the naive oracle on lattice-aligned tangency, where rejects touch exactly", () => {
+    // Integer polygons swept by an integer rectangle make edge-on-edge and
+    // vertex-on-corner contact common instead of measure-zero, which is where a
+    // bounding-box reject that forgets its epsilon slack starts lying.
+    const shapes: CardPoint[][] = [
+      [{ x: 600, y: 400 }, { x: 800, y: 400 }, { x: 800, y: 600 }, { x: 600, y: 600 }],
+      [{ x: 700, y: 380 }, { x: 820, y: 500 }, { x: 700, y: 620 }, { x: 580, y: 500 }],
+      // Concave comb: long thin teeth that slice a card without ever putting a
+      // vertex inside it or a card corner inside the polygon.
+      [
+        { x: 560, y: 400 }, { x: 860, y: 400 }, { x: 860, y: 420 }, { x: 600, y: 420 },
+        { x: 600, y: 480 }, { x: 860, y: 480 }, { x: 860, y: 500 }, { x: 600, y: 500 },
+        { x: 600, y: 560 }, { x: 860, y: 560 }, { x: 860, y: 580 }, { x: 560, y: 580 },
+      ],
+    ];
+    const spacious: Omit<CardLayoutBounds, "occupiedPolygons"> = {
+      width: 2000,
+      height: 1200,
+      map: { x: 900, y: 900, width: 200, height: 150 },
+      margin: 20,
+      gap: 0,
+      occupiedAreas: [],
+    };
+    let blocked = 0;
+    let free = 0;
+    for (const rings of shapes) {
+      for (const size of [{ width: 40, height: 20 }, { width: 120, height: 60 }, { width: 260, height: 40 }]) {
+        const polygon: CardPolygon = { rings: [rings] };
+        const layoutBounds: CardLayoutBounds = { ...spacious, occupiedPolygons: [polygon] };
+        for (let x = 500; x <= 900; x += 20) {
+          for (let y = 340; y <= 660; y += 20) {
+            const origin = { x, y, width: size.width, height: size.height };
+            const expectedFree = !oracleRectHitsPolygon(origin, polygon, 0);
+            const clamped = clampCardPosition({ ...origin }, layoutBounds);
+            const actualFree = clamped.x === x && clamped.y === y;
+            expect(actualFree, `rect=${JSON.stringify(origin)} shape=${rings.length}`).toBe(expectedFree);
+            if (expectedFree) free += 1; else blocked += 1;
+          }
+        }
+      }
+    }
+    expect(free).toBeGreaterThan(100);
+    expect(blocked).toBeGreaterThan(100);
+  });
+
+  it("keeps the full gap between cards placed by the containment repair scan", () => {
+    // Every card shares one anchor, so side packing overflows and the repair
+    // scan places most of them against an already-dense canvas. That is the
+    // only path that uses the placed-card grid index, so it is where a query
+    // box that forgets to grow by `gap` would let neighbours touch.
+    for (const gap of [0, 6, 14, 24, 40]) {
+      for (const cardCount of [14, 26, 38]) {
+        const layoutBounds: CardLayoutBounds = {
+          width: 2200,
+          height: 1500,
+          map: { x: 900, y: 600, width: 400, height: 300 },
+          margin: 30,
+          gap,
+          occupiedAreas: [{ x: 880, y: 580, width: 440, height: 340 }],
+        };
+        const cards: CardLayoutInput[] = Array.from({ length: cardCount }, (_, index) => ({
+          id: `cf-${index}`,
+          anchorX: 1100,
+          anchorY: 750,
+          width: 150 + (index % 5) * 12,
+          height: 70 + (index % 3) * 10,
+        }));
+        const result = solveCardLayout(cards, layoutBounds, { mode: "quadrant" });
+        const context = `gap=${gap} cards=${cardCount} status=${result.status}`;
+        expect(result.placements, context).toHaveLength(cardCount);
+        if (result.status !== "solved") continue;
+        for (let left = 0; left < result.placements.length; left += 1) {
+          for (let right = left + 1; right < result.placements.length; right += 1) {
+            expect(
+              overlapsWithGap(result.placements[left]!, result.placements[right]!, gap),
+              `${context} pair ${left}/${right}`,
+            ).toBe(false);
+          }
+        }
+      }
+    }
+  });
+
+  it("agrees with the naive obstacle oracle for every manual clamp result", () => {
+    for (let seed = 500; seed <= 620; seed += 1) {
+      const { bounds: layoutBounds } = fuzzScenario(seed);
+      const polygons = layoutBounds.occupiedPolygons ?? [];
+      if (polygons.length === 0 || layoutBounds.allowMapOverlap) continue;
+      const random = seededRandom(seed * 31 + 7);
+      const position = {
+        x: random() * layoutBounds.width,
+        y: random() * layoutBounds.height,
+        width: 60 + Math.round(random() * 160),
+        height: 40 + Math.round(random() * 90),
+      };
+      const clamped = clampCardPosition(position, layoutBounds);
+      const card = { ...clamped, width: position.width, height: position.height };
+      const blocked = polygons.some((polygon) => oracleRectHitsPolygon(card, polygon, 0))
+        || (layoutBounds.occupiedAreas ?? []).some((zone) => overlapsWithGap(card, zone, 0));
+      // The clamp only reports a blocked result when no free rail existed at all.
+      if (!blocked) continue;
+      const originBlocked = polygons.some((polygon) => oracleRectHitsPolygon(
+        { x: clamp(position.x, layoutBounds.margin, layoutBounds.width - layoutBounds.margin - position.width),
+          y: clamp(position.y, layoutBounds.margin, layoutBounds.height - layoutBounds.margin - position.height),
+          width: position.width,
+          height: position.height },
+        polygon,
+        0,
+      ));
+      expect(originBlocked, `seed=${seed}`).toBe(true);
+    }
+  });
+});
+
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+describe("card layout degenerate and hostile inputs", () => {
+  const hostileBounds = (polygons: CardPolygon[]): CardLayoutBounds => ({
+    width: 1200,
+    height: 800,
+    map: { x: 300, y: 150, width: 600, height: 500 },
+    margin: 24,
+    gap: 10,
+    occupiedAreas: [],
+    occupiedPolygons: polygons,
+  });
+
+  const sample = (count: number): CardLayoutInput[] => Array.from({ length: count }, (_, index) => ({
+    id: `d-${index}`,
+    anchorX: 350 + index * 70,
+    anchorY: 250 + (index % 3) * 120,
+    width: 150,
+    height: 80,
+  }));
+
+  it.each<[string, CardPolygon[]]>([
+    ["empty ring list", [{ rings: [] }]],
+    ["empty ring", [{ rings: [[]] }]],
+    ["single-point ring", [{ rings: [[{ x: 500, y: 400 }]] }]],
+    ["two-point ring", [{ rings: [[{ x: 460, y: 300 }, { x: 720, y: 300 }]] }]],
+    ["collinear ring", [{ rings: [[{ x: 400, y: 400 }, { x: 500, y: 400 }, { x: 600, y: 400 }, { x: 700, y: 400 }]] }]],
+    ["zero-area ring", [{ rings: [[{ x: 500, y: 400 }, { x: 500, y: 400 }, { x: 500, y: 400 }]] }]],
+    ["ring with hole", [{
+      rings: [
+        [{ x: 400, y: 250 }, { x: 800, y: 250 }, { x: 800, y: 600 }, { x: 400, y: 600 }],
+        [{ x: 500, y: 330 }, { x: 700, y: 330 }, { x: 700, y: 520 }, { x: 500, y: 520 }],
+      ],
+    }]],
+    ["hole larger than shell", [{
+      rings: [
+        [{ x: 500, y: 330 }, { x: 700, y: 330 }, { x: 700, y: 520 }, { x: 500, y: 520 }],
+        [{ x: 400, y: 250 }, { x: 800, y: 250 }, { x: 800, y: 600 }, { x: 400, y: 600 }],
+      ],
+    }]],
+    ["declared bounds with empty rings", [{ rings: [], bounds: { x: 400, y: 300, width: 200, height: 150 } }]],
+    ["declared bounds of zero size", [{
+      rings: [[{ x: 500, y: 400 }, { x: 500, y: 400 }, { x: 500, y: 400 }]],
+      bounds: { x: 500, y: 400, width: 0, height: 0 },
+    }]],
+  ])("survives a degenerate polygon: %s", (_label, polygons) => {
+    const layoutBounds = hostileBounds(polygons);
+    const cards = sample(6);
+    const result = solveCardLayout(cards, layoutBounds, { mode: "quadrant" });
+    expect(result.placements).toHaveLength(cards.length);
+    for (const placement of result.placements) {
+      expect(Number.isFinite(placement.x)).toBe(true);
+      expect(Number.isFinite(placement.y)).toBe(true);
+    }
+    if (result.status === "solved") {
+      for (const placement of result.placements) {
+        for (const polygon of polygons) {
+          expect(oracleRectHitsPolygon(placement, polygon, layoutBounds.gap)).toBe(false);
+        }
+      }
+    }
+    expect(() => clampCardPosition({ x: 520, y: 380, width: 160, height: 90 }, layoutBounds)).not.toThrow();
+  });
+
+  it.each<[string, number, number]>([
+    ["NaN anchors", Number.NaN, Number.NaN],
+    ["positive infinity anchors", Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY],
+    ["negative infinity anchors", Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY],
+    ["mixed NaN/infinity anchors", Number.NaN, Number.POSITIVE_INFINITY],
+  ])("never throws on non-finite anchors: %s", (_label, anchorX, anchorY) => {
+    const polygons: CardPolygon[] = [{
+      rings: [[{ x: 400, y: 250 }, { x: 800, y: 250 }, { x: 800, y: 600 }, { x: 400, y: 600 }]],
+    }];
+    const layoutBounds = hostileBounds(polygons);
+    const cards: CardLayoutInput[] = [
+      { id: "bad-0", anchorX, anchorY, width: 160, height: 90 },
+      { id: "bad-1", anchorX, anchorY: 300, width: 160, height: 90 },
+      { id: "good", anchorX: 500, anchorY: 400, width: 160, height: 90 },
+    ];
+    for (const mode of FUZZ_MODES) {
+      let result: ReturnType<typeof solveCardLayout> | null = null;
+      expect(() => { result = solveCardLayout(cards, layoutBounds, { mode, autoBalance: true }); }).not.toThrow();
+      expect(result!.placements).toHaveLength(cards.length);
+      expect(result!.placements.map((placement) => placement.id)).toEqual(cards.map((card) => card.id));
+    }
+    expect(() => clampCardPosition({ x: anchorX, y: anchorY, width: 160, height: 90 }, layoutBounds)).not.toThrow();
+    expect(() => clampCardPosition({ x: 500, y: 400, width: anchorX, height: anchorY }, layoutBounds)).not.toThrow();
+  });
+
+  it("keeps repeated solves of the same inputs byte-identical", () => {
+    const { cards, bounds: layoutBounds, options } = fuzzScenario(77);
+    const first = solveCardLayout(cards, layoutBounds, options);
+    const second = solveCardLayout(cards, layoutBounds, options);
+    const third = solveCardLayout(cards.slice(), { ...layoutBounds }, { ...options });
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+  });
+
+  it("resolves equidistant repair slots to the first probe in scan order", () => {
+    // (192,180) and (240,108) are exactly equidistant from the (30,30) probe.
+    // The repair scan compares squared distances, so the row-major first hit
+    // wins deterministically instead of depending on Math.hypot rounding.
+    const layoutBounds: CardLayoutBounds = {
+      width: 900,
+      height: 700,
+      map: { x: 300, y: 200, width: 300, height: 250 },
+      margin: 30,
+      gap: 6,
+      occupiedAreas: [],
+    };
+    const cards: CardLayoutInput[] = Array.from({ length: 12 }, (_, index) => ({
+      id: `tie-${index}`,
+      anchorX: 450,
+      anchorY: 325,
+      width: 120,
+      height: 60,
+    }));
+    const runs = Array.from({ length: 3 }, () => solveCardLayout(cards, layoutBounds, { mode: "right-stack" }));
+    expect(runs[1]).toEqual(runs[0]);
+    expect(runs[2]).toEqual(runs[0]);
   });
 });
