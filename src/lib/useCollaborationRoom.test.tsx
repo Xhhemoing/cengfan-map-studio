@@ -2,7 +2,7 @@ import { act, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ROOM_ACCESS_STORAGE_PREFIX } from "./app-constants";
-import type { RoomKickedInfo, RoomMember } from "./collaboration-client";
+import type { CollaborationRoom, RoomKickedInfo, RoomMember } from "./collaboration-client";
 import type { ProjectPackage } from "./project-package";
 import { useCollaborationRoom, type UseCollaborationRoomResult } from "./useCollaborationRoom";
 
@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   subscribeRoom: vi.fn(),
   leaveRoom: vi.fn(),
   fetchRoomOperations: vi.fn(),
+  joinRoom: vi.fn(),
+  fetchRoom: vi.fn(),
 }));
 
 vi.mock("./collaboration-client", async (importOriginal) => {
@@ -21,7 +23,8 @@ vi.mock("./collaboration-client", async (importOriginal) => {
   return { ...actual, ...mocks };
 });
 
-const samplePackage = { kind: "cengfan-project-package", exportedAt: "2026-08-24T00:00:00.000Z" } as unknown as ProjectPackage;
+const samplePackage = { kind: "cengfan-project-package", exportedAt: "2026-08-24T00:00:00.000Z", title: "本地" } as unknown as ProjectPackage;
+const remotePackage = { kind: "cengfan-project-package", exportedAt: "2026-08-24T01:00:00.000Z", title: "远端" } as unknown as ProjectPackage;
 
 function member(clientId: string, role: RoomMember["role"] = "editor"): RoomMember {
   return { clientId, role, joinedAt: "2026-08-24T00:00:00.000Z", lastSeenAt: "2026-08-24T00:00:00.000Z" };
@@ -33,6 +36,8 @@ let emitMembers: ((members: RoomMember[]) => void) | null = null;
 let emitKicked: ((info: RoomKickedInfo) => void) | null = null;
 /** subscribeRoom 的 onError:客户端判定断流(onerror 或心跳看门狗超时)时会调用它。 */
 let notifyStreamError: (() => void) | null = null;
+/** subscribeRoom 的房间事件回调:用来投递远端增量/快照。 */
+let emitRoomUpdate: ((room: CollaborationRoom<ProjectPackage>) => void) | null = null;
 let subscribeOptions: { version?: number | (() => number) } | null = null;
 /** 每条订阅一个条目,记录是否已经退订,用来断言同一时刻只有一条流。 */
 let subscriptions: Array<{ live: boolean }> = [];
@@ -64,7 +69,7 @@ function Harness({ onRender }: { onRender: (result: UseCollaborationRoomResult) 
   return null;
 }
 
-async function mountRoom(): Promise<void> {
+async function mountHarness(): Promise<void> {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -72,6 +77,10 @@ async function mountRoom(): Promise<void> {
   await act(async () => {
     root.render(<Harness onRender={(result) => { latest = result; }} />);
   });
+}
+
+async function mountRoom(): Promise<void> {
+  await mountHarness();
   await act(async () => {
     latest!.startRoom();
   });
@@ -82,6 +91,7 @@ beforeEach(() => {
   emitMembers = null;
   emitKicked = null;
   notifyStreamError = null;
+  emitRoomUpdate = null;
   subscribeOptions = null;
   subscriptions = [];
   window.localStorage.clear();
@@ -91,10 +101,23 @@ beforeEach(() => {
   });
   mocks.submitRoomSnapshot.mockResolvedValue({ id: "ROOM01", version: 1, ready: true, updatedBy: "self" });
   mocks.leaveRoom.mockResolvedValue({ id: "ROOM01", version: 1, members: [] });
+  mocks.joinRoom.mockResolvedValue({
+    room: { id: "ROOM01", version: 7, ready: true, updatedBy: "mate" },
+    access: { id: "self", participantId: "self", displayName: "本机协作者", role: "editor", accessToken: "guest-token" },
+  });
+  mocks.fetchRoom.mockResolvedValue({
+    id: "ROOM01",
+    version: 7,
+    ready: true,
+    updatedBy: "mate",
+    snapshot: remotePackage,
+    role: "editor",
+    members: [member("mate", "owner"), member("self")],
+  });
   mocks.subscribeRoom.mockImplementation((
     _roomId: string,
     _accessToken: string,
-    _onSnapshot: unknown,
+    onRoom: (room: CollaborationRoom<ProjectPackage>) => void,
     onError: () => void,
     options: {
       onMembers?: (members: RoomMember[]) => void;
@@ -104,6 +127,7 @@ beforeEach(() => {
   ) => {
     emitMembers = options.onMembers ?? null;
     emitKicked = options.onKicked ?? null;
+    emitRoomUpdate = onRoom;
     notifyStreamError = onError;
     subscribeOptions = options;
     const entry = { live: true };
@@ -240,5 +264,76 @@ describe("useCollaborationRoom subscription", () => {
     expect(latest!.collaborationMessage).not.toContain("浏览器");
     expect(latest!.collaborationMessage).toContain("正在自动重连");
     expect(latest!.collaborationMessage).toContain("重新加入");
+  });
+});
+
+describe("useCollaborationRoom version state", () => {
+  it("exposes the room version reached after creating a room", async () => {
+    await mountRoom();
+
+    expect(latest!.roomVersion).toBe(1);
+  });
+
+  it("exposes the joined room version instead of staying at v0", async () => {
+    await mountHarness();
+    act(() => {
+      latest!.setRoomInput("room01");
+      latest!.setInviteTokenInput("invite-token");
+    });
+
+    await act(async () => {
+      latest!.joinRoom();
+    });
+
+    expect(latest!.roomId).toBe("ROOM01");
+    expect(latest!.collaborationStatus).toBe("connected");
+    // 加入时只写 versionRef 的话,查看者会一直显示 v0。
+    expect(latest!.roomVersion).toBe(7);
+  });
+
+  it("advances the room version when a remote delta arrives", async () => {
+    await mountRoom();
+    expect(latest!.roomVersion).toBe(1);
+
+    act(() => emitRoomUpdate!({
+      id: "ROOM01",
+      version: 4,
+      ready: true,
+      updatedBy: "mate",
+      operations: [{ type: "set", path: ["title"], value: "远端改名" }],
+    }));
+
+    expect(latest!.roomVersion).toBe(4);
+    expect(latest!.collaborationStatus).toBe("connected");
+  });
+
+  it("advances the room version when a remote snapshot arrives", async () => {
+    await mountRoom();
+
+    act(() => emitRoomUpdate!({
+      id: "ROOM01",
+      version: 5,
+      ready: true,
+      updatedBy: "mate",
+      snapshot: remotePackage,
+    }));
+
+    expect(latest!.roomVersion).toBe(5);
+  });
+
+  it("advances the room version after backfilling a disconnect gap", async () => {
+    await mountRoom();
+    mocks.fetchRoomOperations.mockResolvedValue({
+      id: "ROOM01",
+      version: 9,
+      operations: [{ type: "set", path: ["title"], value: "断线期间的改动" }],
+    });
+
+    await act(async () => {
+      notifyStreamError!();
+    });
+
+    expect(latest!.roomVersion).toBe(9);
+    expect(latest!.collaborationStatus).toBe("connected");
   });
 });

@@ -230,16 +230,14 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       baselineRef.current = rebased.baseline;
       suppressSendRef.current = true;
       applyPackage(rebased.current, room.version);
-      versionRef.current = room.version;
       baselineRef.current = rebased.baseline;
     } else if (room.snapshot) {
       suppressSendRef.current = true;
       baselineRef.current = optionsRef.current.applyPackage(room.snapshot, room.version);
-      versionRef.current = room.version;
-    } else {
-      versionRef.current = room.version;
-      setRoomVersion(room.version);
     }
+    // ref 与 state 必须一起推进:只写 ref 会让协作面板/查看者一直停在 v0。
+    versionRef.current = room.version;
+    setRoomVersion(room.version);
     setCollaborationStatus("connected");
     setCollaborationMessage(room.rebasedFromVersion === undefined ? "增量同步已完成" : "已自动合并互不冲突的并发修改");
   };
@@ -279,14 +277,12 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
         baselineRef.current = rebased.baseline;
         suppressSendRef.current = true;
         applyPackage(rebased.current, interval.version);
-        versionRef.current = interval.version;
         baselineRef.current = rebased.baseline;
         baseline = rebased.baseline;
         rebasedCurrent = rebased.current;
-      } else {
-        versionRef.current = interval.version;
-        setRoomVersion(interval.version);
       }
+      versionRef.current = interval.version;
+      setRoomVersion(interval.version);
       setCollaborationStatus(reason === "conflict" ? "syncing" : "connected");
       setCollaborationMessage(reason === "conflict" ? "已补齐远端修改，正在重试上传" : "已补齐断线期间的修改");
       return {
@@ -305,6 +301,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
             const applied = optionsRef.current.applyPackage(room.snapshot, room.version);
             baselineRef.current = applied;
             versionRef.current = room.version;
+            setRoomVersion(room.version);
             setCollaborationStatus("connected");
             setCollaborationMessage("已重新加载完整快照");
             // 整包重载后本地状态即远端状态,不再有可重试的增量。
@@ -430,6 +427,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       suppressSendRef.current = true;
       baselineRef.current = optionsRef.current.applyPackage(room.snapshot, room.version);
       versionRef.current = room.version;
+      setRoomVersion(room.version);
       if (room.closed) {
         setCollaborationStatus("closed");
         setCollaborationMessage("房间已关闭，无法继续同步或编辑");
