@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createImportTemplateSheets, parseExcelArrayBuffer, parseExcelWorkbookRows, parseOcrLikeText } from "./binary-import";
+import {
+  createImportTemplateSheets,
+  expandMergedCells,
+  parseExcelArrayBuffer,
+  parseExcelWorkbookRows,
+  parseOcrLikeText,
+} from "./binary-import";
 
 describe("binary import adapters", () => {
   it("parses excel-like row matrix into candidates", () => {
@@ -92,6 +98,7 @@ describe("binary import adapters", () => {
       ["学生姓名", "是", "林舟"],
       ["去向类型", "否", "中国去向 / 海外去向"],
     ]));
+    expect(template.guide.map((row) => row[2]).join("\n")).toContain("合并单元格");
   });
 
   it("returns an empty result for an empty or blank-only sheet", () => {
@@ -142,15 +149,70 @@ describe("binary import adapters", () => {
     expect(result.unmappedHeaders).toEqual([]);
   });
 
-  it("skips rows that leave a required cell blank instead of importing them", () => {
+  it("skips rows that leave a required cell blank and says which cell is missing", () => {
     const result = parseExcelWorkbookRows([
       ["学生姓名", "录取院校", "城市"],
       ["苏禾", "浙江大学", "杭州市"],
       ["   ", "浙江大学", "杭州市"],
       ["缺城市", "浙江大学", ""],
+      ["", "", ""],
     ]);
 
     expect(result.candidates).toEqual([expect.objectContaining({ name: "苏禾", sourceLine: 2 })]);
+    // A trailing blank sheet row is normal; the two partial rows are reported.
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "浙江大学\t杭州市", reason: "缺少姓名" },
+      { sourceLine: 4, rawLine: "缺城市\t浙江大学", reason: "缺少城市" },
+    ]);
+  });
+
+  it("fills a merged 省份 block down its rows so only the anchor cell needs a value", () => {
+    const rows = [
+      ["学生姓名", "录取院校", "城市", "省份"],
+      ["苏禾", "浙江大学", "杭州市", "浙江省"],
+      ["陈宁", "宁波大学", "宁波市", ""],
+      ["林舟", "北京大学", "北京市", "北京市"],
+    ];
+    const merges = [{ s: { r: 1, c: 3 }, e: { r: 2, c: 3 } }];
+
+    expect(parseExcelWorkbookRows(rows, { merges }).candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", province: "浙江省" }),
+      expect.objectContaining({ name: "陈宁", province: "浙江省" }),
+      expect.objectContaining({ name: "林舟", province: "北京市" }),
+    ]);
+    // Without the merge ranges the blank cell stays blank instead of guessing.
+    expect(parseExcelWorkbookRows(rows).candidates[1]).not.toHaveProperty("province");
+  });
+
+  it("recovers a sparse row whose only required cell comes from a vertical merge", () => {
+    const result = parseExcelWorkbookRows(
+      [
+        ["城市", "录取院校", "学生姓名"],
+        ["杭州市", "浙江大学", "苏禾"],
+        ["", "浙江大学", "陈宁"],
+      ],
+      { merges: [{ s: { r: 1, c: 0 }, e: { r: 2, c: 0 } }] },
+    );
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", city: "杭州市" }),
+      expect.objectContaining({ name: "陈宁", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("expands a merge block without overwriting cells the user filled in", () => {
+    expect(expandMergedCells(
+      [["浙江省", "", "杭州市"], ["", "宁波市", ""]],
+      [{ s: { r: 0, c: 0 }, e: { r: 1, c: 1 } }],
+    )).toEqual([
+      ["浙江省", "浙江省", "杭州市"],
+      ["浙江省", "宁波市", ""],
+    ]);
+    // A merge anchored on a blank cell has nothing to copy.
+    expect(expandMergedCells([["", ""], ["", ""]], [{ s: { r: 0, c: 0 }, e: { r: 1, c: 1 } }]))
+      .toEqual([["", ""], ["", ""]]);
+    expect(expandMergedCells([["浙江省"]])).toEqual([["浙江省"]]);
   });
 
   it("falls back to free-text parsing when the sheet has no recognizable header", () => {

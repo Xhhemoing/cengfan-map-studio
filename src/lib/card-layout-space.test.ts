@@ -6,6 +6,7 @@ import {
   protectedZones,
   validateHard,
 } from "./card-layout-space";
+import { rectangleIntersectsPolygon } from "./card-layout-geometry";
 import type { CardLayoutBounds, CardPlacement } from "./card-layout-types";
 
 const bounds: CardLayoutBounds = {
@@ -88,6 +89,38 @@ describe("layout space", () => {
     expect(index.hits({ x: 520, y: 420, width: 40, height: 40 }, 0)).toBe(false);
     expect(index.hits({ x: 520, y: 420, width: 40, height: 40 }, 30)).toBe(true);
     expect(index.clone().items).toHaveLength(1);
+  });
+
+  it("answers polygon hit tests exactly, however coarse the occupancy raster is", () => {
+    // A ring with a genuine hole plus a blob small enough to sit inside a
+    // single raster cell: the first punishes a raster that treats "inside the
+    // outline" as blocked, the second one that assumes a cell no outline
+    // crosses must be empty.
+    const ring = [
+      { x: 300, y: 200 }, { x: 700, y: 200 }, { x: 700, y: 500 }, { x: 300, y: 500 },
+    ];
+    const hole = [
+      { x: 420, y: 300 }, { x: 580, y: 300 }, { x: 580, y: 420 }, { x: 420, y: 420 },
+    ];
+    const speck = [{ x: 120, y: 640 }, { x: 150, y: 640 }, { x: 150, y: 670 }, { x: 120, y: 670 }];
+    const polygons = [{ rings: [ring, [...hole].reverse()] }, { rings: [speck] }];
+    const space = new LayoutSpace({ ...bounds, occupiedAreas: [], occupiedPolygons: polygons });
+
+    // Brute force over probes of several sizes; every one must agree with the
+    // geometry primitives the raster is shortcutting. The half-pixel offset
+    // keeps probe edges off the polygon coordinates, where "touching" and
+    // "overlapping" disagree by zero area and the answer is arbitrary anyway.
+    for (const size of [8, 30, 90]) {
+      for (let x = 20.5; x <= 900; x += 37) {
+        for (let y = 20.5; y <= 700; y += 41) {
+          const probe = { x, y, width: size, height: size };
+          const expected = polygons.some((polygon) =>
+            rectangleIntersectsPolygon(probe, polygon, space.gap));
+          expect({ x, y, size, blocked: space.blocked(probe) })
+            .toEqual({ x, y, size, blocked: expected });
+        }
+      }
+    }
   });
 
   it("rejects layouts that break any hard constraint", () => {

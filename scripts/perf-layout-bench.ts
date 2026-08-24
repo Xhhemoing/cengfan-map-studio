@@ -3,10 +3,11 @@
  *
  * Run: npm run perf:layout
  * Save machine-readable output:
- * npx tsx scripts/perf-layout-bench.ts > .agent_workspace/round1/perf-baseline.json
+ * npx tsx scripts/perf-layout-bench.ts > .agent_workspace/round2/perf-baseline.json
  */
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
+import { Worker } from "node:worker_threads";
 import {
   solveCardLayout,
   type CardLayoutBounds,
@@ -16,7 +17,7 @@ import {
 } from "../src/lib/card-layout";
 import { assertLayoutInvariants } from "../src/lib/layout-perf";
 
-export const DEFAULT_LAYOUT_BENCH_COUNTS = [36, 60, 100, 200, 400] as const;
+export const DEFAULT_LAYOUT_BENCH_COUNTS = [16, 24, 36, 60, 100, 200, 400] as const;
 export const DEFAULT_LAYOUT_BENCH_MODES: readonly CardLayoutMode[] = [
   "quadrant",
   "radial",
@@ -64,6 +65,22 @@ export interface LayoutBenchmarkReport {
   results: LayoutBenchmarkResult[];
 }
 
+export interface WorkerMessageBenchmarkResult {
+  methodology: "worker_threads request and placement-shaped response; solver excluded";
+  count: number;
+  startupIterations: number;
+  warmupIterations: number;
+  iterations: number;
+  startupP50Ms: number;
+  startupP95Ms: number;
+  warmP50Ms: number;
+  warmP95Ms: number;
+}
+
+export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
+  workerMessageOverhead: WorkerMessageBenchmarkResult;
+}
+
 export function makeLayoutBenchmarkCards(count: number, seed = 7): CardLayoutInput[] {
   const cards: CardLayoutInput[] = [];
   let state = seed >>> 0;
@@ -106,6 +123,108 @@ function percentile(samples: readonly number[], quantile: number): number {
 
 function rounded(value: number): number {
   return Number(value.toFixed(3));
+}
+
+const ECHO_WORKER_SOURCE = `
+  const { parentPort } = require("node:worker_threads");
+  parentPort.on("message", (request) => {
+    parentPort.postMessage({
+      type: "result",
+      requestId: request.requestId,
+      key: request.key,
+      result: {
+        mode: request.options.mode,
+        status: "solved",
+        placements: request.cards.map((card) => ({
+          ...card,
+          x: card.anchorX,
+          y: card.anchorY,
+          side: "right",
+        })),
+      },
+    });
+  });
+`;
+
+function workerRoundTrip(worker: Worker, payload: object, requestId: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const startedAt = performance.now();
+    const onError = (error: Error) => {
+      worker.off("message", onMessage);
+      reject(error);
+    };
+    const onMessage = () => {
+      worker.off("error", onError);
+      resolve(performance.now() - startedAt);
+    };
+    worker.once("error", onError);
+    worker.once("message", onMessage);
+    worker.postMessage({ ...payload, requestId });
+  });
+}
+
+/**
+ * Separates message/startup overhead from solver time. It deliberately uses a
+ * placement-shaped response so both structured-clone directions scale with
+ * roster size, while excluding solver work from the timing.
+ */
+export async function runWorkerMessageBenchmark(
+  count = 24,
+  startupIterations = 7,
+  warmupIterations = 2,
+  iterations = 30,
+): Promise<WorkerMessageBenchmarkResult> {
+  positiveInteger(count, "worker card count");
+  positiveInteger(startupIterations, "worker startupIterations");
+  positiveInteger(warmupIterations, "worker warmupIterations");
+  positiveInteger(iterations, "worker iterations");
+  const payload = {
+    type: "solve",
+    key: `worker-probe-${count}`,
+    cards: makeLayoutBenchmarkCards(count),
+    bounds: makeLayoutBenchmarkBounds(),
+    options: {
+      mode: "quadrant",
+      autoBalance: true,
+      connectorStyle: "curve",
+      connectorWidth: 1.5,
+    },
+  };
+  const startupSamples: number[] = [];
+  let requestId = 0;
+  for (let iteration = 0; iteration < startupIterations; iteration += 1) {
+    const worker = new Worker(ECHO_WORKER_SOURCE, { eval: true });
+    try {
+      startupSamples.push(await workerRoundTrip(worker, payload, requestId += 1));
+    } finally {
+      await worker.terminate();
+    }
+  }
+
+  const worker = new Worker(ECHO_WORKER_SOURCE, { eval: true });
+  const warmSamples: number[] = [];
+  try {
+    for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+      await workerRoundTrip(worker, payload, requestId += 1);
+    }
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+      warmSamples.push(await workerRoundTrip(worker, payload, requestId += 1));
+    }
+  } finally {
+    await worker.terminate();
+  }
+
+  return {
+    methodology: "worker_threads request and placement-shaped response; solver excluded",
+    count,
+    startupIterations,
+    warmupIterations,
+    iterations,
+    startupP50Ms: rounded(percentile(startupSamples, 0.5)),
+    startupP95Ms: rounded(percentile(startupSamples, 0.95)),
+    warmP50Ms: rounded(percentile(warmSamples, 0.5)),
+    warmP95Ms: rounded(percentile(warmSamples, 0.95)),
+  };
 }
 
 function solveAndAssert(
@@ -200,5 +319,9 @@ const isDirectRun = process.argv[1] !== undefined
   && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isDirectRun) {
-  console.log(JSON.stringify(runLayoutBenchmark(), null, 2));
+  const report: LayoutBenchmarkCliReport = {
+    ...runLayoutBenchmark(),
+    workerMessageOverhead: await runWorkerMessageBenchmark(),
+  };
+  console.log(JSON.stringify(report, null, 2));
 }

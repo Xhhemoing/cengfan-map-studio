@@ -76,19 +76,25 @@ export function containFree(
   rows.sort((left, right) => Math.abs(left - originY) - Math.abs(right - originY) || left - right);
 
   let best: CardPlacement | null = null;
+  // Squared throughout: the scan compares far more distances than it keeps, and
+  // squaring orders them the same way a square root would.
   let bestDistance = Infinity;
+  // The scan probes thousands of lattice points and only one of them survives,
+  // so it tests a bare rectangle and pays for a placement object once.
+  const probe: CardArea = { x: 0, y: 0, width: placement.width, height: placement.height };
   for (const y of rows) {
-    const dy = Math.abs(y - originY);
+    const dy = (y - originY) ** 2;
     if (dy >= bestDistance) break;
     for (const x of columns) {
-      const dx = Math.abs(x - originX);
+      const dx = (x - originX) ** 2;
       if (dx >= bestDistance) break;
-      const distance = Math.hypot(dx, dy);
+      const distance = dx + dy;
       if (distance >= bestDistance) continue;
-      const candidate: CardPlacement = { ...placement, x, y };
-      if (!isFree(candidate, space, placed)) continue;
+      probe.x = x;
+      probe.y = y;
+      if (!isFree(probe, space, placed)) continue;
       bestDistance = distance;
-      best = { ...candidate, side: space.sideOf(candidate) };
+      best = { ...placement, x, y, side: space.sideOf(probe) };
     }
   }
   return best ?? stackAtMargin(placement, space, placed);
@@ -186,7 +192,7 @@ export function repackAll(cards: readonly CardLayoutInput[], space: LayoutSpace)
 }
 
 /** Reading order over anchors; keeps a dense pack roughly geographic. */
-function readingOrder(cards: readonly CardLayoutInput[]): CardLayoutInput[] {
+export function readingOrder(cards: readonly CardLayoutInput[]): CardLayoutInput[] {
   return [...cards].sort((left, right) =>
     left.anchorY - right.anchorY || left.anchorX - right.anchorX || left.id.localeCompare(right.id));
 }

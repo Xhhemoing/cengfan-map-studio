@@ -59,8 +59,11 @@ describe("parseAgentRequest", () => {
 
   it("strictly validates role content and tool argument limits", () => {
     expect(parseAgentRequest({ ...valid, messages: [{ role: "user", content: null }] }).ok).toBe(false);
+    expect(parseAgentRequest({ ...valid, messages: [{ role: "user", content: " " }] }).ok).toBe(false);
     expect(parseAgentRequest({ ...valid, messages: [{ role: "assistant", content: 1 }] }).ok).toBe(false);
+    expect(parseAgentRequest({ ...valid, messages: [{ role: "assistant", content: " " }] }).ok).toBe(false);
     expect(parseAgentRequest({ ...valid, messages: [{ role: "system", content: 1 }] }).ok).toBe(false);
+    expect(parseAgentRequest({ ...valid, messages: [{ role: "tool", tool_call_id: "call-1", content: " " }] }).ok).toBe(false);
     expect(parseAgentRequest({ ...valid, messages: [{ role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "check_health", arguments: "x".repeat(16 * 1024 + 1) } }] }] }).ok).toBe(false);
     expect(parseAgentRequest({ ...valid, messages: [{ role: "assistant", content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "check_health", arguments: "[]" } }] }] }).ok).toBe(false);
     const longDataArguments = JSON.stringify({ image: `data:image/png;base64,${"a".repeat(300)}` });
@@ -90,6 +93,10 @@ describe("parseAgentRequest", () => {
     const parsed = parseAgentRequest({ ...valid, budget: { usedTokens: -1, maxTokens: 999999, rounds: 2.8, maxRounds: 99 } });
     expect(parsed.ok).toBe(true);
     if (parsed.ok) expect(parsed.value.budget).toEqual({ usedTokens: 0, maxTokens: 60000, rounds: 2, maxRounds: 20 });
+  });
+
+  it("rejects empty budget receipts", () => {
+    expect(parseAgentRequest({ ...valid, budgetReceipt: " " }).ok).toBe(false);
   });
 
   it("enforces server runtime budgets over client-supplied limits", () => {

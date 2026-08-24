@@ -17,6 +17,9 @@ import {
   type PanelSide,
 } from "../lib/editor-layout";
 
+/** useStudioChrome 的返回值：主题/皮肤/面板宽度状态与更新回调。 */
+export type StudioChrome = ReturnType<typeof useStudioChrome>;
+
 /**
  * 编辑器外壳（chrome）状态：主题模式、皮肤、可调面板宽度。
  * 全部为纯 UI 偏好，与项目文档数据无关；持久化到 localStorage 并同步到 <html> 根节点。

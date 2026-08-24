@@ -24,8 +24,10 @@ export type DataIssueKind =
 export interface DataIssue {
   /**
    * Stable `kind:studentId` identifier so the UI can key, locate and dedupe
-   * rows. Always populated by {@link listDataIssues}; use
-   * {@link resolveDataIssueId} when an issue comes from another source.
+   * rows. Optional on the input type because issue literals are built in
+   * several places; everything produced by {@link listDataIssues} is a
+   * {@link ResolvedDataIssue} and therefore always carries one. Read it with
+   * {@link resolveDataIssueId} so a hand-built issue behaves identically.
    */
   id?: string;
   studentId: string;
@@ -35,6 +37,9 @@ export interface DataIssue {
   severity: "warning" | "info";
 }
 
+/** A {@link DataIssue} whose stable id is guaranteed by the type system. */
+export type ResolvedDataIssue = DataIssue & { id: string };
+
 /** One student produces at most one issue per kind, so this pair is unique. */
 export function dataIssueId(kind: DataIssueKind, studentId: string): string {
   return `${kind}:${studentId}`;
@@ -42,6 +47,11 @@ export function dataIssueId(kind: DataIssueKind, studentId: string): string {
 
 export function resolveDataIssueId(issue: DataIssue): string {
   return issue.id ?? dataIssueId(issue.kind, issue.studentId);
+}
+
+/** Guarantees the stable id on an issue that came from somewhere else. */
+export function withDataIssueId(issue: DataIssue): ResolvedDataIssue {
+  return { ...issue, id: resolveDataIssueId(issue) };
 }
 
 function missingFields(student: Student): string[] {
@@ -57,7 +67,7 @@ function createIssue(
   kind: DataIssueKind,
   detail: string,
   severity: DataIssue["severity"],
-): DataIssue {
+): ResolvedDataIssue {
   return {
     id: dataIssueId(kind, student.id),
     studentId: student.id,
@@ -100,13 +110,14 @@ export function buildDataHealthSummary(project: ProjectDocument): DataHealthSumm
   };
 }
 
-export function listDataIssues(project: ProjectDocument): DataIssue[] {
-  const missing: DataIssue[] = [];
-  const unresolved: DataIssue[] = [];
-  const manualProvince: DataIssue[] = [];
-  const international: DataIssue[] = [];
-  const hidden: DataIssue[] = [];
-  const duplicate: DataIssue[] = [];
+/** Every returned issue carries its stable `kind:studentId` id. */
+export function listDataIssues(project: ProjectDocument): ResolvedDataIssue[] {
+  const missing: ResolvedDataIssue[] = [];
+  const unresolved: ResolvedDataIssue[] = [];
+  const manualProvince: ResolvedDataIssue[] = [];
+  const international: ResolvedDataIssue[] = [];
+  const hidden: ResolvedDataIssue[] = [];
+  const duplicate: ResolvedDataIssue[] = [];
   const duplicateIds = duplicateStudentIds(project.students);
 
   for (const student of project.students) {

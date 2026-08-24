@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  explainRequestSchema,
   parseDataRequestSchema,
+  proposeEditsRequestSchema,
   validateEditorCommandPayload,
 } from "./schemas";
 import { localParseData, localProposeEdits } from "./local-fallback";
@@ -18,6 +20,15 @@ describe("ai schemas and local fallback", () => {
   it("rejects empty parse-data payload", () => {
     const parsed = parseDataRequestSchema({ text: "  ", source: "paste" });
     expect(parsed.ok).toBe(false);
+  });
+
+  it("rejects invalid legacy AI field types", () => {
+    expect(parseDataRequestSchema({ text: 42, source: "paste" }).ok).toBe(false);
+    expect(parseDataRequestSchema({ text: "名单", source: 42 }).ok).toBe(false);
+    expect(proposeEditsRequestSchema({ message: "修改", projectSummary: { studentCount: 1, templateId: 42 } }).ok).toBe(false);
+    expect(proposeEditsRequestSchema({ message: "修改", projectSummary: { studentCount: -1 } }).ok).toBe(false);
+    expect(explainRequestSchema({ message: "解释", studentCount: "1" }).ok).toBe(false);
+    expect(explainRequestSchema({ message: " ", studentCount: 1 }).ok).toBe(false);
   });
 
   it("parses three-field candidates with local fallback", () => {

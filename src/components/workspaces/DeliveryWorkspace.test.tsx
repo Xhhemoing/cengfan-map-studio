@@ -98,4 +98,59 @@ describe("DeliveryWorkspace", () => {
     flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="重试导出"]')?.click());
     expect(onRetry).toHaveBeenCalledOnce();
   });
+
+  it("renders each check as a real list with named locate actions and text status", () => {
+    const container = renderWorkspace();
+
+    // Semantic list per check section; the buttons carry severity + detail names.
+    const lists = container.querySelectorAll("ul.delivery-workspace__issue-list");
+    expect(lists).toHaveLength(4);
+    expect(container.querySelectorAll("ul.delivery-workspace__issue-list li button").length).toBe(4);
+    expect(container.querySelector('button[aria-label="定位警告：缺少城市"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="定位错误：地图资源缺失"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="定位警告：地图超出安全边距"]')).not.toBeNull();
+
+    // Section status is exposed as text, not only via icon color.
+    const statuses = Array.from(container.querySelectorAll(".delivery-workspace__check header .sr-only")).map((node) => node.textContent);
+    expect(statuses).toEqual(["有待处理问题", "有待处理问题", "有待处理问题", "有待处理问题"]);
+  });
+
+  it("announces a passing check as text when a section has no issues", () => {
+    const container = renderWorkspace({ dataIssues: [], layoutIssues: [], resourceIssues: [], fontIssues: [] });
+
+    const statuses = Array.from(container.querySelectorAll(".delivery-workspace__check header .sr-only")).map((node) => node.textContent);
+    expect(statuses).toEqual(["检查通过", "检查通过", "检查通过", "检查通过"]);
+    expect(container.querySelector("ul.delivery-workspace__issue-list")).toBeNull();
+  });
+
+  it("links the export error to the retry button and action group via aria-describedby", () => {
+    const container = renderWorkspace({ exportState: "error", exportError: "PNG 导出失败" });
+
+    const error = container.querySelector('[role="alert"]')!;
+    expect(error.id).toBe("delivery-export-error");
+    expect(container.querySelector('button[aria-label="重试导出"]')?.getAttribute("aria-describedby")).toBe("delivery-export-error");
+    expect(container.querySelector('[role="group"][aria-label="导出操作"]')?.getAttribute("aria-describedby")).toBe("delivery-export-error");
+
+    // Without an error the reference is removed so nothing points at a missing id.
+    const idle = renderWorkspace();
+    expect(idle.querySelector('[role="group"][aria-label="导出操作"]')?.hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("names every export action and announces exporting progress politely", () => {
+    const container = renderWorkspace({ exportState: "exporting" });
+
+    expect(container.querySelector('button[aria-label="导出 PNG"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="导出 SVG"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="导出工程包"]')).not.toBeNull();
+    const actionButtons = container.querySelectorAll<HTMLButtonElement>('[aria-label="导出操作"] button');
+    expect(Array.from(actionButtons).every((button) => button.disabled)).toBe(true);
+
+    const status = container.querySelector('[data-export-status]')!;
+    expect(status.getAttribute("role")).toBe("status");
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(status.textContent).toBe("正在导出，请稍候");
+
+    const success = renderWorkspace({ exportState: "success" });
+    expect(success.querySelector('[data-export-status]')?.textContent).toBe("导出完成");
+  });
 });

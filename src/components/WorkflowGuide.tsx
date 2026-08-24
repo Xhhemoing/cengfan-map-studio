@@ -1,5 +1,5 @@
 import { Download, LayoutTemplate, Map, MousePointerClick, Users } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { DataViewId, MapTemplateId } from "../lib/project-data";
 import type { WorkflowProgress, WorkflowStepId, WorkflowStepProgress, WorkflowStepStatus } from "../lib/workflow-progress";
 import type { GlobalSettingsSection } from "./GlobalSettingsScreen";
@@ -124,6 +124,7 @@ export function WorkflowGuide({
   onFocusStudent?: (id: string) => void;
 }) {
   const [open, setOpen] = useState(variant === "fullscreen");
+  const barRef = useRef<HTMLButtonElement | null>(null);
   const activeIndex = WORKFLOW_STEPS.findIndex((step) => step.id === activeStep);
   const activeStepMeta = WORKFLOW_STEPS[activeIndex] ?? WORKFLOW_STEPS[0]!;
   const activeProgress = stepProgress(progress, activeStep);
@@ -226,7 +227,7 @@ export function WorkflowGuide({
       {activeStep === "export" && showStepPanel && (
         <section className="workflow-step-panel" aria-label="检查导出">
           {exportWarnings.unresolvedStudents.length > 0 && (
-            <div className="workflow-warning-list" aria-label="未匹配城市">
+            <div className="workflow-warning-list" role="group" aria-label="未匹配城市">
               <strong>未匹配城市（{exportWarnings.unresolvedStudents.length}）</strong>
               {exportWarnings.unresolvedStudents.map((student) => (
                 <button key={student.id} type="button" onClick={() => onFocusStudent(student.id)}>
@@ -236,7 +237,7 @@ export function WorkflowGuide({
             </div>
           )}
           {exportWarnings.hiddenStudents.length > 0 && (
-            <div className="workflow-warning-list" aria-label="隐藏名单">
+            <div className="workflow-warning-list" role="group" aria-label="隐藏名单">
               <strong>隐藏名单（{exportWarnings.hiddenStudents.length}）</strong>
               {exportWarnings.hiddenStudents.map((student) => (
                 <button key={student.id} type="button" onClick={() => onFocusStudent(student.id)}>
@@ -245,7 +246,7 @@ export function WorkflowGuide({
               ))}
             </div>
           )}
-          <div className="workflow-export-actions">
+          <div className="workflow-export-actions" role="group" aria-label="导出与保存">
             <button type="button" className="secondary-button" onClick={onExportPng}>导出 PNG</button>
             <button type="button" className="secondary-button" onClick={onExportSvg}>导出 SVG</button>
             <button type="button" className="secondary-button" onClick={onExportProject}>导出工程</button>
@@ -285,11 +286,24 @@ export function WorkflowGuide({
       onBlur={variant === "topbar" ? (event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
       } : undefined}
+      onKeyDown={variant === "topbar" ? (event) => {
+        // The hover/focus popover has no modal backdrop, so give keyboard
+        // users an explicit escape hatch back to the status bar toggle.
+        if (event.key === "Escape" && open) {
+          event.stopPropagation();
+          // Focus first: focusing the bar bubbles a focus event that re-opens
+          // the panel, so the closing setOpen must be enqueued after it.
+          barRef.current?.focus();
+          setOpen(false);
+        }
+      } : undefined}
     >
       <button
+        ref={barRef}
         type="button"
         className="workflow-guide__bar"
         aria-expanded={open}
+        aria-controls={open ? "workflow-guide-panel" : undefined}
         aria-label={`制作流程：${activeStepMeta.index}/5 ${activeStepMeta.title}，${activeProgress.status === "ready" ? "已完成" : activeProgress.status === "warning" ? "有警告" : "未开始"}`}
         onClick={() => setOpen((value) => !value)}
       >
@@ -307,7 +321,7 @@ export function WorkflowGuide({
           ))}
         </span>
       </button>
-      {open && <div className="workflow-guide__panel">{panel}</div>}
+      {open && <div id="workflow-guide-panel" className="workflow-guide__panel">{panel}</div>}
     </div>
   );
 }

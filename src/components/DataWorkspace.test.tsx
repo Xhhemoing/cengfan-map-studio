@@ -696,6 +696,114 @@ describe("DataWorkspace", () => {
     ]);
   });
 
+  it("tells the user which rows were skipped and why", () => {
+    const container = render(
+      <DataWorkspace
+        students={[]}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, "姓名,院校,城市\n林舟,北京大学,北京市\n,,杭州市\n苏禾,,杭州市");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "识别文本")!);
+
+    const note = container.querySelector("[data-import-unparsed]");
+    expect(note?.textContent).toContain("未识别 2 行");
+    expect(note?.textContent).toContain("第 3 行 缺少姓名、院校");
+    expect(note?.textContent).toContain("第 4 行 缺少院校");
+    expect(container.textContent).toContain("另有 2 行未识别");
+  });
+
+  it("imports a quoted CSV paste whose names contain commas", () => {
+    const onAppendStudents = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={[]}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, '姓名,院校,城市\n"李,四",北京大学,北京市');
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "识别文本")!);
+    expect(container.querySelector(".import-review")?.textContent).toContain("李,四");
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    expect(onAppendStudents).toHaveBeenCalledWith([
+      expect.objectContaining({ name: "李,四", university: "北京大学", city: "北京市" }),
+    ]);
+  });
+
+  it("carries a merged Excel province cell down to the rows it covers", async () => {
+    const onAppendStudents = vi.fn();
+    const container = render(
+      <DataWorkspace
+        students={[]}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+    const xlsx = await import("xlsx");
+    const workbook = xlsx.utils.book_new();
+    const sheet = xlsx.utils.aoa_to_sheet([
+      ["学生姓名", "录取院校", "城市", "省份"],
+      ["苏禾", "浙江大学", "杭州市", "浙江省"],
+      ["陈宁", "宁波大学", "宁波市", ""],
+    ]);
+    sheet["!merges"] = [{ s: { r: 1, c: 3 }, e: { r: 2, c: 3 } }];
+    xlsx.utils.book_append_sheet(workbook, sheet, "学生数据");
+    const workbookBytes = xlsx.write(workbook, { type: "array", bookType: "xlsx" });
+    const file = new File([], "merged.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => workbookBytes });
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { files: [file] } });
+    flushSync(() => dropzone.dispatchEvent(event));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))!);
+
+    expect(onAppendStudents).toHaveBeenCalledWith([
+      expect.objectContaining({ name: "苏禾", province: "浙江省" }),
+      expect.objectContaining({ name: "陈宁", province: "浙江省" }),
+    ]);
+  });
+
+  it("marks the selected roster row and keeps it focusable for locate actions", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        selectedStudentId="student-1"
+      />,
+    );
+
+    const row = container.querySelector<HTMLElement>('[data-student-row="student-1"]')!;
+    expect(row.getAttribute("aria-current")).toBe("true");
+    expect(row.tabIndex).toBe(-1);
+    row.focus();
+    expect(document.activeElement).toBe(row);
+  });
+
   it("imports an overseas row without demanding a Chinese province", () => {
     const onAppendStudents = vi.fn();
     const container = render(

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createProjectDocument } from "./project-document";
-import { buildDataHealthSummary, dataIssueId, listDataIssues, resolveDataIssueId } from "./data-health";
+import {
+  buildDataHealthSummary,
+  dataIssueId,
+  listDataIssues,
+  resolveDataIssueId,
+  withDataIssueId,
+} from "./data-health";
 
 describe("project data health", () => {
   it("summarizes visible, hidden, international, unresolved, and missing records", () => {
@@ -80,6 +86,35 @@ describe("project data health", () => {
     expect(dataIssueId("hidden", "student-1")).toBe("hidden:student-1");
     expect(resolveDataIssueId({ studentId: "student-9", studentName: "无 id", kind: "duplicate", detail: "", severity: "warning" }))
       .toBe("duplicate:student-9");
+  });
+
+  it("sets an id on every listed issue whatever its kind", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "student-1", name: "", university: "", city: "不存在", visibility: false },
+        { id: "student-2", name: "周晴", university: "哈佛大学", city: "美国·波士顿", locationScope: "international", visibility: true },
+        { id: "student-3", name: "林舟", university: "北京大学", city: "北京市", province: "北京市", visibility: true },
+        { id: "student-4", name: "林舟", university: "北京大学", city: "北京市", visibility: true },
+        { id: "student-5", name: "林舟", university: "北京大学", city: "北京市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    const issues = listDataIssues(project);
+    const kinds = new Set(issues.map((issue) => issue.kind));
+
+    expect(kinds).toEqual(new Set(["missing-field", "unresolved-location", "manual-province", "international", "hidden", "duplicate"]));
+    expect(issues.every((issue) => issue.id === resolveDataIssueId(issue))).toBe(true);
+    expect(issues.every((issue) => issue.id === `${issue.kind}:${issue.studentId}`)).toBe(true);
+    expect(new Set(issues.map((issue) => issue.id)).size).toBe(issues.length);
+  });
+
+  it("fills in the id of an issue built outside listDataIssues", () => {
+    const literal = { studentId: "student-9", studentName: "无 id", kind: "hidden" as const, detail: "", severity: "info" as const };
+
+    expect(withDataIssueId(literal)).toEqual({ ...literal, id: "hidden:student-9" });
+    expect(withDataIssueId({ ...literal, id: "custom" }).id).toBe("custom");
   });
 
   it("reports a whitespace-only name as a missing field and labels it 未命名学生", () => {

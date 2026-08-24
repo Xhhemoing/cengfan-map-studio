@@ -32,6 +32,23 @@ function cardInput(input: Omit<CardLayoutInput, "width" | "height"> & Partial<Pi
   return { width: 220, height: 110, ...input };
 }
 
+/** Pairs of leader lines that cross, as the canvas would draw them. */
+function countCrossings(placements: readonly CardPlacement[]): number {
+  const geometries = placements.map((card) => buildConnectorGeometry({
+    card,
+    anchor: { x: card.anchorX, y: card.anchorY },
+    preferredSide: card.side,
+    style: "curve",
+  }));
+  let crossings = 0;
+  for (let i = 0; i < geometries.length; i += 1) {
+    for (let j = i + 1; j < geometries.length; j += 1) {
+      if (connectorGeometriesIntersect(geometries[i]!, geometries[j]!, 1.5)) crossings += 1;
+    }
+  }
+  return crossings;
+}
+
 function assertHardConstraints(
   placements: CardPlacement[],
   b: CardLayoutBounds,
@@ -589,6 +606,270 @@ describe("card layout", () => {
     const result = solveCardLayout(input, crowded, { mode: "radial", connectorStyle: "curve", connectorWidth: 3 });
     expect(result.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
     expect(new Set(result.placements.map((placement) => placement.id)).size).toBe(input.length);
+  });
+
+  it("never drops, duplicates or corrupts a card, on either side of the search cap", () => {
+    const provinces = Array.from({ length: 34 }, (_, index) => {
+      const cx = 400 + ((index * 137) % 700);
+      const cy = 150 + ((index * 89) % 560);
+      return {
+        rings: [Array.from({ length: 24 }, (_, step) => {
+          const angle = (step / 24) * Math.PI * 2;
+          const radius = 30 + (index % 5) * 8;
+          return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+        })],
+      };
+    });
+    const canvases: CardLayoutBounds[] = [
+      { ...bounds, occupiedAreas: [bounds.map] },
+      { ...bounds, occupiedAreas: [], occupiedPolygons: provinces },
+      { ...bounds, occupiedAreas: [{ x: 200, y: 100, width: 1100, height: 800 }] },
+    ];
+    // Straddles MAX_OPTIMIZED_CARDS (80) so both the searched and the
+    // packing-only paths are covered, and 200 saturates every canvas here.
+    for (const count of [1, 34, 79, 80, 81, 200]) {
+      const input = Array.from({ length: count }, (_, index) => cardInput({
+        id: `card-${index}`,
+        anchorX: 380 + ((index * 137) % 740),
+        anchorY: 140 + ((index * 89) % 620),
+        width: 150,
+        height: 64,
+      }));
+      for (const canvas of canvases) {
+        for (const mode of ["quadrant", "radial"] as CardLayoutMode[]) {
+          const result = solveCardLayout(input, canvas, { mode, connectorStyle: "curve", connectorWidth: 1.5 });
+          expect(result.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
+          for (const placement of result.placements) {
+            expect(Number.isFinite(placement.x) && Number.isFinite(placement.y)).toBe(true);
+            expect(placement.x).toBeGreaterThanOrEqual(canvas.margin - 1e-6);
+            expect(placement.y).toBeGreaterThanOrEqual(canvas.margin - 1e-6);
+            expect(placement.x + placement.width).toBeLessThanOrEqual(canvas.width - canvas.margin + 1e-6);
+            expect(placement.y + placement.height).toBeLessThanOrEqual(canvas.height - canvas.margin + 1e-6);
+          }
+        }
+      }
+    }
+  });
+
+  it("never lets the connector search return a worse layout than packing alone", () => {
+    // Both canvases protect exactly the map frame, so they pose the identical
+    // problem — but only the explicit `occupiedAreas` form counts as geography
+    // worth searching, so the other one shows what packing alone produces.
+    const searched: CardLayoutBounds = { ...bounds, occupiedAreas: [bounds.map] };
+    const packedOnly: CardLayoutBounds = { ...bounds };
+
+    for (const count of [12, 30, 55]) {
+      const input = Array.from({ length: count }, (_, index) => cardInput({
+        id: `q-${index}`,
+        anchorX: 380 + ((index * 137) % 740),
+        anchorY: 140 + ((index * 89) % 620),
+        width: 150,
+        height: 64,
+      }));
+      const withSearch = solveCardLayout(input, searched, { mode: "quadrant", connectorStyle: "curve", connectorWidth: 1.5 });
+      const withoutSearch = solveCardLayout(input, packedOnly, { mode: "quadrant", connectorStyle: "curve", connectorWidth: 1.5 });
+      expect(withSearch.status).toBe(withoutSearch.status);
+      expect(countCrossings(withSearch.placements)).toBeLessThanOrEqual(countCrossings(withoutSearch.placements));
+    }
+  });
+
+  it("keeps every saturated card contained, distinct and mostly unstacked", () => {
+    const shapes: Array<[CardLayoutBounds, number, number, number]> = [
+      // [canvas, card width, card height, card count]
+      [{ width: 600, height: 400, map: { x: 150, y: 80, width: 300, height: 240 }, margin: 16, gap: 8 }, 150, 70, 60],
+      [{ width: 1500, height: 1000, map: { x: 350, y: 120, width: 800, height: 690 }, margin: 40, gap: 8 }, 150, 70, 400],
+      [{ width: 420, height: 260, map: { x: 100, y: 60, width: 220, height: 140 }, margin: 0, gap: 8 }, 220, 110, 150],
+      [{ width: 800, height: 500, map: { x: 200, y: 100, width: 400, height: 300 }, margin: 8, gap: 4 }, 90, 40, 400],
+    ];
+    for (const [canvas, width, height, count] of shapes) {
+      const input = Array.from({ length: count }, (_, index) => cardInput({
+        id: `s-${index}`,
+        anchorX: canvas.width * 0.2 + ((index * 53) % (canvas.width * 0.6)),
+        anchorY: canvas.height * 0.2 + ((index * 37) % (canvas.height * 0.6)),
+        width,
+        height,
+      }));
+      const result = solveCardLayout(input, canvas, { mode: "quadrant" });
+      expect(result.status).toBe("fallback");
+      expect(result.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
+      for (const placement of result.placements) {
+        expect(Number.isFinite(placement.x) && Number.isFinite(placement.y)).toBe(true);
+        expect(placement.x).toBeGreaterThanOrEqual(canvas.margin - 1e-6);
+        expect(placement.y).toBeGreaterThanOrEqual(canvas.margin - 1e-6);
+        expect(placement.x + placement.width).toBeLessThanOrEqual(canvas.width - canvas.margin + 1e-6);
+        expect(placement.y + placement.height).toBeLessThanOrEqual(canvas.height - canvas.margin + 1e-6);
+      }
+      // No card may sit at exactly another's coordinates: that one is invisible
+      // and unselectable, which is worse than any amount of partial overlap.
+      const positions = new Set(result.placements.map((placement) => `${placement.x}:${placement.y}`));
+      expect({ shape: `${canvas.width}x${canvas.height}`, distinct: positions.size })
+        .toEqual({ shape: `${canvas.width}x${canvas.height}`, distinct: count });
+    }
+  });
+
+  it("fills every slot the saturated canvas holds instead of leaving spares empty", () => {
+    // Overlap grows with the square of a slot's occupancy, so the fewest pairs
+    // a canvas can force is the even split of its cards over every slot that
+    // fits on it. Anything above that bound means slots went unused.
+    const shapes: Array<[CardLayoutBounds, number, number, number]> = [
+      [{ width: 900, height: 650, map: { x: 225, y: 130, width: 450, height: 390 }, margin: 24, gap: 8 }, 130, 56, 200],
+      [{ width: 1500, height: 1000, map: { x: 375, y: 200, width: 750, height: 600 }, margin: 24, gap: 8 }, 150, 64, 200],
+      [{ width: 1500, height: 1000, map: { x: 375, y: 200, width: 750, height: 600 }, margin: 24, gap: 8 }, 130, 56, 400],
+    ];
+    for (const [canvas, width, height, count] of shapes) {
+      const input = Array.from({ length: count }, (_, index) => cardInput({
+        id: `f-${index}`,
+        anchorX: canvas.width * 0.2 + ((index * 53) % (canvas.width * 0.6)),
+        anchorY: canvas.height * 0.2 + ((index * 37) % (canvas.height * 0.6)),
+        width,
+        height,
+      }));
+      const columns = Math.floor((canvas.width - canvas.margin * 2 + canvas.gap) / (width + canvas.gap));
+      const rows = Math.floor((canvas.height - canvas.margin * 2 + canvas.gap) / (height + canvas.gap));
+      const slots = Math.max(1, columns * rows);
+      const perSlot = Math.floor(count / slots);
+      const fullSlots = count % slots;
+      const bound = fullSlots * ((perSlot + 1) * perSlot) / 2
+        + (slots - fullSlots) * (perSlot * (perSlot - 1)) / 2;
+
+      const result = solveCardLayout(input, canvas, { mode: "quadrant" });
+
+      let pairs = 0;
+      for (let i = 0; i < result.placements.length; i += 1) {
+        for (let j = i + 1; j < result.placements.length; j += 1) {
+          if (overlaps(result.placements[i]!, result.placements[j]!)) pairs += 1;
+        }
+      }
+      expect({ shape: `${count}@${canvas.width}x${canvas.height}`, pairs })
+        .toEqual({ shape: `${count}@${canvas.width}x${canvas.height}`, pairs: bound });
+    }
+  });
+
+  it("shares saturated overlap out instead of piling it into one stack", () => {
+    const tiny: CardLayoutBounds = {
+      width: 600,
+      height: 400,
+      map: { x: 150, y: 80, width: 300, height: 240 },
+      margin: 16,
+      gap: 8,
+    };
+    const input = Array.from({ length: 60 }, (_, index) => cardInput({
+      id: `s-${index}`,
+      anchorX: 120 + ((index * 53) % 360),
+      anchorY: 90 + ((index * 37) % 220),
+      width: 150,
+      height: 70,
+    }));
+    const result = solveCardLayout(input, tiny, { mode: "quadrant" });
+    // A single stack would pair every card with every other one; spreading
+    // them over slots that tile the canvas has to beat that by a wide margin.
+    let pairs = 0;
+    for (let i = 0; i < result.placements.length; i += 1) {
+      for (let j = i + 1; j < result.placements.length; j += 1) {
+        if (overlaps(result.placements[i]!, result.placements[j]!)) pairs += 1;
+      }
+    }
+    expect(pairs).toBeLessThan((input.length * (input.length - 1)) / 2 / 10);
+  });
+
+  it("clamps a manual position on degenerate and hostile bounds without NaN", () => {
+    const cases: Array<[CardLayoutBounds, { x: number; y: number; width: number; height: number }]> = [
+      [bounds, { x: Number.NaN, y: Number.NaN, width: 200, height: 100 }],
+      [bounds, { x: -9000, y: 9000, width: 200, height: 100 }],
+      [{ ...bounds, width: 0, height: 0, margin: 0 }, { x: 10, y: 10, width: 200, height: 100 }],
+      [{ ...bounds, margin: 5000 }, { x: 700, y: 400, width: 200, height: 100 }],
+      [bounds, { x: 700, y: 400, width: Number.POSITIVE_INFINITY, height: -50 }],
+      [bounds, { x: 700, y: 400, width: Number.NaN, height: Number.NaN }],
+      // A blocked origin forces the candidate search, so the degenerate inputs
+      // have to survive that path too, not just the early accept.
+      [{ ...bounds, occupiedAreas: [{ x: 0, y: 0, width: 1500, height: 1000 }] },
+        { x: Number.NaN, y: 400, width: Number.NaN, height: 100 }],
+      [{ ...bounds, occupiedAreas: [], occupiedPolygons: [{ rings: [[{ x: Number.NaN, y: 0 }, { x: 900, y: 200 }, { x: 900, y: 600 }]] }] },
+        { x: 700, y: 400, width: 200, height: 100 }],
+    ];
+    for (const [canvas, position] of cases) {
+      const clamped = clampCardPosition(position, canvas);
+      expect(Number.isFinite(clamped.x)).toBe(true);
+      expect(Number.isFinite(clamped.y)).toBe(true);
+    }
+  });
+
+  it("pushes a manual card clear of a province-dense map, deterministically and quickly", () => {
+    // Roughly the vertex budget of the real China outlines, where the clamp
+    // used to enumerate the full cross product of every part's AABB edges.
+    const occupiedPolygons = Array.from({ length: 240 }, (_, index) => {
+      const cx = 380 + ((index * 137) % 720);
+      const cy = 140 + ((index * 89) % 600);
+      const radius = 26 + (index % 9) * 7;
+      return {
+        rings: [Array.from({ length: 120 }, (_, step) => {
+          const angle = (step / 120) * Math.PI * 2;
+          return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+        })],
+      };
+    });
+    const canvas: CardLayoutBounds = { ...bounds, occupiedAreas: [], occupiedPolygons };
+    const frames = Array.from({ length: 60 }, (_, index) => ({
+      x: 300 + index * 9,
+      y: 200 + index * 6,
+      width: 220,
+      height: 110,
+    }));
+
+    const started = performance.now();
+    const first = frames.map((frame) => clampCardPosition(frame, canvas));
+    const elapsed = performance.now() - started;
+
+    expect(frames.map((frame) => clampCardPosition(frame, canvas))).toEqual(first);
+    for (const clamped of first) {
+      expect(Number.isFinite(clamped.x) && Number.isFinite(clamped.y)).toBe(true);
+      expect(clamped.x).toBeGreaterThanOrEqual(canvas.margin - 1e-6);
+      expect(clamped.y).toBeGreaterThanOrEqual(canvas.margin - 1e-6);
+      expect(clamped.x + 220).toBeLessThanOrEqual(canvas.width - canvas.margin + 1e-6);
+      expect(clamped.y + 110).toBeLessThanOrEqual(canvas.height - canvas.margin + 1e-6);
+    }
+    // A drag frame has to land inside a frame budget. The unindexed scan took
+    // ~1s per frame here, so this is a cliff detector rather than a tight bound.
+    expect(elapsed / frames.length).toBeLessThan(50);
+  });
+
+  it("puts a manually dragged card on the nearest legal spot, not merely a legal one", () => {
+    const blocker = { x: 600, y: 300, width: 300, height: 200 };
+    const position = { x: 650, y: 340, width: 120, height: 80 };
+
+    const clamped = clampCardPosition(position, { ...bounds, occupiedAreas: [blocker] });
+    const card = { ...clamped, width: position.width, height: position.height };
+
+    expect(overlaps(card, blocker)).toBe(false);
+    // Every candidate edge of the blocker is a legal escape; the closest of
+    // them is sliding up to sit on its top edge, 60px away.
+    expect(clamped).toEqual({ x: 650, y: 220 });
+  });
+
+  it("stays deterministic on a board large enough to exhaust the search budget", () => {
+    const provinces = Array.from({ length: 34 }, (_, index) => ({
+      rings: [Array.from({ length: 90 }, (_, step) => {
+        const angle = (step / 90) * Math.PI * 2;
+        const radius = 34 + (index % 7) * 5;
+        return {
+          x: 400 + ((index * 137) % 700) + Math.cos(angle) * radius,
+          y: 150 + ((index * 89) % 560) + Math.sin(angle) * radius,
+        };
+      })],
+    }));
+    const canvas: CardLayoutBounds = { ...bounds, occupiedAreas: [], occupiedPolygons: provinces };
+    const input = Array.from({ length: 70 }, (_, index) => cardInput({
+      id: `b-${index}`,
+      anchorX: 400 + ((index * 137) % 700),
+      anchorY: 150 + ((index * 89) % 560),
+      width: 130,
+      height: 56,
+    }));
+    const options = { mode: "quadrant" as const, connectorStyle: "curve" as const, connectorWidth: 1.5 };
+    const first = solveCardLayout(input, canvas, options);
+    expect(solveCardLayout(input, canvas, options)).toEqual(first);
+    expect(solveCardLayout([...input], canvas, options)).toEqual(first);
+    expect(first.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
   });
 
   it("uses the renderer connector geometry while optimizing for distance and crossings", () => {

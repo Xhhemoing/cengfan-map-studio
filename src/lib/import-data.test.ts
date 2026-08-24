@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   detectHeaderColumns,
+  isBlankImportCell,
   looksLikeStudentHeader,
   missingRequiredColumns,
   normalizeHeaderCell,
   parseDelimitedTable,
   parseLocationScopeValue,
   parseStudentText,
+  splitDelimitedLine,
+  trimImportCell,
   type ImportCandidate,
 } from "./import-data";
 
@@ -225,7 +228,7 @@ describe("import data robustness", () => {
 
     expect(result.candidates).toHaveLength(1);
     expect(result.unparsed).toEqual([
-      { sourceLine: 3, rawLine: "只有姓名,,", reason: "无法识别学生名称、录取院校和城市" },
+      { sourceLine: 3, rawLine: "只有姓名,,", reason: "缺少院校、城市" },
     ]);
   });
 
@@ -257,5 +260,110 @@ describe("import data robustness", () => {
   it("returns nothing for blank input without inventing candidates", () => {
     expect(parseStudentText("")).toEqual({ candidates: [], unparsed: [] });
     expect(parseStudentText("\uFEFF\n   \n")).toEqual({ candidates: [], unparsed: [] });
+  });
+});
+
+describe("import header aliases and fuzzy matching", () => {
+  it("maps the 录取学校 / 高校 / 学院 destination wordings", () => {
+    expect(detectHeaderColumns(["姓名", "录取学校", "城市"]).university).toBe(1);
+    expect(detectHeaderColumns(["姓名", "高校", "城市"]).university).toBe(1);
+    expect(detectHeaderColumns(["姓名", "学院", "城市"]).university).toBe(1);
+  });
+
+  it("accepts 生源地 as a city column but never over an explicit city column", () => {
+    expect(detectHeaderColumns(["姓名", "高校", "生源地"])).toEqual({ name: 0, university: 1, city: 2 });
+    // A sheet carrying both keeps the destination city and leaves 生源地 unused.
+    expect(detectHeaderColumns(["姓名", "高校", "生源地", "城市"])).toEqual({ name: 0, university: 1, city: 3 });
+  });
+
+  it("maps 所在省 like the other province wordings", () => {
+    expect(detectHeaderColumns(["姓名", "院校", "城市", "所在省"])).toEqual({
+      name: 0,
+      university: 1,
+      city: 2,
+      province: 3,
+    });
+  });
+
+  it("reads decorated headers by substring while ignoring non-student columns", () => {
+    expect(detectHeaderColumns(["学生学号", "学生姓名（中文）", "录取院校名称", "所在城市/地区", "所在省"])).toEqual({
+      name: 1,
+      university: 2,
+      city: 3,
+      province: 4,
+    });
+  });
+
+  it("prefers the exact header over a decorated one for the same field", () => {
+    // "录取院校名称" only matches by substring, so the exact "院校" wins.
+    expect(detectHeaderColumns(["姓名", "录取院校名称", "院校", "城市"])).toMatchObject({ university: 2 });
+  });
+
+  it("never reads a data row as a header just because its values contain alias words", () => {
+    expect(looksLikeStudentHeader(["姓名：林舟", "就读院校：北京大学", "城市：北京"])).toBe(false);
+    expect(looksLikeStudentHeader(["林舟", "北京大学", "北京市"])).toBe(false);
+    // 同学 and 大学 are aliases, yet this line is a student, not a header.
+    expect(looksLikeStudentHeader(["新同学", "北京大学", "北京"])).toBe(false);
+    expect(parseStudentText("新同学 北京大学 北京").candidates).toEqual([
+      expect.objectContaining({ name: "新同学", university: "北京大学", city: "北京" }),
+    ]);
+  });
+});
+
+describe("quoted csv rows", () => {
+  it("keeps a delimiter that sits inside a quoted cell", () => {
+    expect(splitDelimitedLine('"李,四",北京大学,北京市', ",")).toEqual(["李,四", "北京大学", "北京市"]);
+    expect(splitDelimitedLine('林舟,"北京大学, 深圳研究生院",深圳市', ",")).toEqual(["林舟", "北京大学, 深圳研究生院", "深圳市"]);
+    expect(splitDelimitedLine('张 "大" 三,北京大学', ",")).toEqual(['张 "大" 三', "北京大学"]);
+  });
+
+  it("unescapes a doubled quote inside a quoted cell", () => {
+    expect(splitDelimitedLine('"张""大""三",北京大学', ",")).toEqual(['张"大"三', "北京大学"]);
+  });
+
+  it("imports a quoted roster whose names contain commas", () => {
+    const result = parseStudentText([
+      "姓名,院校,城市",
+      '"李,四",北京大学,北京市',
+      '"周, 晴",哈佛大学,美国·波士顿,海外',
+    ].join("\n"));
+
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["李,四", "周, 晴"]);
+    expect(result.unparsed).toEqual([]);
+  });
+});
+
+describe("blank and incomplete import rows", () => {
+  it("treats a zero-width-only name as missing instead of importing it", () => {
+    expect(trimImportCell("\u200b \uFEFF")).toBe("");
+    expect(isBlankImportCell("\u3000")).toBe(true);
+
+    const result = parseStudentText("姓名,院校,城市\n\u200b,北京大学,北京市");
+
+    expect(result.candidates).toEqual([]);
+    expect(result.unparsed).toEqual([expect.objectContaining({ reason: "缺少姓名" })]);
+  });
+
+  it("names the missing fields of a city-only row instead of dropping it silently", () => {
+    const result = parseStudentText([
+      "姓名,院校,城市",
+      ",,杭州市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: ",,杭州市", reason: "缺少姓名、院校" },
+    ]);
+  });
+
+  it("stays quiet about a separator-only row that carries no data", () => {
+    const result = parseStudentText([
+      "姓名,院校,城市",
+      "林舟,北京大学,北京市",
+      ",,",
+    ].join("\n"));
+
+    expect(result.candidates).toHaveLength(1);
+    expect(result.unparsed).toEqual([]);
   });
 });

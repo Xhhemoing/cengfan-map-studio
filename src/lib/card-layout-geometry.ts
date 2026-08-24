@@ -48,6 +48,18 @@ export function expandArea(area: CardArea, amount: number): CardArea {
   };
 }
 
+/** Smallest rectangle covering both inputs. */
+export function unionArea(left: CardArea, right: CardArea): CardArea {
+  const x = Math.min(left.x, right.x);
+  const y = Math.min(left.y, right.y);
+  return {
+    x,
+    y,
+    width: Math.max(left.x + left.width, right.x + right.width) - x,
+    height: Math.max(left.y + left.height, right.y + right.height) - y,
+  };
+}
+
 export function centerOf(area: CardArea): CardPoint {
   return { x: area.x + area.width / 2, y: area.y + area.height / 2 };
 }
@@ -58,6 +70,23 @@ export function boundsTouch(left: CardArea, right: CardArea, clearance: number):
     && left.x + left.width + clearance >= right.x
     && left.y <= right.y + right.height + clearance
     && left.y + left.height + clearance >= right.y;
+}
+
+/** Corners in clockwise order, the winding the edge walks below assume. */
+export function areaCorners(area: CardArea): [CardPoint, CardPoint, CardPoint, CardPoint] {
+  return [
+    { x: area.x, y: area.y },
+    { x: area.x + area.width, y: area.y },
+    { x: area.x + area.width, y: area.y + area.height },
+    { x: area.x, y: area.y + area.height },
+  ];
+}
+
+export function pointInArea(point: CardPoint, area: CardArea): boolean {
+  return point.x >= area.x - EPSILON
+    && point.x <= area.x + area.width + EPSILON
+    && point.y >= area.y - EPSILON
+    && point.y <= area.y + area.height + EPSILON;
 }
 
 export function orientation(a: CardPoint, b: CardPoint, c: CardPoint): number {
@@ -85,6 +114,22 @@ export function segmentsIntersect(a: CardPoint, b: CardPoint, c: CardPoint, d: C
     || pointOnSegment(d, a, b)
     || pointOnSegment(a, c, d)
     || pointOnSegment(b, c, d);
+}
+
+/** True when the segment touches `area`, counting a segment fully inside it. */
+export function segmentTouchesArea(start: CardPoint, end: CardPoint, area: CardArea): boolean {
+  // Bounding-box reject first: on a province outline almost every edge is far
+  // from the probe rectangle, and four comparisons beat four segment tests.
+  if (Math.min(start.x, end.x) > area.x + area.width + EPSILON
+    || Math.max(start.x, end.x) < area.x - EPSILON
+    || Math.min(start.y, end.y) > area.y + area.height + EPSILON
+    || Math.max(start.y, end.y) < area.y - EPSILON) return false;
+  if (pointInArea(start, area) || pointInArea(end, area)) return true;
+  const corners = areaCorners(area);
+  for (let index = 0; index < corners.length; index += 1) {
+    if (segmentsIntersect(start, end, corners[index]!, corners[(index + 1) % corners.length]!)) return true;
+  }
+  return false;
 }
 
 export function pointInRing(point: CardPoint, ring: CardPoint[]): boolean {
@@ -132,8 +177,31 @@ export function polygonBounds(polygon: CardPolygon): CardArea | null {
 }
 
 /**
+ * Iterate the closed edges of every ring. Rings are implicitly closed, so the
+ * last point pairs with the first.
+ */
+export function forEachPolygonEdge(
+  polygon: CardPolygon,
+  visit: (start: CardPoint, end: CardPoint) => boolean | void,
+): boolean {
+  for (const ring of polygon.rings) {
+    for (let index = 0; index < ring.length; index += 1) {
+      const start = ring[index]!;
+      const end = ring[(index + 1) % ring.length]!;
+      if (visit(start, end) === true) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * True when `card` (grown by `gap`) touches the polygon. `cachedBounds` skips
  * the AABB walk; pass it whenever the polygon is tested more than once.
+ *
+ * Two cases, in cost order: an outline edge cuts the rectangle, or no edge does
+ * and the rectangle lies wholly inside or wholly outside the shape — which one
+ * costs a single ray cast to settle. Callers with many probes against the same
+ * geometry should use the indexed variant in `card-layout-space` instead.
  */
 export function rectangleIntersectsPolygon(
   card: CardArea,
@@ -144,27 +212,14 @@ export function rectangleIntersectsPolygon(
   const expanded = expandArea(card, gap);
   const bounds = cachedBounds === undefined ? polygonBounds(polygon) : cachedBounds;
   if (!bounds || !overlaps(expanded, bounds)) return false;
-
-  // Cheapest discriminator first: any shell vertex inside the card settles it
-  // without a single ray cast, which is the common case for dense boards.
   const shell = polygon.rings[0] ?? [];
   if (shell.some((point) => point.x >= expanded.x - EPSILON
     && point.x <= expanded.x + expanded.width + EPSILON
     && point.y >= expanded.y - EPSILON
     && point.y <= expanded.y + expanded.height + EPSILON)) return true;
-
-  const corners = [
-    { x: expanded.x, y: expanded.y },
-    { x: expanded.x + expanded.width, y: expanded.y },
-    { x: expanded.x + expanded.width, y: expanded.y + expanded.height },
-    { x: expanded.x, y: expanded.y + expanded.height },
-  ];
+  const corners = areaCorners(expanded);
   if (corners.some((corner) => pointInPolygon(corner, polygon))) return true;
-
-  const rectangleEdges = corners.map((corner, index) => [
-    corner,
-    corners[(index + 1) % corners.length]!,
-  ] as const);
+  const rectangleEdges = corners.map((corner, index) => [corner, corners[(index + 1) % corners.length]!] as const);
   return polygon.rings.some((ring) => ring.some((point, index) => {
     const next = ring[(index + 1) % ring.length];
     return Boolean(next && rectangleEdges.some(([start, end]) => segmentsIntersect(point, next, start, end)));

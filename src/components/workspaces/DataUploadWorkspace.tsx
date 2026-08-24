@@ -38,7 +38,7 @@ function MappingIssueRow({
     window.setTimeout(() => setSaved(false), 1600);
   };
   return (
-    <div className="data-quality-row data-upload-workspace__mapping-row" role="listitem">
+    <div className="data-quality-row data-upload-workspace__mapping-row" data-issue-id={resolveDataIssueId(issue)} role="listitem">
       <div className="data-quality-row__content">
         <strong>{issue.studentName}</strong>
         <small>{issue.detail}</small>
@@ -64,6 +64,7 @@ function MappingIssueRow({
         icon={<LocateFixed size={14} aria-hidden />}
         aria-label={`定位${issue.studentName}`}
         variant="secondary"
+        data-locate-issue={resolveDataIssueId(issue)}
         onClick={() => onSelectStudent(issue.studentId)}
       >
         定位到名单
@@ -72,11 +73,24 @@ function MappingIssueRow({
   );
 }
 
+/**
+ * Brings the roster row for a student into view and moves focus onto it, so a
+ * 定位 action from the quality rail lands on the record instead of only
+ * scrolling near it. The row lives in a sibling component, hence the DOM lookup
+ * by its existing `data-student-row` id rather than a new routing layer.
+ */
+function focusStudentRow(id: string): boolean {
+  const row = Array.from(document.querySelectorAll<HTMLElement>("[data-student-row]")).find((item) => item.dataset.studentRow === id);
+  if (!row) return false;
+  if (typeof row.scrollIntoView === "function") row.scrollIntoView({ block: "center" });
+  if (typeof row.focus === "function") row.focus({ preventScroll: true });
+  return true;
+}
+
 function selectStudentRow(id: string, onSelectStudent: (studentId: string) => void, delegate?: (studentId: string) => void) {
   delegate?.(id);
   onSelectStudent(id);
-  const row = Array.from(document.querySelectorAll<HTMLElement>("[data-student-row]")).find((item) => item.dataset.studentRow === id);
-  if (typeof row?.scrollIntoView === "function") row.scrollIntoView({ block: "center" });
+  focusStudentRow(id);
 }
 
 export type DataUploadWorkspaceProps = {

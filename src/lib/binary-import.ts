@@ -1,13 +1,19 @@
 import {
   candidateFromColumns,
+  describeMissingCells,
   detectHeaderColumns,
+  isBlankImportCell,
+  missingRequiredCells,
   missingRequiredColumns,
   parseStudentText,
   STUDENT_HEADER_ALIASES,
+  trimImportCell,
   type RequiredStudentColumn,
   type StudentColumn,
+  type ImportCandidate,
   type StudentColumnIndexes,
   type TextImportResult,
+  type UnparsedLine,
 } from "./import-data";
 
 export type { RequiredStudentColumn, StudentColumn } from "./import-data";
@@ -45,19 +51,50 @@ export function createImportTemplateSheets(): ImportTemplateSheets {
       ["去向类型", "否", "中国去向 / 海外去向"],
       ["省份", "否", "浙江省（留空时按城市自动匹配）"],
       ["填写说明", "", "去向类型留空时按中国去向处理；海外去向无需填写省份"],
+      ["填写说明", "", "合并单元格会按整块自动补齐；CSV 中含逗号的姓名请用英文双引号包裹"],
     ],
   };
 }
 
 const HEADER_SEARCH_DEPTH = 8;
 
-/** Trims BOM/whitespace so a CSV-sourced matrix behaves like an XLSX one. */
-function normalizeCell(value: unknown): string {
-  return String(value ?? "").replace(/\uFEFF/g, "").trim();
+/** A `!merges` entry from the xlsx worksheet: inclusive start/end cell addresses. */
+export interface SheetMergeRange {
+  s: { r: number; c: number };
+  e: { r: number; c: number };
+}
+
+export interface ExcelParseOptions {
+  /** Pass `worksheet["!merges"]` so a merged 省份/城市 block fills its rows. */
+  merges?: readonly SheetMergeRange[];
 }
 
 function normalizeMatrix(rows: unknown[][]): string[][] {
-  return rows.map((row) => (Array.isArray(row) ? row : []).map(normalizeCell));
+  return rows.map((row) => (Array.isArray(row) ? row : []).map(trimImportCell));
+}
+
+/**
+ * xlsx only stores a merged block's value in its top-left cell and leaves the
+ * rest blank, which would turn every following row of a merged 省份/城市 block
+ * into an incomplete record. Copying the anchor value across the block keeps
+ * those rows importable; cells the user actually filled in are never touched.
+ */
+export function expandMergedCells(rows: string[][], merges: readonly SheetMergeRange[] = []): string[][] {
+  if (merges.length === 0) return rows;
+  const expanded = rows.map((row) => [...row]);
+  for (const merge of merges) {
+    const anchor = expanded[merge.s.r]?.[merge.s.c] ?? "";
+    if (isBlankImportCell(anchor)) continue;
+    for (let row = merge.s.r; row <= merge.e.r; row += 1) {
+      const target = expanded[row];
+      if (!target) continue;
+      for (let column = merge.s.c; column <= merge.e.c; column += 1) {
+        while (target.length < column) target.push("");
+        if (isBlankImportCell(target[column])) target[column] = anchor;
+      }
+    }
+  }
+  return expanded;
 }
 
 function matrixToText(rows: string[][]): string {
@@ -137,8 +174,8 @@ export function parseExcelArrayBuffer(input: ArrayBuffer | string[][]): ExcelImp
   return { ...parseStudentText(""), ...emptyMetadata() };
 }
 
-export function parseExcelWorkbookRows(input: unknown[][]): ExcelImportResult {
-  const rows = normalizeMatrix(input ?? []);
+export function parseExcelWorkbookRows(input: unknown[][], options: ExcelParseOptions = {}): ExcelImportResult {
+  const rows = expandMergedCells(normalizeMatrix(input ?? []), options.merges);
   // An empty sheet (or one holding only blank cells) is not an error: report
   // nothing recognized instead of pretending a header was found.
   if (!rows.some((row) => row.some(Boolean))) {
@@ -153,15 +190,25 @@ export function parseExcelWorkbookRows(input: unknown[][]): ExcelImportResult {
     return { ...parseStudentText(matrixToText(rows)), ...metadata };
   }
 
-  const candidates = rows.slice(header.rowIndex + 1).flatMap((row, rowIndex) => {
+  const candidates: ImportCandidate[] = [];
+  const unparsed: UnparsedLine[] = [];
+  rows.slice(header.rowIndex + 1).forEach((row, rowIndex) => {
+    const sourceLine = header.rowIndex + rowIndex + 2;
     const rawLine = row.filter(Boolean).join("\t");
-    const candidate = candidateFromColumns(row, header.indexes, header.rowIndex + rowIndex + 2, rawLine);
-    return candidate ? [candidate] : [];
+    const candidate = candidateFromColumns(row, header.indexes, sourceLine, rawLine);
+    if (candidate) {
+      candidates.push(candidate);
+      return;
+    }
+    // Trailing blank sheet rows are normal; a row that holds data but misses a
+    // required cell is reported so the import never drops it silently.
+    if (row.every(isBlankImportCell)) return;
+    unparsed.push({ sourceLine, rawLine, reason: describeMissingCells(missingRequiredCells(row, header.indexes)) });
   });
 
   return {
     candidates,
-    unparsed: [],
+    unparsed,
     ...metadata,
   };
 }

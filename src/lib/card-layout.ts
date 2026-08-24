@@ -35,13 +35,13 @@ import {
   containFree,
   layoutGrid,
   orderResult,
-  overlapPairs,
   repackAll,
   shelfLayout,
   stackAtMargin,
   sweepPack,
 } from "./card-layout-pack";
 import { MAX_OPTIMIZED_CARDS, optimizedLayout } from "./card-layout-optimizer";
+import { betterLayout, layeredPack, provablyInfeasible } from "./card-layout-saturation";
 import { LayoutSpace, PlacementIndex, validateHard } from "./card-layout-space";
 import {
   type CardArea,
@@ -148,53 +148,94 @@ function packSides(
   return placed.items;
 }
 
-/** [out of bounds, overlapping pairs, obstacle hits] — lower is better. */
-function layoutQuality(placements: readonly CardPlacement[], space: LayoutSpace): [number, number, number] {
-  let outside = 0;
-  let obstacles = 0;
-  for (const placement of placements) {
-    if (!space.inside(placement)) outside += 1;
-    if (space.blocked(placement)) obstacles += 1;
-  }
-  return [outside, overlapPairs(placements, space.gap), obstacles];
-}
-
-function betterLayout(
-  left: CardPlacement[],
-  right: CardPlacement[],
+/**
+ * Repair ladder for a layout that broke a hard constraint: an anchor-greedy
+ * repack, then a dense obstacle-aware sweep. The sweep is handed back when it
+ * had to run, because the saturated path scores it too and it is much the most
+ * expensive rung to compute twice.
+ */
+function repairLadder(
+  cards: CardLayoutInput[],
   space: LayoutSpace,
-): CardPlacement[] {
-  const leftQuality = layoutQuality(left, space);
-  const rightQuality = layoutQuality(right, space);
-  for (let index = 0; index < leftQuality.length; index += 1) {
-    if (leftQuality[index] !== rightQuality[index]) {
-      return leftQuality[index]! < rightQuality[index]! ? left : right;
-    }
+): { legal: CardPlacement[] | null; swept: CardPlacement[] | null } {
+  const repacked = repackAll(cards, space);
+  if (repacked) {
+    const ordered = orderResult(cards, repacked);
+    if (validateHard(ordered, space)) return { legal: ordered, swept: null };
   }
-  return left;
+  const swept = sweepPack(cards, space);
+  return { legal: validateHard(swept, space) ? swept : null, swept };
 }
 
 /**
- * Repair ladder for a layout that broke a hard constraint: an anchor-greedy
- * repack, then a dense obstacle-aware sweep. If neither is legal the canvas is
- * saturated, and the least-bad contained layout wins — a card that covers the
- * map still reads, a card buried under another one does not.
+ * No legal arrangement was found, so the least-bad contained layout wins — a
+ * card that covers the map still reads, a card buried under another one does
+ * not.
  */
+function contain(
+  cards: CardLayoutInput[],
+  space: LayoutSpace,
+  mode: CardLayoutMode,
+  attempt: CardPlacement[],
+  swept: CardPlacement[] | null,
+): CardLayoutResult {
+  const contained = [
+    swept ?? sweepPack(cards, space),
+    sweepPack(cards, space, { ignoreObstacles: true }),
+    shelfLayout(cards, space),
+    attempt,
+    layeredPack(cards, space),
+  ];
+  return {
+    status: "fallback",
+    placements: contained.reduce((best, candidate) => betterLayout(best, candidate, space)),
+    mode,
+  };
+}
+
 function degrade(
   cards: CardLayoutInput[],
   space: LayoutSpace,
   mode: CardLayoutMode,
   attempt: CardPlacement[],
 ): CardLayoutResult {
-  const repacked = repackAll(cards, space);
-  if (repacked) {
-    const ordered = orderResult(cards, repacked);
-    if (validateHard(ordered, space)) return { status: "solved", placements: ordered, mode };
-  }
-  const swept = sweepPack(cards, space);
-  if (validateHard(swept, space)) return { status: "solved", placements: swept, mode };
+  const { legal, swept } = repairLadder(cards, space);
+  if (legal) return { status: "solved", placements: legal, mode };
+  return contain(cards, space, mode, attempt, swept);
+}
 
-  const contained = [swept, sweepPack(cards, space, { ignoreObstacles: true }), shelfLayout(cards, space), attempt];
+/**
+ * Offer a legal layout to the connector-aware search, which either returns
+ * something that scores better or nothing at all.
+ *
+ * The search is skipped unless there is real geography to route around, the
+ * board is small enough for its quadratic bookkeeping, and — enforced by the
+ * caller — a legal layout already exists. That last condition matters for cost
+ * as much as for quality: the search only accepts orders that pass the same
+ * hard-constraint check the ladder just failed, so on a saturated canvas it is
+ * guaranteed to come back empty after paying full price.
+ */
+function refine(
+  cards: CardLayoutInput[],
+  space: LayoutSpace,
+  mode: CardLayoutMode,
+  options: CardLayoutOptions,
+  legal: CardPlacement[],
+): CardLayoutResult {
+  const hasObstacles = (space.bounds.occupiedAreas?.length ?? 0) > 0 || space.polygons.length > 0;
+  if ((mode !== "quadrant" && mode !== "radial") || !hasObstacles || cards.length > MAX_OPTIMIZED_CARDS) {
+    return { status: "solved", placements: legal, mode };
+  }
+  const optimized = optimizedLayout(cards, space, mode, options, legal);
+  return { status: "solved", placements: optimized ?? legal, mode };
+}
+
+/**
+ * The canvas provably cannot hold the cards, so every search below would fail
+ * after paying for itself. Skip straight to the least-bad contained layout.
+ */
+function saturated(cards: CardLayoutInput[], space: LayoutSpace, mode: CardLayoutMode): CardLayoutResult {
+  const contained = [shelfLayout(cards, space), layeredPack(cards, space)];
   return {
     status: "fallback",
     placements: contained.reduce((best, candidate) => betterLayout(best, candidate, space)),
@@ -211,6 +252,7 @@ export function solveCardLayout(
   const inputs = sanitizeCards(cards);
   if (inputs.length === 0) return { status: "solved", placements: [], mode };
   const space = new LayoutSpace(bounds);
+  if (provablyInfeasible(inputs, space)) return saturated(inputs, space, mode);
 
   if (mode === "grid") {
     const grid = orderResult(inputs, layoutGrid(inputs, space));
@@ -218,17 +260,14 @@ export function solveCardLayout(
     return degrade(inputs, space, mode, grid);
   }
 
-  // Only explicit geography justifies the connector-aware search; the implicit
-  // map-frame zone alone keeps the cheaper side packing.
-  const hasObstacles = (space.bounds.occupiedAreas?.length ?? 0) > 0 || space.polygons.length > 0;
-  if ((mode === "quadrant" || mode === "radial") && inputs.length <= MAX_OPTIMIZED_CARDS && hasObstacles) {
-    const optimized = optimizedLayout(inputs, space, mode, options);
-    if (optimized) return { status: "solved", placements: optimized, mode };
-  }
-
+  // Side packing first, then the repair ladder: whichever legal layout comes
+  // out is both what the solver ships and what the connector-aware search has
+  // to beat, so the search can only ever improve the result.
   const packed = orderResult(inputs, packSides(inputs, space, mode, options));
-  if (validateHard(packed, space)) return { status: "solved", placements: packed, mode };
-  return degrade(inputs, space, mode, packed);
+  if (validateHard(packed, space)) return refine(inputs, space, mode, options, packed);
+  const { legal, swept } = repairLadder(inputs, space);
+  if (legal) return refine(inputs, space, mode, options, legal);
+  return contain(inputs, space, mode, packed, swept);
 }
 
 export function layoutCards(

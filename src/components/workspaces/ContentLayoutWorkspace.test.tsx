@@ -117,4 +117,20 @@ describe("ContentLayoutWorkspace", () => {
     expect(container.querySelector('[aria-label="智能排版控制"]')).toBeNull();
     expect(container.querySelector('[aria-label="排版问题提示"]')).toBeNull();
   });
+
+  it("exposes a labelled inspector focus target and a canvas selection announcer", () => {
+    const { container } = renderWorkspace();
+
+    // The rail inspector is a named group that can receive programmatic focus.
+    const panel = container.querySelector('[aria-label="内容对象属性"] [data-inspector-panel]');
+    expect(panel).not.toBeNull();
+    expect(panel?.getAttribute("role")).toBe("group");
+    expect(panel?.getAttribute("aria-label")).toBe("当前对象属性：画布");
+    expect(panel?.getAttribute("tabindex")).toBe("-1");
+
+    // The editing canvas ships a polite live region for selection announcements.
+    const announcer = container.querySelector('.content-layout-workspace__canvas [data-canvas-selection-announcement]');
+    expect(announcer).not.toBeNull();
+    expect(announcer?.getAttribute("role")).toBe("status");
+  });
 });

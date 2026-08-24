@@ -1,6 +1,7 @@
 import type { Student } from "./project-data";
 import { resolveCity, resolveProvinceName } from "./search-catalog";
 import { createId } from "./ids";
+import { trimImportCell } from "./import-data";
 
 export interface StudentInput {
   name: string;
@@ -30,9 +31,14 @@ export interface StudentBuildResult {
 }
 
 
+/**
+ * Required-field checks run on {@link trimImportCell} output, so a cell holding
+ * only spaces, a full-width space or a zero-width character is rejected exactly
+ * like an empty one instead of creating a nameless record.
+ */
 export function validateStudentInput(input: StudentInput): StudentIssue[] {
   const issues: StudentIssue[] = [];
-  if (!input.name.trim()) {
+  if (!trimImportCell(input.name)) {
     issues.push({
       code: "missing_field",
       field: "name",
@@ -40,7 +46,7 @@ export function validateStudentInput(input: StudentInput): StudentIssue[] {
       message: "学生名称不能为空",
     });
   }
-  if (!input.university.trim()) {
+  if (!trimImportCell(input.university)) {
     issues.push({
       code: "missing_field",
       field: "university",
@@ -48,7 +54,7 @@ export function validateStudentInput(input: StudentInput): StudentIssue[] {
       message: "录取院校不能为空",
     });
   }
-  if (!input.city.trim()) {
+  if (!trimImportCell(input.city)) {
     issues.push({
       code: "missing_field",
       field: "city",
@@ -108,22 +114,23 @@ export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult 
     const isInternational = input.locationScope === "international";
     // Overseas destinations never carry a Chinese province, so they are also
     // never reported as an unresolved China city.
-    const province = isInternational ? "" : (input.province?.trim() ?? "");
+    const province = isInternational ? "" : trimImportCell(input.province);
+    const city = trimImportCell(input.city);
     const location = isInternational
-      ? { city: input.city.trim(), province: "", status: "unresolved" as const }
-      : resolveCityLocation(input.city);
-    if (!isInternational && !province && input.city.trim() && location.status === "unresolved") {
+      ? { city, province: "", status: "unresolved" as const }
+      : resolveCityLocation(city);
+    if (!isInternational && !province && city && location.status === "unresolved") {
       issues.push({
         code: "unresolved_city",
         field: "city",
         level: "warning",
-        message: `无法定位城市：${input.city}`,
+        message: `无法定位城市：${city}`,
         studentIndex: index,
       });
     }
 
-    const name = input.name.trim();
-    const university = input.university.trim();
+    const name = trimImportCell(input.name);
+    const university = trimImportCell(input.university);
     const key = duplicateKey(name, university);
     const entry = duplicateCounts.get(key) ?? { name, university, count: 0 };
     entry.count += 1;
@@ -133,7 +140,7 @@ export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult 
       id: createId("student"),
       name,
       university,
-      city: location.city || input.city.trim(),
+      city: location.city || city,
       ...(province ? { province } : {}),
       ...(isInternational ? { locationScope: "international" as const } : {}),
       visibility: true,

@@ -15,6 +15,19 @@ export interface CardLayoutWorkerState {
   pending: boolean;
 }
 
+/**
+ * Keep small solves on the main thread and avoid paying worker startup latency.
+ *
+ * Linux/Node 22 probes measured 21.397 ms startup p50 (24.109 ms p95) and
+ * 0.423 ms warm p95 transfer cost at 24 cards. Main-thread p95 stayed at or
+ * below 10.836 ms through 16 cards, then reached 16.147–29.206 ms at 24 cards.
+ */
+export const DEFAULT_WORKER_CARD_THRESHOLD = 24;
+
+export function shouldUseCardLayoutWorker(cardCount: number): boolean {
+  return cardCount >= DEFAULT_WORKER_CARD_THRESHOLD;
+}
+
 function workerIsAvailable(): boolean {
   return typeof window !== "undefined" && typeof Worker !== "undefined";
 }
@@ -44,7 +57,11 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
     if (!request) return { key: null, result: null, cached: false };
     const cached = cardLayoutCache.get(request.key);
     if (cached) return { key: request.key, result: cached, cached: true };
-    if (!forceSync && workerIsAvailable()) return { key: request.key, result: null, cached: false };
+    if (!forceSync
+      && shouldUseCardLayoutWorker(request.cards.length)
+      && workerIsAvailable()) {
+      return { key: request.key, result: null, cached: false };
+    }
     const result = solveCardLayout(request.cards, request.bounds, request.options);
     cardLayoutCache.set(request.key, result);
     return { key: request.key, result, cached: !forceSync };
@@ -72,7 +89,7 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
     }
 
     const cached = cardLayoutCache.get(currentRequest.key);
-    if (cached || forceSync) {
+    if (cached || forceSync || !shouldUseCardLayoutWorker(currentRequest.cards.length)) {
       const result = cached ?? solveCardLayout(currentRequest.cards, currentRequest.bounds, currentRequest.options);
       cardLayoutCache.set(currentRequest.key, result);
       setState({ key: currentRequest.key, result, pending: false });

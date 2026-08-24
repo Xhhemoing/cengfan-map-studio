@@ -23,12 +23,12 @@ import {
   HTTP_ERROR_CODES,
   InvalidJsonError,
   RequestBodyTooLargeError,
+  apiSecurityHeaders,
   corsHeaders,
   createJsonSender,
   isRecord,
   readJson,
   requestIdFor,
-  securityHeaders,
 } from "./http-utils";
 import { serveStatic } from "./static-files";
 import { hasApiToken, requestApiAuth } from "./workspace-auth";
@@ -72,6 +72,7 @@ export interface AiServerOptions {
   roomTtlMs?: number;
   roomInvitationTtlMs?: number;
   roomEventsTicketTtlMs?: number;
+  roomEventsHeartbeatMs?: number;
   trustProxy?: boolean;
   budgetReceiptSecret?: string;
   budgetReceiptLedger?: BudgetReceiptLedger;
@@ -177,6 +178,7 @@ export function createAiServer(options: AiServerOptions = {}) {
     clientIp: (request) => clientIp(request, trustProxy),
     maxJsonBodyBytes,
     roomEventsTicketTtlMs,
+    roomEventsHeartbeatMs: options.roomEventsHeartbeatMs,
     corsOrigins,
   });
   const aiRouter = createAiRouter({
@@ -301,7 +303,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         const temporaryFile = `${workspaceFile}.${process.pid}.tmp`;
         await writeFile(temporaryFile, `${JSON.stringify(snapshot)}\n`, "utf8");
         await rename(temporaryFile, workspaceFile);
-        response.writeHead(204, { ...securityHeaders(), ...corsHeaders(request, corsOrigins) });
+        response.writeHead(204, { ...apiSecurityHeaders(), ...corsHeaders(request, corsOrigins) });
         response.end();
         return;
       }

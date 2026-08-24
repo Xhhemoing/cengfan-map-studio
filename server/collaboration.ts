@@ -16,7 +16,13 @@ type LifecycleListener = (event: LifecycleEvent) => void;
 type InvitationRecord = { role: Exclude<CollaborationRole, "owner">; expiresAt: number };
 const MAX_TRACKED_TRANSACTIONS = 256;
 const MAX_OPERATION_HISTORY = 256;
+const MAX_REVOKED_ACCESS_RECORDS = 256;
 const DEFAULT_MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+
+interface RevokedAccessRecord {
+  participant: RoomParticipant;
+  leaveResult: { id: string; version: number; members: RoomMember[] };
+}
 
 export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): RoomStore {
   const options = typeof input === "function" ? { generateId: input } : input;
@@ -35,6 +41,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const operationHistory = new Map<string, Array<{ version: number; operations: CollaborationOperation[] }>>();
   const lastActivity = new Map<string, number>();
   const accessRecords = new Map<string, Map<string, RoomParticipant>>();
+  const revokedAccessRecords = new Map<string, Map<string, RevokedAccessRecord>>();
   const invitations = new Map<string, Map<string, InvitationRecord>>();
   const legacyRoomIds = new Set<string>();
 
@@ -49,6 +56,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       operationHistory.delete(id);
       lastActivity.delete(id);
       accessRecords.delete(id);
+      revokedAccessRecords.delete(id);
       invitations.delete(id);
       legacyRoomIds.delete(id);
     }
@@ -81,6 +89,13 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       if (tokenMatches(accessToken, tokenHash)) return participant;
     }
     throw new CollaborationError("ROOM_FORBIDDEN", "房间访问凭证无效");
+  };
+
+  const matchingTokenHash = <T>(records: Map<string, T> | undefined, accessToken: string): string | undefined => {
+    for (const hash of records?.keys() ?? []) {
+      if (tokenMatches(accessToken, hash)) return hash;
+    }
+    return undefined;
   };
 
   const authorize = (id: string, accessToken: string, capability: CollaborationCapability): RoomParticipant => {
@@ -136,6 +151,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     };
     rooms.set(id, room);
     accessRecords.set(id, new Map([[tokenHash(accessToken), publicParticipant(access)]]));
+    revokedAccessRecords.set(id, new Map());
     invitations.set(id, new Map());
     transactions.set(id, new Set());
     operationHistory.set(id, []);
@@ -326,17 +342,40 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   };
 
   const leave = (id: string, accessToken: string, clientId: string): { id: string; version: number; members: RoomMember[] } => {
-    const participant = authorize(id, accessToken, "read");
+    purgeExpired();
     const key = id.toUpperCase();
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
+    const revokedRecords = revokedAccessRecords.get(key);
+    const revokedHash = matchingTokenHash(revokedRecords, accessToken);
+    if (revokedHash) {
+      const revoked = revokedRecords?.get(revokedHash);
+      if (!revoked || revoked.participant.id !== clientId) {
+        throw new CollaborationError("ROOM_FORBIDDEN", "只能移除当前访问凭证对应的成员");
+      }
+      return {
+        ...revoked.leaveResult,
+        members: revoked.leaveResult.members.map((member) => ({ ...member })),
+      };
+    }
+    const participant = authorize(key, accessToken, "read");
     if (participant.id !== clientId) throw new CollaborationError("ROOM_FORBIDDEN", "只能移除当前访问凭证对应的成员");
     const nextRoom = { ...room, members: room.members.filter((member) => member.clientId !== clientId) };
+    const activeRecords = accessRecords.get(key);
+    const activeHash = matchingTokenHash(activeRecords, accessToken);
+    if (!activeHash) throw new CollaborationError("ROOM_FORBIDDEN", "房间访问凭证无效");
+    activeRecords?.delete(activeHash);
     rooms.set(key, nextRoom);
     touch(key);
+    const leaveResult = { id: room.id, version: nextRoom.version, members: membersOf(nextRoom) };
+    revokedRecords?.set(activeHash, { participant, leaveResult });
+    if (revokedRecords && revokedRecords.size > MAX_REVOKED_ACCESS_RECORDS) {
+      const oldest = revokedRecords.keys().next().value;
+      if (oldest) revokedRecords.delete(oldest);
+    }
     notifyLifecycle(key, "members", nextRoom);
-    return { id: room.id, version: nextRoom.version, members: membersOf(nextRoom) };
+    return leaveResult;
   };
 
   const setAccess = (id: string, accessToken: string, clientId: string, action: "set-readonly" | "close"): { id: string; version: number; readonly: boolean; closed: boolean } => {

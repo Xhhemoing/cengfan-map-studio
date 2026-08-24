@@ -3,11 +3,7 @@
  * scorer. Everything here reasons about the *rendered* leader line, so layout
  * decisions and the canvas agree on what "crossing" means.
  */
-import {
-  boundsTouch,
-  pointInPolygon,
-  segmentIntersectsPolygon,
-} from "./card-layout-geometry";
+import { boundsTouch } from "./card-layout-geometry";
 import type { LayoutSpace } from "./card-layout-space";
 import type { CardArea, CardLayoutInput, CardPoint } from "./card-layout-types";
 import {
@@ -42,9 +38,18 @@ export function connectorIntersects(
     && connectorGeometriesIntersect(left, right, clearance);
 }
 
-/** A leader line that runs through another card's body. */
-export function connectorHitsCard(geometry: ConnectorGeometry, card: CardArea, clearance: number): boolean {
-  return boundsTouch(connectorBounds(geometry), card, clearance)
+/**
+ * A leader line that runs through another card's body. `geometryBounds` is the
+ * line's cached AABB; recomputing it here would walk every curve sample on a
+ * test whose whole job is to reject cheaply.
+ */
+export function connectorHitsCard(
+  geometry: ConnectorGeometry,
+  geometryBounds: CardArea,
+  card: CardArea,
+  clearance: number,
+): boolean {
+  return boundsTouch(geometryBounds, card, clearance)
     && geometry.segments.some((segment) => segmentIntersectsRect(segment, card, clearance));
 }
 
@@ -57,15 +62,7 @@ export function connectorMapIntersections(
   anchor: CardPoint,
   space: LayoutSpace,
 ): number {
-  if (space.polygons.length === 0) return 0;
-  const geometryArea = connectorBounds(geometry);
-  let intersections = 0;
-  for (const { polygon, area } of space.polygons) {
-    if (!boundsTouch(geometryArea, area, 0)) continue;
-    if (pointInPolygon(anchor, polygon)) continue;
-    if (geometry.segments.some((segment) => segmentIntersectsPolygon(segment, polygon))) intersections += 1;
-  }
-  return intersections;
+  return space.polygonCrossings(geometry.segments, anchor);
 }
 
 /**

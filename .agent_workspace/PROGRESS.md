@@ -10,8 +10,8 @@
 | 轮次 | 状态 | 开始 | 结束 | 说明 |
 | --- | --- | --- | --- | --- |
 | Round 1 | complete | 2026-08-24 | 2026-08-24 | 拆 God 组件 / 布局求解 / 导入诚实 / API 4xx / a11y / 性能基线 |
-| Round 2 | in_progress | 2026-08-24 | — | 靶向重构与深度优化 |
-| Round 3 | pending | — | — | SOTA 打磨与最终验收 |
+| Round 2 | complete | 2026-08-24 | 2026-08-24 | App 再拆 −747 行；连接线搜索复活；hidden 卡清零；leave 撤 token |
+| Round 3 | in_progress | 2026-08-24 | — | SOTA 打磨与最终验收 |
 
 ## Round 1 结论摘要
 
@@ -41,4 +41,13 @@
 
 ## Round 2 结论简报
 
-（待回收）
+详见 [round2/BRIEF.md](round2/BRIEF.md)。集成：**tsc 绿、全量 173×1429 tests 绿**。
+
+## 验证纪律记录（续）
+
+### Round 2
+
+| failure | cause | fix | recheck |
+| --- | --- | --- | --- |
+| 全量 1429 通过，无集成失败 | 子代理曾报告 PosterCanvas.performance 超时 | opus-layout 修复 clampCardPosition 穷举（1068ms→4.9ms） | 全量 vitest 173 files passed |
+| tsc 曾报 card-layout-space 进行中错误 | 并行编辑中间态 | 回收后 tsc app+node 0 error | 主调度复跑 tsc |

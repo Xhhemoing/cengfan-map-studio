@@ -208,11 +208,24 @@ export function connectorGeometriesIntersect(left: ConnectorGeometry, right: Con
   const nearAnchorEnd = (segment: ConnectorSegment, tail: ConnectorSegment) =>
     distanceSquared(segment.end, tail.end) <= anchorRadius * anchorRadius
     && distanceSquared(segment.start, tail.end) <= anchorRadius * anchorRadius;
-  return left.segments.some((first) => right.segments.some((second) => {
-    if (sharedAnchor && leftTail && rightTail
-      && nearAnchorEnd(first, leftTail) && nearAnchorEnd(second, rightTail)) return false;
-    return segmentDistance(first, second) <= clearance + EPSILON;
-  }));
+  // A curve is 16 sampled segments, so a naive pass costs 256 segment-distance
+  // computations per pair of leader lines. Two segments can only be within
+  // `reach` if their bounding boxes are, and four comparisons settle that.
+  const reach = clearance + EPSILON;
+  for (const first of left.segments) {
+    const minX = Math.min(first.start.x, first.end.x) - reach;
+    const maxX = Math.max(first.start.x, first.end.x) + reach;
+    const minY = Math.min(first.start.y, first.end.y) - reach;
+    const maxY = Math.max(first.start.y, first.end.y) + reach;
+    const firstNearAnchor = sharedAnchor && leftTail !== undefined && nearAnchorEnd(first, leftTail);
+    for (const second of right.segments) {
+      if (minX > Math.max(second.start.x, second.end.x) || maxX < Math.min(second.start.x, second.end.x)) continue;
+      if (minY > Math.max(second.start.y, second.end.y) || maxY < Math.min(second.start.y, second.end.y)) continue;
+      if (firstNearAnchor && rightTail && nearAnchorEnd(second, rightTail)) continue;
+      if (segmentDistance(first, second) <= reach) return true;
+    }
+  }
+  return false;
 }
 
 export function segmentIntersectsRect(segment: ConnectorSegment, rect: Rect, clearance = 0): boolean {

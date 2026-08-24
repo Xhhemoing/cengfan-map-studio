@@ -871,6 +871,27 @@ export function PosterCanvas({
     [pins, project.dataView, selectedStudentId],
   );
   const mapTheme = useMemo(() => ({ ink: project.map.edgeColor, heatColors: HEAT_COLORS }), [project.map.edgeColor]);
+  // Screen-reader description of the current canvas selection. Announced through
+  // a polite live region next to the svg and mirrored into the svg's aria-label
+  // so the selection survives a fresh read of the canvas landmark.
+  const selectionAnnouncement = useMemo(() => {
+    if (exportMode) return "";
+    if (selectedTextId) {
+      const text = project.textElements.find((element) => element.id === selectedTextId);
+      return text ? `已选中文字：${text.content.trim() || text.role}` : "";
+    }
+    if (selectedAssetId) {
+      const asset = project.assetElements.find((element) => element.id === selectedAssetId);
+      return asset ? `已选中素材：${asset.label}` : "";
+    }
+    if (selectedProvince) return `已选中省份：${selectedProvince}`;
+    if (selectedStudentId) {
+      const pin = pins.find((item) => item.id === selectedStudentId);
+      return pin ? `已选中学生：${pin.label}` : "";
+    }
+    if (mapSelected) return "已选中地图展示框";
+    return "";
+  }, [exportMode, mapSelected, pins, project.assetElements, project.textElements, selectedAssetId, selectedProvince, selectedStudentId, selectedTextId]);
   const selectMap = useCallback(() => onSelect?.({ type: "map" }), [onSelect]);
   const selectProvince = useCallback((province: string) => onSelect?.({ type: "province", province }), [onSelect]);
   const selectAsset = useCallback((id: string) => onSelect?.({ type: "asset", id }), [onSelect]);
@@ -957,6 +978,14 @@ export function PosterCanvas({
               data-cards-layer
               onClick={!exportMode ? () => onSelect?.({ type: "cards" }) : undefined}
               role={!exportMode && onSelect ? "button" : undefined}
+              tabIndex={!exportMode && onSelect ? 0 : undefined}
+              aria-label={!exportMode && onSelect ? `选择数据展示框（${destinationCards.length} 个板块）` : undefined}
+              onKeyDown={!exportMode && onSelect ? (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelect({ type: "cards" });
+                }
+              } : undefined}
             >
               {connectorEdge.filters.length > 0 && (
                 <defs data-connector-edge-filters>
@@ -1233,6 +1262,13 @@ export function PosterCanvas({
               role={!exportMode && onSelect ? "button" : undefined}
               tabIndex={!exportMode && onSelect ? 0 : undefined}
               aria-label="特邀嘉宾"
+              onKeyDown={!exportMode && onSelect ? (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelect({ type: "guests" });
+                }
+              } : undefined}
               onPointerDown={!exportMode && onMoveGuests ? (event) => {
                 const point = canvasPoint(event);
                 if (!point) return;
@@ -1516,6 +1552,7 @@ export function PosterCanvas({
   layerBlocks.sort((a, b) => a.z - b.z);
 
   return (
+    <>
     <svg
       ref={posterRef}
       className="poster"
@@ -1526,7 +1563,7 @@ export function PosterCanvas({
       width={project.canvas.width}
       height={project.canvas.height}
       role="img"
-      aria-label="毕业去向蹭饭图编辑画布"
+      aria-label={selectionAnnouncement ? `毕业去向蹭饭图编辑画布，${selectionAnnouncement}` : "毕业去向蹭饭图编辑画布"}
       onClick={(event) => {
         if (!exportMode && event.target === event.currentTarget) onSelect?.({ type: "canvas" });
       }}
@@ -1584,5 +1621,16 @@ export function PosterCanvas({
 
       {layerBlocks.map((block) => <Fragment key={block.key}>{block.node}</Fragment>)}
     </svg>
+    {!exportMode && (
+      <span
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        data-canvas-selection-announcement
+      >
+        {selectionAnnouncement}
+      </span>
+    )}
+    </>
   );
 }

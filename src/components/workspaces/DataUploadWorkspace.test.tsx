@@ -152,8 +152,64 @@ describe("DataUploadWorkspace", () => {
       ],
     });
 
-    const ids = Array.from(container.querySelectorAll("[data-issue-id]")).map((row) => row.getAttribute("data-issue-id"));
+    const ids = Array.from(container.querySelectorAll(".data-quality-panel [data-issue-id]")).map((row) => row.getAttribute("data-issue-id"));
     expect(ids).toEqual(["unresolved-location:student-1", "duplicate:student-1"]);
+    // The map-mapping list repeats the same issue and must reuse its id.
+    expect(container.querySelector('.data-upload-workspace__mapping-row[data-issue-id="unresolved-location:student-1"]')).not.toBeNull();
+  });
+
+  it("moves focus to the roster row when an issue is located by its stable id", () => {
+    const innerSelect = vi.fn();
+    const outerSelect = vi.fn();
+    const { container } = renderWorkspace({
+      issues: [
+        { id: "unresolved-location:student-1", studentId: "student-1", studentName: "林舟", kind: "unresolved-location", detail: "无法定位城市：火星市", severity: "warning" },
+      ],
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), onSelectStudent: innerSelect },
+      onSelectStudent: outerSelect,
+    });
+
+    const issueRow = container.querySelector('.data-quality-panel [data-issue-id="unresolved-location:student-1"]')!;
+    const locate = issueRow.querySelector<HTMLButtonElement>("[data-locate-issue]")!;
+    expect(locate.getAttribute("data-locate-issue")).toBe("unresolved-location:student-1");
+
+    flushSync(() => locate.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(innerSelect).toHaveBeenCalledWith("student-1");
+    expect(outerSelect).toHaveBeenCalledWith("student-1");
+    expect(document.activeElement).toBe(container.querySelector('[data-student-row="student-1"]'));
+  });
+
+  it("locates the roster row from the map-mapping list too", () => {
+    const outerSelect = vi.fn();
+    const { container } = renderWorkspace({
+      issues: [
+        { studentId: "student-1", studentName: "林舟", kind: "manual-province", detail: "使用省份覆盖：火星省", severity: "info" },
+      ],
+      onSelectStudent: outerSelect,
+    });
+
+    const mappingRow = container.querySelector('.data-upload-workspace__mapping-row[data-issue-id="manual-province:student-1"]')!;
+    flushSync(() => mappingRow.querySelector<HTMLButtonElement>('button[aria-label="定位林舟"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(outerSelect).toHaveBeenCalledWith("student-1");
+    expect(document.activeElement).toBe(container.querySelector('[data-student-row="student-1"]'));
+  });
+
+  it("still reports the selection when the located record is filtered out of the table", () => {
+    const outerSelect = vi.fn();
+    const { container } = renderWorkspace({
+      issues: [
+        { studentId: "student-404", studentName: "不在表内", kind: "duplicate", detail: "与其他记录一致", severity: "warning" },
+      ],
+      onSelectStudent: outerSelect,
+    });
+    const active = document.activeElement;
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-locate-issue="duplicate:student-404"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(outerSelect).toHaveBeenCalledWith("student-404");
+    expect(document.activeElement).toBe(active);
   });
 
   it("shows an empty state when all locations and provinces are resolved", () => {

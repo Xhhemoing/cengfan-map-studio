@@ -5,6 +5,8 @@ import {
   runLayoutBenchmark,
 } from "./perf-layout-bench";
 
+// Round 1's worst 36/60-card p95 was 16.766 ms. Keep this deliberately
+// generous: CI should catch pathological regressions, not machine variance.
 const CI_P95_BUDGET_MS = 500;
 
 describe("layout performance benchmark", () => {

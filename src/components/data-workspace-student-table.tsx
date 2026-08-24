@@ -72,6 +72,10 @@ export function DataWorkspaceStudentTable({
                 key={student.id}
                 data-student-row={student.id}
                 data-editing={isEditing || undefined}
+                // Not in the tab order, but focusable so 定位 from the data
+                // quality rail can move the caret onto the located record.
+                tabIndex={-1}
+                aria-current={selectedStudentId === student.id ? "true" : undefined}
                 className={`${isVisible ? "" : "is-hidden"} ${selectedStudentId === student.id ? "is-selected" : ""}`}
                 onClick={() => onSelectStudent(student.id)}
                 onDoubleClick={() => editing.onStart(student)}

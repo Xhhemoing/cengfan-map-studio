@@ -25,7 +25,7 @@ export function ReferenceCardStyleWorkspace({ cards, onPatch }: {
           <p>选择可直接在画布和导出文件中稳定渲染的样式。</p>
         </div>
       </header>
-      <div className="reference-card-style-workspace__grid">
+      <div className="reference-card-style-workspace__grid" role="group" aria-label="展示框样式选项">
         {templates.map((template) => {
           const selected = cards.templateId === template.id || cards.presentation === template.cards.presentation;
           return (

@@ -4,8 +4,8 @@ import { parseAgentRequest } from "./ai/agent-request";
 import type { createAgentLoopBackend, AgentRuntimeConfig } from "./ai/agent-routing";
 import type { createAiLogger } from "./ai/ai-observability";
 import type { AiBackend } from "./ai/llm-client";
-import { parseDataRequestSchema, proposeEditsRequestSchema } from "./ai/schemas";
-import { isRecord, readJson } from "./http-utils";
+import { explainRequestSchema, parseDataRequestSchema, proposeEditsRequestSchema } from "./ai/schemas";
+import { readJson } from "./http-utils";
 
 const DEFAULT_MAX_AI_BODY_BYTES = 512 * 1024;
 
@@ -40,6 +40,9 @@ function upstreamCode(error: unknown): string {
 export function createAiRouter(options: AiRouterOptions) {
   const maxBodyBytes = Math.min(options.maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES);
   return async ({ request, response, pathname, requestId, sendAi }: AiRouteContext): Promise<boolean> => {
+    const sendValidationError = (message: string | undefined) => {
+      sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: message ?? "AI 请求格式无效" } });
+    };
     if (request.method === "POST" && pathname === "/api/ai/agent") {
       const body = await readJson(request, maxBodyBytes);
       const parsed = parseAgentRequest(body, {
@@ -47,10 +50,14 @@ export function createAiRouter(options: AiRouterOptions) {
         maxRounds: options.agentRuntime.maxRounds,
       });
       if (!parsed.ok) {
-        sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: parsed.error, aiCode: "AI_VALIDATION_ERROR" } });
+        sendValidationError(parsed.error);
         return true;
       }
-      const historyHasAssistantOrTool = parsed.value.messages.some((message) => message.role === "assistant" || message.role === "tool");
+      const hasConversationHistory = parsed.value.messages.length > 1;
+      if ((hasConversationHistory || parsed.value.budgetReceipt) && !parsed.value.taskId) {
+        sendValidationError("继续会话必须提供 taskId");
+        return true;
+      }
       const taskId = parsed.value.taskId || createAgentTaskId();
       const receiptClaim = parsed.value.budgetReceipt
         ? options.budgetReceiptLedger.beginConsume(parsed.value.budgetReceipt, taskId)
@@ -58,11 +65,11 @@ export function createAiRouter(options: AiRouterOptions) {
       const initialClaim = parsed.value.budgetReceipt ? null : options.budgetReceiptLedger.reserveInitial(taskId);
       const claim = receiptClaim ?? initialClaim;
       const receipt = receiptClaim?.payload ?? null;
-      if ((historyHasAssistantOrTool && !parsed.value.budgetReceipt)
+      if ((hasConversationHistory && !parsed.value.budgetReceipt)
         || (parsed.value.budgetReceipt && (!receiptClaim || receipt!.maxTokens !== options.agentRuntime.tokenBudget || receipt!.maxRounds !== options.agentRuntime.maxRounds))
         || (!parsed.value.budgetReceipt && !initialClaim)) {
         if (claim) options.budgetReceiptLedger.rollback(claim);
-        sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: "会话预算回执无效、已过期或已被使用" } });
+        sendValidationError("会话预算回执无效、已过期或已被使用");
         return true;
       }
       parsed.value.budget = receipt
@@ -163,7 +170,7 @@ export function createAiRouter(options: AiRouterOptions) {
       options.aiLogger.log("ai.request.started", { requestId });
       const parsed = parseDataRequestSchema(body);
       if (!parsed.ok || !parsed.value) {
-        sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: parsed.error } });
+        sendValidationError(parsed.error);
       } else {
         await runLegacyRoute((signal) => options.ai.parseData(parsed.value!, { requestId, signal }));
       }
@@ -175,7 +182,7 @@ export function createAiRouter(options: AiRouterOptions) {
       options.aiLogger.log("ai.request.started", { requestId });
       const parsed = proposeEditsRequestSchema(body);
       if (!parsed.ok || !parsed.value) {
-        sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: parsed.error } });
+        sendValidationError(parsed.error);
       } else {
         await runLegacyRoute((signal) => options.ai.proposeEdits(parsed.value!, { requestId, signal }));
       }
@@ -185,10 +192,11 @@ export function createAiRouter(options: AiRouterOptions) {
     if (request.method === "POST" && pathname === "/api/ai/explain") {
       const body = await readJson(request, maxBodyBytes);
       options.aiLogger.log("ai.request.started", { requestId });
-      if (!isRecord(body) || typeof body.message !== "string" || !body.message.trim()) {
-        sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: "message 不能为空" } });
+      const parsed = explainRequestSchema(body);
+      if (!parsed.ok || !parsed.value) {
+        sendValidationError(parsed.error);
       } else {
-        await runLegacyRoute((signal) => options.ai.explain(body.message as string, Number(body.studentCount ?? 0), { requestId, signal }));
+        await runLegacyRoute((signal) => options.ai.explain(parsed.value!.message, parsed.value!.studentCount, { requestId, signal }));
       }
       return true;
     }

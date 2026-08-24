@@ -1,6 +1,7 @@
 import { Download, FileUp } from "lucide-react";
 import type { ImportReviewRow } from "../lib/data-workspace";
 import type { ExcelImportResult } from "../lib/binary-import";
+import type { UnparsedLine } from "../lib/import-data";
 import { FileDropzone } from "./FileDropzone";
 import { ActionButton, ActionGroup, CompactButton, PanelHeader } from "./StudioUi";
 import { ROSTER_FILE_ACCEPT, studentColumnLabels } from "./data-workspace-fields";
@@ -15,6 +16,8 @@ export interface CandidateSummary {
   missing: number;
   duplicate: number;
 }
+
+const UNPARSED_PREVIEW_LIMIT = 3;
 
 /**
  * Roster ingest panel: pasted text, the local/AI/OCR-text parsers, workbook
@@ -41,6 +44,7 @@ export function DataWorkspaceImportPanel({
   onToggleReviewRow,
   candidateSummary,
   unparsedCount,
+  unparsedRows,
   onApplyImport,
 }: {
   importText: string;
@@ -60,8 +64,10 @@ export function DataWorkspaceImportPanel({
   onToggleReviewRow: (index: number, accepted: boolean) => void;
   candidateSummary: CandidateSummary;
   unparsedCount: number;
+  unparsedRows: UnparsedLine[];
   onApplyImport: (mode: "append" | "replace") => void;
 }) {
+  const previewedUnparsed = unparsedRows.slice(0, UNPARSED_PREVIEW_LIMIT);
   return (
     <>
       <div className="import-box">
@@ -152,6 +158,14 @@ export function DataWorkspaceImportPanel({
             </p>
           )}
         </section>
+      )}
+
+      {unparsedRows.length > 0 && (
+        <p className="panel-note" data-import-unparsed>
+          未识别 {unparsedRows.length} 行（不会被导入）：
+          {previewedUnparsed.map((row) => `第 ${row.sourceLine} 行 ${row.reason}`).join("；")}
+          {unparsedRows.length > previewedUnparsed.length ? " 等" : ""}
+        </p>
       )}
 
       {reviewRows.length > 0 && (

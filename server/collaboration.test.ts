@@ -45,7 +45,7 @@ describe("collaboration room store", () => {
     expect(heartbeat.version).toBe(0);
   });
 
-  it("removes a member on leave and stays idempotent for unknown members", () => {
+  it("revokes a member token on leave while keeping leave retries idempotent", () => {
     const secrets = ["owner-access", "editor-invite", "editor-access"];
     const store = createRoomStore({ generateId: () => "MEM003", generateSecret: () => secrets.shift()! });
     const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
@@ -55,6 +55,14 @@ describe("collaboration room store", () => {
     const left = store.leave("MEM003", editor.access.accessToken, "editor");
     expect(left.members.map((member) => member.clientId)).toEqual(["owner"]);
     expect(store.leave("MEM003", editor.access.accessToken, "editor").members.map((member) => member.clientId)).toEqual(["owner"]);
+    expect(() => store.authorize("MEM003", editor.access.accessToken, "read"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+    expect(() => store.apply("MEM003", editor.access.accessToken, {
+      txId: "after-leave",
+      clientId: "editor",
+      baseVersion: 0,
+      snapshot: { title: "不应写入" },
+    })).toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
     expect(() => store.leave("MEM003", owner.access.accessToken, "nobody"))
       .toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
   });

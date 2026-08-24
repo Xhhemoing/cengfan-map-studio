@@ -98,6 +98,30 @@ describe("MapStyleWorkspace", () => {
     expect(onPatchProvince).not.toHaveBeenCalled();
   });
 
+  it("gives every primary control an accessible name and announces the canvas selection", () => {
+    const { container } = renderWorkspace("北京市");
+
+    // Data-view segmented control: each button carries an explicit name + pressed state.
+    const viewButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="地图表达"] button'));
+    expect(viewButtons).toHaveLength(5);
+    for (const button of viewButtons) {
+      expect(button.getAttribute("aria-label")).toMatch(/^切换为.+表达$/);
+      expect(button.hasAttribute("aria-pressed")).toBe(true);
+    }
+    // History buttons are named.
+    expect(container.querySelector('button[aria-label="撤销地图修改"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="重做地图修改"]')).not.toBeNull();
+
+    // The rail inspector exposes a labelled focus target for the selected province.
+    const panel = container.querySelector('[data-inspector-panel]');
+    expect(panel?.getAttribute("aria-label")).toBe("当前对象属性：省份 北京市");
+
+    // The canvas announces the selected province via a polite live region.
+    const announcer = container.querySelector('.map-style-workspace__canvas [data-canvas-selection-announcement]');
+    expect(announcer?.getAttribute("aria-live")).toBe("polite");
+    expect(announcer?.textContent).toBe("已选中省份：北京市");
+  });
+
   it("keeps history controls in the right-side context without a return-editor header", () => {
     const { container, onPatchMap, onUndo, onRedo } = renderWorkspace();
 

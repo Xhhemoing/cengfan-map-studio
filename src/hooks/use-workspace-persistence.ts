@@ -8,7 +8,6 @@ import {
   loadLatestBrowserWorkspace,
   saveBrowserWorkspaceSnapshot,
 } from "../lib/browser-workspace-store";
-import type { EditorCommand } from "../lib/editor-commands";
 import { editorProjectStore } from "../lib/editor-project-store";
 import { loadUserFonts, type UserFont } from "../lib/fonts";
 import {
@@ -35,7 +34,6 @@ export function useWorkspacePersistence({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
   const [initialWorkspace] = useState(() => loadBrowserWorkspaceMirror(browserStores.mirror));
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
-  const [previewCommands, setPreviewCommands] = useState<EditorCommand[]>([]);
   const [syncState, setSyncState] = useState<LocalWorkspaceOverwriteState>({
     status: initialWorkspace ? "saved" : "idle",
     savedAt: initialWorkspace?.exportedAt ?? null,
@@ -146,7 +144,6 @@ export function useWorkspacePersistence({ projectId }: { projectId?: string }) {
       setUserFonts(restored.fonts);
       setCustomTemplates(restored.customTemplates);
       setRenderSettings(restored.renderSettings);
-      setPreviewCommands([]);
       setSyncState({ status: "saved", savedAt: pack.exportedAt });
       setStatusMessage("已从浏览器本地完整工作区恢复");
     }).catch(() => undefined).finally(() => {
@@ -178,7 +175,6 @@ export function useWorkspacePersistence({ projectId }: { projectId?: string }) {
       setUserFonts(restored.fonts);
       setCustomTemplates(restored.customTemplates);
       setRenderSettings(restored.renderSettings);
-      setPreviewCommands([]);
       setStatusMessage(`已打开项目「${record.name}」`);
     }).catch(() => {
       if (cancelled) return;
@@ -246,8 +242,6 @@ export function useWorkspacePersistence({ projectId }: { projectId?: string }) {
   return {
     project,
     setProject,
-    previewCommands,
-    setPreviewCommands,
     userAssets,
     setUserAssets,
     userFonts,

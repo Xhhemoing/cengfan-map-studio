@@ -220,6 +220,7 @@ export function DataWorkspace({
         onToggleReviewRow={roster.toggleReviewRow}
         candidateSummary={roster.candidateSummary}
         unparsedCount={roster.unparsedCount}
+        unparsedRows={roster.unparsedRows}
         onApplyImport={roster.applyImport}
       />
 

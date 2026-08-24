@@ -6,6 +6,7 @@ import { corsHeaders, isRecord, readJson, securityHeaders } from "./http-utils";
 import type { createRateLimiter } from "./ai/rate-limit";
 
 const DEFAULT_MAX_ROOM_TRANSACTION_BYTES = 8 * 1024 * 1024;
+const DEFAULT_ROOM_EVENTS_HEARTBEAT_MS = 20_000;
 const MAX_ROOM_EVENTS_TICKETS = 10_000;
 
 interface CollaborationRouterOptions {
@@ -14,6 +15,7 @@ interface CollaborationRouterOptions {
   clientIp: (request: http.IncomingMessage) => string;
   maxJsonBodyBytes: number;
   roomEventsTicketTtlMs: number;
+  roomEventsHeartbeatMs?: number;
   corsOrigins: readonly string[];
 }
 
@@ -43,6 +45,7 @@ function roomErrorStatus(error: CollaborationError): number {
 export function createCollaborationRouter(options: CollaborationRouterOptions) {
   const roomEventsTickets = new Map<string, { roomId: string; accessToken: string; expiresAt: number }>();
   const maxBodyBytes = Math.min(options.maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES);
+  const roomEventsHeartbeatMs = Math.max(1, options.roomEventsHeartbeatMs ?? DEFAULT_ROOM_EVENTS_HEARTBEAT_MS);
   const sendRoomError = (send: RouteContext["send"], error: CollaborationError) => send(roomErrorStatus(error), {
     error: { code: error.code, message: error.message, currentVersion: error.currentVersion },
   });
@@ -281,8 +284,17 @@ export function createCollaborationRouter(options: CollaborationRouterOptions) {
     roomEventsTickets.delete(ticket!);
     const knownVersionParam = eventUrl.searchParams.get("version");
     const knownVersion = knownVersionParam === null ? Number.NaN : Number(knownVersionParam);
-    let unsubscribe: () => void;
-    let unsubscribeLifecycle: () => void;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let unsubscribe: () => void = () => undefined;
+    let unsubscribeLifecycle: () => void = () => undefined;
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      if (heartbeat) clearInterval(heartbeat);
+      unsubscribe();
+      unsubscribeLifecycle();
+    };
     try {
       const room = options.roomStore.get(eventsMatch[1]!);
       if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
@@ -297,6 +309,9 @@ export function createCollaborationRouter(options: CollaborationRouterOptions) {
           response.end();
         } else if (event.kind === "access") {
           response.write(`event: snapshot\ndata: ${JSON.stringify({ ...event.room, snapshot: undefined })}\n\n`);
+        } else if (!event.members.some((member) => member.clientId === participant.id)) {
+          response.write(`event: revoked\ndata: ${JSON.stringify({ id: event.room.id })}\n\n`);
+          response.end();
         } else {
           response.write(`event: members\ndata: ${JSON.stringify(event.members)}\n\n`);
         }
@@ -317,15 +332,16 @@ export function createCollaborationRouter(options: CollaborationRouterOptions) {
       else throw error;
       return true;
     }
-    const heartbeat = setInterval(() => {
-      options.roomStore.get(eventsMatch[1]!);
-      response.write(": heartbeat\n\n");
-    }, 20_000);
-    request.on("close", () => {
-      clearInterval(heartbeat);
-      unsubscribe();
-      unsubscribeLifecycle();
-    });
+    heartbeat = setInterval(() => {
+      try {
+        options.roomStore.authorize(eventsMatch[1]!, ticketRecord.accessToken, "read");
+        response.write(": heartbeat\n\n");
+      } catch {
+        response.end();
+      }
+    }, roomEventsHeartbeatMs);
+    request.once("aborted", cleanup);
+    response.once("close", cleanup);
     return true;
   };
 }

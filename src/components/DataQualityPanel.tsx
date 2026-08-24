@@ -29,27 +29,31 @@ export function DataQualityPanel({
         </div>
       ) : (
         <div className="data-quality-list" role="list" aria-label="数据质量问题">
-          {issues.map((issue) => (
-            <div
-              className={`data-quality-row data-quality-row--${issue.severity}`}
-              key={resolveDataIssueId(issue)}
-              data-issue-id={resolveDataIssueId(issue)}
-              role="listitem"
-            >
-              <div className="data-quality-row__content">
-                <strong>{issue.studentName}</strong>
-                <small>{issueLabels[issue.kind]} · {issue.detail}</small>
-              </div>
-              <CompactButton
-                icon={<LocateFixed size={14} aria-hidden />}
-                aria-label={`定位${issue.studentName}`}
-                variant="secondary"
-                onClick={() => onSelectStudent(issue.studentId)}
+          {issues.map((issue) => {
+            const issueId = resolveDataIssueId(issue);
+            return (
+              <div
+                className={`data-quality-row data-quality-row--${issue.severity}`}
+                key={issueId}
+                data-issue-id={issueId}
+                role="listitem"
               >
-                定位到名单
-              </CompactButton>
-            </div>
-          ))}
+                <div className="data-quality-row__content">
+                  <strong>{issue.studentName}</strong>
+                  <small>{issueLabels[issue.kind]} · {issue.detail}</small>
+                </div>
+                <CompactButton
+                  icon={<LocateFixed size={14} aria-hidden />}
+                  aria-label={`定位${issue.studentName}`}
+                  variant="secondary"
+                  data-locate-issue={issueId}
+                  onClick={() => onSelectStudent(issue.studentId)}
+                >
+                  定位到名单
+                </CompactButton>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>

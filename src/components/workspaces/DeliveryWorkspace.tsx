@@ -46,6 +46,12 @@ function issueKey(item: DeliveryIssue, index: number): string {
   return `resource-${item.issue.target}-${item.issue.kind}-${index}`;
 }
 
+function issueSeverityLabel(item: DeliveryIssue): string {
+  if (item.issue.severity === "error") return "错误";
+  if (item.issue.severity === "warning") return "警告";
+  return "提示";
+}
+
 function CheckSection({
   title,
   issues,
@@ -57,19 +63,30 @@ function CheckSection({
   onLocate: (issue: DeliveryIssue) => void;
   children?: ReactNode;
 }) {
+  const passed = issues.length === 0;
   return (
     <section className="delivery-workspace__check" aria-label={title}>
       <header>
         <div><strong>{title}</strong><small>{issues.length} 项</small></div>
-        {issues.length === 0 ? <CheckCircle2 size={17} aria-label="检查通过" /> : <TriangleAlert size={17} aria-label="有待处理问题" />}
+        {/* Status is announced as text; the icon is decorative so the state never relies on color alone. */}
+        {passed ? <CheckCircle2 size={17} aria-hidden /> : <TriangleAlert size={17} aria-hidden />}
+        <span className="sr-only">{passed ? "检查通过" : "有待处理问题"}</span>
       </header>
-      {issues.length > 0 && <div className="delivery-workspace__issue-list">
-        {issues.map((item, index) => (
-          <button key={issueKey(item, index)} type="button" onClick={() => onLocate(item)}>
-            <span>{item.issue.detail}</span><small>定位</small>
-          </button>
-        ))}
-      </div>}
+      {issues.length > 0 && (
+        <ul className="delivery-workspace__issue-list" style={{ listStyle: "none", padding: 0, marginBottom: 0 }} aria-label={`${title}问题列表`}>
+          {issues.map((item, index) => (
+            <li key={issueKey(item, index)} style={{ display: "grid" }}>
+              <button
+                type="button"
+                aria-label={`定位${issueSeverityLabel(item)}：${item.issue.detail}`}
+                onClick={() => onLocate(item)}
+              >
+                <span>{item.issue.detail}</span><small aria-hidden="true">定位</small>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {children}
     </section>
   );
@@ -107,18 +124,35 @@ export function DeliveryRail({
       <CheckSection title="排版问题" issues={layoutIssues.map((issue) => ({ kind: "layout", issue }))} onLocate={onLocate} />
       <CheckSection title="资源缺失" issues={resourceIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
       <CheckSection title="字体问题" issues={fontIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
-      {exportState === "error" && <div className="delivery-workspace__error" role="alert"><strong>导出失败</strong><span>{exportError ?? "请检查浏览器下载权限后重试"}</span><button type="button" aria-label="重试导出" onClick={onRetry}><RotateCcw size={15} aria-hidden /> 重试</button></div>}
+      {exportState === "error" && (
+        <div id="delivery-export-error" className="delivery-workspace__error" role="alert">
+          <strong>导出失败</strong>
+          <span>{exportError ?? "请检查浏览器下载权限后重试"}</span>
+          <button type="button" aria-label="重试导出" aria-describedby="delivery-export-error" onClick={onRetry}>
+            <RotateCcw size={15} aria-hidden /> 重试
+          </button>
+        </div>
+      )}
       <section className="delivery-workspace__controls" aria-label="导出设置">
         <label htmlFor="delivery-png-scale">PNG 倍率<select id="delivery-png-scale" aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option></select></label>
         <span>最终像素尺寸：{project.canvas.width * pngScale} × {project.canvas.height * pngScale} px</span>
         <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="透明背景" checked={transparentExport} onChange={(event) => onTransparentExportChange(event.target.checked)} />透明背景</label>
         <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="工程包包含资源" checked={includeResources} onChange={(event) => onIncludeResourcesChange(event.target.checked)} />工程包包含资源</label>
       </section>
-      <div className="delivery-workspace__actions" role="group" aria-label="导出操作">
-        <button type="button" className="primary-button" onClick={onExportPng} disabled={exportState === "exporting"}><ImageDown size={16} aria-hidden />PNG</button>
+      <div
+        className="delivery-workspace__actions"
+        role="group"
+        aria-label="导出操作"
+        aria-describedby={exportState === "error" ? "delivery-export-error" : undefined}
+      >
+        <button type="button" className="primary-button" aria-label="导出 PNG" onClick={onExportPng} disabled={exportState === "exporting"}><ImageDown size={16} aria-hidden />PNG</button>
         <button type="button" className="secondary-button" aria-label="导出 SVG" onClick={onExportSvg} disabled={exportState === "exporting"}><Download size={16} aria-hidden />SVG</button>
         <button type="button" className="secondary-button" aria-label="导出工程包" onClick={onExportProjectPackage} disabled={exportState === "exporting"}><PackageOpen size={16} aria-hidden />工程包</button>
       </div>
+      {/* The buttons only disable while exporting; announce progress and completion for screen readers. */}
+      <span className="sr-only" role="status" aria-live="polite" data-export-status>
+        {exportState === "exporting" ? "正在导出，请稍候" : exportState === "success" ? "导出完成" : ""}
+      </span>
     </aside>
   );
 }

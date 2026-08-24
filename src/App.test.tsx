@@ -1755,6 +1755,36 @@ describe("Shell CSS contract", () => {
     // The narrow-screen inspector access control remains discoverable in the topbar.
     expect(container.querySelector(".inspector-toggle-group")).not.toBeNull();
   });
+
+  it("wires a keyboard skip link to the studio stage landmark without touching the hash route", () => {
+    const container = renderPublicApp();
+
+    const skip = container.querySelector<HTMLAnchorElement>("a.skip-link");
+    expect(skip).not.toBeNull();
+    expect(skip?.getAttribute("href")).toBe("#studio-stage");
+    const target = container.querySelector<HTMLElement>("#studio-stage");
+    expect(target).not.toBeNull();
+    expect(target?.getAttribute("tabindex")).toBe("-1");
+
+    const hashBefore = window.location.hash;
+    click(skip!);
+
+    expect(document.activeElement).toBe(target);
+    // Hash 路由（#/project/…）不受片段跳转影响。
+    expect(window.location.hash).toBe(hashBefore);
+  });
+
+  it("keeps the skip link and stage target available in the legacy workspace shell", () => {
+    const container = renderLegacyApp();
+
+    const skip = container.querySelector<HTMLAnchorElement>("a.skip-link");
+    expect(skip).not.toBeNull();
+    const target = container.querySelector<HTMLElement>("#studio-stage.editor-area");
+    expect(target).not.toBeNull();
+
+    click(skip!);
+    expect(document.activeElement).toBe(target);
+  });
 });
 
 describe("Responsive editor shell", () => {

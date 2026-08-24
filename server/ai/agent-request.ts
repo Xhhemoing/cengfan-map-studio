@@ -95,9 +95,10 @@ export function parseAgentRequest(value: unknown, limits: AgentBudgetLimits = { 
   for (const raw of value.messages) {
     if (!isRecord(raw) || typeof raw.role !== "string" || !ROLES.has(raw.role)) return { ok: false, error: "消息 role 无效" };
     if (raw.role === "assistant" && raw.tool_calls === undefined && ("tool_call_id" in raw || "name" in raw)) return { ok: false, error: "assistant 消息字段无效" };
-    if ((raw.role === "system" || raw.role === "user") && typeof raw.content !== "string") return { ok: false, error: `${raw.role} 消息 content 必须是字符串` };
+    if ((raw.role === "system" || raw.role === "user") && (typeof raw.content !== "string" || !raw.content.trim())) return { ok: false, error: `${raw.role} 消息 content 必须是非空字符串` };
     if (raw.role === "assistant" && raw.content !== undefined && raw.content !== null && typeof raw.content !== "string") return { ok: false, error: "assistant 消息 content 类型无效" };
-    if (raw.role === "tool" && (typeof raw.tool_call_id !== "string" || !raw.tool_call_id.trim() || typeof raw.content !== "string")) return { ok: false, error: "tool 消息字段无效" };
+    if (raw.role === "assistant" && raw.tool_calls === undefined && (typeof raw.content !== "string" || !raw.content.trim())) return { ok: false, error: "assistant 消息 content 不能为空" };
+    if (raw.role === "tool" && (typeof raw.tool_call_id !== "string" || !raw.tool_call_id.trim() || typeof raw.content !== "string" || !raw.content.trim())) return { ok: false, error: "tool 消息字段无效" };
     if (contentSize(raw.content) > MAX_CONTENT_BYTES) return { ok: false, error: "单条消息过长" };
     if (awaitingToolResults && raw.role !== "tool") return { ok: false, error: "assistant tool_calls 必须先消费全部 tool 结果" };
     if (raw.role === "assistant" && raw.tool_calls !== undefined) {
@@ -121,7 +122,7 @@ export function parseAgentRequest(value: unknown, limits: AgentBudgetLimits = { 
   const last = messages.at(-1);
   if (!last || last.role !== "user" || last.content !== value.userMessage) messages.push({ role: "user", content: value.userMessage });
   if (value.taskId !== undefined && (typeof value.taskId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(value.taskId))) return { ok: false, error: "taskId 无效" };
-  if (value.budgetReceipt !== undefined && (typeof value.budgetReceipt !== "string" || value.budgetReceipt.length > 2048)) return { ok: false, error: "budgetReceipt 无效" };
+  if (value.budgetReceipt !== undefined && (typeof value.budgetReceipt !== "string" || !value.budgetReceipt.trim() || value.budgetReceipt.length > 2048)) return { ok: false, error: "budgetReceipt 无效" };
   return { ok: true, value: { userMessage: value.userMessage, digest: value.digest, messages, budget: normalizeBudget(value.budget, limits), taskId: value.taskId as string | undefined, budgetReceipt: value.budgetReceipt as string | undefined } };
 }
 

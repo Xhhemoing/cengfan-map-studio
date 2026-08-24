@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
+import { apiSecurityHeaders } from "./http-utils";
 import { createServerLifecycle, validateProductionConfig } from "./production";
 
 describe("production configuration", () => {
@@ -35,6 +36,17 @@ describe("production configuration", () => {
 
   it("keeps development compatible without production-only secrets", () => {
     expect(validateProductionConfig({ NODE_ENV: "development" })).toMatchObject({ ok: true, config: { nodeEnv: "development" } });
+  });
+});
+
+describe("production response security", () => {
+  it("prevents API caching, MIME sniffing, and cross-origin framing", () => {
+    expect(apiSecurityHeaders()).toMatchObject({
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+    });
   });
 });
 

@@ -50,6 +50,13 @@ export function securityHeaders(): Record<string, string> {
   };
 }
 
+export function apiSecurityHeaders(): Record<string, string> {
+  return {
+    ...securityHeaders(),
+    "Cache-Control": "no-store",
+  };
+}
+
 export function sendJson(
   request: http.IncomingMessage,
   response: http.ServerResponse,
@@ -62,7 +69,7 @@ export function sendJson(
     ? { ...body, requestId }
     : body;
   response.writeHead(status, {
-    ...securityHeaders(),
+    ...apiSecurityHeaders(),
     ...corsHeaders(request, corsOrigins),
     "Content-Type": "application/json; charset=utf-8",
   });

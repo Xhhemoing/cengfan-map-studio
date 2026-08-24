@@ -161,6 +161,33 @@ describe("student data", () => {
     ]);
   });
 
+  it("rejects a name made only of invisible characters", () => {
+    for (const name of ["   ", "\u3000", "\u200b", "\uFEFF "]) {
+      expect(validateStudentInput({ name, university: "北京大学", city: "北京市" })).toEqual([
+        expect.objectContaining({ code: "missing_field", field: "name", level: "error" }),
+      ]);
+    }
+
+    const built = buildStudentRecords([
+      { name: "\u200b", university: "北京大学", city: "北京市" },
+      { name: " 林舟 ", university: "北京大学", city: "北京市" },
+    ]);
+
+    expect(built.issues).toEqual([
+      expect.objectContaining({ code: "missing_field", field: "name", studentIndex: 0 }),
+    ]);
+    expect(built.students[0]?.name).toBe("");
+    expect(built.students[1]?.name).toBe("林舟");
+  });
+
+  it("keeps a city-only input as an error-flagged record naming both gaps", () => {
+    const result = buildStudentRecords([{ name: "  ", university: "", city: "杭州市" }]);
+
+    expect(result.issues.map((issue) => issue.field)).toEqual(["name", "university"]);
+    expect(result.issues.every((issue) => issue.level === "error")).toBe(true);
+    expect(result.issues.some((issue) => issue.code === "unresolved_city")).toBe(false);
+  });
+
   it("trims confirmed fields without persisting source-only input", () => {
     const result = buildStudentRecords([
       {

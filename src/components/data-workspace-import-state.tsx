@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { confirmImportCandidates, type ImportReviewRow } from "../lib/data-workspace";
 import { findDuplicateStudentGroups } from "../lib/data-duplicate";
 import { createImportTemplateSheets, parseExcelWorkbookRows, parseOcrLikeText } from "../lib/binary-import";
-import { parseStudentText, type ImportCandidate } from "../lib/import-data";
+import { parseStudentText, type ImportCandidate, type UnparsedLine } from "../lib/import-data";
 import type { ParseDataResult } from "../lib/ai-client";
 import type { Student } from "../lib/project-data";
 import type { CandidateSummary, ExcelRecognition } from "./data-workspace-import-panel";
@@ -32,7 +32,7 @@ export function useRosterImport({
   const [importText, setImportText] = useState("");
   const [reviewRows, setReviewRows] = useState<ImportReviewRow[]>([]);
   const [excelRecognition, setExcelRecognition] = useState<ExcelRecognition | null>(null);
-  const [unparsedCount, setUnparsedCount] = useState(0);
+  const [unparsedRows, setUnparsedRows] = useState<UnparsedLine[]>([]);
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
 
@@ -54,29 +54,29 @@ export function useRosterImport({
 
   const setCandidates = (
     candidates: ImportCandidate[],
-    unparsed: number,
+    unparsed: UnparsedLine[],
     sourceLabel: string,
     recognition?: ExcelRecognition,
   ) => {
     setExcelRecognition(recognition?.headerRowIndex !== undefined ? recognition : null);
-    setUnparsedCount(unparsed);
+    setUnparsedRows(unparsed);
     if (candidates.length === 0) {
       onMessage(`没有从${sourceLabel}识别到可导入数据`);
       setReviewRows([]);
       return;
     }
     setReviewRows(candidates.map((candidate) => ({ ...candidate, accepted: true })));
-    onMessage(`从${sourceLabel}识别到 ${candidates.length} 条候选${unparsed ? `，另有 ${unparsed} 行未识别` : ""}`);
+    onMessage(`从${sourceLabel}识别到 ${candidates.length} 条候选${unparsed.length ? `，另有 ${unparsed.length} 行未识别` : ""}`);
   };
 
   const parseText = () => {
     const parsed = parseStudentText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "文本");
+    setCandidates(parsed.candidates, parsed.unparsed, "文本");
   };
 
   const parseOcrText = () => {
     const parsed = parseOcrLikeText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "OCR 文本");
+    setCandidates(parsed.candidates, parsed.unparsed, "OCR 文本");
   };
 
   const parseWithAi = async () => {
@@ -87,7 +87,7 @@ export function useRosterImport({
     setIsAiParsing(true);
     try {
       const parsed = await requestAiParse({ text: importText, source: "paste" });
-      setCandidates(parsed.candidates, parsed.unparsed.length, `智能识别（${parsed.provider}）`);
+      setCandidates(parsed.candidates, parsed.unparsed, `智能识别（${parsed.provider}）`);
     } catch (error) {
       onMessage(error instanceof Error ? error.message : "智能识别失败");
     } finally {
@@ -107,12 +107,14 @@ export function useRosterImport({
         onMessage("Excel 中没有工作表");
         return;
       }
-      const rows = XLSX.utils.sheet_to_json<(string | number)[]>(workbook.Sheets[firstSheetName], {
+      const sheet = workbook.Sheets[firstSheetName]!;
+      const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, {
         header: 1,
         defval: "",
       });
-      const parsed = parseExcelWorkbookRows(rows);
-      setCandidates(parsed.candidates, parsed.unparsed.length, `Excel（${file.name}）`, parsed);
+      // Merged 省份/城市 blocks only carry a value in their anchor cell.
+      const parsed = parseExcelWorkbookRows(rows, { merges: sheet["!merges"] });
+      setCandidates(parsed.candidates, parsed.unparsed, `Excel（${file.name}）`, parsed);
     } catch (error) {
       onMessage(error instanceof Error ? error.message : "Excel 解析失败");
     }
@@ -135,7 +137,7 @@ export function useRosterImport({
   const resetReview = () => {
     setReviewRows([]);
     setExcelRecognition(null);
-    setUnparsedCount(0);
+    setUnparsedRows([]);
     setImportText("");
   };
 
@@ -202,7 +204,8 @@ export function useRosterImport({
     isAiParsing,
     reviewRows,
     excelRecognition,
-    unparsedCount,
+    unparsedRows,
+    unparsedCount: unparsedRows.length,
     candidateSummary,
     replaceConfirmation,
     parseText,
