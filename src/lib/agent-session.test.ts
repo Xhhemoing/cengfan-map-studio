@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createProjectDocument } from "./project-document";
+import { createProjectDocument, type ProjectDocument } from "./project-document";
+import { buildCardFacts } from "./render-facts";
 import { AgentSession, compactAgentToolResult, type AgentSessionSnapshot } from "./agent-session";
 
 function response(body: unknown) {
@@ -504,6 +505,89 @@ describe("AgentSession", () => {
 
     expect(session.shadowProject.students[0]).toMatchObject({ city: "波士顿", province: "广东省" });
     expect(JSON.parse(session.steps[0]!.result.content).warning).toContain("波士顿");
+  });
+
+  it.each([
+    { grouping: "province" as const, expected: ["广东省", "浙江省"] },
+    { grouping: "city" as const, expected: ["广州市", "杭州市"] },
+    { grouping: "university" as const, expected: ["中山大学", "浙江大学"] },
+  ])("keys $grouping auto_layout positions with the render layer's group ids", async ({ grouping, expected }) => {
+    const base = createProjectDocument({
+      students: [
+        { id: "s1", name: "张三", university: "中山大学", city: "广州市", visibility: true },
+        { id: "s2", name: "李四", university: "浙江大学", city: "杭州市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+    const project: ProjectDocument = { ...base, cards: { ...base.cards, grouping } };
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "auto_layout", arguments: { mode: "quadrant" } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("自动排版");
+
+    expect(Object.keys(session.shadowProject.cards.positions ?? {}).sort()).toEqual(expected);
+  });
+
+  it("lays out with the measured card heights instead of a people-count estimate", async () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "s1", name: "张三", university: "北京大学", city: "北京市", visibility: true },
+        { id: "s2", name: "李四", university: "清华大学", city: "北京市", visibility: true },
+        { id: "s3", name: "王五", university: "复旦大学", city: "上海市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "auto_layout", arguments: {} }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("自动排版");
+
+    const placements = JSON.parse(session.steps[0]!.result.content).samples as Array<{ id: string; height: number }>;
+    const rendered = new Map(buildCardFacts(project).map((fact) => [fact.group.key, fact.height]));
+    expect(placements).toHaveLength(2);
+    for (const placement of placements) expect(placement.height).toBe(rendered.get(placement.id));
+  });
+
+  it("reports occlusion and connector conflicts from the rendered geometry", async () => {
+    const base = createProjectDocument({
+      students: [
+        { id: "s1", name: "张三", university: "北京大学", city: "北京市", visibility: true },
+        { id: "s2", name: "李四", university: "中山大学", city: "广州市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+    const facts = buildCardFacts(base);
+    const [first, second] = facts;
+    const project: ProjectDocument = {
+      ...base,
+      cards: {
+        ...base.cards,
+        connectorStyle: "straight",
+        positions: {
+          [first!.group.key]: { x: second!.anchorX - first!.width / 2, y: second!.anchorY - first!.height / 2 },
+          [second!.group.key]: { x: first!.anchorX - second!.width / 2, y: first!.anchorY - second!.height / 2 },
+        },
+      },
+      textElements: [{
+        id: "over-map", role: "custom", content: "压在地图上的标题",
+        x: base.map.x + base.map.width / 2, y: base.map.y + base.map.height / 2,
+        fontSize: 36, color: "#1c3154", fontWeight: 700, textAlign: "center", maxWidth: 420, visibility: true,
+      }],
+    };
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "check_health", arguments: {} }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("检查版面");
+
+    const issues = JSON.parse(session.steps[0]!.result.content).issues as Array<{ id: string; kind: string }>;
+    expect(issues.some((issue) => issue.kind === "occlusion" && issue.id === "map:over-map")).toBe(true);
+    expect(issues.some((issue) => issue.kind === "connector-conflict")).toBe(true);
   });
 
   it("rejects concurrent runs and can continue a completed conversation", async () => {

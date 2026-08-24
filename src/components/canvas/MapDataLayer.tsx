@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import type { DataViewId } from "../../lib/project-data";
 import type { MapFeature } from "../../lib/map-data";
 import type { MapSettings, ProvinceStyle } from "../../lib/scene-document";
@@ -13,6 +13,7 @@ import {
 } from "../../lib/province-texture-placement";
 import { resolveEdgeStyle, type EdgeStrokeSpec } from "../../lib/edge-styles";
 import { heatColorForCount } from "../../lib/heat-scale";
+import { clearCanvasPreview, createCanvasPreviewScheduler, scheduleCanvasPreview } from "./CanvasDragPreview";
 
 export interface MapDataLayerProps {
   settings: MapSettings;
@@ -34,6 +35,8 @@ export interface MapDataLayerProps {
   selectedProvince?: string | null;
   onSelectProvince?: (province: string) => void;
   onMoveProvinceTexture?: (province: string, offsetX: number, offsetY: number) => void;
+  /** Throttle window for texture drag previews. 0 applies every pointer move directly. */
+  renderIntervalMs?: number;
 }
 
 function provinceFill(
@@ -206,7 +209,6 @@ function provinceTextureRecords(
   bounds?: (feature: MapFeature) => [[number, number], [number, number]] | null | undefined,
   center?: (feature: MapFeature) => [number, number] | null | undefined,
   placementBounds: TexturePlacementBounds = { x: 0, y: 0, width: settings.width, height: settings.height },
-  preview?: { province: string; offsetX: number; offsetY: number } | null,
 ) {
   const textures = features.flatMap((feature) => {
     if (!provinceVisible(feature, settings)) return [];
@@ -217,8 +219,8 @@ function provinceTextureRecords(
     const box = resolveBounds(feature, path, bounds);
     if (!box) return [];
     const baseAnchor = resolveCenter(feature, box, center);
-    const offsetX = preview?.province === feature.name ? preview.offsetX : layout.offsetX ?? 0;
-    const offsetY = preview?.province === feature.name ? preview.offsetY : layout.offsetY ?? 0;
+    const offsetX = layout.offsetX ?? 0;
+    const offsetY = layout.offsetY ?? 0;
     const anchor: [number, number] = [baseAnchor[0] + offsetX, baseAnchor[1] + offsetY];
     const calculatedRect = provinceTextureBox(box, layout, anchor);
     const uniformSize = settings.provinceTextureUniformSize;
@@ -290,6 +292,23 @@ function provinceTextureNodes(
   });
 }
 
+interface TexturePreviewOffset {
+  offsetX: number;
+  offsetY: number;
+}
+
+/** Texture images render as siblings of their editor handle, so the drag can find one without a ref map. */
+function findTextureImage(editor: SVGGElement, featureId: string): SVGImageElement | null {
+  const siblings = editor.parentNode?.childNodes;
+  if (!siblings) return null;
+  for (const node of Array.from(siblings)) {
+    if (node instanceof Element && node.getAttribute("data-province-texture") === featureId) {
+      return node as SVGImageElement;
+    }
+  }
+  return null;
+}
+
 function edgeFilterDefs(filters: Array<{ id: string; markupKey: string }>) {
   return filters.map((filter) => {
     if (filter.markupKey === "soft-glow") {
@@ -355,8 +374,8 @@ export function MapDataLayer({
   selectedProvince = null,
   onSelectProvince,
   onMoveProvinceTexture,
+  renderIntervalMs = 0,
 }: MapDataLayerProps) {
-  const [texturePreview, setTexturePreview] = useState<{ province: string; offsetX: number; offsetY: number } | null>(null);
   const textureDrag = useRef<{
     province: string;
     pointerId: number;
@@ -364,7 +383,49 @@ export function MapDataLayer({
     pointerY: number;
     offsetX: number;
     offsetY: number;
+    originX: number;
+    originY: number;
+    anchorX: number;
+    anchorY: number;
+    editor: SVGGElement;
+    box: SVGRectElement | null;
+    image: SVGImageElement | null;
   } | null>(null);
+  const texturePreviewScheduler = useRef(createCanvasPreviewScheduler<TexturePreviewOffset>());
+
+  /**
+   * Drag previews bypass React: a pointer move only rewrites the geometry attributes of the
+   * dragged texture, so a long drag never re-renders (and re-projects) the whole map.
+   */
+  const updateTexturePreview = (next: TexturePreviewOffset) => {
+    const drag = textureDrag.current;
+    if (!drag) return;
+    const deltaX = next.offsetX - drag.offsetX;
+    const deltaY = next.offsetY - drag.offsetY;
+    const x = drag.originX + deltaX;
+    const y = drag.originY + deltaY;
+    drag.editor.setAttribute("data-texture-offset-x", String(next.offsetX));
+    drag.editor.setAttribute("data-texture-offset-y", String(next.offsetY));
+    drag.box?.setAttribute("x", String(x));
+    drag.box?.setAttribute("y", String(y));
+    drag.image?.setAttribute("x", String(x));
+    drag.image?.setAttribute("y", String(y));
+    drag.image?.setAttribute("data-texture-cx", String(drag.anchorX + deltaX));
+    drag.image?.setAttribute("data-texture-cy", String(drag.anchorY + deltaY));
+  };
+
+  const scheduleTexturePreview = (next: TexturePreviewOffset) => {
+    if (renderIntervalMs > 0) {
+      scheduleCanvasPreview(texturePreviewScheduler.current, next, renderIntervalMs, updateTexturePreview);
+      return;
+    }
+    updateTexturePreview(next);
+  };
+
+  const clearTexturePreview = () => clearCanvasPreview(texturePreviewScheduler.current);
+
+  useEffect(() => () => clearTexturePreview(), []);
+
   const maximum = Math.max(0, ...features.map((feature) => counts.get(feature.name) ?? 0));
   const edge = resolveEdgeStyle({
     style: settings.edgeStyle,
@@ -385,18 +446,14 @@ export function MapDataLayer({
     return { x: event.clientX, y: event.clientY };
   };
   const textureRecords = renderTextures
-    ? provinceTextureRecords(features, settings, path, bounds, center, texturePlacementBounds, texturePreview)
+    ? provinceTextureRecords(features, settings, path, bounds, center, texturePlacementBounds)
     : [];
   const textureEditors = !onSelectProvince ? [] : textureRecords.map((texture) => {
     const selected = selectedProvince === texture.feature.name;
     const automaticOffsetX = texture.rect.x - texture.unadjustedRect.x;
     const automaticOffsetY = texture.rect.y - texture.unadjustedRect.y;
-    const startOffsetX = texturePreview?.province === texture.feature.name
-      ? texturePreview.offsetX
-      : (texture.layout.offsetX ?? 0) + automaticOffsetX;
-    const startOffsetY = texturePreview?.province === texture.feature.name
-      ? texturePreview.offsetY
-      : (texture.layout.offsetY ?? 0) + automaticOffsetY;
+    const startOffsetX = (texture.layout.offsetX ?? 0) + automaticOffsetX;
+    const startOffsetY = (texture.layout.offsetY ?? 0) + automaticOffsetY;
     return (
       <g
         key={`province-texture-editor-${texture.feature.id}`}
@@ -422,14 +479,20 @@ export function MapDataLayer({
             pointerY: point.y,
             offsetX: startOffsetX,
             offsetY: startOffsetY,
+            originX: texture.rect.x,
+            originY: texture.rect.y,
+            anchorX: texture.anchor[0] + automaticOffsetX,
+            anchorY: texture.anchor[1] + automaticOffsetY,
+            editor: event.currentTarget,
+            box: event.currentTarget.querySelector("rect"),
+            image: findTextureImage(event.currentTarget, texture.feature.id),
           };
         }}
         onPointerMove={(event) => {
           const drag = textureDrag.current;
           if (!drag) return;
           const point = eventPoint(event);
-          setTexturePreview({
-            province: drag.province,
+          scheduleTexturePreview({
             offsetX: drag.offsetX + point.x - drag.pointerX,
             offsetY: drag.offsetY + point.y - drag.pointerY,
           });
@@ -441,13 +504,15 @@ export function MapDataLayer({
           const offsetX = drag.offsetX + point.x - drag.pointerX;
           const offsetY = drag.offsetY + point.y - drag.pointerY;
           if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          clearTexturePreview();
           textureDrag.current = null;
-          setTexturePreview(null);
           onMoveProvinceTexture?.(drag.province, Math.round(offsetX), Math.round(offsetY));
         }}
         onPointerCancel={() => {
+          const drag = textureDrag.current;
+          if (drag) updateTexturePreview({ offsetX: drag.offsetX, offsetY: drag.offsetY });
+          clearTexturePreview();
           textureDrag.current = null;
-          setTexturePreview(null);
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {

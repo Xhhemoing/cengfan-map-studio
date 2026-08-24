@@ -38,6 +38,10 @@ export type StudioLayoutTemplateProps = {
   /** 移动端 AI 抽屉开关状态。 */
   drawerOpen: boolean;
   onDrawerClose: () => void;
+  /** 抽屉关闭后焦点返回的入口按钮（顶栏 AI 入口）。 */
+  drawerReturnFocusTo?: HTMLElement | null;
+  /** 全局状态条（操作反馈 + 本地保存状态）。 */
+  status?: ReactNode;
   /** 中心画布内容（各阶段 workspace）。 */
   children: ReactNode;
 };
@@ -46,7 +50,7 @@ export type StudioLayoutTemplateProps = {
  * 全局布局模板（T1 模板化落点）。
  *
  * 所有聚焦阶段的唯一页面外壳：app-shell 容器 + 顶栏（品牌/步骤条/动作组）
- * + 三栏编辑器（左 AI/总览、中画布、右编辑工具）+ 移动端 AI 抽屉。
+ * + 三栏编辑器（左 AI/总览、中画布、右编辑工具）+ 移动端 AI 抽屉 + 状态条。
  * 阶段之间只通过槽位（slots）区分内容，外壳本身完全共用。
  */
 export function StudioLayoutTemplate({
@@ -63,6 +67,8 @@ export function StudioLayoutTemplate({
   rightRailLabel,
   drawerOpen,
   onDrawerClose,
+  drawerReturnFocusTo,
+  status,
   children,
 }: StudioLayoutTemplateProps) {
   return (
@@ -77,9 +83,15 @@ export function StudioLayoutTemplate({
       <StudioEditorShell stage={stage} leftRail={leftRail} rightRail={rightRail} rightRailLabel={rightRailLabel}>
         {children}
       </StudioEditorShell>
-      <StudioAssistantDrawer open={drawerOpen} onClose={onDrawerClose} label="AI 助手与高级功能">
+      <StudioAssistantDrawer
+        open={drawerOpen}
+        onClose={onDrawerClose}
+        label="AI 助手与高级功能"
+        returnFocusTo={drawerReturnFocusTo}
+      >
         {leftRail}
       </StudioAssistantDrawer>
+      {status}
     </div>
   );
 }

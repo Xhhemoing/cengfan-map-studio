@@ -12,20 +12,38 @@ export interface AiTransportConfig {
 
 interface CompletionPayload {
   choices?: Array<{ message?: unknown }>;
-  usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown };
+  usage?: {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    total_tokens?: unknown;
+    prompt_cache_hit_tokens?: unknown;
+    prompt_cache_miss_tokens?: unknown;
+    prompt_tokens_details?: { cached_tokens?: unknown };
+  };
 }
 
 function nonNegativeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
+/** DeepSeek 用 prompt_cache_hit/miss_tokens，OpenAI 兼容端用 prompt_tokens_details.cached_tokens，两种都归一到 hit/miss。 */
 function parseUsage(payload: CompletionPayload): AiUsage | undefined {
-  const promptTokens = nonNegativeInteger(payload.usage?.prompt_tokens);
-  const completionTokens = nonNegativeInteger(payload.usage?.completion_tokens);
-  const totalTokens = nonNegativeInteger(payload.usage?.total_tokens);
-  return promptTokens !== undefined && completionTokens !== undefined && totalTokens !== undefined
-    ? { promptTokens, completionTokens, totalTokens }
-    : undefined;
+  const usage = payload.usage;
+  if (!usage) return undefined;
+  const promptTokens = nonNegativeInteger(usage.prompt_tokens);
+  const completionTokens = nonNegativeInteger(usage.completion_tokens);
+  const totalTokens = nonNegativeInteger(usage.total_tokens);
+  if (promptTokens === undefined && completionTokens === undefined && totalTokens === undefined) return undefined;
+  const cacheHitTokens = nonNegativeInteger(usage.prompt_cache_hit_tokens) ?? nonNegativeInteger(usage.prompt_tokens_details?.cached_tokens);
+  const cacheMissTokens = nonNegativeInteger(usage.prompt_cache_miss_tokens)
+    ?? (promptTokens !== undefined && cacheHitTokens !== undefined ? Math.max(0, promptTokens - cacheHitTokens) : undefined);
+  return {
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+    totalTokens: totalTokens ?? (promptTokens ?? 0) + (completionTokens ?? 0),
+    ...(cacheHitTokens !== undefined ? { promptCacheHitTokens: cacheHitTokens } : {}),
+    ...(cacheMissTokens !== undefined ? { promptCacheMissTokens: cacheMissTokens } : {}),
+  };
 }
 
 function abortError(): AiCallError {

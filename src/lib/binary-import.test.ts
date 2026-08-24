@@ -14,6 +14,40 @@ describe("binary import adapters", () => {
       university: "北京大学",
       city: "北京",
     });
+    expect(result.unparsed).toEqual([]);
+    expect(result.unmappedHeaders).toEqual([]);
+    expect(result.missingRequiredFields).toEqual([]);
+  });
+
+  it("parses the canonical template header without leftovers", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "录取院校", "城市", "去向类型"],
+      ["林舟", "北京大学", "北京市", "中国去向"],
+      ["周晴", "哈佛大学", "美国·波士顿", "海外去向"],
+      ["", "", "", ""],
+    ]);
+
+    expect(result.headerRowIndex).toBe(0);
+    expect(result.missingRequiredFields).toEqual([]);
+    expect(result.unmappedHeaders).toEqual([]);
+    expect(result.unparsed).toEqual([]);
+    expect(result.candidates).toEqual([
+      {
+        name: "林舟",
+        university: "北京大学",
+        city: "北京市",
+        sourceLine: 2,
+        rawLine: "林舟\t北京大学\t北京市\t中国去向",
+      },
+      {
+        name: "周晴",
+        university: "哈佛大学",
+        city: "美国·波士顿",
+        locationScope: "international",
+        sourceLine: 3,
+        rawLine: "周晴\t哈佛大学\t美国·波士顿\t海外去向",
+      },
+    ]);
   });
 
   it("maps reordered bilingual headers for name, enrolled university, and city", () => {
@@ -80,6 +114,70 @@ describe("binary import adapters", () => {
       expect.objectContaining({ field: "university", sourceHeader: "school" }),
     ]);
     expect(result.missingRequiredFields).toEqual(["city"]);
+  });
+
+  it("drops every candidate and explains the gap when a required column is missing", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "录取学校", "备注"],
+      ["苏禾", "浙江大学", "保研"],
+      ["林舟", "北京大学", ""],
+      ["", "", ""],
+    ]);
+
+    expect(result.missingRequiredFields).toEqual(["city"]);
+    expect(result.candidates).toEqual([]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: "苏禾\t浙江大学\t保研", reason: "表头缺少必填列:城市" },
+      { sourceLine: 3, rawLine: "林舟\t北京大学", reason: "表头缺少必填列:城市" },
+    ]);
+  });
+
+  it("keeps extra columns unmapped without shifting mapped values", () => {
+    const result = parseExcelWorkbookRows([
+      ["班级", "学生姓名", "录取学校", "城市", "去向类型", "备注"],
+      ["三班", "苏禾", "浙江大学", "杭州市", "", ""],
+      ["", "林舟", "北京大学", "北京市", "", "待确认"],
+    ]);
+
+    expect(result.unmappedHeaders).toEqual(["班级", "备注"]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市", sourceLine: 2 }),
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市", sourceLine: 3 }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("reports rows with blank required cells as unparsed with 1-based row numbers", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "录取院校", "城市", "去向类型"],
+      ["苏禾", "浙江大学", "杭州市", ""],
+      ["林舟", "", "北京市", ""],
+      ["", "复旦大学", "", "海外去向"],
+      ["", "", "", ""],
+    ]);
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", sourceLine: 2 }),
+    ]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "林舟\t北京市", reason: "缺少必填字段:录取院校" },
+      { sourceLine: 4, rawLine: "复旦大学\t海外去向", reason: "缺少必填字段:学生姓名、城市" },
+    ]);
+  });
+
+  it("treats 海外去向 in the destination column as an international scope", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "录取院校", "城市", "去向类型"],
+      ["周晴", "哈佛大学", "美国·波士顿", "海外去向"],
+      ["苏禾", "浙江大学", "杭州市", "中国去向"],
+      ["顾言", "帝国理工学院", "伦敦", "Overseas"],
+    ]);
+
+    expect(result.candidates.map((candidate) => candidate.locationScope)).toEqual([
+      "international",
+      undefined,
+      "international",
+    ]);
   });
 
   it("builds a canonical import template with a separate guide sheet", () => {

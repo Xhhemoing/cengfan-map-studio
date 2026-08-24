@@ -102,4 +102,48 @@ describe("import data", () => {
       rawLine: "周晴,哈佛大学,美国·波士顿,海外",
     }]);
   });
+
+  it("reads the fourth column with the same scope vocabulary as the excel importer", () => {
+    const result = parseStudentText([
+      "姓名,院校,城市,去向类型",
+      "周晴,哈佛大学,美国·波士顿,海外去向",
+      "苏禾,浙江大学,杭州市,中国去向",
+      "顾言,帝国理工学院,伦敦,Overseas",
+    ].join("\n"));
+
+    expect(result.candidates.map((candidate) => candidate.locationScope)).toEqual([
+      "international",
+      undefined,
+      "international",
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("skips alias header rows instead of importing them as students", () => {
+    const result = parseStudentText("学生姓名,录取学校,城市\n苏禾,浙江大学,杭州市");
+
+    expect(result.candidates).toEqual([{
+      name: "苏禾",
+      university: "浙江大学",
+      city: "杭州市",
+      sourceLine: 2,
+      rawLine: "苏禾,浙江大学,杭州市",
+    }]);
+    expect(result.unparsed).toEqual([]);
+    expect(parseDelimitedTable("学生姓名,录取学校,城市\n苏禾,浙江大学,杭州市")).toEqual([
+      expect.objectContaining({ name: "苏禾", sourceLine: 2 }),
+    ]);
+  });
+
+  it("recognizes labeled records that use alias labels", () => {
+    const result = parseStudentText("学生姓名：苏禾；录取学校：浙江大学；所在城市：杭州市");
+
+    expect(result.candidates).toEqual([{
+      name: "苏禾",
+      university: "浙江大学",
+      city: "杭州市",
+      sourceLine: 1,
+      rawLine: "学生姓名：苏禾；录取学校：浙江大学；所在城市：杭州市",
+    }]);
+  });
 });

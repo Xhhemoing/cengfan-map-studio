@@ -37,6 +37,12 @@ function createAgentTaskId(): string {
   return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+/** 只透传工具名，工具参数与结果始终不进日志。 */
+function agentToolNames(outcome: { kind: string; calls?: Array<{ name: string }> }): string[] | undefined {
+  if (outcome.kind === "tool-call") return outcome.calls?.map((call) => call.name);
+  return outcome.kind === "finish" ? ["finish"] : undefined;
+}
+
 function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
   if (trustProxy) {
     const forwarded = request.headers["x-forwarded-for"];
@@ -835,9 +841,9 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         parsed.value.budget = receipt
-          ? { usedTokens: receipt.usedTokens, maxTokens: receipt.maxTokens, rounds: receipt.rounds, maxRounds: receipt.maxRounds }
+          ? { usedTokens: receipt.usedTokens, maxTokens: receipt.maxTokens, rounds: receipt.rounds, maxRounds: receipt.maxRounds, lastPromptTokens: receipt.lastPromptTokens }
           : { usedTokens: 0, maxTokens: agentRuntime.tokenBudget, rounds: 0, maxRounds: agentRuntime.maxRounds };
-        aiLogger.log("ai.request.started", { requestId, route: "primary", messageCount: parsed.value.messages.length, promptBytes: Buffer.byteLength(parsed.value.userMessage, "utf8") });
+        aiLogger.log("ai.request.started", { requestId, taskId, roundIndex: parsed.value.budget.rounds, route: "primary", messageCount: parsed.value.messages.length, promptBytes: Buffer.byteLength(parsed.value.userMessage, "utf8") });
         const requestController = new AbortController();
         const abortRequest = () => requestController.abort();
         const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
@@ -855,6 +861,7 @@ export function createAiServer(options: AiServerOptions = {}) {
           if (meta?.route === "fallback" || meta?.route === "local") {
             aiLogger.log("ai.route.fallback", {
               requestId,
+              taskId,
               route: meta.route,
               provider: meta.provider,
               model: meta.model,
@@ -864,10 +871,11 @@ export function createAiServer(options: AiServerOptions = {}) {
               fallbackReason: meta.fallbackReason,
             });
           }
-          aiLogger.log("ai.agent.finished", { requestId, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage, fallbackReason: meta?.fallbackReason });
-          aiLogger.log("ai.request.completed", { requestId, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage });
-          const responseBudget = "budget" in outcome && outcome.budget ? outcome.budget : parsed.value.budget;
-          const budgetReceipt = budgetReceipts.issue({ taskId, usedTokens: responseBudget.usedTokens, rounds: responseBudget.rounds, maxTokens: responseBudget.maxTokens, maxRounds: responseBudget.maxRounds, sequence: (receipt?.sequence ?? 0) + 1, issuedAt: Date.now() });
+          const outcomeBudget = "budget" in outcome && outcome.budget ? outcome.budget : parsed.value.budget;
+          const responseBudget = { usedTokens: outcomeBudget.usedTokens, maxTokens: outcomeBudget.maxTokens, rounds: outcomeBudget.rounds, maxRounds: outcomeBudget.maxRounds };
+          aiLogger.log("ai.agent.finished", { requestId, taskId, roundIndex: responseBudget.rounds, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage, budgetUsedTokens: responseBudget.usedTokens, toolNames: agentToolNames(outcome), fallbackReason: meta?.fallbackReason });
+          aiLogger.log("ai.request.completed", { requestId, taskId, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage });
+          const budgetReceipt = budgetReceipts.issue({ taskId, ...responseBudget, sequence: (receipt?.sequence ?? 0) + 1, issuedAt: Date.now(), lastPromptTokens: outcomeBudget.lastPromptTokens });
           const budgetPayload = budgetReceipts.verify(budgetReceipt, taskId);
           if (!budgetPayload || !claim) throw new Error("预算回执签发失败");
           let committed = false;
@@ -885,7 +893,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         } catch (error) {
           if (claim) budgetReceiptLedger.rollback(claim);
           const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
+          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, taskId, errorCode: code });
           if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
         } finally {
           request.removeListener("aborted", abortRequest);

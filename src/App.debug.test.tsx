@@ -41,7 +41,7 @@ afterEach(() => {
 describe("debug", () => {
   it("clicks the advanced tab then looks for the settings button", () => {
     const container = renderLegacyApp();
-    const tab = container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="studio-advanced-panel"]');
+    const tab = container.querySelector<HTMLButtonElement>('[role="tab"][data-rail-tab="advanced"]');
     if (tab) click(tab);
     expect(true).toBe(true);
   });

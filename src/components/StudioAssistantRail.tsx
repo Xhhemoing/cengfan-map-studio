@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { AgentAssistant } from "./AgentAssistant";
 import { StageOverviewPanel } from "./StageOverviewPanel";
 import type { StageOverviewAction, StageOverviewModel } from "../lib/stage-overview";
@@ -51,6 +51,14 @@ const COLLABORATION_LABELS: Record<CollaborationStatus, string> = {
   closed: "房间已关闭",
 };
 
+type RailTabId = "ai" | "stage" | "advanced";
+
+const RAIL_TABS: ReadonlyArray<{ id: RailTabId; label: string }> = [
+  { id: "ai", label: "AI 助手" },
+  { id: "stage", label: "本阶段" },
+  { id: "advanced", label: "高级功能" },
+];
+
 function selectionLabel(selection: SceneSelection): string {
   switch (selection.type) {
     case "canvas": return "画布";
@@ -88,8 +96,39 @@ export function StudioAssistantRail({
   stageOverview,
   onStageOverviewAction,
 }: StudioAssistantRailProps) {
-  const [activeTab, setActiveTab] = useState<"ai" | "stage" | "advanced">("ai");
+  const [activeTab, setActiveTab] = useState<RailTabId>("ai");
   const [advancedView, setAdvancedView] = useState<"operations" | "elements">("operations");
+  // 桌面常驻栏与移动端抽屉会同时挂载同一个 rail，静态 id 会在文档里重复。
+  const instanceId = useId();
+  const tabId = (tab: RailTabId) => `${instanceId}-${tab}-tab`;
+  const panelId = (tab: RailTabId) => `${instanceId}-${tab}-panel`;
+  const tabRefs = useRef(new Map<RailTabId, HTMLButtonElement>());
+
+  const selectTab = (tab: RailTabId) => {
+    setActiveTab(tab);
+    if (tab === "advanced") setAdvancedView("operations");
+  };
+
+  const nextTabIndex = (key: string, index: number): number | null => {
+    switch (key) {
+      case "ArrowRight":
+      case "ArrowDown": return (index + 1) % RAIL_TABS.length;
+      case "ArrowLeft":
+      case "ArrowUp": return (index - 1 + RAIL_TABS.length) % RAIL_TABS.length;
+      case "Home": return 0;
+      case "End": return RAIL_TABS.length - 1;
+      default: return null;
+    }
+  };
+
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: RailTabId) => {
+    const index = nextTabIndex(event.key, RAIL_TABS.findIndex((item) => item.id === tab));
+    if (index === null) return;
+    event.preventDefault();
+    const next = RAIL_TABS[index]!.id;
+    selectTab(next);
+    tabRefs.current.get(next)?.focus();
+  };
   const outline = useMemo(() => [
     { selection: { type: "canvas" } as const, label: "画布" },
     { selection: { type: "map" } as const, label: "地图展示框" },
@@ -108,56 +147,45 @@ export function StudioAssistantRail({
   return (
     <div className="studio-assistant-rail">
       <div className="studio-assistant-rail__tabs" role="tablist" aria-label="左侧工具">
-        <button
-          type="button"
-          role="tab"
-          id="studio-ai-tab"
-          aria-selected={activeTab === "ai"}
-          aria-controls="studio-ai-panel"
-          onClick={() => setActiveTab("ai")}
-        >
-          AI 助手
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="studio-stage-tab"
-          aria-selected={activeTab === "stage"}
-          aria-controls="studio-stage-panel"
-          onClick={() => setActiveTab("stage")}
-        >
-          本阶段
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="studio-advanced-tab"
-          aria-selected={activeTab === "advanced"}
-          aria-controls="studio-advanced-panel"
-          onClick={() => {
-            setActiveTab("advanced");
-            setAdvancedView("operations");
-          }}
-        >
-          高级功能
-        </button>
+        {RAIL_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            ref={(node) => {
+              if (node) tabRefs.current.set(tab.id, node);
+              else tabRefs.current.delete(tab.id);
+            }}
+            type="button"
+            role="tab"
+            data-rail-tab={tab.id}
+            id={tabId(tab.id)}
+            aria-selected={activeTab === tab.id}
+            aria-controls={panelId(tab.id)}
+            tabIndex={activeTab === tab.id ? 0 : -1}
+            onClick={() => selectTab(tab.id)}
+            onKeyDown={(event) => onTabKeyDown(event, tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
       {activeTab === "ai" ? (
         <section
           className="studio-assistant-rail__panel"
           role="tabpanel"
-          id="studio-ai-panel"
-          aria-labelledby="studio-ai-tab"
+          data-rail-panel="ai"
+          id={panelId("ai")}
+          aria-labelledby={tabId("ai")}
           aria-label="AI 助手"
         >
-          <AgentAssistant presentation="docked" project={project} assets={assets} onPreview={onPreview} onCommit={onCommit} />
+          <AgentAssistant project={project} assets={assets} onPreview={onPreview} onCommit={onCommit} />
         </section>
       ) : activeTab === "stage" ? (
         <section
           className="studio-assistant-rail__panel"
           role="tabpanel"
-          id="studio-stage-panel"
-          aria-labelledby="studio-stage-tab"
+          data-rail-panel="stage"
+          id={panelId("stage")}
+          aria-labelledby={tabId("stage")}
           aria-label="本阶段"
         >
           <StageOverviewPanel
@@ -180,8 +208,9 @@ export function StudioAssistantRail({
         <section
           className="studio-assistant-rail__panel"
           role="tabpanel"
-          id="studio-advanced-panel"
-          aria-labelledby="studio-advanced-tab"
+          data-rail-panel="advanced"
+          id={panelId("advanced")}
+          aria-labelledby={tabId("advanced")}
           aria-label="高级功能"
         >
           <div className="studio-advanced">

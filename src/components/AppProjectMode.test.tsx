@@ -42,7 +42,7 @@ function click(element: Element): void {
 }
 
 function openRailAdvancedTab(container: HTMLElement): void {
-  click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="studio-advanced-panel"]')!);
+  click(container.querySelector<HTMLButtonElement>('[role="tab"][data-rail-tab="advanced"]')!);
 }
 
 // GlobalSettingsScreen is lazy; flush the module-resolution microtask once after

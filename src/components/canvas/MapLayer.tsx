@@ -70,6 +70,84 @@ function getFeatureSplit(features: readonly MapFeature[], collapse: boolean) {
   return collapse ? cached.folded : cached.open;
 }
 
+interface ProjectedFeatures {
+  projection: ReturnType<typeof geoMercator>;
+  /** Serialized SVG path data, computed at most once per feature per projection. */
+  path: (feature: MapFeature) => string | null;
+  bounds: (feature: MapFeature) => [[number, number], [number, number]] | null;
+  /** Raw projected centroid, including non-finite results for degenerate geometry. */
+  centroid: (feature: MapFeature) => [number, number];
+  /** Centroid restricted to finite coordinates, for texture anchoring. */
+  center: (feature: MapFeature) => [number, number] | null;
+}
+
+/** Extents change while a map is resized; keep a few so resizing does not grow the cache forever. */
+const PROJECTION_CACHE_LIMIT = 6;
+
+const projectionCache = new WeakMap<readonly MapFeature[], Map<string, ProjectedFeatures>>();
+
+function buildProjectedFeatures(
+  features: readonly MapFeature[],
+  extent: [[number, number], [number, number]],
+): ProjectedFeatures {
+  const projection = geoMercator().fitExtent(
+    extent,
+    { type: "FeatureCollection", features } as never,
+  );
+  const geo = geoPath(projection);
+  const paths = new Map<MapFeature, string | null>();
+  const boxes = new Map<MapFeature, [[number, number], [number, number]] | null>();
+  const centroids = new Map<MapFeature, [number, number]>();
+  const path = (feature: MapFeature) => {
+    if (!paths.has(feature)) paths.set(feature, geo(feature as never));
+    return paths.get(feature) ?? null;
+  };
+  const bounds = (feature: MapFeature) => {
+    if (!boxes.has(feature)) {
+      const box = geo.bounds(feature as never);
+      boxes.set(
+        feature,
+        box && Number.isFinite(box[0][0]) && Number.isFinite(box[1][0])
+          ? box as [[number, number], [number, number]]
+          : null,
+      );
+    }
+    return boxes.get(feature) ?? null;
+  };
+  const centroid = (feature: MapFeature) => {
+    let point = centroids.get(feature);
+    if (!point) {
+      const projected = geo.centroid(feature as never);
+      point = [projected[0], projected[1]];
+      centroids.set(feature, point);
+    }
+    return point;
+  };
+  const center = (feature: MapFeature) => {
+    const point = centroid(feature);
+    return Number.isFinite(point[0]) && Number.isFinite(point[1]) ? point : null;
+  };
+  return { projection, path, bounds, centroid, center };
+}
+
+function getProjectedFeatures(
+  features: readonly MapFeature[],
+  extent: [[number, number], [number, number]],
+): ProjectedFeatures {
+  let byExtent = projectionCache.get(features);
+  if (!byExtent) {
+    byExtent = new Map();
+    projectionCache.set(features, byExtent);
+  }
+  const key = extent.flat().join(",");
+  const cached = byExtent.get(key);
+  if (cached) return cached;
+  const projected = buildProjectedFeatures(features, extent);
+  if (byExtent.size >= PROJECTION_CACHE_LIMIT) byExtent.delete(byExtent.keys().next().value!);
+  byExtent.set(key, projected);
+  return projected;
+}
+
 function renderMapImage(
   settings: MapSettings,
   features: readonly MapFeature[],
@@ -164,23 +242,7 @@ function SouthSeaInset({
   if (insetFeatures.length === 0) return null;
   const frame = defaultSouthSeaInsetFrame(settings.width, settings.height);
   const pad = 8;
-  const projection = geoMercator().fitExtent(
-    [[pad, pad], [frame.width - pad, frame.height - pad]],
-    { type: "FeatureCollection", features: insetFeatures } as never,
-  );
-  const path = geoPath(projection);
-  const featureBounds = (feature: MapFeature): [[number, number], [number, number]] | null => {
-    const bounds = path.bounds(feature as never);
-    if (!bounds || !Number.isFinite(bounds[0][0]) || !Number.isFinite(bounds[1][0])) return null;
-    return bounds as [[number, number], [number, number]];
-  };
-  const featureCenter = (feature: MapFeature): [number, number] | null => {
-    const centroid = path.centroid(feature as never);
-    if (Number.isFinite(centroid[0]) && Number.isFinite(centroid[1])) {
-      return [centroid[0], centroid[1]];
-    }
-    return null;
-  };
+  const projected = getProjectedFeatures(insetFeatures, [[pad, pad], [frame.width - pad, frame.height - pad]]);
 
   return (
     <g data-south-sea-inset transform={`translate(${frame.x} ${frame.y})`}>
@@ -198,9 +260,9 @@ function SouthSeaInset({
         features={insetFeatures}
         counts={counts}
         dataView={dataView}
-        path={(feature) => path(feature as never)}
-        bounds={featureBounds}
-        center={featureCenter}
+        path={projected.path}
+        bounds={projected.bounds}
+        center={projected.center}
         heatColors={theme?.heatColors}
         renderFills={renderVectorFills}
         renderTextures
@@ -267,23 +329,8 @@ export function MapLayer({
 }: MapLayerProps) {
   const collapse = settings.collapseSouthChinaSea === true;
   const { mainlandFeatures, insetFeatures } = getFeatureSplit(features, collapse);
-  const projection = geoMercator().fitExtent(
-    [[0, 0], [settings.width, settings.height]],
-    { type: "FeatureCollection", features: mainlandFeatures } as never,
-  );
-  const path = geoPath(projection);
-  const featureBounds = (feature: MapFeature): [[number, number], [number, number]] | null => {
-    const bounds = path.bounds(feature as never);
-    if (!bounds || !Number.isFinite(bounds[0][0]) || !Number.isFinite(bounds[1][0])) return null;
-    return bounds as [[number, number], [number, number]];
-  };
-  const featureCenter = (feature: MapFeature): [number, number] | null => {
-    const centroid = path.centroid(feature as never);
-    if (Number.isFinite(centroid[0]) && Number.isFinite(centroid[1])) {
-      return [centroid[0], centroid[1]];
-    }
-    return null;
-  };
+  const projected = getProjectedFeatures(mainlandFeatures, [[0, 0], [settings.width, settings.height]]);
+  const projection = projected.projection;
   const interactive = !exportMode && Boolean(onSelectMap);
   const selectMap = () => onSelectMap?.({ type: "map" });
   const centerX = settings.width / 2;
@@ -344,15 +391,15 @@ export function MapLayer({
         features={mainlandFeatures}
         counts={counts}
         dataView={dataView}
-        path={(feature) => path(feature as never)}
-        bounds={featureBounds}
-        center={featureCenter}
+        path={projected.path}
+        bounds={projected.bounds}
+        center={projected.center}
         heatColors={theme?.heatColors}
         renderFills={renderVectorFills}
         renderTextures={false}
         renderBorders={false}
       />
-      {imageSource && (imageZIndex < BORDER_Z) && renderMapImage(settings, mainlandFeatures, (feature) => path(feature as never))}
+      {imageSource && (imageZIndex < BORDER_Z) && renderMapImage(settings, mainlandFeatures, projected.path)}
       {/* Borders + province textures on top of the custom map image (and solid fills). */}
       <g data-map-borders>
         <MapDataLayer
@@ -360,19 +407,20 @@ export function MapLayer({
           features={mainlandFeatures}
           counts={counts}
           dataView={dataView}
-          path={(feature) => path(feature as never)}
-          bounds={featureBounds}
-          center={featureCenter}
+          path={projected.path}
+          bounds={projected.bounds}
+          center={projected.center}
           heatColors={theme?.heatColors}
           renderFills={false}
           renderTextures
           renderBorders
+          renderIntervalMs={renderIntervalMs}
           selectedProvince={selectedProvince}
           onSelectProvince={!exportMode ? onSelectProvince : undefined}
           onMoveProvinceTexture={!exportMode ? onMoveProvinceTexture : undefined}
         />
       </g>
-      {imageSource && (imageZIndex >= BORDER_Z && imageZIndex < LABEL_Z) && renderMapImage(settings, mainlandFeatures, (feature) => path(feature as never))}
+      {imageSource && (imageZIndex >= BORDER_Z && imageZIndex < LABEL_Z) && renderMapImage(settings, mainlandFeatures, projected.path)}
       {collapse && (
         <SouthSeaInset
           settings={settings}
@@ -420,7 +468,7 @@ export function MapLayer({
       })}
       {settings.showProvinceLabels && mainlandFeatures.map((feature) => {
         const administrativeCenter = projection(feature.center);
-        const centroid = path.centroid(feature as never);
+        const centroid = projected.centroid(feature);
         const usesAdministrativeCenter = Boolean(administrativeCenter
           && Number.isFinite(administrativeCenter[0])
           && Number.isFinite(administrativeCenter[1]));
@@ -445,13 +493,13 @@ export function MapLayer({
           </text>
         ) : null;
       })}
-      {imageSource && imageZIndex >= LABEL_Z && renderMapImage(settings, mainlandFeatures, (feature) => path(feature as never))}
+      {imageSource && imageZIndex >= LABEL_Z && renderMapImage(settings, mainlandFeatures, projected.path)}
       </g>
       {!exportMode && onSelectProvince && interactiveFeatures.map((feature) => (
         <path
           key={`province-hit-${feature.id}`}
           data-province-hit={feature.id}
-          d={path(feature as never) ?? ""}
+          d={projected.path(feature) ?? ""}
           fill="transparent"
           stroke="transparent"
           strokeWidth={8}

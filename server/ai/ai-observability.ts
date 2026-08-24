@@ -8,7 +8,7 @@ const EVENTS = new Set([
   "ai.rate_limited",
 ]);
 
-const ALLOWED = new Set(["requestId", "route", "provider", "model", "latencyMs", "attempts", "usage", "errorCode", "messageCount", "promptBytes", "toolNames", "fallbackReason"]);
+const ALLOWED = new Set(["requestId", "taskId", "roundIndex", "route", "provider", "model", "latencyMs", "attempts", "usage", "budgetUsedTokens", "errorCode", "messageCount", "promptBytes", "toolNames", "fallbackReason"]);
 
 export function createAiLogger(write: (line: string) => void = (line) => console.warn(line)) {
   return {

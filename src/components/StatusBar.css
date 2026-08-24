@@ -1,0 +1,56 @@
+/*
+ * 状态条浮在编辑器外壳之上：三栏 shell 是 `calc(100vh - topbar)` 的整块网格，
+ * 追加常规流元素会把内容顶出首屏，因此这里用固定定位挂在底部中央。
+ */
+.studio-status-bar {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  z-index: 40;
+  display: inline-flex;
+  max-width: min(70vw, 720px);
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  color: var(--editor-ink, #23303a);
+  font-size: 12px;
+  line-height: 18px;
+  background: var(--editor-surface-raised, #fff);
+  border: 1px solid var(--editor-line, #ccd7dd);
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgb(20 30 40 / 14%);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.studio-status-bar[data-empty="true"] {
+  display: none;
+}
+
+.studio-status-bar__sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.studio-status-bar__sync > span[aria-hidden="true"] {
+  width: 7px;
+  height: 7px;
+  background: var(--editor-ink-muted, #8fa1ad);
+  border-radius: 50%;
+}
+
+.studio-status-bar__sync[data-sync-status="saving"] > span[aria-hidden="true"] { background: #d6a13d; }
+.studio-status-bar__sync[data-sync-status="saved"] > span[aria-hidden="true"] { background: #3f9c74; }
+.studio-status-bar__sync[data-sync-status="failed"] > span[aria-hidden="true"] { background: #c95c49; }
+
+.studio-status-bar__message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (width <= 760px) {
+  .studio-status-bar { max-width: calc(100vw - 24px); }
+}

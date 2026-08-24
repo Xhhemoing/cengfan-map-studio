@@ -1,6 +1,15 @@
-import { parseStudentText, type TextImportResult } from "./import-data";
+import {
+  COLUMN_LABELS,
+  HEADER_ALIASES,
+  matchStudentColumn,
+  parseLocationScope,
+  REQUIRED_COLUMNS,
+  type RequiredStudentColumn,
+  type StudentColumn,
+} from "./import-aliases";
+import { parseStudentText, type TextImportResult, type UnparsedLine } from "./import-data";
 
-export type StudentColumn = "name" | "university" | "city" | "locationScope";
+export type { StudentColumn } from "./import-aliases";
 
 export interface ExcelColumnMapping {
   field: StudentColumn;
@@ -13,7 +22,7 @@ export interface ExcelImportResult extends TextImportResult {
   headerRowIndex?: number;
   columnMappings: ExcelColumnMapping[];
   unmappedHeaders: string[];
-  missingRequiredFields: Array<Extract<StudentColumn, "name" | "university" | "city">>;
+  missingRequiredFields: RequiredStudentColumn[];
 }
 
 export interface ImportTemplateSheets {
@@ -38,47 +47,26 @@ export function createImportTemplateSheets(): ImportTemplateSheets {
   };
 }
 
-const REQUIRED_COLUMNS = ["name", "university", "city"] as const;
-
-const HEADER_ALIASES: Record<StudentColumn, readonly string[]> = {
-  name: ["姓名", "学生", "学生姓名", "名字", "name", "student", "student name", "full name"],
-  university: [
-    "院校",
-    "录取院校",
-    "录取学校",
-    "大学",
-    "学校",
-    "就读学校",
-    "就读院校",
-    "university",
-    "school",
-    "college",
-    "enrolled university",
-  ],
-  city: ["城市", "所在城市", "目的地城市", "city", "destination city", "location"],
-  locationScope: ["去向类型", "去向", "地区类型", "destination type", "location scope", "scope"],
-};
-
-function normalizeHeader(value: string): string {
-  return value
-    .trim()
-    .toLocaleLowerCase("zh-CN")
-    .replace(/\s|_|-|\(|\)|（|）/g, "");
-}
-
 function findColumnIndexes(header: string[]): Partial<Record<StudentColumn, number>> {
   const indexes: Partial<Record<StudentColumn, number>> = {};
-  for (const column of Object.keys(HEADER_ALIASES) as StudentColumn[]) {
-    const aliases = HEADER_ALIASES[column].map(normalizeHeader);
-    const index = header.findIndex((cell) => aliases.includes(normalizeHeader(cell)));
-    if (index >= 0) indexes[column] = index;
-  }
+  header.forEach((cell, index) => {
+    const column = matchStudentColumn(cell);
+    if (column && indexes[column] === undefined) indexes[column] = index;
+  });
   return indexes;
+}
+
+function toRowCells(row: string[] | undefined): string[] {
+  return (row ?? []).map((cell) => String(cell ?? "").trim());
+}
+
+function rowRawLine(cells: string[]): string {
+  return cells.filter(Boolean).join("\t");
 }
 
 function matrixToText(rows: string[][]): string {
   return rows
-    .map((row) => row.map((cell) => String(cell ?? "").trim()).filter(Boolean).join("\t"))
+    .map((row) => rowRawLine(toRowCells(row)))
     .filter((line) => line.length > 0)
     .join("\n");
 }
@@ -141,11 +129,8 @@ function createMetadata(
   };
 }
 
-function parseLocationScope(value: string | undefined): "international" | undefined {
-  const normalized = value?.trim().toLocaleLowerCase("zh-CN") ?? "";
-  return normalized.includes("海外") || normalized.includes("international") || normalized.includes("overseas")
-    ? "international"
-    : undefined;
+function describeColumns(fields: readonly StudentColumn[]): string {
+  return fields.map((field) => COLUMN_LABELS[field]).join("、");
 }
 
 export function parseExcelArrayBuffer(input: ArrayBuffer | string[][]): ExcelImportResult {
@@ -160,31 +145,55 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
   if (!header) return { ...parseStudentText(matrixToText(rows)), ...emptyMetadata() };
 
   const metadata = createMetadata(rows, header);
+  // sourceLine 为表格 1 基行号:表头在 header.rowIndex(0 基),其后第 offset 行即 +2。
+  const dataRows = rows.slice(header.rowIndex + 1).map((row, offset) => ({
+    cells: toRowCells(row),
+    sourceLine: header.rowIndex + offset + 2,
+  })).filter(({ cells }) => cells.some(Boolean));
+
   if (metadata.missingRequiredFields.length > 0) {
-    return { ...parseStudentText(matrixToText(rows)), ...metadata };
+    const reason = `表头缺少必填列:${describeColumns(metadata.missingRequiredFields)}`;
+    return {
+      candidates: [],
+      unparsed: dataRows.map(({ cells, sourceLine }) => ({
+        sourceLine,
+        rawLine: rowRawLine(cells),
+        reason,
+      })),
+      ...metadata,
+    };
   }
 
-  const candidates = rows.slice(header.rowIndex + 1).flatMap((row, rowIndex) => {
-    const name = row[header.indexes.name!]?.trim() ?? "";
-    const university = row[header.indexes.university!]?.trim() ?? "";
-    const city = row[header.indexes.city!]?.trim() ?? "";
-    if (!name || !university || !city) return [];
-    const locationScope = parseLocationScope(row[header.indexes.locationScope!]);
-    return [{
-      name,
-      university,
-      city,
-      ...(locationScope ? { locationScope } : {}),
-      sourceLine: header.rowIndex + rowIndex + 2,
-      rawLine: row.map((cell) => cell.trim()).filter(Boolean).join("\t"),
-    }];
-  });
+  const candidates: TextImportResult["candidates"] = [];
+  const unparsed: UnparsedLine[] = [];
 
-  return {
-    candidates,
-    unparsed: [],
-    ...metadata,
-  };
+  for (const { cells, sourceLine } of dataRows) {
+    const values = {
+      name: cells[header.indexes.name!] ?? "",
+      university: cells[header.indexes.university!] ?? "",
+      city: cells[header.indexes.city!] ?? "",
+    };
+    const missing = REQUIRED_COLUMNS.filter((field) => !values[field]);
+    const rawLine = rowRawLine(cells);
+    if (missing.length > 0) {
+      unparsed.push({
+        sourceLine,
+        rawLine,
+        reason: `缺少必填字段:${describeColumns(missing)}`,
+      });
+      continue;
+    }
+    const scopeIndex = header.indexes.locationScope;
+    const locationScope = scopeIndex === undefined ? undefined : parseLocationScope(cells[scopeIndex]);
+    candidates.push({
+      ...values,
+      ...(locationScope ? { locationScope } : {}),
+      sourceLine,
+      rawLine,
+    });
+  }
+
+  return { candidates, unparsed, ...metadata };
 }
 
 export function parseOcrLikeText(text: string): TextImportResult {

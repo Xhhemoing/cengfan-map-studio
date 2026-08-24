@@ -8,7 +8,7 @@ import {
   type AgentLoopOutcome,
   type AgentLoopRequest,
 } from "./agent-loop";
-import type { AiRoute } from "./agent-types";
+import type { AgentBudgetState, AiRoute } from "./agent-types";
 import { AiCallError } from "./ai-errors";
 
 export const DEFAULT_AGENT_MODEL = "deepseek-v4-flash";
@@ -92,8 +92,21 @@ function applyRuntimeBudget(request: AgentLoopRequest, runtime: AgentRuntimeConf
       maxTokens,
       rounds: Math.min(maxRounds, Math.max(0, Math.floor(budget.rounds))),
       maxRounds,
+      ...(budget.lastPromptTokens !== undefined
+        ? { lastPromptTokens: Math.max(0, Math.floor(budget.lastPromptTokens)) }
+        : {}),
     },
   };
+}
+
+/**
+ * 预检与 usedTokenDelta 用同一套语义：usedTokens 已按缓存去重，一轮的新增上界只有补全上限，
+ * 不再按整段 prompt 预留，否则长会话会被自己反复重发的历史提前挤出预算。
+ */
+function exceedsBudget(budget: AgentBudgetState): boolean {
+  return budget.rounds >= budget.maxRounds
+    || budget.usedTokens >= budget.maxTokens
+    || budget.usedTokens + AGENT_MAX_TOKENS > budget.maxTokens;
 }
 
 function withRoute(outcome: AgentLoopOutcome, route: AiRoute, fallbackReason?: string, requestId = "local", config?: AiConfig): AgentLoopOutcome {
@@ -161,12 +174,13 @@ export function createAgentLoopBackend(config: AgentRuntimeConfig | AiConfig): A
       const boundedRequest = applyRuntimeBudget(request, runtime);
       if (boundedRequest.signal?.aborted) throw new AiCallError("AI_ABORTED", "AI 调用已取消");
       const budget = boundedRequest.budget!;
-      if (!runtime.primary || budget.rounds >= budget.maxRounds || budget.usedTokens >= budget.maxTokens || budget.usedTokens + AGENT_MAX_TOKENS > budget.maxTokens) {
+      const budgetExhausted = exceedsBudget(budget);
+      if (!runtime.primary || budgetExhausted) {
         return withRoute(
-          budget.rounds >= budget.maxRounds || budget.usedTokens >= budget.maxTokens || budget.usedTokens + AGENT_MAX_TOKENS > budget.maxTokens
+          budgetExhausted
             ? { kind: "finish", summary: "已达到 AI 任务预算，保留当前预览结果。", budget }
             : runLocalAgentTurn(boundedRequest),
-          runtime.primary ? "local" : "local",
+          "local",
           runtime.primary && budget.usedTokens + AGENT_MAX_TOKENS > budget.maxTokens ? "AI_BUDGET_EXCEEDED" : undefined,
           request.requestId,
           runtime.primary,

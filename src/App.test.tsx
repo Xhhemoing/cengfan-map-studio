@@ -64,7 +64,7 @@ function click(element: Element): void {
 }
 
 function openRailAdvancedTab(container: HTMLElement): void {
-  const el = container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="studio-advanced-panel"]');
+  const el = container.querySelector<HTMLButtonElement>('[role="tab"][data-rail-tab="advanced"]');
   click(el!);
 }
 
@@ -994,7 +994,7 @@ describe("App student editing", () => {
     // The assistant rail lives in the topbar drawer for the public content shell.
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开AI助手与高级功能"]')!);
     const drawer = document.querySelector(".studio-assistant-drawer")!;
-    click(drawer.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="studio-advanced-panel"]')!);
+    click(drawer.querySelector<HTMLButtonElement>('[role="tab"][data-rail-tab="advanced"]')!);
     click(drawer.querySelector<HTMLButtonElement>('button[aria-label="打开元素查看"]')!);
     const issue = Array.from(drawer.querySelectorAll<HTMLButtonElement>('section[aria-label="排版问题提示"] button'))
       .find((button) => button.textContent?.includes("text-title"));
@@ -1368,7 +1368,7 @@ describe("App student editing", () => {
     expect(projectMenu.textContent).toContain("在线协作");
 
     expect(container.querySelectorAll<HTMLButtonElement>(".workflow-stage-stepper button")).toHaveLength(5);
-    expect(container.querySelector('[role="tab"][aria-controls="studio-advanced-panel"]')).not.toBeNull();
+    expect(container.querySelector('[role="tab"][data-rail-tab="advanced"]')).not.toBeNull();
   });
 
   it("removes legacy toolbar action clusters while keeping the canvas rendered", () => {
@@ -1675,7 +1675,7 @@ describe("Top workflow and left assistant rail", () => {
 
   it("opens advanced project settings from the rail without adding an AI-bottom advanced entry", () => {
     const container = renderLegacyApp();
-    click(container.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="studio-advanced-panel"]')!);
+    click(container.querySelector<HTMLButtonElement>('[role="tab"][data-rail-tab="advanced"]')!);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
 
     expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).not.toBeNull();
@@ -1699,6 +1699,25 @@ describe("Top workflow and left assistant rail", () => {
     click(container.querySelector<HTMLButtonElement>('button[aria-label="管理协作与邀请"]')!);
     expect(container.querySelector<HTMLDetailsElement>(".topbar .project-menu")?.open).toBe(true);
     expect(container.querySelector('[aria-label="增量协作设置"]')).not.toBeNull();
+  });
+});
+
+describe("Studio status bar", () => {
+  it("announces six-stage operation feedback in one polite live region", () => {
+    const container = renderPublicApp();
+
+    const status = container.querySelector('.studio-status-bar[role="status"]');
+    expect(status).not.toBeNull();
+    expect(status?.getAttribute("aria-live")).toBe("polite");
+    expect(status?.textContent).toContain("仅在点击强制保存时写入本地");
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    click(workflowStage(container, "展示框样式"));
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="刷新展示框位置"]')!);
+
+    // 同一个 live region 被原地更新，读屏才会播报这条反馈。
+    expect(container.querySelector('.studio-status-bar[role="status"]')).toBe(status);
+    expect(status?.textContent).toContain("已刷新展示框位置");
   });
 });
 
@@ -1861,9 +1880,9 @@ describe("Stage overview (T2)", () => {
   it("shows the stage overview in the left rail with progress badge and cards", () => {
     const container = renderPublicApp();
     click(workflowStage(container, "数据与素材"));
-    click(container.querySelector('[role="tab"][aria-controls="studio-stage-panel"]')!);
+    click(container.querySelector('[role="tab"][data-rail-tab="stage"]')!);
 
-    const panel = container.querySelector("#studio-stage-panel");
+    const panel = container.querySelector('[data-rail-panel="stage"]');
     expect(panel).not.toBeNull();
     expect(panel!.textContent).toContain("数据与素材");
     expect(panel!.querySelector("[data-stage-status]")).not.toBeNull();
@@ -1872,13 +1891,13 @@ describe("Stage overview (T2)", () => {
 
   it("keeps the overview in sync with the active stage", () => {
     const container = renderPublicApp();
-    click(container.querySelector('[role="tab"][aria-controls="studio-stage-panel"]')!);
+    click(container.querySelector('[role="tab"][data-rail-tab="stage"]')!);
 
-    const dataPanel = container.querySelector("#studio-stage-panel")!;
+    const dataPanel = container.querySelector('[data-rail-panel="stage"]')!;
     expect(dataPanel.textContent).toContain("数据与素材");
 
     click(workflowStage(container, "最终导出"));
-    const exportPanel = container.querySelector("#studio-stage-panel")!;
+    const exportPanel = container.querySelector('[data-rail-panel="stage"]')!;
     expect(exportPanel.textContent).toMatch(/导出状态|导出检查|数据告警|排版问题|资源缺失/);
   });
 });

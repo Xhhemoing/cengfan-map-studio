@@ -108,6 +108,25 @@ describe("budget receipts", () => {
     });
   });
 
+  it("carries lastPromptTokens and still verifies receipts issued without it", () => {
+    const signer = createBudgetReceiptSigner("test-secret");
+    const legacy = signer.issue({ taskId: "task-legacy", usedTokens: 123, rounds: 2, maxTokens: 60000, maxRounds: 20, sequence: 1, issuedAt: 1000 });
+    expect(legacy).not.toContain("lastPromptTokens");
+    expect(signer.verify(legacy, "task-legacy")).toMatchObject({ usedTokens: 123, rounds: 2 });
+    expect(signer.verify(legacy, "task-legacy")?.lastPromptTokens).toBeUndefined();
+
+    const upgraded = signer.issue({ taskId: "task-legacy", usedTokens: 200, rounds: 3, maxTokens: 60000, maxRounds: 20, sequence: 2, issuedAt: 1000, lastPromptTokens: 4200 });
+    expect(signer.verify(upgraded, "task-legacy")).toMatchObject({ lastPromptTokens: 4200 });
+  });
+
+  it("rejects a receipt whose lastPromptTokens is negative or fractional", () => {
+    const signer = createBudgetReceiptSigner("test-secret");
+    for (const lastPromptTokens of [-1, 1.5]) {
+      const receipt = signer.issue({ taskId: "task-bad-prompt", usedTokens: 1, rounds: 1, maxTokens: 60000, maxRounds: 20, sequence: 1, issuedAt: 1000, lastPromptTokens });
+      expect(signer.verify(receipt, "task-bad-prompt")).toBeNull();
+    }
+  });
+
   it("rejects tampered, cross-task, malformed, and oversized receipts", () => {
     const signer = createBudgetReceiptSigner("test-secret");
     const receipt = signer.issue({ taskId: "task-1", usedTokens: 123, rounds: 2, maxTokens: 60000, maxRounds: 20, sequence: 1, issuedAt: Date.now() });

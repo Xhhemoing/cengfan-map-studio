@@ -22,4 +22,20 @@ describe("AI structured logger", () => {
     expect(JSON.stringify(output)).not.toContain("private");
     expect(JSON.stringify(output)).not.toContain("sk-secret");
   });
+
+  it("keeps agent task, round, tool name and budget fields", () => {
+    const lines: string[] = [];
+    const logger = createAiLogger((line) => lines.push(line));
+    logger.log("ai.agent.finished", {
+      requestId: "req-2",
+      taskId: "task-42",
+      roundIndex: 3,
+      budgetUsedTokens: 5_600,
+      toolNames: ["query_students", "check_health"],
+      toolArguments: { name: "张三" },
+    });
+    const output = JSON.parse(lines[0]!);
+    expect(output).toMatchObject({ taskId: "task-42", roundIndex: 3, budgetUsedTokens: 5_600, toolNames: ["query_students", "check_health"] });
+    expect(JSON.stringify(output)).not.toContain("张三");
+  });
 });

@@ -48,6 +48,7 @@ import { ProjectMenu } from "./components/ProjectMenu";
 import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayoutTemplate";
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
+import { StatusBar } from "./components/StatusBar";
 
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
@@ -78,10 +79,6 @@ import { SkinSelector } from "./components/SkinSelector";
 import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
 import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
 import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
-import {
-  previewEditorCommands,
-  type EditorCommand,
-} from "./lib/editor-commands";
 import {
   applyTransaction,
   createProjectDocument,
@@ -196,7 +193,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
   const [initialWorkspace] = useState(() => loadBrowserWorkspaceMirror(browserStores.mirror));
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
-  const [previewCommands, setPreviewCommands] = useState<EditorCommand[]>([]);
   const [agentPreview, setAgentPreview] = useState<ProjectDocument | null>(null);
   const [workspaceSession] = useState(() => typeof window === "undefined"
     ? loadWorkspaceSession(null)
@@ -307,7 +303,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => legacyEditorEnabled ? "content" : workspaceSession.stage);
   const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "data" ? "content" : activeStage);
   const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
-  const assistantEntryRef = useRef<HTMLButtonElement>(null);
+  // 抽屉关闭后要把焦点还给顶栏入口按钮；用 state 持有节点，保证节点挂载后会重渲染并透传下去。
+  const [assistantEntryRef, setAssistantEntryRef] = useState<HTMLButtonElement | null>(null);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
@@ -412,15 +409,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     void ensureUserFontsLoaded(userFonts);
   }, [userFonts]);
 
-  const renderProject = useMemo(() => {
-    if (agentPreview) return agentPreview;
-    if (previewCommands.length === 0) return project;
-    try {
-      return previewEditorCommands(project, previewCommands);
-    } catch {
-      return project;
-    }
-  }, [agentPreview, project, previewCommands]);
+  const renderProject = agentPreview ?? project;
 
   const template = renderProject.templateId;
   const dataView = renderProject.dataView;
@@ -488,7 +477,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       setUserFonts(restored.fonts);
       setCustomTemplates(restored.customTemplates);
       setRenderSettings(restored.renderSettings);
-      setPreviewCommands([]);
+      setAgentPreview(null);
       setSyncState({ status: "saved", savedAt: pack.exportedAt });
       setStatusMessage("已从浏览器本地完整工作区恢复");
     }).catch(() => undefined).finally(() => {
@@ -520,7 +509,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       setUserFonts(restored.fonts);
       setCustomTemplates(restored.customTemplates);
       setRenderSettings(restored.renderSettings);
-      setPreviewCommands([]);
+      setAgentPreview(null);
       setStatusMessage(`已打开项目「${record.name}」`);
     }).catch(() => {
       if (cancelled) return;
@@ -542,7 +531,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setUserFonts(restored.fonts);
     setCustomTemplates(restored.customTemplates);
     setRenderSettings(restored.renderSettings);
-    setPreviewCommands([]);
+    setAgentPreview(null);
     workspaceSync.markPending();
     return restored;
   };
@@ -614,7 +603,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       return;
     }
     setProject(next);
-    setPreviewCommands([]);
+    setAgentPreview(null);
     workspaceSync.markPending();
   };
 
@@ -627,7 +616,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
       const next = applyTransaction(current, transaction);
       return next;
     });
-    setPreviewCommands([]);
     setAgentPreview(null);
     workspaceSync.markPending();
   };
@@ -1183,7 +1171,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     if (!window.confirm("新建项目会清空当前未保存修改，是否继续？")) return;
     const next = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     setProject(next);
-    setPreviewCommands([]);
+    setAgentPreview(null);
     setSelection({ type: "canvas" });
     setSelectedStudentId(null);
     setActivePanel("roster");
@@ -1195,7 +1183,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const restoreLocalProject = () => {
     const next = loadInitialProject();
     setProject(next);
-    setPreviewCommands([]);
+    setAgentPreview(null);
     setSelection({ type: "canvas" });
     setActivePanel("roster");
     setActiveWorkflowStep("roster");
@@ -1486,7 +1474,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       project={project}
       assets={userAssets}
       syncStatus={syncState.status}
-      collaboration={{ roomId: collaboration.roomId, status: collaboration.collaborationStatus, participantCount: collaboration.roomParticipants.length }}
+      collaboration={{ roomId: collaboration.roomId, status: collaboration.collaborationStatus, participantCount: collaboration.roomMembers.length }}
       dataIssueCount={dataIssues.length}
       renderIntervalMs={resolvedRenderInterval}
       onOpenSettings={openStudioSettings}
@@ -1507,7 +1495,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const assistantEntryButton = (
     <button
-      ref={assistantEntryRef}
+      ref={setAssistantEntryRef}
       type="button"
       aria-label="打开AI助手与高级功能"
       aria-expanded={assistantDrawerOpen}
@@ -1917,6 +1905,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
         rightRailLabel={STAGE_METADATA[activeStage].rightRailLabel}
         drawerOpen={assistantDrawerOpen}
         onDrawerClose={() => setAssistantDrawerOpen(false)}
+        drawerReturnFocusTo={assistantEntryRef}
+        status={<StatusBar message={statusMessage} syncStatus={syncState.status} savedAt={syncState.savedAt} />}
       >
         {slots.workspace}
       </StudioLayoutTemplate>

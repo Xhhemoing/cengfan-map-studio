@@ -122,6 +122,22 @@ describe("resolveAgentConfig", () => {
     await expect(backend.runTurn({ userMessage: "地图缩小", digest: { map: { scale: 1 } }, messages: [], signal: controller.signal })).rejects.toMatchObject({ code: "AI_ABORTED" });
   });
 
+  it("carries lastPromptTokens into the turn so a resumed task is charged only for new tokens", async () => {
+    const runtime = resolveAgentRuntimeConfig({ AI_API_KEY: "key" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "完成" } }],
+      usage: { prompt_tokens: 4_500, completion_tokens: 100, total_tokens: 4_600 },
+    }), { status: 200 })));
+    const backend = createAgentLoopBackend(runtime);
+    const outcome = await backend.runTurn({
+      userMessage: "继续",
+      digest: {},
+      messages: [],
+      budget: { usedTokens: 5_000, maxTokens: 60_000, rounds: 1, maxRounds: 20, lastPromptTokens: 4_000 },
+    });
+    expect(outcome).toMatchObject({ kind: "finish", budget: { usedTokens: 5_600, lastPromptTokens: 4_500 } });
+  });
+
   it("does not start a remote turn when the runtime budget cannot cover one agent call", async () => {
     const runtime = resolveAgentRuntimeConfig({ AI_API_KEY: "key", AI_AGENT_TOKEN_BUDGET: "3000" });
     const fetchMock = vi.fn();

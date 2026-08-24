@@ -1,3 +1,11 @@
+import {
+  createLabelPattern,
+  looksLikeHeaderRow,
+  matchStudentColumn,
+  parseLocationScope,
+  type StudentColumn,
+} from "./import-aliases";
+
 export interface ImportCandidate {
   name: string;
   university: string;
@@ -24,27 +32,6 @@ function splitLines(text: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-}
-
-function looksLikeHeader(parts: string[]): boolean {
-  const normalized = parts.map((part) => part.toLowerCase());
-  const headerTokens = new Set([
-    "姓名",
-    "学生",
-    "学生名称",
-    "院校",
-    "录取院校",
-    "大学",
-    "学校",
-    "城市",
-    "所在城市",
-    "name",
-    "university",
-    "school",
-    "city",
-  ]);
-  const hitCount = normalized.filter((part) => headerTokens.has(part)).length;
-  return hitCount >= 2;
 }
 
 function detectDelimiter(line: string): string | null {
@@ -78,13 +65,12 @@ function toCandidate(
   if (parts.length < 3) return null;
   const [name, university, city, scope] = parts;
   if (!name || !university || !city) return null;
+  const locationScope = parseLocationScope(scope);
   return {
     name,
     university,
     city,
-    ...(scope?.trim().toLocaleLowerCase("zh-CN") === "海外" || scope?.trim().toLocaleLowerCase("zh-CN") === "international"
-      ? { locationScope: "international" as const }
-      : {}),
+    ...(locationScope ? { locationScope } : {}),
     sourceLine,
     rawLine,
   };
@@ -94,20 +80,28 @@ function parseLabeledCandidate(
   line: string,
   sourceLine: number,
 ): ImportCandidate | null {
-  const fields = new Map<string, string>();
-  const labelPattern = /(姓名|学生(?:姓名)?|name|就读院校|就读学校|录取院校|院校|学校|university|school|城市|所在城市|city)\s*[：:]/giu;
-  const matches = Array.from(line.matchAll(labelPattern));
+  const fields = new Map<StudentColumn, string>();
+  const matches = Array.from(line.matchAll(createLabelPattern()));
   for (const [index, match] of matches.entries()) {
-    const label = match[1]!.toLocaleLowerCase("zh-CN");
+    const column = matchStudentColumn(match[1]);
+    if (!column || fields.has(column)) continue;
     const start = (match.index ?? 0) + match[0].length;
     const end = matches[index + 1]?.index ?? line.length;
-    fields.set(label, line.slice(start, end).replace(/^[\s,，;；|｜]+|[\s,，;；|｜]+$/g, "").trim());
+    fields.set(column, line.slice(start, end).replace(/^[\s,，;；|｜]+|[\s,，;；|｜]+$/g, "").trim());
   }
-  const name = fields.get("姓名") ?? fields.get("学生") ?? fields.get("学生姓名") ?? fields.get("name");
-  const university = fields.get("就读院校") ?? fields.get("就读学校") ?? fields.get("录取院校")
-    ?? fields.get("院校") ?? fields.get("学校") ?? fields.get("university") ?? fields.get("school");
-  const city = fields.get("城市") ?? fields.get("所在城市") ?? fields.get("city");
-  return name && university && city ? { name, university, city, sourceLine, rawLine: line } : null;
+  const name = fields.get("name");
+  const university = fields.get("university");
+  const city = fields.get("city");
+  if (!name || !university || !city) return null;
+  const locationScope = parseLocationScope(fields.get("locationScope"));
+  return {
+    name,
+    university,
+    city,
+    ...(locationScope ? { locationScope } : {}),
+    sourceLine,
+    rawLine: line,
+  };
 }
 
 export function parseDelimitedTable(text: string): ImportCandidate[] {
@@ -119,7 +113,7 @@ export function parseDelimitedTable(text: string): ImportCandidate[] {
 
   lines.forEach((line, index) => {
     const parts = splitParts(line, delimiter);
-    if (index === 0 && looksLikeHeader(parts)) return;
+    if (index === 0 && looksLikeHeaderRow(parts)) return;
     const candidate = toCandidate(parts, index + 1, line);
     if (candidate) candidates.push(candidate);
   });
@@ -140,7 +134,7 @@ export function parseStudentText(text: string): TextImportResult {
     }
     const delimiter = detectDelimiter(line);
     const parts = splitParts(line, delimiter);
-    if (index === 0 && looksLikeHeader(parts) && parts.length >= 3) {
+    if (index === 0 && looksLikeHeaderRow(parts) && parts.length >= 3) {
       return;
     }
 

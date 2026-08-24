@@ -79,10 +79,10 @@ describe("StudioAssistantDrawer integration", () => {
     // MUI Drawer portals to document.body.
     const drawerRoot = document.querySelector(".MuiDrawer-root");
     expect(drawerRoot).not.toBeNull();
-    expect(document.querySelector('[role="tab"][aria-controls="studio-ai-panel"]')).not.toBeNull();
+    expect(document.querySelector('[role="tab"][data-rail-tab="ai"]')).not.toBeNull();
 
     // (a) the advanced tab exposes the compact 数据诊断 action.
-    click(document.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="studio-advanced-panel"]'));
+    click(document.querySelector<HTMLButtonElement>('[role="tab"][data-rail-tab="advanced"]'));
     expect(document.querySelector('button[aria-label="打开数据诊断"]')).not.toBeNull();
 
     // (b) switching to 元素查看 shows the element list.

@@ -1,10 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
-import { geoMercator, geoPath } from "d3-geo";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { MapLayer } from "./MapLayer";
 import type { MapFeature } from "../../lib/map-data";
 import type { MapSettings } from "../../lib/scene-document";
+
+const geoCounts = vi.hoisted(() => ({ generators: 0, serializations: 0 }));
+
+vi.mock("d3-geo", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("d3-geo")>();
+  return {
+    ...actual,
+    geoPath: ((...creationArgs: Parameters<typeof actual.geoPath>) => {
+      geoCounts.generators += 1;
+      const generator = actual.geoPath(...creationArgs);
+      const counted = ((...args: Parameters<typeof generator>) => {
+        geoCounts.serializations += 1;
+        return generator(...args);
+      }) as typeof generator;
+      return Object.assign(counted, generator);
+    }) as typeof actual.geoPath,
+  };
+});
+
+const { geoMercator, geoPath } = await import("d3-geo");
+const { MapLayer } = await import("./MapLayer");
 
 const feature: MapFeature = {
   type: "Feature",
@@ -23,6 +42,47 @@ const baseMapSettings: Pick<MapSettings, "edgeStyle" | "edgeWidth" | "provinceSt
 };
 
 describe("MapLayer", () => {
+  it("serializes each province path once per projection and reuses it across renders", () => {
+    const provinces = ["a", "b", "c"].map((id, index): MapFeature => ({
+      ...feature,
+      id,
+      name: id,
+      shortName: id,
+      properties: { ...feature.properties, adcode: index + 1, name: id },
+    }));
+    const mapSettings: MapSettings = {
+      x: 0, y: 0, width: 800, height: 690, scale: 1,
+      landColor: "#eee", activeColor: "#123", edgeColor: "#456", showProvinceLabels: true,
+      ...baseMapSettings,
+    };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    geoCounts.generators = 0;
+    geoCounts.serializations = 0;
+    flushSync(() => root.render(
+      <svg>
+        <MapLayer settings={mapSettings} features={provinces} counts={new Map()} onSelectProvince={vi.fn()} />
+      </svg>,
+    ));
+
+    // Fills, borders and hit areas all reuse one serialization per province.
+    expect(container.querySelectorAll("[data-province-hit]")).toHaveLength(3);
+    expect(geoCounts.serializations).toBe(provinces.length);
+
+    flushSync(() => root.render(
+      <svg>
+        <MapLayer settings={{ ...mapSettings }} features={provinces} counts={new Map([["a", 1]])} onSelectProvince={vi.fn()} />
+      </svg>,
+    ));
+
+    expect(geoCounts.generators).toBe(1);
+    expect(geoCounts.serializations).toBe(provinces.length);
+
+    root.unmount();
+    container.remove();
+  });
+
   it("renders the selected province label font over the map-wide font", () => {
     const container = document.createElement("div");
     const root = createRoot(container);

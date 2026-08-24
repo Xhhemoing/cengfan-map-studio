@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildSystemMessage, runAgentTurn, MAX_TURNS } from "./agent-loop";
+import { buildSystemMessage, runAgentTurn, MAX_READ_ONLY_STREAK, MAX_TURNS } from "./agent-loop";
 import type { AiConfig } from "./llm-client";
-import type { ChatMessage } from "./agent-types";
+import type { AgentBudgetState, ChatMessage } from "./agent-types";
 
 const CONFIG: AiConfig = {
   apiKey: "key",
@@ -12,12 +12,12 @@ const CONFIG: AiConfig = {
   maxTokens: 4_000,
 };
 
-function stubReply(message: ChatMessage) {
+function stubReply(message: ChatMessage, usage?: Record<string, unknown>) {
   vi.stubGlobal("fetch", vi.fn(async () => ({
     ok: true,
     status: 200,
     text: async () => "",
-    json: async () => ({ choices: [{ message }] }),
+    json: async () => ({ choices: [{ message }], usage }),
   })));
 }
 
@@ -31,6 +31,14 @@ function calls(...entries: Array<[string, Record<string, unknown>]>) {
       function: { name, arguments: JSON.stringify(args) },
     })),
   };
+}
+
+/** 构造 count 个只读回合（assistant tool_calls + tool 结果），第 index 轮的参数由 argsFor 决定。 */
+function readOnlyRounds(count: number, argsFor: (index: number) => Record<string, unknown>, name = "inspect_project"): ChatMessage[] {
+  return Array.from({ length: count }, (_unused, index) => [
+    calls([name, argsFor(index)]),
+    { role: "tool" as const, tool_call_id: "call-0", content: "{}" },
+  ]).flat();
 }
 
 afterEach(() => {
@@ -185,19 +193,103 @@ describe("runAgentTurn", () => {
     expect(sent.filter((message) => message.role === "user" && message.content === "新的用户需求")).toHaveLength(1);
   });
 
-  it("stops after the read-only streak limit", async () => {
+  it("stops after repeating the identical read-only call MAX_READ_ONLY_STREAK times", async () => {
     stubReply(calls(["inspect_project", { path: "map.scale" }]));
+    const outcome = await runAgentTurn(CONFIG, {
+      userMessage: "x",
+      digest: {},
+      messages: [{ role: "user", content: "x" }, ...readOnlyRounds(MAX_READ_ONLY_STREAK, () => ({ path: "cards.padding" }))],
+    });
+    expect(outcome.kind).toBe("finish");
+    if (outcome.kind === "finish") expect(outcome.summary).toContain("无进展");
+  });
+
+  it("treats reordered keys and equivalent arguments as the same read-only round", async () => {
+    stubReply(calls(["query_students", { province: "广东", offset: 0 }]));
     const messages: ChatMessage[] = [
       { role: "user", content: "x" },
-      calls(["inspect_project", { path: "a" }]),
+      calls(["query_students", { province: "广东", offset: 0 }]),
       { role: "tool", tool_call_id: "call-0", content: "{}" },
-      calls(["describe_capability", { domain: "map" }]),
+      calls(["query_students", { offset: 0, province: "广东" }]),
       { role: "tool", tool_call_id: "call-0", content: "{}" },
-      calls(["check_health", {}]),
+      calls(["query_students", { province: "广东", offset: 0 }]),
+      { role: "tool", tool_call_id: "call-0", content: "{}" },
     ];
     const outcome = await runAgentTurn(CONFIG, { userMessage: "x", digest: {}, messages });
     expect(outcome.kind).toBe("finish");
     if (outcome.kind === "finish") expect(outcome.summary).toContain("无进展");
+  });
+
+  it("keeps paging through query_students because each offset is a different read-only round", async () => {
+    stubReply(calls(["query_students", { offset: 250 }]));
+    const outcome = await runAgentTurn(CONFIG, {
+      userMessage: "把所有学生按城市分组",
+      digest: {},
+      messages: [{ role: "user", content: "把所有学生按城市分组" }, ...readOnlyRounds(5, (index) => ({ offset: index * 50 }), "query_students")],
+    });
+    expect(outcome.kind).toBe("tool-call");
+  });
+
+  it("does not brake when consecutive read-only rounds inspect different paths", async () => {
+    stubReply(calls(["check_health", {}]));
+    const messages: ChatMessage[] = [
+      { role: "user", content: "x" },
+      calls(["inspect_project", { path: "cards.padding" }]),
+      { role: "tool", tool_call_id: "call-0", content: "{}" },
+      calls(["inspect_project", { path: "cards.connectorColor" }]),
+      { role: "tool", tool_call_id: "call-0", content: "{}" },
+      calls(["describe_capability", { domain: "map" }]),
+      { role: "tool", tool_call_id: "call-0", content: "{}" },
+    ];
+    const outcome = await runAgentTurn(CONFIG, { userMessage: "x", digest: {}, messages });
+    expect(outcome.kind).toBe("tool-call");
+  });
+
+  it("charges only the fresh prompt tokens so a growing conversation stays linear", async () => {
+    const promptTokensPerRound = [1_000, 2_000, 3_000];
+    let round = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => "",
+      json: async () => ({
+        choices: [{ message: { role: "assistant", content: "继续" } }],
+        usage: { prompt_tokens: promptTokensPerRound[round++], completion_tokens: 100, total_tokens: promptTokensPerRound[round - 1]! + 100 },
+      }),
+    })));
+    let budget: AgentBudgetState = { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: 20 };
+    const used: number[] = [];
+    for (let index = 0; index < promptTokensPerRound.length; index += 1) {
+      const outcome = await runAgentTurn(CONFIG, { userMessage: "x", digest: {}, messages: [], budget });
+      budget = outcome.kind === "failed" ? budget : outcome.budget!;
+      used.push(budget.usedTokens);
+    }
+    expect(used).toEqual([1_100, 2_200, 3_300]);
+    expect(budget.lastPromptTokens).toBe(3_000);
+  });
+
+  it("prefers the reported cache miss over the prompt difference", async () => {
+    stubReply({ role: "assistant", content: "完成" }, { prompt_tokens: 5_000, completion_tokens: 120, total_tokens: 5_120, prompt_cache_hit_tokens: 4_800, prompt_cache_miss_tokens: 200 });
+    const outcome = await runAgentTurn(CONFIG, {
+      userMessage: "x",
+      digest: {},
+      messages: [],
+      budget: { usedTokens: 900, maxTokens: 60_000, rounds: 1, maxRounds: 20, lastPromptTokens: 1_000 },
+    });
+    expect(outcome.kind).toBe("finish");
+    if (outcome.kind === "finish") expect(outcome.budget).toMatchObject({ usedTokens: 900 + 120 + 200, lastPromptTokens: 5_000 });
+  });
+
+  it("falls back to totalTokens when the upstream reports no prompt or completion split", async () => {
+    stubReply({ role: "assistant", content: "完成" }, { total_tokens: 777 });
+    const outcome = await runAgentTurn(CONFIG, {
+      userMessage: "x",
+      digest: {},
+      messages: [],
+      budget: { usedTokens: 100, maxTokens: 60_000, rounds: 1, maxRounds: 20, lastPromptTokens: 1_000 },
+    });
+    expect(outcome.kind).toBe("finish");
+    if (outcome.kind === "finish") expect(outcome.budget).toMatchObject({ usedTokens: 877, lastPromptTokens: 1_000 });
   });
 
   it("stops at the turn limit", async () => {

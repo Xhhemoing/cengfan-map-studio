@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { AlertTriangle, Check, LoaderCircle, Minus, Plus, ShieldCheck, Sparkles, X } from "lucide-react";
+import { AlertTriangle, Check, LoaderCircle, Plus, ShieldCheck, Sparkles } from "lucide-react";
 import { AgentSession, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
 import type { UserAsset } from "../lib/assets";
 import { loadAssistantConversationState, saveAssistantConversationState, type AssistantConversationRecord } from "../lib/agent-conversation-store";
@@ -148,16 +148,12 @@ function createConversation(project: ProjectDocument, mode: Mode, assets: UserAs
 }
 
 type AssistantConversationState = {
-  open: boolean;
-  setOpen: Dispatch<SetStateAction<boolean>>;
   mode: Mode;
   setMode: Dispatch<SetStateAction<Mode>>;
   conversations: AssistantConversation[];
   setConversations: Dispatch<SetStateAction<AssistantConversation[]>>;
   activeId: string | null;
   setActiveId: Dispatch<SetStateAction<string | null>>;
-  position: { x: number; y: number } | null;
-  setPosition: Dispatch<SetStateAction<{ x: number; y: number } | null>>;
   hydrated: boolean;
   hydrate: (project: ProjectDocument, assets: UserAsset[]) => void;
 };
@@ -165,11 +161,9 @@ type AssistantConversationState = {
 const AssistantConversationContext = createContext<AssistantConversationState | null>(null);
 
 export function AssistantConversationProvider({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("conservative");
   const [conversations, setConversations] = useState<AssistantConversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
   const hydrate = (project: ProjectDocument, assets: UserAsset[]) => {
@@ -184,7 +178,7 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
     }
     setHydrated(true);
   };
-  return <AssistantConversationContext.Provider value={{ open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, position, setPosition, hydrated, hydrate }}>{children}</AssistantConversationContext.Provider>;
+  return <AssistantConversationContext.Provider value={{ mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate }}>{children}</AssistantConversationContext.Provider>;
 }
 
 export function AgentAssistant({
@@ -193,18 +187,16 @@ export function AgentAssistant({
   onPreview,
   onCommit,
   onPendingCountChange,
-  presentation = "floating",
 }: {
   project: ProjectDocument;
   assets: UserAsset[];
   onPreview?: (project: ProjectDocument | null) => void;
   onCommit: (transaction: ProjectTransaction) => void;
   onPendingCountChange?: (count: number) => void;
-  presentation?: "floating" | "docked";
 }) {
   const state = useContext(AssistantConversationContext);
   if (!state) throw new Error("AgentAssistant must be rendered inside AssistantConversationProvider");
-  const { open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, position, setPosition, hydrated, hydrate } = state;
+  const { mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate } = state;
   const [message, setMessage] = useState("");
   const mountedRef = useRef(false);
   const hasMountedRef = useRef(false);
@@ -212,7 +204,6 @@ export function AgentAssistant({
   const latestProjectDigestRef = useRef<string | null>(null);
   const projectGenerationRef = useRef(0);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const activeRunRef = useRef<AgentSession | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
 
@@ -318,28 +309,6 @@ export function AgentAssistant({
       if (runningId) setConversations((current) => current.map((conversation) => conversation.id === runningId && conversation.status === "running" ? { ...conversation, status: "cancelled", summary: "已取消，预览未应用" } : conversation));
     };
   }, [setConversations]);
-
-  const openAssistant = () => {
-    if (!activeId) {
-      const draft = createConversation(project, mode, assets);
-      setConversations((current) => [...current, draft]);
-      setActiveId(draft.id);
-    }
-    setOpen(true);
-  };
-
-  useEffect(() => {
-    if (!open || !position) return;
-    const clamp = () => {
-      const width = 390;
-      setPosition((current) => current ? {
-        x: Math.max(0, Math.min(current.x, Math.max(0, window.innerWidth - width))),
-        y: Math.max(0, Math.min(current.y, Math.max(0, window.innerHeight - 52))),
-      } : current);
-    };
-    window.addEventListener("resize", clamp);
-    return () => window.removeEventListener("resize", clamp);
-  }, [open, position, setPosition]);
 
   const updateConversation = (id: string, update: (conversation: AssistantConversation) => AssistantConversation) => {
     setConversations((current) => current.map((conversation) => conversation.id === id ? update(conversation) : conversation));
@@ -476,33 +445,6 @@ export function AgentAssistant({
     updateConversation(active.id, (conversation) => ({ ...conversation, status: "applied", selectedStepIds: [] }));
   };
 
-  const beginDrag = (event: React.PointerEvent<HTMLElement>) => {
-    const target = event.target as HTMLElement;
-    if (target.closest("button, input, label, textarea")) return;
-    const panel = event.currentTarget.closest(".agent-assistant-window") as HTMLElement | null;
-    const rect = panel?.getBoundingClientRect();
-    if (!rect) return;
-    dragRef.current = { pointerId: event.pointerId, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top };
-    setPosition({ x: Math.max(0, rect.left), y: Math.max(0, rect.top) });
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const moveDrag = (event: React.PointerEvent<HTMLElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const width = 390;
-    const x = Math.max(0, Math.min(event.clientX - drag.offsetX, Math.max(0, window.innerWidth - width)));
-    const y = Math.max(0, Math.min(event.clientY - drag.offsetY, Math.max(0, window.innerHeight - 52)));
-    setPosition({ x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 });
-  };
-
-  const endDrag = (event: React.PointerEvent<HTMLElement>) => {
-    if (dragRef.current?.pointerId === event.pointerId) {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-      dragRef.current = null;
-    }
-  };
-
   const renderConversation = (conversation: AssistantConversation) => (
     <>
       <div className="agent-assistant-history" aria-label="对话历史">
@@ -512,6 +454,9 @@ export function AgentAssistant({
             {item.selectedStepIds.length > 0 && item.status === "completed" && <small>待应用</small>}
           </button>
         ))}
+        <button type="button" title="新建对话" aria-label="新建对话" disabled={conversation.status === "running"} onClick={createNewConversation}>
+          <Plus size={14} aria-hidden />
+        </button>
       </div>
       <div className="agent-assistant-body">
         <div className="agent-mode-control" role="radiogroup" aria-label="AI 执行模式">
@@ -550,7 +495,7 @@ export function AgentAssistant({
     </>
   );
 
-  const displayConversation = active ?? conversations[0] ?? (presentation === "docked" ? {
+  const displayConversation = active ?? conversations[0] ?? {
     id: "docked-initializing",
     title: "AI 对话",
     session: new AgentSession(project, { mode, assets }),
@@ -565,43 +510,11 @@ export function AgentAssistant({
     provider: "",
     restored: false,
     projectDigest: currentProjectDigest,
-  } : null);
-
-  if (presentation === "docked") {
-    return (
-      <section className="agent-assistant agent-assistant--docked" data-agent-presentation="docked" aria-label="AI 助手">
-        {displayConversation ? renderConversation(displayConversation) : <p className="panel-note">AI 助手正在初始化…</p>}
-      </section>
-    );
-  }
+  };
 
   return (
-    <div className="agent-assistant">
-      {!open && (
-        <button className="agent-assistant-launcher" type="button" aria-label={pendingCount > 0 ? `打开 AI 助手，${pendingCount} 个待应用对话` : "打开 AI 助手"} title="打开 AI 助手" onClick={openAssistant}>
-          <Sparkles size={21} aria-hidden />
-          {pendingCount > 0 && <span className="agent-assistant-badge" aria-hidden="true">{pendingCount}</span>}
-        </button>
-      )}
-      {open && active && (
-        <section
-          className="agent-assistant-window"
-          role="dialog"
-          aria-label="AI 助手"
-          style={position ? { left: `${position.x}px`, top: `${position.y}px`, right: "auto", bottom: "auto" } : undefined}
-        >
-          <header className="agent-assistant-header" onPointerDown={beginDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
-            <span><Sparkles size={16} aria-hidden /> AI 助手</span>
-            <div className="agent-assistant-header-actions">
-              <button type="button" title="新建对话" aria-label="新建对话" onClick={createNewConversation}><Plus size={15} aria-hidden /></button>
-              <button type="button" title="最小化 AI 助手" aria-label="最小化 AI 助手" onClick={() => setOpen(false)}><Minus size={15} aria-hidden /></button>
-              <button type="button" title="重置窗口位置" aria-label="重置窗口位置" onClick={() => setPosition(null)}><Sparkles size={15} aria-hidden /></button>
-              <button type="button" title="关闭 AI 助手" aria-label="关闭 AI 助手" onClick={() => { setOpen(false); onPreview?.(null); }}><X size={15} aria-hidden /></button>
-            </div>
-          </header>
-          {renderConversation(active)}
-        </section>
-      )}
-    </div>
+    <section className="agent-assistant agent-assistant--docked" data-agent-presentation="docked" aria-label="AI 助手">
+      {renderConversation(displayConversation)}
+    </section>
   );
 }

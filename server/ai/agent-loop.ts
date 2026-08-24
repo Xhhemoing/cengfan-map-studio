@@ -1,6 +1,7 @@
 import type { AiConfig } from "./llm-client";
 import { chatWithTools } from "./llm-client";
 import type { AgentBudgetState, AiCallMeta, ChatMessage } from "./agent-types";
+import { usedTokenDelta } from "./agent-types";
 import { AiCallError } from "./ai-errors";
 import { validateAgentToolBatch } from "./agent-request";
 import { AGENT_TOOLS, READ_ONLY_TOOLS } from "./tool-registry";
@@ -50,14 +51,48 @@ function assistantTurnCount(messages: ChatMessage[]): number {
   return messages.filter((message) => message.role === "assistant").length;
 }
 
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, item]) => [key, canonicalValue(item)]),
+    );
+  }
+  return value;
+}
+
+/** 只读回合的指纹：工具名加规范化后的参数，用来区分“原地重复”和“翻页/换路径继续读”。 */
+function readOnlyCallSignature(message: ChatMessage): string | null {
+  if (message.role !== "assistant" || !message.tool_calls?.length) return null;
+  if (!message.tool_calls.every((call) => READ_ONLY_TOOLS.has(call.function.name))) return null;
+  return message.tool_calls
+    .map((call) => {
+      let args: unknown;
+      try {
+        args = canonicalValue(JSON.parse(call.function.arguments || "{}"));
+      } catch {
+        args = call.function.arguments;
+      }
+      return `${call.function.name}:${JSON.stringify(args)}`;
+    })
+    .sort()
+    .join("|");
+}
+
+/** 只累计与上一只读回合签名完全相同的回合；参数不同（例如 query_students 递增 offset）说明仍在推进，不计入。 */
 function readOnlyStreak(messages: ChatMessage[]): number {
   let streak = 0;
+  let previousSignature: string | null = null;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (!message) break;
     if (message.role === "tool") continue;
-    if (message.role !== "assistant" || !message.tool_calls?.length) break;
-    if (!message.tool_calls.every((call) => READ_ONLY_TOOLS.has(call.function.name))) break;
+    const signature = readOnlyCallSignature(message);
+    if (signature === null) break;
+    if (previousSignature !== null && signature !== previousSignature) break;
+    previousSignature = signature;
     streak += 1;
   }
   return streak;
@@ -211,10 +246,12 @@ export async function runAgentTurn(
     if (error instanceof AiCallError) throw error;
     return { kind: "failed", error: error instanceof Error ? error.message : String(error) };
   }
+  const usage = assistantMessage.meta?.usage;
   const nextBudget: AgentBudgetState = {
     ...budget,
     rounds: budget.rounds + 1,
-    usedTokens: Math.min(budget.maxTokens, budget.usedTokens + (assistantMessage.meta?.usage?.totalTokens ?? 0)),
+    usedTokens: Math.min(budget.maxTokens, budget.usedTokens + usedTokenDelta(usage, budget.lastPromptTokens)),
+    lastPromptTokens: usage?.promptTokens ?? budget.lastPromptTokens,
   };
   const meta = assistantMessage.meta;
 

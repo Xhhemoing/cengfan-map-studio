@@ -393,6 +393,68 @@ describe("unified application server", () => {
     expect(continued.status).toBe(200);
   });
 
+  it("charges a continued agent task only for new prompt tokens and logs its task id", async () => {
+    const lines: string[] = [];
+    const server = createAiServer({
+      budgetReceiptSecret: "receipt-test-secret",
+      aiLogger: createAiLogger((line) => lines.push(line)),
+      agentConfig: {
+        primary: { apiKey: "primary-key", baseUrl: "https://primary.example/v1", model: "primary-model", timeoutMs: 1000, maxTokens: 4000, retryMaxAttempts: 1 },
+        maxRounds: 20,
+        tokenBudget: 60000,
+        retryMaxAttempts: 1,
+        retryBaseDelayMs: 0,
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const assistantMessage = { role: "assistant", content: null, tool_calls: [{ id: "call-budget", type: "function", function: { name: "check_health", arguments: "{}" } }] };
+    const promptTokensPerRound = [1000, 2000];
+    let round = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      const promptTokens = promptTokensPerRound[round++]!;
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        text: async () => "",
+        json: async () => ({
+          choices: [{ message: round === 1 ? assistantMessage : { role: "assistant", content: "完成" } }],
+          usage: { prompt_tokens: promptTokens, completion_tokens: 100, total_tokens: promptTokens + 100 },
+        }),
+      } as Response;
+    }) as typeof fetch;
+    try {
+      const first = await rawPost(origin, "/api/ai/agent", { userMessage: "检查一下画布", taskId: "task-budget", digest: {}, messages: [] });
+      const firstBody = JSON.parse(first.body) as { budgetReceipt: string; budget: { usedTokens: number } };
+      expect(firstBody.budget.usedTokens).toBe(1100);
+
+      const continued = await rawPost(origin, "/api/ai/agent", {
+        userMessage: "检查一下画布",
+        taskId: "task-budget",
+        budgetReceipt: firstBody.budgetReceipt,
+        digest: {},
+        messages: [assistantMessage, { role: "tool", tool_call_id: "call-budget", content: JSON.stringify({ ok: true }) }],
+      });
+      expect(continued.status).toBe(200);
+      const continuedBody = JSON.parse(continued.body) as { budget: Record<string, unknown> };
+      expect(continuedBody.budget.usedTokens).toBe(2200);
+      expect(continuedBody.budget).not.toHaveProperty("lastPromptTokens");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events.every((event) => event.taskId === "task-budget")).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({
+      event: "ai.agent.finished",
+      taskId: "task-budget",
+      roundIndex: 1,
+      budgetUsedTokens: 1100,
+      toolNames: ["check_health"],
+    }));
+  });
+
   it("does not reset a signed budget when history is reduced to user messages", async () => {
     const server = createAiServer({ budgetReceiptSecret: "receipt-test-secret", agentConfig: { apiKey: undefined, baseUrl: "https://llm.example/v1", model: "test-model", timeoutMs: 1000, maxTokens: 4000 } });
     servers.push(server);
