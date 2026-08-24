@@ -23,7 +23,7 @@ import {
   parseDataRequestSchema,
   proposeEditsRequestSchema,
 } from "./ai/schemas";
-import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomStore, type RoomStoreOptions, type RoomStoreSnapshot } from "./collaboration";
+import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomPersistOutcome, type RoomStore, type RoomStoreOptions, type RoomStoreSnapshot } from "./collaboration";
 
 export const DEFAULT_PORT = 8787;
 
@@ -577,6 +577,17 @@ export function createAiServer(options: AiServerOptions = {}) {
       persistence: { outcome, at, ...(lastFailureAt === null ? {} : { lastFailureAt }) },
     };
   };
+  /**
+   * 健康检查上的落盘结论。房间存储用 at: 0 表示从未成功落过盘，原样发出去在朴素解析器
+   * 眼里就是 1970 年；房间响应早在 roomPersistence 里把它报成 null，运维面必须说同一件事。
+   * 失败连击原样透传——健康检查改写的只有那个假时刻——并且复制一份再改，
+   * 不去动存储自己持有的对象。
+   */
+  const publishedLastFlush = (): (Omit<RoomPersistOutcome, "at"> & { at: number | null }) | null => {
+    const lastFlush = roomStore.lastPersistOutcome?.();
+    if (!lastFlush) return null;
+    return { ...lastFlush, at: typeof lastFlush.at === "number" && lastFlush.at > 0 ? lastFlush.at : null };
+  };
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
   const maxRoomEventBytes = positiveBytes(
@@ -746,7 +757,7 @@ export function createAiServer(options: AiServerOptions = {}) {
           rooms: {
             restoredAtBoot,
             skippedAtLastShutdown: { count: skippedRoomCount, ids: skippedRoomIds },
-            lastFlush: roomStore.lastPersistOutcome?.() ?? null,
+            lastFlush: publishedLastFlush(),
           },
         });
         return;
@@ -925,7 +936,9 @@ export function createAiServer(options: AiServerOptions = {}) {
           });
           const prefer = Array.isArray(request.headers.prefer) ? request.headers.prefer.join(",") : request.headers.prefer ?? "";
           const result = prefer.toLowerCase().includes("return=minimal") ? { ...room, snapshot: undefined } : room;
-          send(200, result);
+          // 正在编辑的成员稳态下只会反复收到这条 ack：SSE 对落盘一言不发，创建/加入/快照
+          // 那三个报落盘的响应他一次也不会再取。最小 ack 省的是快照，不是事故。
+          send(200, { ...result, ...roomPersistenceFields(transactionMatch[1]!) });
         } catch (error) {
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;
