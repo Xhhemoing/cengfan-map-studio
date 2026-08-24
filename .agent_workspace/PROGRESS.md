@@ -25,7 +25,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 6 | CLOSED | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn; fable 6 ACCEPT + 4 NITS; no blocker. |
 | 7 | CLOSED | R7-1–R7-9 + R7-3b + R7-10 | — | 189/1757/2; lint 0/6; CI `362c318`; fable 8 ACCEPT + 2 NITS; no blocker. |
 | 8 | CLOSED | R8-1–R8-9 + R8-3b + R8-10 | — | 197/1846/2; lint 0/1; CI `553d5c1`; fable 9 ACCEPT + 1 NITS; no blocker. |
-| 9 | IN_PROGRESS | R9-1, R9-6, R9-8 | — | Tmp leak; ack persistence; App extract; test splits. |
+| 9 | IN_PROGRESS | R9-1, R9-2, R9-6, R9-8 | — | Tmp leak; ack persistence; App extract; test splits. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -165,6 +165,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R9-1 (`baff4c9`): `writeFileAtomically` unlinks `.tmp` on rename failure (both writers). Rollback: revert `baff4c9`. Filed: AI state store same pattern; no boot-time `*.tmp` sweep.
 - R9-8 (`a789835`): collaboration tests split by domain; 57 it + 1 skipped bench unchanged. Rollback: revert `a789835`.
 - R9-6 (`b1a398a`): jsdom leaked-root `setupFiles` guard. Rollback: revert `b1a398a`.
+- R9-2 (`2334a3d`): transaction ack spreads `roomPersistenceFields`; health `at: 0 → null`. Rollback: revert `2334a3d` (ops shape).
 
 ## Round Briefings
 
