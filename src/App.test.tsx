@@ -8,6 +8,7 @@ import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
 import { sampleStudents } from "./lib/project-data";
 import { COLLABORATION_SEND_DELAY_MS, ROOM_ACCESS_STORAGE_PREFIX } from "./lib/app-constants";
 import { CollaborationClientError } from "./lib/collaboration-client";
+import { editorProjectStore } from "./lib/editor-project-store";
 import { createProjectPackage } from "./lib/project-package";
 
 import { LEGACY_EDITOR_STORAGE_KEY, WORKSPACE_SESSION_STORAGE_KEY } from "./lib/workspace-session";
@@ -2692,5 +2693,40 @@ describe("Collaboration send effect recovery (R2-3)", () => {
         restoreStream();
       }
     });
+  });
+});
+
+describe("Missing project honesty under a degraded store (R6-5)", () => {
+  function mountProject(projectId: string): HTMLDivElement {
+    window.localStorage.clear();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push({ root, container });
+    flushSync(() => root.render(<App projectId={projectId} />));
+    return container;
+  }
+
+  it("does not claim an unknown project was deleted while the store is degraded", async () => {
+    // jsdom 没有 IndexedDB，共享 store 恒处于内存降级模式：get() 只能返回空的内存副本。
+    expect(editorProjectStore.health).toBe("memory");
+    const originalHash = window.location.hash;
+    const container = mountProject("no-such-project");
+
+    const alert = await vi.waitFor(() => {
+      const node = container.querySelector('[role="alert"]');
+      expect(node).not.toBeNull();
+      return node!;
+    });
+
+    expect(alert.getAttribute("data-missing-project")).toBe("unconfirmed");
+    expect(alert.getAttribute("data-store-health")).toBe("memory");
+    expect(alert.textContent).not.toContain("项目不存在或已删除");
+    expect(alert.textContent).toContain("本机数据库已降级");
+    expect(alert.textContent).toContain("无法确认这个工程是否还在磁盘上");
+
+    click(container.querySelector('button[aria-label="返回项目列表"]')!);
+    expect(window.location.hash).toBe("#/");
+    window.location.hash = originalHash;
   });
 });

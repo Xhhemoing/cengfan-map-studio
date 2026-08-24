@@ -42,6 +42,10 @@ import {
 } from "./lib/project-data";
 import { createId } from "./lib/ids";
 import { editorProjectStore } from "./lib/editor-project-store";
+import {
+  resolveMissingProjectNotice,
+  type MissingProjectObservation,
+} from "./lib/missing-project-notice";
 
 import { AssistantConversationProvider } from "./components/AgentAssistant";
 import { ProjectMenu } from "./components/ProjectMenu";
@@ -232,7 +236,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
   );
   const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
-  const [projectMissing, setProjectMissing] = useState(false);
+  const [projectMissing, setProjectMissing] = useState<MissingProjectObservation | null>(null);
   const [projectLoading, setProjectLoading] = useState(() => Boolean(projectId));
   // projectId 变更(如浏览器前进/后退直达另一项目)时,在渲染期同步重置加载/缺失状态,
   // 让加载壳在 get() 完成前一直显示,避免旧项目数据被编辑后误存到新项目记录。
@@ -241,7 +245,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   if (prevProjectId !== projectId) {
     setPrevProjectId(projectId);
     setProjectLoading(Boolean(projectId));
-    setProjectMissing(false);
+    setProjectMissing(null);
   }
   const [userFonts, setUserFonts] = useState<UserFont[]>(() =>
     initialWorkspace?.fonts ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserFonts(), [])),
@@ -516,13 +520,16 @@ function StudioApp({ projectId }: { projectId?: string }) {
     if (!projectId) return;
     let cancelled = false;
     projectIdRef.current = projectId;
+    // 降级可能正好发生在这次读取途中:两端都记下来,缺失文案才能区分"磁盘上真的没有"
+    // 与"数据库掉线后读到的是空内存副本"。
+    const healthAtRequest = editorProjectStore.health;
     void editorProjectStore.get(projectId).then((record) => {
       if (cancelled) return;
       // 渲染期已重置缺失状态;此处仅收尾加载状态(渲染期 setState 也会在加载完成前触发重渲染)。
-      setProjectMissing(false);
+      setProjectMissing(null);
       setProjectLoading(false);
       if (!record) {
-        setProjectMissing(true);
+        setProjectMissing({ reason: "not-found", healthAtRequest, health: editorProjectStore.health });
         return;
       }
       const restored = restoreProjectPackage(record.pack);
@@ -539,7 +546,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       setStatusMessage(`已打开项目「${record.name}」`);
     }).catch(() => {
       if (cancelled) return;
-      setProjectMissing(true);
+      setProjectMissing({ reason: "read-failed", healthAtRequest, health: editorProjectStore.health });
       setProjectLoading(false);
     });
     return () => { cancelled = true; };
@@ -1746,12 +1753,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
   }
 
   if (projectMissing) {
+    const notice = resolveMissingProjectNotice(projectMissing);
     return (
       <main className="workbench-shell">
-        <section className="workbench-error workbench-error--recover" role="alert">
+        <section
+          className="workbench-error workbench-error--recover"
+          role="alert"
+          data-missing-project={notice.kind}
+          data-store-health={projectMissing.health}
+        >
           <span className="workbench-brand-mark"><MapPinned size={22} /></span>
-          <strong>项目不存在或已删除</strong>
-          <p>这个链接指向的项目已经不在本机项目列表中了。可以回到项目列表继续编辑其他项目。</p>
+          <strong>{notice.title}</strong>
+          <p>{notice.detail}</p>
           <div className="workbench-error-actions">
             <button type="button" className="primary-button" aria-label="返回项目列表" onClick={() => { window.location.hash = "#/"; }}>
               返回项目列表
