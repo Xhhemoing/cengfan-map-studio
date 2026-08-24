@@ -58,3 +58,9 @@ export function loadBrowserValue<T>(load: () => T, fallback: T): T {
     return fallback;
   }
 }
+
+/** 服务端渲染下没有浏览器状态可读,读取本身失败时退回同一份兜底值。 */
+export function loadBrowserState<T>(load: () => T, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  return loadBrowserValue(load, fallback);
+}

@@ -22,6 +22,7 @@ import {
 import { createNoteElement, createTextElement } from "./lib/canvas-data";
 import {
   loadInitialProject,
+  loadBrowserState,
   loadBrowserValue,
 } from "./lib/app-initialization";
 import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
@@ -221,6 +222,13 @@ import {
   subscribePageLeave,
 } from "./lib/editor-workspace-persistence";
 import {
+  applyWorkspacePackage,
+  collaborationPackage,
+  mergeSharedProject,
+  restoredSceneSelection,
+  type EditorWorkspaceSetters,
+} from "./lib/editor-workspace-state";
+import {
   armCollaborationSend,
   createCollaborationHealTracker,
 } from "./lib/collaboration-send";
@@ -232,23 +240,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
   const [previewCommands, setPreviewCommands] = useState<EditorCommand[]>([]);
   const [agentPreview, setAgentPreview] = useState<ProjectDocument | null>(null);
-  const [workspaceSession] = useState(() => typeof window === "undefined"
-    ? loadWorkspaceSession(null)
-    : loadBrowserValue(() => loadWorkspaceSession(window.localStorage), loadWorkspaceSession(null)));
-  const [selection, setSelection] = useState<SceneSelection>(() => {
-    if (workspaceSession.selectedProvince) return { type: "province", province: workspaceSession.selectedProvince };
-    if (workspaceSession.selectedObject === "cards") return { type: "cards" };
-    if (workspaceSession.selectedObject === "guests") return { type: "guests" };
-    if (workspaceSession.selectedObject) return { type: "asset", id: workspaceSession.selectedObject };
-    return { type: "text", id: "text-note" };
-  });
+  const [workspaceSession] = useState(() => loadBrowserState(
+    () => loadWorkspaceSession(window.localStorage),
+    loadWorkspaceSession(null),
+  ));
+  const [selection, setSelection] = useState<SceneSelection>(() => restoredSceneSelection(workspaceSession));
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [syncState, setSyncState] = useState<LocalWorkspaceOverwriteState>({
     status: initialWorkspace ? "saved" : "idle",
     savedAt: initialWorkspace?.exportedAt ?? null,
   });
-  const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(() =>
-    initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
+  const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(
+    () => initialWorkspace?.customTemplates ?? loadBrowserState(loadCustomTemplates, []),
   );
   const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
   const [projectMissing, setProjectMissing] = useState<MissingProjectObservation | null>(null);
@@ -262,11 +265,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setProjectLoading(Boolean(projectId));
     setProjectMissing(null);
   }
-  const [userFonts, setUserFonts] = useState<UserFont[]>(() =>
-    initialWorkspace?.fonts ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserFonts(), [])),
+  const [userFonts, setUserFonts] = useState<UserFont[]>(
+    () => initialWorkspace?.fonts ?? loadBrowserState(loadUserFonts, []),
   );
-  const [userAssets, setUserAssets] = useState<UserAsset[]>(() =>
-    initialWorkspace?.assets ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserAssets(), [])),
+  const [userAssets, setUserAssets] = useState<UserAsset[]>(
+    () => initialWorkspace?.assets ?? loadBrowserState(loadUserAssets, []),
   );
   const [showGrid] = useState(false);
   const [gridSize] = useState(DEFAULT_GRID_SIZE);
@@ -319,8 +322,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const posterRef = useRef<SVGSVGElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel>(() => WORKFLOW_STAGE_TO_LEGACY_PANEL[workspaceSession.stage] ?? "roster");
-  const [legacyEditorEnabled] = useState(() => typeof window !== "undefined"
-    && loadBrowserValue(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false));
+  const [legacyEditorEnabled] = useState(
+    () => loadBrowserState(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false),
+  );
   const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => legacyEditorEnabled ? "content" : workspaceSession.stage);
   const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "data" ? "content" : activeStage);
   const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
@@ -444,15 +448,19 @@ function StudioApp({ projectId }: { projectId?: string }) {
     workspaceSync.markPending();
   }, [customTemplates, project, renderSettings, userAssets, userFonts, workspaceSync]);
 
+  const workspaceSetters: EditorWorkspaceSetters = {
+    setProject,
+    setUserAssets,
+    setUserFonts,
+    setCustomTemplates,
+    setRenderSettings,
+    clearPreviewCommands: () => setPreviewCommands([]),
+  };
+
   const applyRestoredWorkspace = (restored: ProjectPackage) => {
     workspaceHydratedRef.current = true;
     skipNextWorkspacePendingRef.current = true;
-    setProject(restored.project);
-    setUserAssets(restored.assets);
-    setUserFonts(restored.fonts);
-    setCustomTemplates(restored.customTemplates);
-    setRenderSettings(restored.renderSettings);
-    setPreviewCommands([]);
+    applyWorkspacePackage(workspaceSetters, restored);
   };
 
   useEffect(() => {
@@ -494,19 +502,15 @@ function StudioApp({ projectId }: { projectId?: string }) {
     return () => { cancelled = true; };
   }, [projectId]);
 
-  const currentCollaborationPackage = (exportedAt = new Date().toISOString()): ProjectPackage => {
-    const pack = createProjectPackageEnvelope(latestWorkspaceRef.current);
-    return { ...pack, exportedAt, project: { ...pack.project, history: { past: [], future: [] } } };
-  };
+  const currentCollaborationPackage = (exportedAt = new Date().toISOString()): ProjectPackage =>
+    collaborationPackage(latestWorkspaceRef.current, exportedAt);
 
   const applySharedPackage = (pack: ProjectPackage, _version: number): ProjectPackage => {
     const restored = restoreProjectPackage(pack);
-    setProject((current) => ({ ...restored.project, history: current.history, version: current.version + 1 }));
-    setUserAssets(restored.assets);
-    setUserFonts(restored.fonts);
-    setCustomTemplates(restored.customTemplates);
-    setRenderSettings(restored.renderSettings);
-    setPreviewCommands([]);
+    applyWorkspacePackage({
+      ...workspaceSetters,
+      setProject: () => setProject((current) => mergeSharedProject(current, restored.project)),
+    }, restored);
     workspaceSync.markPending();
     return restored;
   };
