@@ -120,6 +120,12 @@ export interface UseCollaborationRoomResult {
   /** 传输层不可达(超时/断网/网关错误)时为真;协议层拒绝不会置位。 */
   collaborationOffline: boolean;
   /**
+   * 服务端上一次落盘没能完整写下这个房间(R6-2 的 `persistedAtLastFlush` 为 `false`):房间还在
+   * 正常同步,但服务端一重启就没了。纯展示态——不参与重连、补齐、离线或终局的任何判据,
+   * 服务端没有给出说法时一律为 `false`,不替它宣布死亡。
+   */
+  roomPersistenceDegraded: boolean;
+  /**
    * 每完成一次"离线 → 在线"的恢复就 +1。调用方可以拿它当 effect 依赖,在连接痊愈的那一刻
    * 重发分区期间没能上传的修改(每次恢复只触发一次)。
    */
@@ -199,6 +205,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   const [roomVersion, setRoomVersion] = useState(0);
   const [collaborationStatus, setCollaborationStatus] = useState<RoomCollaborationStatus>("idle");
   const [collaborationOffline, setCollaborationOfflineState] = useState(false);
+  const [roomPersistenceDegraded, setRoomPersistenceDegraded] = useState(false);
   const [connectionHealCount, setConnectionHealCount] = useState(0);
   /** 网络恢复时自增,作为订阅 effect 的依赖:重挂一条流即为"立刻重连",退避序列不受影响。 */
   const [reconnectNonce, setReconnectNonce] = useState(0);
@@ -298,6 +305,16 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setConnectionHealCount((count) => count + 1);
   };
 
+  /**
+   * 记下服务端对"这个房间能不能挺过一次重启"的最新说法。只有明确的 `false` 才是降级:`true`
+   * 是明确的健康,`undefined` 是服务端没说(旧服务端),两者都不该让面板开口。没说时保留上一个
+   * 说法而不是清零——握手报了降级、随后的快照没带这个字段,不代表房间忽然又安全了。
+   */
+  const notePersistedAtLastFlush = (persistedAtLastFlush: boolean | undefined) => {
+    if (persistedAtLastFlush === undefined) return;
+    setRoomPersistenceDegraded(persistedAtLastFlush === false);
+  };
+
   const applyRemoteInterval = (operations: CollaborationOperation[], version: number) => {
     if (operations.length > 0 && baselineRef.current) {
       const { currentPackage, applyPackage } = optionsRef.current;
@@ -364,6 +381,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
           const room = await fetchRoom<ProjectPackage>(activeRoomId, activeToken, { signal });
           if (isTerminal()) return;
           markOnline();
+          notePersistedAtLastFlush(room.persistedAtLastFlush);
           if (room.closed) {
             markRoomClosed();
             return;
@@ -500,6 +518,8 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     roomClosedRef.current = false;
     setRoomExpired(false);
     setRoomClosed(false);
+    // 上一间房的持久化处境和下一间房无关:握手还没回话之前不能挂着旧房间的警告。
+    setRoomPersistenceDegraded(false);
   };
 
   const startCollaborationRoom = async () => {
@@ -511,6 +531,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     try {
       const allocated = await createRoom<ProjectPackage>({ clientId, displayName: COLLABORATION_DISPLAY_NAME, signal });
       const { room, access } = allocated;
+      notePersistedAtLastFlush(allocated.persistedAtLastFlush);
       roomClosedRef.current = room.closed ?? false;
       persistRoomAccess(room.id, access.accessToken);
       setRoomId(room.id);
@@ -558,6 +579,8 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setCollaborationStatus("connecting");
     setCollaborationMessage(persistedToken ? "正在恢复房间访问" : "正在验证邀请凭证");
     try {
+      // 握手先说一次,快照可能更新:两处都记下来,后到的说法覆盖先到的。
+      let joinedPersistedAtLastFlush: boolean | undefined;
       const access = persistedToken
         ? { accessToken: persistedToken, role: null }
         : await joinRoom<ProjectPackage>({
@@ -566,10 +589,15 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
           clientId,
           displayName: COLLABORATION_DISPLAY_NAME,
           signal,
-        }).then((joined) => joined.access);
+        }).then((joined) => {
+          joinedPersistedAtLastFlush = joined.persistedAtLastFlush;
+          return joined.access;
+        });
       const room = await retryInitializingRoom(() => fetchRoom<ProjectPackage>(normalizedRoomId, access.accessToken, { signal }));
       if (!room.snapshot) throw new Error("房间工程数据不完整");
       markOnline();
+      notePersistedAtLastFlush(joinedPersistedAtLastFlush);
+      notePersistedAtLastFlush(room.persistedAtLastFlush);
       roomClosedRef.current = room.closed ?? false;
       persistRoomAccess(normalizedRoomId, access.accessToken);
       setRoomId(normalizedRoomId);
@@ -645,6 +673,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setRoomReadonly(false);
     setRoomClosed(false);
     setRoomExpired(false);
+    setRoomPersistenceDegraded(false);
     roomClosedRef.current = false;
     roomExpiredRef.current = false;
     setInvitationToken(null);
@@ -735,6 +764,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     roomVersion,
     collaborationStatus,
     collaborationOffline,
+    roomPersistenceDegraded,
     connectionHealCount,
     collaborationMessage,
     collaborationOpen,
