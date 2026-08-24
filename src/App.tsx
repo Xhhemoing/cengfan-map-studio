@@ -188,6 +188,7 @@ import {
 import {
   CollaborationClientError,
   fetchRoomOperations,
+  isCollaborationTransportError,
   isOwnRoomAcknowledgement,
   submitRoomOperations,
   type CollaborationRoom,
@@ -585,12 +586,48 @@ function StudioApp({ projectId }: { projectId?: string }) {
     };
   }, []);
 
+  /**
+   * 分区愈合信号。送出 effect 只在工作区或房间身份变化时重新武装,所以分区期间失败的
+   * 增量要等用户下一次编辑才会重投——用户不动就永远不上传。离线态被摘掉,或房间版本
+   * 前进(流上收到事件本身就证明连接回来了),都算连接已愈合,必须重新武装一次送出。
+   *
+   * 只置位标记、不额外触发渲染:这两个信号同时也是送出 effect 的依赖,而 effect 按声明
+   * 顺序执行,标记在同一次 commit 里先于送出 effect 就绪。
+   */
+  const collaborationHealRoomRef = useRef<string | null>(null);
+  const collaborationHealOfflineRef = useRef(false);
+  const collaborationHealVersionRef = useRef(0);
+  const collaborationHealPendingRef = useRef(false);
   useEffect(() => {
+    const { collaborationOffline, roomId, roomVersion } = collaboration;
+    // 换房间只是重新立水位线:新房间的版本号与上一间毫无关系,不能当成一次愈合。
+    if (collaborationHealRoomRef.current !== roomId) {
+      collaborationHealRoomRef.current = roomId;
+      collaborationHealOfflineRef.current = collaborationOffline;
+      collaborationHealVersionRef.current = roomVersion;
+      collaborationHealPendingRef.current = false;
+      return;
+    }
+    const healed = collaborationHealOfflineRef.current && !collaborationOffline;
+    const advanced = roomVersion > collaborationHealVersionRef.current;
+    collaborationHealOfflineRef.current = collaborationOffline;
+    collaborationHealVersionRef.current = Math.max(collaborationHealVersionRef.current, roomVersion);
+    if (healed || advanced) collaborationHealPendingRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collaboration.collaborationOffline, collaboration.roomId, collaboration.roomVersion]);
+
+  useEffect(() => {
+    // 每次送出都消费掉愈合标记:重投是一次性的补投,不是自带重试的循环。
+    const healResend = collaborationHealPendingRef.current;
+    collaborationHealPendingRef.current = false;
     const { roomId, roomAccessToken, roomRole, roomReadonly, roomClosed } = collaboration;
     if (!roomId || !roomAccessToken || roomRole === "viewer" || roomReadonly || roomClosed || !collaborationBaselineRef.current) return;
     if (suppressCollaborationSendRef.current) {
       suppressCollaborationSendRef.current = false;
-      return;
+      // 愈合往往正是被远端事件带回来的,而远端事件会置位抑制标记。照常吞掉这一次,
+      // 分区期间攒下的增量就又要等用户下一次编辑;基线此刻已经把远端修改并进去了,
+      // 重新 diff 出来的只会是本地那部分。
+      if (!healResend) return;
     }
     /**
      * 上传在途期间可以切房、退房或卸载。回执回来时房间已经不是发起时那间,写基线会污染
@@ -601,6 +638,16 @@ function StudioApp({ projectId }: { projectId?: string }) {
     const pendingOperations = (baseline: ProjectPackage): CollaborationOperation[] => (
       diffCollaborationDocument(baseline, currentCollaborationPackage(baseline.exportedAt))
     );
+
+    /**
+     * 送出侧自己推进的版本(回执、冲突补齐)不是愈合信号:连接本来就是通的。先把水位线
+     * 抬上去,愈合探测才不会把它当成一次新的愈合——否则一次冲突补齐会额外拉起一轮重投,
+     * 把 R2-3 的冲突预算叠成一串上传。
+     */
+    const advanceRoomVersion = (version: number) => {
+      collaborationHealVersionRef.current = Math.max(collaborationHealVersionRef.current, version);
+      collaboration.setRoomVersion(version);
+    };
 
     const commitAcknowledgement = (txId: string, operations: CollaborationOperation[], acknowledged: CollaborationRoom<ProjectPackage>) => {
       const activeBaseline = collaborationBaselineRef.current;
@@ -618,7 +665,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       // 并重复应用已经落地的修改。
       if (acknowledged.version > collaborationVersionRef.current) {
         collaborationVersionRef.current = acknowledged.version;
-        collaboration.setRoomVersion(acknowledged.version);
+        advanceRoomVersion(acknowledged.version);
       }
     };
 
@@ -649,7 +696,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         applySharedPackage(rebased.current, interval.version);
         collaborationBaselineRef.current = rebased.baseline;
         collaborationVersionRef.current = interval.version;
-        collaboration.setRoomVersion(interval.version);
+        advanceRoomVersion(interval.version);
         // 工作区状态是异步落地的,重新 diff 只能用 rebase 的结果,不能读 latestWorkspaceRef。
         return diffCollaborationDocument(rebased.baseline, rebased.current);
       } catch {
@@ -681,7 +728,13 @@ function StudioApp({ projectId }: { projectId?: string }) {
         if (outdated()) return;
         if (!(error instanceof CollaborationClientError) || error.code !== "VERSION_CONFLICT") {
           collaboration.setCollaborationStatus("error");
-          collaboration.setCollaborationMessage(error instanceof Error ? error.message : "增量同步失败");
+          // 传输层失败和服务端拒绝是两回事:本地修改仍然有效,连接一回来这批增量就会被
+          // 愈合信号重新投出去,面板要照实说,别让用户以为改动已经丢了。
+          // TODO(R3-3): hook 还没导出 collaborationOffline 的 setter,送出侧只能改文案;
+          // setter 落地后这里应直接置位离线态,与断流路径共用同一套说法。
+          collaboration.setCollaborationMessage(isCollaborationTransportError(error)
+            ? "网络异常，本地修改已保留，恢复后会自动续传"
+            : error instanceof Error ? error.message : "增量同步失败");
           return;
         }
         // 重试预算固定为一次,且只在这里消耗:客户端自己的请求级重试(超时/网络)不叠加
@@ -716,8 +769,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
     return () => window.clearTimeout(timer);
     // Depend on the individual room fields rather than the whole controller
     // object so the debounce only re-arms when the room or workspace changes.
+    // collaborationOffline/roomVersion are the heal signals: without them a diff
+    // stranded by a partition waits for the next user edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collaborationClientId, customTemplates, project, renderSettings, collaboration.roomAccessToken, collaboration.roomId, collaboration.roomRole, collaboration.roomReadonly, collaboration.roomClosed, userAssets, userFonts]);
+  }, [collaborationClientId, customTemplates, project, renderSettings, collaboration.collaborationOffline, collaboration.roomAccessToken, collaboration.roomId, collaboration.roomRole, collaboration.roomReadonly, collaboration.roomClosed, collaboration.roomVersion, userAssets, userFonts]);
 
   const commitProject = (next: ProjectDocument) => {
     if (!collaboration.canEdit) {

@@ -7,6 +7,7 @@ import { createProjectDocument, serializeProjectDocument } from "./lib/project-d
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
 import { sampleStudents } from "./lib/project-data";
 import { COLLABORATION_SEND_DELAY_MS } from "./lib/app-constants";
+import { CollaborationClientError } from "./lib/collaboration-client";
 import { createProjectPackage } from "./lib/project-package";
 
 import { LEGACY_EDITOR_STORAGE_KEY, WORKSPACE_SESSION_STORAGE_KEY } from "./lib/workspace-session";
@@ -2279,5 +2280,154 @@ describe("Collaboration send effect recovery (R2-3)", () => {
       globalThis.fetch = originalFetch;
       restoreStream();
     }
+  });
+
+  describe("partition heal auto-resend (R3-2)", () => {
+    /** 分区形态:上传打到截止时间才失败,事务根本没有落到服务端。 */
+    function timedOut(): never {
+      throw new CollaborationClientError("REQUEST_TIMEOUT", "协作服务无响应，网络可能已中断");
+    }
+
+    it("resends the diff stranded by a partition once a stream event proves the link is back", async () => {
+      const container = renderApp();
+      const roomId = "HEAL01";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const uploads: UploadedTransaction[] = [];
+      let partitioned = true;
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+          uploads.push(body);
+          if (partitioned) timedOut();
+          return json({ id: roomId, version: 3, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        }
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+        renameStudent(container, "林舟", "分区林舟");
+        await vi.waitFor(() => expect(uploads).toHaveLength(1), { timeout: 5_000 });
+        await vi.waitFor(() => expect(collaborationStatus(container)?.getAttribute("data-collaboration-status")).toBe("error"));
+
+        // 网络恢复:流上先回来一条别人的增量。此后用户没有任何编辑。
+        partitioned = false;
+        ScriptedEventSource.instances[0]!.emit("snapshot", {
+          id: roomId,
+          version: 2,
+          updatedBy: "c-remote",
+          lastTxId: "tx-remote",
+          operations: [{ type: "set", path: ["renderSettings", "fixedFps"], value: 45 }],
+        });
+
+        await vi.waitFor(() => expect(uploads).toHaveLength(2), { timeout: 5_000 });
+        // 重投落在愈合后的版本上,且只带本地增量:远端刚落地的修改不能被当成本地改动重放。
+        expect(uploads[1]!.baseVersion).toBe(2);
+        expect(pathsOf(uploads[1]!)).toContain("project.students");
+        expect(pathsOf(uploads[1]!)).not.toContain("renderSettings.fixedFps");
+        await vi.waitFor(() => expect(collaborationStatus(container)?.getAttribute("data-collaboration-status")).toBe("connected"));
+
+        // 一次愈合只补投一次:回执推进版本不得再触发一轮上传。
+        await new Promise((resolve) => setTimeout(resolve, COLLABORATION_SEND_DELAY_MS * 4));
+        expect(uploads).toHaveLength(2);
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
+
+    it("resends when the offline flag clears even though no new version arrives", async () => {
+      const container = renderApp();
+      const roomId = "HEAL02";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const uploads: UploadedTransaction[] = [];
+      const backfills: string[] = [];
+      let partitioned = true;
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+          uploads.push(body);
+          if (partitioned) timedOut();
+          return json({ id: roomId, version: 2, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        }
+        if (url.includes(`/api/rooms/${roomId}/operations`)) {
+          backfills.push(url);
+          if (partitioned) timedOut();
+          // 分区期间远端什么都没发生:补齐成功但没有区间可套,版本原地不动。
+          return json({ id: roomId, version: 1, afterVersion: 1, operations: [] });
+        }
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+        renameStudent(container, "林舟", "离线林舟");
+        await vi.waitFor(() => expect(uploads).toHaveLength(1), { timeout: 5_000 });
+
+        // 断流 → 补齐也打不通 → 面板进入离线态。
+        ScriptedEventSource.instances[0]!.onerror!();
+        await vi.waitFor(() => expect(container.textContent).toContain("网络已断开"), { timeout: 5_000 });
+
+        // 网络恢复:重连挂上新流,下一次补齐成功把离线态摘掉,期间没有任何编辑与版本推进。
+        partitioned = false;
+        await vi.waitFor(() => expect(ScriptedEventSource.instances.length).toBeGreaterThan(1), { timeout: 5_000 });
+        ScriptedEventSource.instances[1]!.onerror!();
+
+        await vi.waitFor(() => expect(uploads).toHaveLength(2), { timeout: 5_000 });
+        expect(uploads[1]!.baseVersion).toBe(1);
+        expect(pathsOf(uploads[1]!)).toContain("project.students");
+        await vi.waitFor(() => expect(collaborationStatus(container)?.getAttribute("data-collaboration-status")).toBe("connected"));
+        await new Promise((resolve) => setTimeout(resolve, COLLABORATION_SEND_DELAY_MS * 4));
+        expect(uploads).toHaveLength(2);
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
+
+    it("keeps a partitioned upload out of the loop when the link never comes back", async () => {
+      const container = renderApp();
+      const roomId = "HEAL03";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const uploads: UploadedTransaction[] = [];
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+          uploads.push(body);
+          return timedOut();
+        }
+        if (url.includes(`/api/rooms/${roomId}/operations`)) return timedOut();
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+        renameStudent(container, "林舟", "顽固分区林舟");
+        await vi.waitFor(() => expect(uploads).toHaveLength(1), { timeout: 5_000 });
+
+        // 分区持续:没有愈合信号就没有重投,失败本身不能自己拉起下一次上传。
+        await new Promise((resolve) => setTimeout(resolve, COLLABORATION_SEND_DELAY_MS * 5));
+        expect(uploads).toHaveLength(1);
+        expect(container.textContent).toContain("恢复后会自动续传");
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
   });
 });
