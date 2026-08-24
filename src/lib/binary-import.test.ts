@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createImportTemplateSheets, parseExcelArrayBuffer, parseExcelWorkbookRows, parseOcrLikeText } from "./binary-import";
+import {
+  createImportTemplateSheets,
+  parseExcelArrayBuffer,
+  parseExcelWorkbook,
+  parseExcelWorkbookRows,
+  parseOcrLikeText,
+} from "./binary-import";
 
 describe("binary import adapters", () => {
   it("parses excel-like row matrix into candidates", () => {
@@ -336,6 +342,101 @@ describe("binary import adapters", () => {
     expect(result.unmappedHeaders).toEqual(["备注"]);
     // 省份要出现在识别面板的列映射里,而且排在核心列之后。
     expect(result.columnMappings.map((mapping) => mapping.field)).toEqual(["name", "university", "city", "province"]);
+  });
+
+  it("reads the roster on the second sheet when the workbook opens with a cover page", () => {
+    const result = parseExcelWorkbook([
+      {
+        name: "封面",
+        rows: [["2026 届毕业生去向统计"], ["制表单位", "教务处"], ["更新日期", "2026-06-01"]],
+      },
+      {
+        name: "去向名单",
+        rows: [
+          ["学生姓名", "录取院校", "城市"],
+          ["苏禾", "浙江大学", "杭州市"],
+          ["林舟", "北京大学", "北京市"],
+        ],
+      },
+    ]);
+
+    expect(result?.sheetName).toBe("去向名单");
+    expect(result?.skippedSheetNames).toEqual(["封面"]);
+    expect(result?.candidates.map((candidate) => candidate.name)).toEqual(["苏禾", "林舟"]);
+  });
+
+  it("prefers a readable sheet over a leading sheet whose header misses a required column", () => {
+    const result = parseExcelWorkbook([
+      { name: "汇总", rows: [["学生姓名", "录取院校"], ["苏禾", "浙江大学"]] },
+      { name: "明细", rows: [["苏禾", "浙江大学", "杭州市"], ["林舟", "北京大学", "北京市"]] },
+    ]);
+
+    expect(result?.sheetName).toBe("明细");
+    expect(result?.candidates).toHaveLength(2);
+  });
+
+  it("picks the sheet with the most candidates when several sheets look like rosters", () => {
+    const header = ["学生姓名", "录取院校", "城市"];
+    const result = parseExcelWorkbook([
+      { name: "预备名单", rows: [header, ["苏禾", "浙江大学", "杭州市"]] },
+      {
+        name: "正式名单",
+        rows: [header, ["林舟", "北京大学", "北京市"], ["周晴", "哈佛大学", "波士顿"], ["顾言", "南京大学", "南京市"]],
+      },
+      { name: "填写说明", rows: [["字段", "必填", "示例"]] },
+    ]);
+
+    expect(result?.sheetName).toBe("正式名单");
+    expect(result?.skippedSheetNames).toEqual(["预备名单", "填写说明"]);
+    expect(result?.candidates).toHaveLength(3);
+  });
+
+  it("keeps the template roundtrip on 学生数据 even though 填写说明 parses into fallback rows", () => {
+    const template = createImportTemplateSheets();
+    const result = parseExcelWorkbook([
+      {
+        name: "学生数据",
+        rows: [template.data[0], ["苏禾", "浙江大学", "杭州市", "中国去向", "浙江省"]],
+      },
+      { name: "填写说明", rows: template.guide },
+    ]);
+
+    expect(result?.sheetName).toBe("学生数据");
+    expect(result?.skippedSheetNames).toEqual(["填写说明"]);
+    expect(result?.candidates).toEqual([expect.objectContaining({ name: "苏禾", province: "浙江省" })]);
+  });
+
+  it("still selects 学生数据 when the downloaded template has no data rows yet", () => {
+    const template = createImportTemplateSheets();
+    // 说明表按列位回退能凑出好几条假候选,空模板的数据表一条都没有:选表不能只比候选数。
+    expect(parseExcelWorkbookRows(template.guide).candidates.length).toBeGreaterThan(0);
+
+    const result = parseExcelWorkbook([
+      { name: "学生数据", rows: template.data },
+      { name: "填写说明", rows: template.guide },
+    ]);
+
+    expect(result?.sheetName).toBe("学生数据");
+    expect(result?.candidates).toEqual([]);
+  });
+
+  it("matches single-sheet parsing exactly and reports no skipped sheets", () => {
+    const rows = [
+      ["学生姓名", "录取院校", "城市", "去向类型"],
+      ["苏禾", "浙江大学", "杭州市", "中国去向"],
+      ["林舟", "", "北京市", ""],
+    ];
+    const single = parseExcelWorkbook([{ name: "Sheet1", rows }]);
+
+    expect(single).toEqual({
+      ...parseExcelWorkbookRows(rows),
+      sheetName: "Sheet1",
+      skippedSheetNames: [],
+    });
+  });
+
+  it("returns null for a workbook without sheets", () => {
+    expect(parseExcelWorkbook([])).toBeNull();
   });
 
   it("ignores a fifth column on the headerless fallback path instead of reading it as province", () => {

@@ -2,7 +2,7 @@ import { Download, FileUp, Table2 } from "lucide-react";
 import { useState } from "react";
 import { confirmImportCandidates, type ImportReviewRow } from "../lib/data-workspace";
 import { parseStudentText, type ImportCandidate, type UnparsedLine } from "../lib/import-data";
-import { createImportTemplateSheets, parseExcelWorkbookRows, parseOcrLikeText } from "../lib/binary-import";
+import { createImportTemplateSheets, parseExcelWorkbook, parseOcrLikeText } from "../lib/binary-import";
 import { buildRosterExportSheets, createRosterExportFilename } from "../lib/roster-export";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
 import { SPREADSHEET_IMPORT_LIMIT, checkImportFileSize } from "../lib/import-file-limits";
@@ -68,6 +68,19 @@ function importOutcomeSummary(success: number, skipped: number): string {
   return `成功 ${success} · 跳过 ${skipped}`;
 }
 
+/** 表名太多时只点名前几张，剩下的用「等」收尾，避免状态栏被一长串表名撑爆。 */
+const SKIPPED_SHEET_PREVIEW = 3;
+
+/**
+ * 没被读取的工作表提示：与「另有 N 行未识别」同一口径，
+ * 让「名单在第二张、封面在第一张」这类工作簿里没读的表在提示里看得见。
+ */
+function describeSkippedSheets(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  const preview = names.slice(0, SKIPPED_SHEET_PREVIEW).join("、");
+  return `，另有 ${names.length} 张工作表未读取（${preview}${names.length > SKIPPED_SHEET_PREVIEW ? " 等" : ""}）`;
+}
+
 /** 等待用户在替换确认框里表态的一批导入结果，确认前不碰名单。 */
 type PendingReplace = {
   students: Student[];
@@ -113,6 +126,8 @@ export function DataImportPanel({
     unparsed: UnparsedLine[],
     sourceLabel: string,
     recognition?: ExcelRecognition,
+    /** 追加在成功/跳过口径之后的补充说明，目前用于点名没被读取的工作表。 */
+    note = "",
   ) => {
     setExcelRecognition(recognition?.headerRowIndex !== undefined ? recognition : null);
     setUnparsedRows(unparsed);
@@ -120,13 +135,13 @@ export function DataImportPanel({
     // 换了一批候选，上一次的替换摘要就过期了，避免旧数字残留误导用户。
     setReplaceConfirmation(null);
     if (candidates.length === 0) {
-      onMessage(`没有从${sourceLabel}识别到可导入数据`);
+      onMessage(`没有从${sourceLabel}识别到可导入数据${note}`);
       setReviewRows([]);
       return;
     }
     setReviewRows(candidates.map((candidate) => ({ ...candidate, accepted: true })));
     onMessage(
-      `从${sourceLabel}识别到 ${candidates.length} 条候选${unparsed.length ? `，另有 ${unparsed.length} 行未识别` : ""}`,
+      `从${sourceLabel}识别到 ${candidates.length} 条候选${unparsed.length ? `，另有 ${unparsed.length} 行未识别` : ""}${note}`,
     );
   };
 
@@ -226,21 +241,31 @@ export function DataImportPanel({
       const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) {
+      // 整本工作簿都读进来交给选表逻辑：教务导出常把封面/汇总排在第一张，只读第一张会丢掉真名单。
+      const sheets = workbook.SheetNames.flatMap((name) => {
+        const sheet = workbook.Sheets[name];
+        if (!sheet) return [];
+        const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, {
+          header: 1,
+          defval: "",
+        });
+        return [{
+          name,
+          rows: rows.map((row) => (Array.isArray(row) ? row : []).map((cell) => String(cell ?? "").trim())),
+        }];
+      });
+      const parsed = parseExcelWorkbook(sheets);
+      if (!parsed) {
         onMessage("Excel 中没有工作表");
         return;
       }
-      const sheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, {
-        header: 1,
-        defval: "",
-      });
-      const matrix = rows.map((row) =>
-        (Array.isArray(row) ? row : []).map((cell) => String(cell ?? "").trim()),
+      setCandidates(
+        parsed.candidates,
+        parsed.unparsed,
+        `Excel（${file.name} · 工作表「${parsed.sheetName}」）`,
+        parsed,
+        describeSkippedSheets(parsed.skippedSheetNames),
       );
-      const parsed = parseExcelWorkbookRows(matrix);
-      setCandidates(parsed.candidates, parsed.unparsed, `Excel（${file.name}）`, parsed);
     } catch (error) {
       onMessage(error instanceof Error ? error.message : "Excel 解析失败");
     }

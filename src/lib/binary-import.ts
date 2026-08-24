@@ -221,6 +221,55 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
   return { candidates, unparsed, ...metadata };
 }
 
+/** 工作簿里的一张表:表名要一起带进来,选中表与被跳过的表都得能在提示里点名。 */
+export interface ExcelSheetInput {
+  name: string;
+  rows: string[][];
+}
+
+export interface ExcelWorkbookImportResult extends ExcelImportResult {
+  /** 实际读取的工作表名。 */
+  sheetName: string;
+  /** 没被读取的工作表名,按工作簿原顺序;非空说明这本工作簿里还有内容没进候选。 */
+  skippedSheetNames: string[];
+}
+
+/**
+ * 选表档位:表头可用(2) > 无表头按列位回退(1) > 表头缺必填列(0)。
+ * 缺必填列的表一行都读不出来(整表进 unparsed),所以排在回退路径之后;
+ * 自家模板的「填写说明」是三列说明文字、认不到表头,因而永远输给带表头的「学生数据」。
+ */
+function sheetTier(result: ExcelImportResult): number {
+  if (result.headerRowIndex === undefined) return 1;
+  return result.missingRequiredFields.length > 0 ? 0 : 2;
+}
+
+function isBetterSheet(candidate: ExcelImportResult, current: ExcelImportResult): boolean {
+  const tierDelta = sheetTier(candidate) - sheetTier(current);
+  if (tierDelta !== 0) return tierDelta > 0;
+  return candidate.candidates.length > current.candidates.length;
+}
+
+/**
+ * 整本工作簿里挑一张最像名单的表:逐表跑 `parseExcelWorkbookRows`,按「表头可用 → 候选最多」取最佳,
+ * 平票保留靠前的表——单表工作簿因此与直接调 `parseExcelWorkbookRows` 完全一致。
+ * 教务导出常把封面/汇总放在第一张,只读第一张会把封面当名单、真名单静默丢失。
+ * 空工作簿返回 null,由调用方决定怎么提示。
+ */
+export function parseExcelWorkbook(sheets: readonly ExcelSheetInput[]): ExcelWorkbookImportResult | null {
+  if (sheets.length === 0) return null;
+  const parsed = sheets.map((sheet) => parseExcelWorkbookRows(sheet.rows));
+  let bestIndex = 0;
+  for (let index = 1; index < parsed.length; index += 1) {
+    if (isBetterSheet(parsed[index], parsed[bestIndex])) bestIndex = index;
+  }
+  return {
+    ...parsed[bestIndex],
+    sheetName: sheets[bestIndex].name,
+    skippedSheetNames: sheets.filter((_, index) => index !== bestIndex).map((sheet) => sheet.name),
+  };
+}
+
 /** 归一化后整行被吃空时的兜底理由:行数不守恒必须报出来,不能当作解析成功。 */
 const OCR_LOST_LINE_REASON = "OCR 归一化后未产生解析结果";
 
