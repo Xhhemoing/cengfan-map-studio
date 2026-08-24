@@ -17,11 +17,48 @@ function areaKey(area: CardArea): [number, number, number, number] {
   return [area.x, area.y, area.width, area.height];
 }
 
-function polygonKey(polygon: CardPolygon): { rings: number[][][]; bounds?: [number, number, number, number] } {
-  return {
-    rings: polygon.rings.map((ring) => ring.map((point) => [point.x, point.y])),
-    ...(polygon.bounds ? { bounds: areaKey(polygon.bounds) } : {}),
+const numberBytes = new DataView(new ArrayBuffer(8));
+
+function geometryHash(polygons: readonly CardPolygon[]): string {
+  let hashA = 0x811c9dc5;
+  let hashB = 0x9e3779b9;
+
+  const addUint32 = (value: number) => {
+    hashA = Math.imul(hashA ^ value, 0x01000193);
+    hashB = Math.imul(hashB + value, 0x85ebca6b);
   };
+  const addNumber = (value: number) => {
+    numberBytes.setFloat64(0, value === 0 ? 0 : value, true);
+    addUint32(numberBytes.getUint32(0, true));
+    addUint32(numberBytes.getUint32(4, true));
+  };
+
+  addUint32(polygons.length);
+  for (const polygon of polygons) {
+    addUint32(polygon.rings.length);
+    for (const ring of polygon.rings) {
+      addUint32(ring.length);
+      for (const point of ring) {
+        addNumber(point.x);
+        addNumber(point.y);
+      }
+    }
+    addUint32(polygon.bounds ? 1 : 0);
+    if (polygon.bounds) {
+      addNumber(polygon.bounds.x);
+      addNumber(polygon.bounds.y);
+      addNumber(polygon.bounds.width);
+      addNumber(polygon.bounds.height);
+    }
+  }
+
+  hashA ^= hashA >>> 16;
+  hashA = Math.imul(hashA, 0x85ebca6b);
+  hashA ^= hashA >>> 13;
+  hashB ^= hashB >>> 16;
+  hashB = Math.imul(hashB, 0xc2b2ae35);
+  hashB ^= hashB >>> 13;
+  return `${(hashA >>> 0).toString(16).padStart(8, "0")}${(hashB >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 /** Creates a stable key for solver inputs without including renderer-only styling. */
@@ -36,7 +73,7 @@ export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutC
       gap: bounds.gap,
       allowMapOverlap: bounds.allowMapOverlap === true,
       occupiedAreas: (bounds.occupiedAreas ?? []).map(areaKey),
-      occupiedPolygons: (bounds.occupiedPolygons ?? []).map(polygonKey),
+      occupiedPolygonHash: geometryHash(bounds.occupiedPolygons ?? []),
     },
     options: {
       mode: options.mode ?? "quadrant",
