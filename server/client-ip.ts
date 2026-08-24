@@ -9,6 +9,64 @@ function rightmostHop(value: HeaderValue, arrayMode: "join" | "last"): string | 
   return hops?.split(",").map((hop) => hop.trim()).filter(Boolean).at(-1);
 }
 
+function forwardedParts(value: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let quoted = false;
+  let escaped = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (escaped) {
+      escaped = false;
+    } else if (quoted && character === "\\") {
+      escaped = true;
+    } else if (character === "\"") {
+      quoted = !quoted;
+    } else if (!quoted && (character === "," || character === ";")) {
+      parts.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start));
+  return parts;
+}
+
+function normalizeForwardedAddress(value: string): string | undefined {
+  let address = value.trim();
+  if (address.startsWith("\"")) {
+    if (address.length < 2 || !address.endsWith("\"")) return undefined;
+    address = address.slice(1, -1).replace(/\\(.)/g, "$1").trim();
+  } else if (address.includes("\"")) {
+    return undefined;
+  }
+
+  if (!address || address.toLowerCase() === "unknown" || address.startsWith("_")) {
+    return undefined;
+  }
+
+  const bracketed = address.match(/^\[([^\]]+)\](?::\d+)?$/);
+  if (bracketed) return bracketed[1];
+
+  const ipv4WithPort = address.match(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/);
+  return ipv4WithPort?.[1] ?? address;
+}
+
+function forwardedFor(value: HeaderValue): string | undefined {
+  const header = Array.isArray(value) ? value.join(",") : value;
+  if (!header) return undefined;
+
+  let lastUsable: string | undefined;
+  for (const part of forwardedParts(header)) {
+    const match = part.trim().match(/^for\s*=\s*(.*)$/i);
+    if (!match) continue;
+    const address = normalizeForwardedAddress(match[1]);
+    // Ignore unusable hops while retaining the last usable proxy-added value.
+    if (address) lastUsable = address;
+  }
+  return lastUsable;
+}
+
 export function clientIp(
   request: Pick<http.IncomingMessage, "headers" | "socket">,
   trustProxy: boolean,
@@ -19,5 +77,9 @@ export function clientIp(
   const realIp = trustProxy && !forwardedIp
     ? rightmostHop(request.headers["x-real-ip"], "last")
     : undefined;
-  return (forwardedIp || realIp || request.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
+  const standardForwardedIp = trustProxy && !forwardedIp && !realIp
+    ? forwardedFor(request.headers.forwarded)
+    : undefined;
+  return (forwardedIp || realIp || standardForwardedIp || request.socket.remoteAddress || "unknown")
+    .replace(/^::ffff:/, "");
 }

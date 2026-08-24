@@ -803,3 +803,73 @@ describe("、 | ； separated pastes", () => {
     expect(result.unparsed).toEqual([]);
   });
 });
+
+describe("／ separated pastes", () => {
+  it("reads a row separated by the fullwidth solidus a Chinese IME types", () => {
+    const result = parseStudentText("林舟／北京大学／北京市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("leaves the ASCII slash of a joint program inside its cell", () => {
+    // A / separates nothing in a roster: it writes a date, a path, and the
+    // school within a university, so splitting on it cut 哈佛大学 in half.
+    const result = parseStudentText("林舟,哈佛大学/肯尼迪学院,波士顿");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "哈佛大学/肯尼迪学院", city: "波士顿" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("keeps an ASCII slash inside the city of an unlabeled line", () => {
+    const result = parseStudentText("林舟 北京大学 北京市/海淀区");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市/海淀区" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("still believes the ， of a row whose cell holds a ／", () => {
+    // ， is the separator here and ／ only joins a university to its school, so
+    // reading the ／ first would have made 肯尼迪学院 the city.
+    const result = parseStudentText("林舟，哈佛大学／肯尼迪学院，波士顿");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "哈佛大学／肯尼迪学院", city: "波士顿" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("still reads a labeled ，-separated row by its labels", () => {
+    const result = parseStudentText("姓名：林舟，就读院校：北京大学，城市：北京市，去向类型：海外");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        name: "林舟", university: "北京大学", city: "北京市", locationScope: "international",
+      }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("keeps a ／-separated roster aligned when one row states an overseas 去向", () => {
+    const result = parseStudentText([
+      "苏禾／浙江大学／杭州市",
+      "林舟／北京大学／北京市",
+      "周晴／哈佛大学／波士顿／海外",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "周晴", university: "哈佛大学", city: "波士顿", locationScope: "international" }),
+    ]);
+    expect(result.candidates[0]?.locationScope).toBeUndefined();
+    expect(result.candidates[1]?.locationScope).toBeUndefined();
+    expect(result.unparsed).toEqual([]);
+  });
+});

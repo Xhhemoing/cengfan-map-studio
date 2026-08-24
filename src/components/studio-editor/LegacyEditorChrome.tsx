@@ -252,7 +252,7 @@ export function LegacyEditorChrome({
           {projectActions}
 
           <ToolbarGroup label="导出">
-            <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}>
+            <button type="button" className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}>
               <ImageDown size={16} aria-hidden /> {posterExport.exportingPng ? "导出中..." : "导出 PNG"}
             </button>
           </ToolbarGroup>

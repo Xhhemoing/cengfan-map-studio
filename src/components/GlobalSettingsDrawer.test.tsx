@@ -65,6 +65,22 @@ describe("GlobalSettingsDrawer", () => {
     expect(document.activeElement).toBe(close);
   });
 
+  it("hides the close icon from assistive technology", () => {
+    const { container } = renderDrawer({ title: "渲染设置" });
+    const close = container.querySelector<HTMLButtonElement>('button[aria-label="关闭渲染设置"]')!;
+    const icon = close.querySelector("svg");
+    expect(icon).not.toBeNull();
+    expect(icon!.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("hides the default-title close icon from assistive technology", () => {
+    const { container } = renderDrawer();
+    const close = container.querySelector<HTMLButtonElement>('button[aria-label="关闭全局设置"]')!;
+    const icon = close.querySelector("svg");
+    expect(icon).not.toBeNull();
+    expect(icon!.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it("closes on Escape and on backdrop click", () => {
     const { container, onClose } = renderDrawer();
 

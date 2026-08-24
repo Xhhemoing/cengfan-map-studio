@@ -514,6 +514,37 @@ describe("layoutGrid", () => {
     }
     expect(placements.slice(6).map((placement) => placement.y)).toEqual([bottom, bottom, bottom]);
   });
+
+  it("hands back the caller's order even when most of the cards were fallbacks", () => {
+    // Nothing is placeable, so every card past the first few is a leftover the
+    // grid stacked rather than a cell it found.
+    const space = makeSpace([{ x: 0, y: 0, width: 900, height: 700 }], wideMap);
+    const cards = gridCards(9);
+
+    const placements = layoutGrid(cards, space);
+
+    expect(placements.map((placement) => placement.id)).toEqual(cards.map((card) => card.id));
+  });
+
+  it("returns one seat per card, so nothing the loop drops goes missing", () => {
+    for (const space of [makeSpace(), makeSpace([wideMap], wideMap), makeSpace([{ x: 0, y: 0, width: 900, height: 700 }], wideMap)]) {
+      for (const count of [1, 5, 18]) {
+        const cards = gridCards(count);
+
+        const placements = layoutGrid(cards, space);
+
+        // A card the loop never emitted would come back from `orderResult` as a
+        // margin seat, so the length matches the input either way.
+        expect(placements).toHaveLength(cards.length);
+        expect(placements.map((placement) => placement.id)).toEqual(cards.map((card) => card.id));
+        for (const placement of placements) expect(placement.side).toBe(space.sideOf(placement));
+      }
+    }
+  });
+
+  it("still returns nothing for an empty card list", () => {
+    expect(layoutGrid([], makeSpace())).toEqual([]);
+  });
 });
 
 describe("sweepPack", () => {

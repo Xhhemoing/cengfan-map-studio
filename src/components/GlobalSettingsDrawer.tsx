@@ -84,7 +84,7 @@ export function GlobalSettingsDrawer({
           <strong id={titleId}>{title}</strong>
           <IconButton
             label={`关闭${title}`}
-            icon={<X size={16} />}
+            icon={<X size={16} aria-hidden />}
             variant="ghost"
             className="global-settings-drawer__close"
             onClick={onClose}

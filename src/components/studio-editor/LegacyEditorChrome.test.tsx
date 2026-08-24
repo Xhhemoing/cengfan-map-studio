@@ -194,5 +194,7 @@ describe("LegacyEditorChrome decorative topbar icons", () => {
       .find((button) => button.textContent?.includes("导出 PNG"));
     expect(exportButton).not.toBeUndefined();
     expect(exportButton?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    // Explicit type so the button never submits an enclosing form (HTML default is "submit").
+    expect(exportButton?.type).toBe("button");
   });
 });

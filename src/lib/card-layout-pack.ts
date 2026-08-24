@@ -382,7 +382,7 @@ export function layoutGrid(cards: readonly CardLayoutInput[], space: LayoutSpace
       placed.add(fallback);
     }
   }
-  return placements;
+  return orderResult(cards, placements, space);
 }
 
 /** Pairwise overlap count; used to pick the least-bad saturated layout. */
