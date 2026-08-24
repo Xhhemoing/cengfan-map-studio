@@ -18,7 +18,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
 | 1 | CLOSED | T1–T10 + R2-0 | — | Hotfix-after full suite 1391 pass / 1 skip |
-| 2 | IMPLEMENTING | R2-1, R2-2, R2-4, R2-6, R2-7, R2-9, R2-10 | — | AI refusal visible; remaining R2-3/5/8 |
+| 2 | IMPLEMENTING | R2-1, R2-2, R2-4–R2-7, R2-9, R2-10 | — | SSE backpressure 8×; remaining R2-3/8 |
 
 ## Round 0 Baseline (pre-optimization)
 
