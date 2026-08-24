@@ -38,7 +38,8 @@
 | 15 | 已完成 | opus ×5 | 健康检查对齐、SSE 断流、parse-data 字段、AI 草稿、设置反馈 |
 | 16 | 已完成 | 混编 ×5 | 限流键、parse-data 告知、SSE 重订阅、rail listbox、剩余复查 |
 | 17 | 已完成 | 混编 ×5 | 图片降采样、PNG 面积防护、工作台对话框、房间过期广播、复查 |
-| 18 | 进行中 | 混编 ×5 | 项目库 CAS、字体上限、删 editor-commands、复查 |
+| 18 | 已完成 | 混编 ×5 | 项目库 CAS、字体上限、删 editor-commands、复查 |
+| 19 | 进行中 | opus ×5 | SSE ping/watchdog、tablist 键盘、右栏单挂载、导入体积与对话框、删死 UI |
 
 ### 第 1 轮工作流（只读）
 
@@ -76,6 +77,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 18 轮 CAS / 字体上限 / 删 editor-commands 已合入；启动第 19 轮落地。
 - 2026-08-24：创建专属分支；启动第 1 轮 5 个只读调研子代理。
 - 2026-08-24：第 1 轮 5 份审计齐；启动第 2 轮 5 个落地子代理。
 - 2026-08-24：第 2 轮落地完成并合入专属分支。目标测试 12 文件 164 + 续跑 19 文件 284 通过。启动第 3 轮。
@@ -191,6 +193,32 @@
 | 删除 editor-commands | 仅删除 `src/lib/editor-commands.ts`、`editor-commands.test.ts`、`style-commands.test.ts` |
 | 剩余复查 A | 只读 |
 | 剩余复查 B | 只读 |
+
+## 第 18 轮已合入
+
+- 项目库：`ProjectStore.put` 支持 `expectedUpdatedAt` CAS，冲突抛 `ProjectStoreConflictError`；`saveLocal` 锁存并提示重新加载。工作台省略 expected，仍 last-write-wins。
+- 字体：单文件 5MB 硬上限、≥2MB 资源健康告警、按字节去重复用 id。
+- 删除无引用的 `editor-commands.ts` 及测试。
+
+## 第 18 轮复查结论
+
+1. **协作 SSE**：服务端心跳是注释行，`EventSource` 看不见；退避约 15.5s 后永久放弃，但 UI 仍写「浏览器会自动尝试重连」。应发 `event: ping`、客户端 watchdog、退避耗尽转长间隔或明确断开。
+2. **导入入口**：Excel/CSV/`arrayBuffer` 与工程包 `readAsText` 无体积上限；工程包导入仍用 `window.confirm`；`AssetPanel` / `DataWorkspace` 默认 confirm 残留。`App.tsx` 两处 confirm 可在本轮一并换掉。
+3. **存储死写路径**：`saveCustomTemplates` / `saveUserAssets` 生产零调用，仅测试引用。
+4. **键盘与双挂载**：`GlobalDataNavigation` 无键盘；`GlobalSettingsScreen` 只有左右键；`StudioEditorShell` 桌面/抽屉双挂载导致重复 id。
+5. **死 UI**：`WorkflowGuide` / `HistoryControls` / `GlobalSettingsDrawer` 及未使用的 `WorkspaceNav` / `SegmentedNav`。保留 `/prototype` 与 `WorkflowStepper`。
+
+## 第 19 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| SSE ping + watchdog | `server/index.ts`（仅 events 心跳）、`src/lib/collaboration-client.ts`、`src/lib/useCollaborationRoom.ts` 及测试 |
+| 数据/设置 tablist 键盘 | `src/components/global-data/GlobalDataNavigation.tsx`、`src/components/GlobalSettingsScreen.tsx` 及测试 |
+| 右栏单挂载 | `src/components/StudioEditorShell.tsx` 及测试 |
+| 导入体积与对话框 | `DataImportPanel.tsx`、`usePosterExport.ts`、`DeliveryWorkspace.tsx`、`AssetPanel.tsx`、`DataWorkspace.tsx`、`App.tsx`（仅 confirm 两处）及测试；可新增对话框组件 |
+| 删死 UI 与死写路径 | 删除 `WorkflowGuide.tsx`/`HistoryControls.tsx`/`GlobalSettingsDrawer.tsx` 及测试；`StudioUi.tsx` 去掉未用 nav；`template-store.ts` / `assets.ts` 去掉死写函数及测试 |
+
+本轮不改 P2 视觉核对、不计费、不把 `/api/ai/agent` 改成多模态。工程包图片/字体预算复用可在导入切片用第 18 轮已合入的常量，但不要改 `fonts.ts`。
 
 ## 第 2 轮已合入
 
