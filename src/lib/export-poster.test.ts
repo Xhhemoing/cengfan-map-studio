@@ -98,6 +98,94 @@ describe("poster export", () => {
     expect(markup).not.toContain("data-asset-selection");
   });
 
+  it("omits resize handles, province hit areas and texture editors while keeping the rendered map", () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const provinceFill = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    provinceFill.setAttribute("data-province-id", "11");
+    provinceFill.setAttribute("fill", "#215d75");
+    svg.appendChild(provinceFill);
+    const textureImage = document.createElementNS("http://www.w3.org/2000/svg", "image");
+    textureImage.setAttribute("data-province-texture", "11");
+    svg.appendChild(textureImage);
+    const provinceLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    provinceLabel.setAttribute("data-province-label", "11");
+    provinceLabel.textContent = "北京";
+    svg.appendChild(provinceLabel);
+
+    const handles = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    handles.setAttribute("data-resize-handles", "");
+    const handle = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    handle.setAttribute("data-resize-handle", "se");
+    handles.appendChild(handle);
+    svg.appendChild(handles);
+    const hit = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    hit.setAttribute("data-province-hit", "11");
+    svg.appendChild(hit);
+    // 贴图编辑器：选中态两个属性挂在同一个 <g> 上，组里只有透明命中矩形与虚线选框。
+    const textureEditor = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    textureEditor.setAttribute("data-province-texture-editor", "11");
+    textureEditor.setAttribute("data-province-texture-selection", "11");
+    const textureBox = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    textureBox.setAttribute("stroke-dasharray", "6 4");
+    textureEditor.appendChild(textureBox);
+    svg.appendChild(textureEditor);
+
+    const markup = serializePosterSvg(svg);
+
+    expect(markup).not.toContain("data-resize-handles");
+    // 手柄子节点必须随整组一起消失，不能只删外层属性。
+    expect(markup).not.toContain("data-resize-handle=");
+    expect(markup).not.toContain("data-province-hit");
+    expect(markup).not.toContain("data-province-texture-editor");
+    expect(markup).not.toContain("data-province-texture-selection");
+    expect(markup).not.toContain("stroke-dasharray");
+    // 可见地图内容在别的节点上，剔除编辑态不能把它们带走。
+    expect(markup).toContain("data-province-id");
+    expect(markup).toContain('data-province-texture="11"');
+    expect(markup).toContain("北京");
+  });
+
+  it("omits an unselected province texture editor as well", () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    // 未选中时只有 editor 属性，selection 属性不会渲染，仍然属于编辑态节点。
+    const textureEditor = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    textureEditor.setAttribute("data-province-texture-editor", "12");
+    textureEditor.setAttribute("aria-label", "调整天津市贴图位置");
+    svg.appendChild(textureEditor);
+    const content = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    content.textContent = "保留标题";
+    svg.appendChild(content);
+
+    const markup = serializePosterSvg(svg);
+
+    expect(markup).not.toContain("data-province-texture-editor");
+    expect(markup).not.toContain("调整天津市贴图位置");
+    expect(markup).toContain("保留标题");
+  });
+
+  it("strips editor-only nodes nested inside layer groups", () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const mapLayer = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    mapLayer.setAttribute("data-map-layer", "true");
+    const asset = document.createElementNS("http://www.w3.org/2000/svg", "image");
+    asset.setAttribute("data-asset-id", "asset-badge");
+    mapLayer.appendChild(asset);
+    const nestedHandles = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    nestedHandles.setAttribute("data-resize-handles", "");
+    mapLayer.appendChild(nestedHandles);
+    const nestedHit = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    nestedHit.setAttribute("data-province-hit", "31");
+    mapLayer.appendChild(nestedHit);
+    svg.appendChild(mapLayer);
+
+    const markup = serializePosterSvg(svg);
+
+    expect(markup).toContain("data-map-layer");
+    expect(markup).toContain("asset-badge");
+    expect(markup).not.toContain("data-resize-handles");
+    expect(markup).not.toContain("data-province-hit");
+  });
+
   it("omits editor grid overlays from exported svg", () => {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     const grid = document.createElementNS("http://www.w3.org/2000/svg", "g");

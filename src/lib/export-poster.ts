@@ -10,11 +10,31 @@
  * `availablePngScales` 就会放行全部档位、`svgToPngBlob` 的前置校验也不再触发，
  * 行为退回「先栅格化再看浏览器脸色」。
  */
+/**
+ * 只在编辑器里存在的节点：选中框、网格、缩放手柄、省份贴图编辑器与省份命中层。
+ * 它们要么完全透明（命中层、贴图编辑器的 hit rect），要么只是编辑态装饰，
+ * 导出时必须整节点剔除——否则旧编辑器导出的 SVG/PNG 会烤进虚线框和手柄。
+ * 可见内容都在别的节点上（贴图走 `data-province-texture`，省份填色走 `data-province-id`），
+ * 所以这里删掉整棵子树不会丢画面。
+ *
+ * 回滚方案：把该数组改回原先的四项
+ * `data-selection-overlay` / `data-map-selection-overlay` / `data-asset-selection` / `data-editor-grid`，
+ * 导出行为即退回扩充前。
+ */
+const EDITOR_ONLY_SELECTORS = [
+  "[data-selection-overlay]",
+  "[data-map-selection-overlay]",
+  "[data-asset-selection]",
+  "[data-editor-grid]",
+  "[data-resize-handles]",
+  "[data-province-texture-selection]",
+  "[data-province-texture-editor]",
+  "[data-province-hit]",
+].join(", ");
+
 export function serializePosterSvg(svg: SVGSVGElement, options: { transparentBackground?: boolean; blockFontDisplay?: boolean } = {}): string {
   const clone = svg.cloneNode(true) as SVGSVGElement;
-  clone.querySelectorAll(
-    "[data-selection-overlay], [data-map-selection-overlay], [data-asset-selection], [data-editor-grid]",
-  ).forEach((node) => node.remove());
+  clone.querySelectorAll(EDITOR_ONLY_SELECTORS).forEach((node) => node.remove());
   if (options.transparentBackground) {
     clone.querySelectorAll("[data-canvas-background], [data-background-image]").forEach((node) => node.remove());
   }
