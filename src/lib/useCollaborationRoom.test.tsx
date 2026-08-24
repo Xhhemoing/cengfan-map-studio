@@ -113,13 +113,14 @@ function mountHook(initial: ProjectPackage): Harness {
 interface ServerScript {
   snapshotVersion: number;
   snapshot: ProjectPackage;
-  operations: (afterVersion: number) => Response;
-  room?: () => Response;
+  operations: (afterVersion: number) => Response | Promise<Response>;
+  room?: () => Response | Promise<Response>;
 }
 
 function installFetch(script: ServerScript): MockInstance {
-  const request = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+  const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    requestSignals.push({ url, signal: init?.signal ?? undefined });
     if (url.endsWith(`/api/rooms/${ROOM_ID}/events-ticket`)) {
       return json({ ticket: `ticket-${FakeEventSource.instances.length}` }, 201);
     }
@@ -136,6 +137,12 @@ function installFetch(script: ServerScript): MockInstance {
   return request as unknown as MockInstance;
 }
 
+/** 每次请求拿到的取消信号,用来断言离开房间/卸载时在途请求确实被中止。 */
+let requestSignals: { url: string; signal?: AbortSignal }[] = [];
+
+/** 网络分区:请求发出去了,响应永远不来。 */
+const neverSettles = (): Promise<Response> => new Promise<Response>(() => {});
+
 async function joinRoom(harness: Harness): Promise<void> {
   window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`, ROOM_TOKEN);
   flushSync(() => harness.controller().setRoomInput(ROOM_ID));
@@ -151,6 +158,7 @@ describe("useCollaborationRoom", () => {
 
   beforeEach(() => {
     FakeEventSource.instances = [];
+    requestSignals = [];
     window.localStorage.clear();
     vi.stubGlobal("EventSource", FakeEventSource);
   });
@@ -317,6 +325,92 @@ describe("useCollaborationRoom", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(harness.controller().collaborationStatus).toBe("closed");
+    harness.unmount();
+  });
+
+  it("reports a distinct offline state when the join request never settles, then recovers", async () => {
+    vi.useFakeTimers();
+    installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+      room: () => neverSettles(),
+    });
+    const harness = mountHook(samplePackage());
+    window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`, ROOM_TOKEN);
+    flushSync(() => harness.controller().setRoomInput(ROOM_ID));
+    harness.controller().joinRoom();
+    await vi.waitUntil(() => harness.controller().collaborationStatus === "connecting", { timeout: 2_000, interval: 1 });
+
+    // 分区期间服务端永不回包:没有截止时间的话这里会永远停在"正在恢复房间访问"。
+    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.waitUntil(() => harness.controller().collaborationOffline, { timeout: 2_000, interval: 1 });
+    expect(harness.controller().collaborationStatus).toBe("error");
+    expect(harness.controller().collaborationMessage).toContain("网络");
+    expect(requestSignals.some((call) => call.url.endsWith(`/api/rooms/${ROOM_ID}`) && call.signal?.aborted)).toBe(true);
+
+    installFetch({
+      snapshotVersion: 4,
+      snapshot: samplePackage(30),
+      operations: (afterVersion) => json({ id: ROOM_ID, version: 4, afterVersion, operations: [] }),
+    });
+    harness.controller().joinRoom();
+    await vi.waitUntil(() => !harness.controller().collaborationOffline, { timeout: 2_000, interval: 1 });
+    expect(harness.controller().collaborationStatus).toBe("connected");
+    expect(harness.refs.versionRef.current).toBe(4);
+    harness.unmount();
+  });
+
+  it("aborts an in-flight backfill when the room subscription tears down", async () => {
+    installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      operations: () => neverSettles(),
+    });
+    const harness = mountHook(samplePackage());
+    await joinRoom(harness);
+    await vi.waitFor(() => expect(harness.refs.versionRef.current).toBe(1));
+    const appliedBefore = harness.applied.length;
+
+    FakeEventSource.instances[0]!.fail();
+    await vi.waitFor(() => expect(requestSignals.some((call) => call.url.includes("/operations"))).toBe(true));
+    const backfill = requestSignals.find((call) => call.url.includes("/operations"));
+    expect(harness.refs.backfillInFlightRef.current).toBe(true);
+
+    harness.unmount();
+
+    expect(backfill?.signal?.aborted).toBe(true);
+    await vi.waitFor(() => expect(harness.refs.backfillInFlightRef.current).toBe(false));
+    expect(harness.applied).toHaveLength(appliedBefore);
+  });
+
+  it("goes offline while the backfill cannot reach the server and clears it on the next event", async () => {
+    installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      operations: () => {
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    const harness = mountHook(samplePackage());
+    await joinRoom(harness);
+    await vi.waitFor(() => expect(harness.refs.versionRef.current).toBe(1));
+
+    FakeEventSource.instances[0]!.fail();
+    await vi.waitFor(() => expect(harness.controller().collaborationOffline).toBe(true), { timeout: 5_000 });
+    expect(harness.controller().collaborationStatus).toBe("error");
+
+    // 自持重连挂上新流后,第一条事件就把离线态清掉。
+    await vi.waitFor(() => expect(FakeEventSource.live()).toHaveLength(1), { timeout: 5_000 });
+    FakeEventSource.live()[0]!.emit("snapshot", {
+      id: ROOM_ID,
+      version: 2,
+      operations: [setOp(["renderSettings", "fixedFps"], 33)],
+    });
+
+    expect(harness.controller().collaborationOffline).toBe(false);
+    expect(harness.controller().collaborationStatus).toBe("connected");
+    expect(harness.refs.versionRef.current).toBe(2);
     harness.unmount();
   });
 });
