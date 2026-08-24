@@ -1,0 +1,54 @@
+import { describe, expect, it } from "vitest";
+import type { CardLayoutBounds, CardPlacement } from "./card-layout";
+import { assertLayoutInvariants } from "./layout-perf";
+
+const bounds: CardLayoutBounds = {
+  width: 500,
+  height: 300,
+  map: { x: 150, y: 60, width: 200, height: 180 },
+  margin: 20,
+  gap: 10,
+};
+
+function placement(id: string, x: number, y: number): CardPlacement {
+  return {
+    id,
+    anchorX: 250,
+    anchorY: 150,
+    width: 80,
+    height: 40,
+    x,
+    y,
+    side: "left",
+  };
+}
+
+describe("assertLayoutInvariants", () => {
+  it("accepts finite, contained placements separated by the configured gap", () => {
+    expect(() => assertLayoutInvariants([
+      placement("left", 20, 20),
+      placement("right", 110, 20),
+    ], bounds, { checkOverlaps: true })).not.toThrow();
+  });
+
+  it("rejects non-finite geometry and placements outside the safe margin", () => {
+    expect(() => assertLayoutInvariants([
+      { ...placement("nan", 20, 20), x: Number.NaN },
+    ], bounds)).toThrow(/must be finite/);
+
+    expect(() => assertLayoutInvariants([
+      placement("outside", 19, 20),
+    ], bounds)).toThrow(/outside the canvas margin/);
+  });
+
+  it("checks card overlap only when requested", () => {
+    const overlapping = [
+      placement("first", 20, 20),
+      placement("second", 90, 20),
+    ];
+
+    expect(() => assertLayoutInvariants(overlapping, bounds)).not.toThrow();
+    expect(() => assertLayoutInvariants(overlapping, bounds, { checkOverlaps: true }))
+      .toThrow(/first and second/);
+  });
+});
