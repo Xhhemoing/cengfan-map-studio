@@ -515,7 +515,77 @@ describe("AgentAssistant", () => {
     root.unmount();
   });
 
-  it("cancels a running session on unmount without committing", async () => {
+  it("keeps a running session alive when only the assistant unmounts and shows the result on remount", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    let signal: AbortSignal | undefined;
+    let release!: (value: ReturnType<typeof response>) => void;
+    vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return new Promise<ReturnType<typeof response>>((resolve, reject) => {
+        release = resolve;
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    }));
+    const onCommit = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    // 抽屉打开/关闭只挂载与卸载 AgentAssistant，Provider 始终存活。
+    const renderDrawer = (open: boolean) => flushSync(() => root.render(
+      <AssistantConversationProvider>
+        {open ? <AgentAssistant project={project} assets={[]} onCommit={onCommit} /> : null}
+      </AssistantConversationProvider>,
+    ));
+    renderDrawer(true);
+    await settle();
+    setMessage(container, "抽屉关闭也要跑完");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    renderDrawer(false);
+    expect(signal?.aborted).toBe(false);
+    release(response({ kind: "finish", summary: "关抽屉后仍然完成" }));
+    await settle();
+
+    renderDrawer(true);
+    await vi.waitFor(() => expect(container.textContent).toContain("关抽屉后仍然完成"));
+    expect(container.querySelector('[aria-label="取消 AI 会话"]')).toBeNull();
+    expect(onCommit).not.toHaveBeenCalled();
+    root.unmount();
+  });
+
+  it("keeps the running conversation cancellable after the assistant remounts", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return new Promise((_resolve, reject) => signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+    }));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const renderDrawer = (open: boolean) => flushSync(() => root.render(
+      <AssistantConversationProvider>
+        {open ? <AgentAssistant project={project} assets={[]} onCommit={vi.fn()} /> : null}
+      </AssistantConversationProvider>,
+    ));
+    renderDrawer(true);
+    await settle();
+    setMessage(container, "先关抽屉再取消");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+
+    renderDrawer(false);
+    renderDrawer(true);
+    // 会话状态仍是 running，取消入口指向 Provider 里那个仍在跑的会话。
+    const cancelButton = container.querySelector<HTMLButtonElement>('[aria-label="取消 AI 会话"]');
+    expect(cancelButton).not.toBeNull();
+    expect(signal?.aborted).toBe(false);
+    flushSync(() => cancelButton!.click());
+    expect(signal?.aborted).toBe(true);
+    await vi.waitFor(() => expect(container.textContent).toContain("已取消，预览未应用"));
+    root.unmount();
+  });
+
+  it("cancels a running session when the provider unmounts, without committing", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     let signal: AbortSignal | undefined;
     vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => {

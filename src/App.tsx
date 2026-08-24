@@ -13,6 +13,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -980,7 +981,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   // 与影子 Agent 的 check_health 同源：真值来自 buildHealthInput（真实卡高、真实嘉宾面板、
   // 与画布同一份排版求解结果），而不是估算的 180px 卡高与左上角 width*scale 地图框。
-  const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildHealthInput(project)), [project]);
+  // buildHealthInput 会同步跑一次排版求解，直接挂在 project 上会让名单/地图的每次编辑
+  // 都先付这份开销；改用延后快照后，紧急渲染先提交，健康检查落后一帧且连续编辑只结算最后一次。
+  const healthProject = useDeferredValue(project);
+  const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildHealthInput(healthProject)), [healthProject]);
 
   const handleLegacySceneSelect = (next: SceneSelection) => {
     handleSceneSelect(next);

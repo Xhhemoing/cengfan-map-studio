@@ -1,7 +1,17 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+// App 的排版健康检查跑在延后的 project 快照上，判断「什么时候算」需要能数到真正的调用。
+// 这里只在真实实现外面包一层计数，不替换行为。
+vi.mock("./lib/render-health", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/render-health")>();
+  return { ...actual, buildHealthInput: vi.fn(actual.buildHealthInput) };
+});
+
 import { App } from "./App";
+import { checkLayoutHealth } from "./lib/layout-health";
+import { buildHealthInput } from "./lib/render-health";
 import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { createProjectDocument, serializeProjectDocument } from "./lib/project-document";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
@@ -1003,6 +1013,41 @@ describe("App student editing", () => {
 
     expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
     expect(container.querySelector('[data-text-id="text-title"]')?.classList.contains("is-selected")).toBe(true);
+  });
+
+  it("keeps layout health off the editing commit while staying sourced from buildHealthInput", async () => {
+    const { act } = await import("react");
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.textElements = project.textElements.map((element) => element.id === "text-title"
+      ? { ...element, color: "#ffffff" }
+      : element);
+    window.localStorage.setItem("cengfan-map-studio:draft", serializeProjectDocument(project));
+    const container = renderLegacyApp({ clearStorage: false });
+    await act(async () => {});
+
+    const healthInput = vi.mocked(buildHealthInput);
+    openRailAdvancedTab(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
+    await act(async () => {});
+
+    healthInput.mockClear();
+    changeSelect(container.querySelector<HTMLSelectElement>("#canvas-size-preset")!, "square-1080");
+    // 编辑的同步提交先落地，排版求解不挂在这一帧上。
+    expect(healthInput).not.toHaveBeenCalled();
+
+    await act(async () => {});
+    expect(healthInput).toHaveBeenCalledTimes(1);
+    expect(healthInput.mock.calls[0]![0].canvas.width).toBe(1080);
+
+    const expected = checkLayoutHealth(healthInput.mock.results[0]!.value).map((issue) => issue.detail);
+    expect(expected.some((detail) => detail.includes("text-title"))).toBe(true);
+
+    closeGlobalSettings(container);
+    openRailAdvancedTab(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开元素查看"]')!);
+    const rendered = Array.from(container.querySelectorAll<HTMLButtonElement>('section[aria-label="排版问题提示"] button'))
+      .map((button) => button.textContent);
+    expect(rendered).toEqual(expected);
   });
 
   it("opens the upload workbench for the data stage without template or map presentation controls", async () => {

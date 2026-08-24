@@ -413,8 +413,11 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
+    if (clientId && clientId !== participant.id) {
+      throw new CollaborationError("ROOM_FORBIDDEN", "只能刷新自己的在线状态");
+    }
     const seenAt = new Date(now()).toISOString();
-    const memberClientId = clientId || participant.id;
+    const memberClientId = participant.id;
     const existingMember = room.members.find((member) => member.clientId === memberClientId);
     const nextRoom = existingMember
       ? { ...room, members: room.members.map((member) => member.clientId === memberClientId ? { ...member, lastSeenAt: seenAt } : member) }
@@ -431,6 +434,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     const leavingClientId = clientId || participant.id;
+    if (leavingClientId !== participant.id && participant.role !== "owner") {
+      throw new CollaborationError("ROOM_FORBIDDEN", "只有房间创建者可以移除其他成员");
+    }
     const nextRoom = { ...room, members: room.members.filter((member) => member.clientId !== leavingClientId) };
     rooms.set(key, nextRoom);
     touch(key);

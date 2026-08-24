@@ -25,7 +25,8 @@
 | 2 | 已完成 | opus ×5 | 按第 1 轮结论落地最高价值切片 |
 | 3 | 已完成 | 混编 ×5 | 深化打磨与回归 |
 | 4 | 已完成 | opus ×5 | 复查 P0 与导入/兜底收紧 |
-| 5 | 进行中 | 混编 ×5 | 达标后继续 |
+| 5 | 已完成 | 混编 ×5 | 达标后继续 |
+| 6 | 进行中 | 混编 ×5 | 续聊闭环与死代码清理 |
 
 ### 第 1 轮工作流（只读）
 
@@ -90,4 +91,13 @@
 - DATA 主流程出现「下载 XLSX 模板」。
 - `runLocalAgentTurn` 不再把「把城市字号调大」切成城市视图。
 
-**第 5 轮：** App 健康检查降频；移动端抽屉卸载不取消进行中的 Agent；协作 leave 收紧；复查 3–4 轮；SKILL/AGENTS 路径文档对齐。
+## 第 5 轮已合入
+
+- App 健康检查用 `useDeferredValue`，编辑先出画布再结算排版问题。
+- Agent 进行中会话挂在 Provider 上，关抽屉不再 abort。
+- `leave`/`refreshMember` 不能靠自报 clientId 踢别人。
+- DEVELOPER.md / AGENTS / 导入技能路径已对齐；预路由在 `server/ai/local-preroute.ts`。
+
+**复查 P1（第 6 轮）：** 恢复的会话点「继续对话」可能 400（快照无 taskId/budgetReceipt）。客户端请求体仍发已被忽略的 budget。
+
+**第 6 轮：** 续聊闭环（快照升 v3 或禁用 continue）；去掉死 budget 载荷；修 render-facts.test TS2532；模板按钮可发现性。

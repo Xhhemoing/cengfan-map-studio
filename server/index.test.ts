@@ -907,6 +907,58 @@ describe("unified application server", () => {
     await expect(leftAgain.json()).resolves.toMatchObject({ members: [{ clientId: "client-a", role: "owner" }] });
   });
 
+  it("blocks a viewer from kicking or impersonating other members", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const invitationResponse = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    const invitation = await invitationResponse.json() as { token: string };
+    const joined = await fetch(`${origin}/api/rooms/${created.room.id}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken: invitation.token, clientId: "viewer", displayName: "查看同学" }),
+    });
+    const viewerAccess = (await joined.json() as { access: { accessToken: string } }).access;
+
+    const kick = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+      method: "POST",
+      headers: roomHeaders(viewerAccess.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "client-a" }),
+    });
+    expect(kick.status).toBe(403);
+    await expect(kick.json()).resolves.toMatchObject({ error: { code: "ROOM_FORBIDDEN" } });
+
+    const impersonatedHeartbeat = await fetch(`${origin}/api/rooms/${created.room.id}/members`, {
+      method: "POST",
+      headers: roomHeaders(viewerAccess.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "client-a" }),
+    });
+    expect(impersonatedHeartbeat.status).toBe(403);
+    await expect(impersonatedHeartbeat.json()).resolves.toMatchObject({ error: { code: "ROOM_FORBIDDEN" } });
+
+    const ownHeartbeat = await fetch(`${origin}/api/rooms/${created.room.id}/members`, {
+      method: "POST",
+      headers: roomHeaders(viewerAccess.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "viewer" }),
+    });
+    expect(ownHeartbeat.status).toBe(200);
+    const ownHeartbeatBody = await ownHeartbeat.json() as { members: Array<{ clientId: string }> };
+    expect(ownHeartbeatBody.members.map((member) => member.clientId)).toEqual(["client-a", "viewer"]);
+
+    const ownerKick = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "viewer" }),
+    });
+    expect(ownerKick.status).toBe(200);
+    await expect(ownerKick.json()).resolves.toMatchObject({ members: [{ clientId: "client-a", role: "owner" }] });
+  });
+
   it("validates member bodies and rejects heartbeat on closed rooms", async () => {
     const server = createAiServer();
     servers.push(server);

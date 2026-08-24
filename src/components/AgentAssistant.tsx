@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type ReactNode, type SetStateAction } from "react";
 import { AlertTriangle, Check, LoaderCircle, Plus, ShieldCheck, Sparkles } from "lucide-react";
 import { AgentSession, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
 import type { UserAsset } from "../lib/assets";
@@ -156,6 +156,14 @@ type AssistantConversationState = {
   setActiveId: Dispatch<SetStateAction<string | null>>;
   hydrated: boolean;
   hydrate: (project: ProjectDocument, assets: UserAsset[]) => void;
+  // 进行中的会话归属 Provider 而非某个 AgentAssistant 实例：移动端抽屉关闭会卸载助手，
+  // 但会话必须继续跑完并把结果写回共享状态。
+  activeRunRef: MutableRefObject<AgentSession | null>;
+  activeRunIdRef: MutableRefObject<string | null>;
+  providerMountedRef: MutableRefObject<boolean>;
+  // 过期判定也必须跨卸载存活，否则重新挂载后代次归零会把仍然有效的结果误判为过期。
+  projectGenerationRef: MutableRefObject<number>;
+  latestProjectDigestRef: MutableRefObject<string | null>;
 };
 
 const AssistantConversationContext = createContext<AssistantConversationState | null>(null);
@@ -166,6 +174,20 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
+  const activeRunRef = useRef<AgentSession | null>(null);
+  const activeRunIdRef = useRef<string | null>(null);
+  const providerMountedRef = useRef(true);
+  const projectGenerationRef = useRef(0);
+  const latestProjectDigestRef = useRef<string | null>(null);
+  useEffect(() => {
+    providerMountedRef.current = true;
+    return () => {
+      providerMountedRef.current = false;
+      activeRunRef.current?.cancel();
+      activeRunRef.current = null;
+      activeRunIdRef.current = null;
+    };
+  }, []);
   const hydrate = (project: ProjectDocument, assets: UserAsset[]) => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
@@ -178,7 +200,7 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
     }
     setHydrated(true);
   };
-  return <AssistantConversationContext.Provider value={{ mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate }}>{children}</AssistantConversationContext.Provider>;
+  return <AssistantConversationContext.Provider value={{ mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef }}>{children}</AssistantConversationContext.Provider>;
 }
 
 export function AgentAssistant({
@@ -196,16 +218,12 @@ export function AgentAssistant({
 }) {
   const state = useContext(AssistantConversationContext);
   if (!state) throw new Error("AgentAssistant must be rendered inside AssistantConversationProvider");
-  const { mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate } = state;
+  const { mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef } = state;
   const [message, setMessage] = useState("");
   const mountedRef = useRef(false);
   const hasMountedRef = useRef(false);
   const projectDigestRef = useRef<string | null>(null);
-  const latestProjectDigestRef = useRef<string | null>(null);
-  const projectGenerationRef = useRef(0);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeRunRef = useRef<AgentSession | null>(null);
-  const activeRunIdRef = useRef<string | null>(null);
 
   const active = conversations.find((conversation) => conversation.id === activeId) ?? null;
   const currentProjectDigest = useMemo(() => digestFor(project), [project]);
@@ -290,7 +308,7 @@ export function AgentAssistant({
         persistTimerRef.current = null;
       }
     };
-  }, [activeId, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, setConversations]);
+  }, [activeId, activeRunRef, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, projectGenerationRef, setConversations]);
 
   useEffect(() => () => {
     if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);
@@ -300,15 +318,14 @@ export function AgentAssistant({
     onPendingCountChange?.(pendingCount);
   }, [onPendingCountChange, pendingCount]);
 
+  // 只标记本实例的挂载状态：卸载(移动端抽屉关闭)不取消进行中的会话，
+  // 取消交给 AssistantConversationProvider 的卸载清理。
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      activeRunRef.current?.cancel();
-      const runningId = activeRunIdRef.current;
-      if (runningId) setConversations((current) => current.map((conversation) => conversation.id === runningId && conversation.status === "running" ? { ...conversation, status: "cancelled", summary: "已取消，预览未应用" } : conversation));
     };
-  }, [setConversations]);
+  }, []);
 
   const updateConversation = (id: string, update: (conversation: AssistantConversation) => AssistantConversation) => {
     setConversations((current) => current.map((conversation) => conversation.id === id ? update(conversation) : conversation));
@@ -344,7 +361,7 @@ export function AgentAssistant({
     const request = message.trim();
     const runProjectDigest = currentProjectDigest;
     const runProjectGeneration = projectGenerationRef.current;
-    const isCurrentRun = () => mountedRef.current && activeRunIdRef.current === active.id &&
+    const isCurrentRun = () => providerMountedRef.current && activeRunIdRef.current === active.id &&
       latestProjectDigestRef.current === runProjectDigest && projectGenerationRef.current === runProjectGeneration;
     const progress = ({ round, name, status }: { round: number; name: string; status: "running" | "done" | "rejected" }) => {
       if (isCurrentRun()) updateConversation(active.id, (conversation) => ({
