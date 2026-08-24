@@ -982,6 +982,114 @@ describe("PosterCanvas", () => {
     vi.useRealTimers();
   });
 
+  it("exposes the guest panel to the keyboard with Enter/Space selection and arrow-key stepping", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.guests = { ...project.guests, x: 300, y: 300, visibility: true };
+    const onMoveGuests = vi.fn();
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveGuests={onMoveGuests} onSelect={onSelect} />));
+
+    const panel = container.querySelector<SVGGElement>("[data-guests-layer]")!;
+    expect(panel.getAttribute("tabindex")).toBe("0");
+    expect(panel.getAttribute("role")).toBe("button");
+    expect(panel.getAttribute("aria-label")).toBe("特邀嘉宾");
+
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })));
+    expect(onSelect).toHaveBeenCalledWith({ type: "guests" });
+
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: " " })));
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    expect(onMoveGuests).not.toHaveBeenCalled();
+
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" })));
+    expect(onMoveGuests).toHaveBeenLastCalledWith(301, 300);
+
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" })));
+    expect(onMoveGuests).toHaveBeenLastCalledWith(300, 299);
+
+    // Shift 放大步长,坐标仍走与拖拽同一套 clamp。
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft", shiftKey: true })));
+    expect(onMoveGuests).toHaveBeenLastCalledWith(290, 300);
+
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Tab" })));
+    expect(onMoveGuests).toHaveBeenCalledTimes(3);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("steps the guest panel by one grid cell when the editor grid is on", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.guests = { ...project.guests, x: 300, y: 300, visibility: true };
+    const onMoveGuests = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveGuests={onMoveGuests} showGrid gridSize={20} />));
+
+    const panel = container.querySelector<SVGGElement>("[data-guests-layer]")!;
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })));
+    expect(onMoveGuests).toHaveBeenLastCalledWith(300, 320);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("skips the guest panel commit when an arrow key is clamped back to the same position", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.guests = { ...project.guests, x: 0, y: 0, visibility: true };
+    const onMoveGuests = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveGuests={onMoveGuests} />));
+
+    const panel = container.querySelector<SVGGElement>("[data-guests-layer]")!;
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" })));
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp", shiftKey: true })));
+    expect(onMoveGuests).not.toHaveBeenCalled();
+
+    // 反方向仍可移动,证明被拦下的是 clamp 而不是整个键盘通路。
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })));
+    expect(onMoveGuests).toHaveBeenCalledWith(0, 1);
+
+    // 右边界同理:面板贴住画布右缘后,方向键不会写出越界坐标。
+    const rightEdge = project.canvas.width - project.guests.width;
+    project.guests = { ...project.guests, x: rightEdge };
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveGuests={onMoveGuests} />));
+    onMoveGuests.mockClear();
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight", shiftKey: true })));
+    expect(onMoveGuests).not.toHaveBeenCalled();
+
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" })));
+    expect(onMoveGuests).toHaveBeenCalledWith(rightEdge - 1, 0);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("omits guest panel interaction attributes in export mode", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.guests = { ...project.guests, x: 300, y: 300, visibility: true };
+    const onMoveGuests = vi.fn();
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} exportMode onMoveGuests={onMoveGuests} onSelect={onSelect} />));
+
+    const panel = container.querySelector<SVGGElement>("[data-guests-layer]")!;
+    expect(panel.getAttribute("tabindex")).toBeNull();
+    expect(panel.getAttribute("role")).toBeNull();
+
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" })));
+    flushSync(() => panel.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })));
+    expect(onMoveGuests).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("exposes every destination card to the keyboard with a Chinese label, Enter selection, and arrow-key stepping", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, allowMapOverlap: true, positions: { 北京市: { x: 600, y: 400 } } };

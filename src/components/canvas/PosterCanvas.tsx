@@ -585,8 +585,17 @@ export function PosterCanvas({
       gap: Math.max(10, project.cards.gap),
     });
 
+  // 嘉宾面板位置的唯一约束口径:指针拖拽与键盘步进共用,避免两条路径的边界规则漂移。
+  const clampGuestPosition = (position: { x: number; y: number }) => ({
+    x: Math.round(Math.min(project.canvas.width - guests.width, Math.max(0, position.x))),
+    y: Math.round(Math.min(project.canvas.height - guestHeight, Math.max(0, position.y))),
+  });
+
   // 键盘步进距离:开启网格时按一格走,否则 1px;按住 Shift 放大 10 倍。
-  const cardKeyboardStep = (fast: boolean) => (showGrid ? resolvedGridSize : 1) * (fast ? 10 : 1);
+  const keyboardStep = (fast: boolean) => (showGrid ? resolvedGridSize : 1) * (fast ? 10 : 1);
+
+  // 编辑态下嘉宾面板是可聚焦控件:Tab 可达、Enter/Space 选中、方向键步进移动。
+  const guestInteractive = !exportMode && Boolean(onSelect || onMoveGuests);
 
   const mapLayerZ = project.map.zIndex ?? CANVAS_LAYER_Z.map;
   const cardsLayerZ = project.cards.zIndex ?? CANVAS_LAYER_Z.cards;
@@ -761,7 +770,7 @@ export function PosterCanvas({
                         if ((deltaX === 0 && deltaY === 0) || !onMoveCard) return;
                         event.preventDefault();
                         event.stopPropagation();
-                        const step = cardKeyboardStep(event.shiftKey);
+                        const step = keyboardStep(event.shiftKey);
                         // 与拖拽同一套 clamp:键盘移动也不会越过安全边距、文本与地图占位。
                         const next = clampCardPosition({
                           x: displayPlacement.x + deltaX * step,
@@ -957,9 +966,28 @@ export function PosterCanvas({
               data-guests-layer
               transform={`translate(${guestX} ${guestY})`}
               onClick={!exportMode ? (event) => { event.stopPropagation(); onSelect?.({ type: "guests" }); } : undefined}
-              role={!exportMode && onSelect ? "button" : undefined}
-              tabIndex={!exportMode && onSelect ? 0 : undefined}
+              role={guestInteractive ? "button" : undefined}
+              tabIndex={guestInteractive ? 0 : undefined}
               aria-label="特邀嘉宾"
+              onKeyDown={guestInteractive ? (event) => {
+                if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelect?.({ type: "guests" });
+                  return;
+                }
+                const deltaX = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+                const deltaY = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
+                if ((deltaX === 0 && deltaY === 0) || !onMoveGuests) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const step = keyboardStep(event.shiftKey);
+                // 与拖拽同一套 clamp:键盘移动也不会把面板推出画布。
+                const next = clampGuestPosition({ x: guestX + deltaX * step, y: guestY + deltaY * step });
+                // 被 clamp 顶回原位时不提交,避免键盘按键也产生空事务。
+                if (next.x === Math.round(guestX) && next.y === Math.round(guestY)) return;
+                onMoveGuests(next.x, next.y);
+              } : undefined}
               onPointerDown={!exportMode && onMoveGuests ? (event) => {
                 const point = canvasPoint(event);
                 if (!point) return;
@@ -979,11 +1007,13 @@ export function PosterCanvas({
                 if (!event.currentTarget.hasPointerCapture(event.pointerId) || !guestDrag.current) return;
                 const point = canvasPoint(event);
                 if (!point) return;
-                const nextX = Math.round(Math.min(project.canvas.width - guests.width, Math.max(0, point.x - guestDrag.current.offsetX)));
-                const nextY = Math.round(Math.min(project.canvas.height - guestHeight, Math.max(0, point.y - guestDrag.current.offsetY)));
-                guestDrag.current.x = nextX;
-                guestDrag.current.y = nextY;
-                scheduleGuestPreview({ x: nextX, y: nextY });
+                const next = clampGuestPosition({
+                  x: point.x - guestDrag.current.offsetX,
+                  y: point.y - guestDrag.current.offsetY,
+                });
+                guestDrag.current.x = next.x;
+                guestDrag.current.y = next.y;
+                scheduleGuestPreview(next);
               } : undefined}
               onPointerUp={!exportMode && onMoveGuests ? (event) => {
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
