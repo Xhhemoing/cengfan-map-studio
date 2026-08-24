@@ -8,6 +8,7 @@ import {
   duplicateStoredProject,
   ProjectStoreError,
   type ProjectStoreHealth,
+  type RecoverScheduler,
   type StoredProject,
 } from "./project-store";
 import { createProjectDocument } from "./project-document";
@@ -79,6 +80,59 @@ function failingFactory(onOpen: () => void): IDBFactory {
       return request as unknown as IDBOpenDBRequest;
     },
   } as unknown as IDBFactory;
+}
+
+/** 前 failures 次 open 直接失败，之后交给真实 factory：模拟瞬时打不开、随后恢复的持久层。 */
+function flakyFactory(real: IDBFactory, failures: number): { factory: IDBFactory; opens: () => number } {
+  let remaining = failures;
+  let opens = 0;
+  const factory = {
+    cmp: (a: unknown, b: unknown) => real.cmp(a, b),
+    databases: () => real.databases(),
+    deleteDatabase: (name: string) => real.deleteDatabase(name),
+    open: (name: string, version?: number) => {
+      opens += 1;
+      if (remaining <= 0) return real.open(name, version);
+      remaining -= 1;
+      const request = {
+        result: undefined,
+        error: new DOMException("模拟打开失败", "UnknownError"),
+        onsuccess: null as ((event: Event) => void) | null,
+        onerror: null as ((event: Event) => void) | null,
+        onupgradeneeded: null,
+        onblocked: null,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      };
+      queueMicrotask(() => request.onerror?.(new Event("error")));
+      return request as unknown as IDBOpenDBRequest;
+    },
+  };
+  return { factory: factory as unknown as IDBFactory, opens: () => opens };
+}
+
+interface ManualRecoverProbe {
+  schedule: RecoverScheduler;
+  intervalMs: number;
+  cancelled: number;
+  /** 手动跑一拍探针；取消之后仍可调用，用来断言恢复后再触发是空操作。 */
+  tick: () => Promise<void>;
+}
+
+/** 用手动 tick 替换 setInterval：测试不必真的等上一个恢复间隔。 */
+function manualRecoverProbe(): ManualRecoverProbe {
+  let probe: (() => Promise<void>) | null = null;
+  const state: ManualRecoverProbe = {
+    intervalMs: 0,
+    cancelled: 0,
+    schedule: (registered, intervalMs) => {
+      probe = registered;
+      state.intervalMs = intervalMs;
+      return () => { state.cancelled += 1; };
+    },
+    tick: async () => { await probe?.(); },
+  };
+  return state;
 }
 
 /** 让写事务带着配额错误中止：真实浏览器写满配额时 transaction.error 就是这个 DOMException。 */
@@ -408,6 +462,149 @@ describe("project store failure taxonomy", () => {
     await store.list();
 
     expect(open.mock.calls.length).toBe(attempts);
+  });
+});
+
+describe("project store recovery after memory degrade", () => {
+  it("writes memory-only projects back to disk and flips health once", async () => {
+    const real = new IDBFactory();
+    const flaky = flakyFactory(real, 2);
+    const changes: ProjectStoreHealth[] = [];
+    const probe = manualRecoverProbe();
+    const store = createIndexedDbProjectStore(flaky.factory, {
+      openRetries: 1,
+      retryDelayMs: 0,
+      onHealthChange: (health) => changes.push(health),
+      scheduleRecover: probe.schedule,
+    });
+
+    await store.put(storedProject("proj-degraded", "降级项目"));
+    expect(store.health).toBe("memory");
+    expect(changes).toEqual(["memory"]);
+
+    // 一个探针周期内降级是粘住的：读写都走内存，不会各自重开数据库。
+    const opensWhileDegraded = flaky.opens();
+    await store.list();
+    await store.get("proj-degraded");
+    await store.put(storedProject("proj-degraded-2", "降级项目二"));
+    expect(flaky.opens()).toBe(opensWhileDegraded);
+
+    await probe.tick();
+
+    expect(store.health).toBe("persistent");
+    expect(changes).toEqual(["memory", "persistent"]);
+    expect(probe.cancelled).toBe(1);
+
+    // 恢复后再触发一拍必须是空操作：onHealthChange("persistent") 每次恢复只发一次。
+    await probe.tick();
+    expect(changes).toEqual(["memory", "persistent"]);
+
+    const fresh = createIndexedDbProjectStore(real);
+    expect((await fresh.list()).map((project) => project.id).sort())
+      .toEqual(["proj-degraded", "proj-degraded-2"]);
+    expect((await fresh.get("proj-degraded"))?.name).toBe("降级项目");
+    expect((await store.list()).map((project) => project.id).sort())
+      .toEqual(["proj-degraded", "proj-degraded-2"]);
+  });
+
+  it("keeps the in-session edit on id collision and still lists disk-only projects", async () => {
+    const real = new IDBFactory();
+    const seed = createIndexedDbProjectStore(real);
+    await seed.put(storedProject("proj-shared", "磁盘上的旧版本"));
+    await seed.put(storedProject("proj-disk-only", "只在磁盘上"));
+
+    const flaky = flakyFactory(real, 2);
+    const probe = manualRecoverProbe();
+    const store = createIndexedDbProjectStore(flaky.factory, {
+      openRetries: 1,
+      retryDelayMs: 0,
+      scheduleRecover: probe.schedule,
+    });
+    await store.put({
+      ...storedProject("proj-shared", "会话内的新版本"),
+      updatedAt: "2026-02-01T00:00:00.000Z",
+    });
+    expect(store.health).toBe("memory");
+
+    await probe.tick();
+
+    expect(store.health).toBe("persistent");
+    const fresh = createIndexedDbProjectStore(real);
+    expect((await fresh.list()).map((project) => project.id).sort())
+      .toEqual(["proj-disk-only", "proj-shared"]);
+    expect((await fresh.get("proj-shared"))?.name).toBe("会话内的新版本");
+    expect((await fresh.get("proj-disk-only"))?.name).toBe("只在磁盘上");
+  });
+
+  it("stays degraded and reports the typed quota error when the write-back cannot fit", async () => {
+    const real = new IDBFactory();
+    let quotaArmed = false;
+    let skippedReconcile = false;
+    let writeTransactions = 0;
+    const hooked = hookedFactory(real, (tx) => {
+      if (tx.mode !== "readwrite") return;
+      writeTransactions += 1;
+      if (!quotaArmed) return;
+      // 打开连接时的元数据校正也是 readwrite 事务，放过它，只让写回事务撞配额。
+      if (!skippedReconcile) {
+        skippedReconcile = true;
+        return;
+      }
+      abortWithQuotaError(tx);
+    });
+    const flaky = flakyFactory(hooked, 2);
+    const changes: ProjectStoreHealth[] = [];
+    const failures: ProjectStoreError[] = [];
+    const probe = manualRecoverProbe();
+    let clock = 1_000;
+    const store = createIndexedDbProjectStore(flaky.factory, {
+      openRetries: 1,
+      retryDelayMs: 0,
+      recoverIntervalMs: 20_000,
+      now: () => clock,
+      onHealthChange: (health) => changes.push(health),
+      onRecoverError: (error) => failures.push(error),
+      scheduleRecover: probe.schedule,
+    });
+    await store.put(storedProject("proj-quota-degraded", "配额降级项目"));
+
+    quotaArmed = true;
+    await probe.tick();
+
+    expect(store.health).toBe("memory");
+    expect(changes).toEqual(["memory"]);
+    expect(failures.map((error) => error.code)).toEqual(["quota-exceeded"]);
+    expect(failures[0]?.message).toContain("本机存储空间不足");
+    expect(probe.cancelled).toBe(0);
+
+    // 退避窗口内的探针不能继续砸盘：不新建写事务，也不重复上报。
+    const writesAfterQuota = writeTransactions;
+    await probe.tick();
+    expect(writeTransactions).toBe(writesAfterQuota);
+    expect(failures).toHaveLength(1);
+
+    quotaArmed = false;
+    clock += 20_000 * 4;
+    await probe.tick();
+
+    expect(store.health).toBe("persistent");
+    expect(changes).toEqual(["memory", "persistent"]);
+    expect((await createIndexedDbProjectStore(real).list()).map((project) => project.id))
+      .toEqual(["proj-quota-degraded"]);
+  });
+
+  it("schedules the background probe slowly enough not to storm the database", async () => {
+    const probe = manualRecoverProbe();
+    const store = createIndexedDbProjectStore(failingFactory(() => undefined), {
+      openRetries: 0,
+      retryDelayMs: 0,
+      scheduleRecover: probe.schedule,
+    });
+
+    await store.list();
+
+    expect(store.health).toBe("memory");
+    expect(probe.intervalMs).toBeGreaterThanOrEqual(15_000);
   });
 });
 
