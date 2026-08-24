@@ -4,7 +4,6 @@ import {
   CONNECTOR_ANCHOR_EXEMPT_RADIUS,
   estimateDestinationCardLayouts,
   listContentLayoutIssues,
-  trimSegmentsNearAnchor,
 } from "./content-layout-objects";
 import { fitFeatureProjection, getFeatureSplit } from "../components/canvas/map-data-projection";
 import { getChinaMapFeatures } from "./map-data";
@@ -157,35 +156,6 @@ describe("province anchors match the rendered projection", () => {
   });
 });
 
-describe("trimSegmentsNearAnchor", () => {
-  const anchor = { x: 0, y: 0 };
-
-  it("keeps outside segments, clips the crossing one at the circle and drops inside ones", () => {
-    const trimmed = trimSegmentsNearAnchor([
-      { start: { x: 100, y: 0 }, end: { x: 30, y: 0 } },
-      { start: { x: 30, y: 0 }, end: { x: 10, y: 0 } },
-      { start: { x: 10, y: 0 }, end: { x: 0, y: 0 } },
-    ], anchor, 24);
-
-    expect(trimmed).toHaveLength(2);
-    expect(trimmed[0]).toEqual({ start: { x: 100, y: 0 }, end: { x: 30, y: 0 } });
-    expect(trimmed[1]!.start).toEqual({ x: 30, y: 0 });
-    expect(trimmed[1]!.end.x).toBeCloseTo(24, 6);
-    expect(trimmed[1]!.end.y).toBeCloseTo(0, 6);
-  });
-
-  it("clips a segment leaving the anchor zone at its exit point", () => {
-    const trimmed = trimSegmentsNearAnchor([{ start: { x: 6, y: 0 }, end: { x: 60, y: 0 } }], anchor, 24);
-    expect(trimmed).toHaveLength(1);
-    expect(trimmed[0]!.start.x).toBeCloseTo(24, 6);
-    expect(trimmed[0]!.end).toEqual({ x: 60, y: 0 });
-  });
-
-  it("drops a connector that lives entirely inside the anchor zone", () => {
-    expect(trimSegmentsNearAnchor([{ start: { x: 5, y: 5 }, end: { x: 0, y: 0 } }], anchor, 24)).toEqual([]);
-  });
-});
-
 describe("buildContentLayoutInput", () => {
   it("gives placed cards their manual position, measured size and one connector each", () => {
     const project = projectWith([beijingStudent(), ...zhejiangStudents(6)]);
@@ -209,6 +179,9 @@ describe("buildContentLayoutInput", () => {
     // 锚点端已按共锚点豁免半径裁剪，任何端点都不落入自己那个省份锚点的豁免圈内。
     for (const connector of connectors) {
       const anchor = anchorOf(project, connector.id.replace("connector-", ""));
+      // 出发卡与锚点随连接线一起交给体检，穿卡判定才知道该豁免谁。
+      expect(connector.cardId).toBe(connector.id.replace("connector-", ""));
+      expect(connector.anchor).toEqual(anchor);
       for (const segment of connector.segments) {
         for (const point of [segment.start, segment.end]) {
           const distance = Math.hypot(point.x - anchor.x, point.y - anchor.y);
@@ -317,6 +290,82 @@ describe("listContentLayoutIssues (product path)", () => {
     };
 
     expect(listContentLayoutIssues(project).some((issue) => issue.kind === "connector-conflict")).toBe(false);
+  });
+
+  it("reports a leader line that runs through a third card's body", () => {
+    const project = projectWith([beijingStudent(), student("浙江省", "杭州市", "浙江大学")]);
+    // 北京锚点在图幅东侧 (≈890, 352)。把北京卡摆到画面左侧、浙江卡摆在两者之间
+    // 同一水平线上：北京的引线一路向右，正好从浙江卡的正中间横穿过去。
+    project.cards = {
+      ...project.cards,
+      connectorStyle: "straight",
+      positions: {
+        北京市: centeredPosition(project, "北京市", 250, 351),
+        浙江省: centeredPosition(project, "浙江省", 560, 351),
+      },
+    };
+
+    const issues = listContentLayoutIssues(project);
+    // 两张卡本身没有重叠，所以这不是遮挡换个名字报一遍。
+    expect(issues.some((issue) => issue.kind === "occlusion" && issue.id === "北京市:浙江省")).toBe(false);
+    expect(issues.filter((issue) => issue.kind === "connector-crosses-card")).toEqual([
+      expect.objectContaining({
+        id: "connector-北京市:浙江省",
+        severity: "warning",
+        detail: "北京市 的连接线从 浙江省 上穿过",
+      }),
+    ]);
+  });
+
+  it("stays silent when the same leader line clears the other card", () => {
+    const project = projectWith([beijingStudent(), student("浙江省", "杭州市", "浙江大学")]);
+    // 同一对卡片，只把浙江卡挪下去让开引线：不得再报穿卡。
+    project.cards = {
+      ...project.cards,
+      connectorStyle: "straight",
+      positions: {
+        北京市: centeredPosition(project, "北京市", 250, 351),
+        浙江省: centeredPosition(project, "浙江省", 560, 700),
+      },
+    };
+
+    expect(listContentLayoutIssues(project).some((issue) => issue.kind === "connector-crosses-card")).toBe(false);
+  });
+
+  it("stays silent when a shared-anchor card sits on top of the anchor the bouquet meets at", () => {
+    const project = projectWith([student("浙江省", "杭州市", "浙江大学"), student("浙江省", "宁波市", "宁波大学")]);
+    project.cards = { ...project.cards, grouping: "city", connectorStyle: "straight" };
+    const anchor = anchorOf(project, "杭州市");
+    expect(anchorOf(project, "宁波市")).toEqual(anchor);
+    project.cards = {
+      ...project.cards,
+      positions: {
+        杭州市: centeredPosition(project, "杭州市", anchor.x - 450, anchor.y),
+        // 宁波卡正压在共用锚点上（锚点在它左边框内 10px）：杭州的引线扎向锚点时
+        // 只在最后十几像素蹭进宁波卡，那是花束的固有形状，不是穿卡。
+        宁波市: centeredPosition(project, "宁波市", anchor.x + 100, anchor.y),
+      },
+    };
+
+    expect(listContentLayoutIssues(project).some((issue) => issue.kind === "connector-crosses-card")).toBe(false);
+  });
+
+  it("still reports a leader line that pushes well past the anchor exemption into another card", () => {
+    const project = projectWith([student("浙江省", "杭州市", "浙江大学"), student("浙江省", "宁波市", "宁波大学")]);
+    project.cards = { ...project.cards, grouping: "city", connectorStyle: "straight" };
+    const anchor = anchorOf(project, "杭州市");
+    project.cards = {
+      ...project.cards,
+      positions: {
+        杭州市: centeredPosition(project, "杭州市", anchor.x - 450, anchor.y),
+        // 同一束、同一个锚点，只是宁波卡向左挪到锚点深处（锚点在它左边框内 80px）：
+        // 24px 豁免圈之外仍有 56px 压在卡身上，必须报。
+        宁波市: centeredPosition(project, "宁波市", anchor.x + 30, anchor.y),
+      },
+    };
+
+    expect(listContentLayoutIssues(project).filter((issue) => issue.kind === "connector-crosses-card"))
+      .toEqual([expect.objectContaining({ id: "connector-杭州市:宁波市" })]);
   });
 
   it("reports two manually stacked cards as an occlusion", () => {

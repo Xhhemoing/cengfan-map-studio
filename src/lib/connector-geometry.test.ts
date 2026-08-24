@@ -4,6 +4,8 @@ import {
   connectorGeometriesIntersect,
   resolveConnectorPort,
   segmentIntersectsRect,
+  segmentRectOverlapLength,
+  trimSegmentsNearAnchor,
   type ConnectorGeometry,
 } from "./connector-geometry";
 
@@ -137,5 +139,64 @@ describe("connector geometry", () => {
       { x: 80, y: 20, width: 40, height: 60 },
       2,
     )).toBe(false);
+  });
+});
+
+describe("segmentRectOverlapLength", () => {
+  const rect = { x: 100, y: 100, width: 200, height: 100 };
+
+  it("measures the chord a crossing segment leaves inside the rectangle", () => {
+    // 横穿整幅：进出各在左右边框上，弦长就是矩形宽度。
+    expect(segmentRectOverlapLength({ start: { x: 0, y: 150 }, end: { x: 400, y: 150 } }, rect)).toBeCloseTo(200, 6);
+    // 只走到一半就停：弦长按端点算，不按整条边算。
+    expect(segmentRectOverlapLength({ start: { x: 0, y: 150 }, end: { x: 160, y: 150 } }, rect)).toBeCloseTo(60, 6);
+    // 起点在矩形里、终点在外。
+    expect(segmentRectOverlapLength({ start: { x: 250, y: 150 }, end: { x: 400, y: 150 } }, rect)).toBeCloseTo(50, 6);
+    // 斜削左上角：弦长只有 7px，正是「擦过去」而非「穿身」的形状。
+    expect(segmentRectOverlapLength({ start: { x: 90, y: 115 }, end: { x: 115, y: 90 } }, rect)).toBeCloseTo(Math.hypot(5, 5), 6);
+  });
+
+  it("returns zero for segments that miss, only touch, or leave the rectangle", () => {
+    expect(segmentRectOverlapLength({ start: { x: 0, y: 50 }, end: { x: 400, y: 50 } }, rect)).toBe(0);
+    // 正好擦过左上角这一个点。
+    expect(segmentRectOverlapLength({ start: { x: 90, y: 110 }, end: { x: 110, y: 90 } }, rect)).toBe(0);
+    // 端点正落在边框上、方向朝外：这是连接线从自己卡片出发的形状，弦长为 0。
+    expect(segmentRectOverlapLength({ start: { x: 300, y: 150 }, end: { x: 500, y: 150 } }, rect)).toBeCloseTo(0, 6);
+    // 退化成一个点也不能算长度。
+    expect(segmentRectOverlapLength({ start: { x: 150, y: 150 }, end: { x: 150, y: 150 } }, rect)).toBe(0);
+  });
+
+  it("counts a segment running along the border as fully inside", () => {
+    // 贴着边框走的确压在卡上，是否豁免交给调用方（自身卡片才豁免）。
+    expect(segmentRectOverlapLength({ start: { x: 120, y: 100 }, end: { x: 220, y: 100 } }, rect)).toBeCloseTo(100, 6);
+  });
+});
+
+describe("trimSegmentsNearAnchor", () => {
+  const anchor = { x: 0, y: 0 };
+
+  it("keeps outside segments, clips the crossing one at the circle and drops inside ones", () => {
+    const trimmed = trimSegmentsNearAnchor([
+      { start: { x: 100, y: 0 }, end: { x: 30, y: 0 } },
+      { start: { x: 30, y: 0 }, end: { x: 10, y: 0 } },
+      { start: { x: 10, y: 0 }, end: { x: 0, y: 0 } },
+    ], anchor, 24);
+
+    expect(trimmed).toHaveLength(2);
+    expect(trimmed[0]).toEqual({ start: { x: 100, y: 0 }, end: { x: 30, y: 0 } });
+    expect(trimmed[1]!.start).toEqual({ x: 30, y: 0 });
+    expect(trimmed[1]!.end.x).toBeCloseTo(24, 6);
+    expect(trimmed[1]!.end.y).toBeCloseTo(0, 6);
+  });
+
+  it("clips a segment leaving the anchor zone at its exit point", () => {
+    const trimmed = trimSegmentsNearAnchor([{ start: { x: 6, y: 0 }, end: { x: 60, y: 0 } }], anchor, 24);
+    expect(trimmed).toHaveLength(1);
+    expect(trimmed[0]!.start.x).toBeCloseTo(24, 6);
+    expect(trimmed[0]!.end).toEqual({ x: 60, y: 0 });
+  });
+
+  it("drops a connector that lives entirely inside the anchor zone", () => {
+    expect(trimSegmentsNearAnchor([{ start: { x: 5, y: 5 }, end: { x: 0, y: 0 } }], anchor, 24)).toEqual([]);
   });
 });

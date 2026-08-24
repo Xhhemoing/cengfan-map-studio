@@ -15,20 +15,8 @@ describe("import data", () => {
     const tab = parseDelimitedTable("姓名\t院校\t城市\n顾言\t复旦大学\t上海");
 
     expect(comma).toEqual([
-      {
-        name: "林舟",
-        university: "北京大学",
-        city: "北京",
-        sourceLine: 2,
-        rawLine: "林舟,北京大学,北京",
-      },
-      {
-        name: "苏禾",
-        university: "浙江大学",
-        city: "杭州",
-        sourceLine: 3,
-        rawLine: "苏禾,浙江大学,杭州",
-      },
+      { name: "林舟", university: "北京大学", city: "北京", sourceLine: 2, rawLine: "林舟,北京大学,北京" },
+      { name: "苏禾", university: "浙江大学", city: "杭州", sourceLine: 3, rawLine: "苏禾,浙江大学,杭州" },
     ] satisfies ImportCandidate[]);
 
     expect(tab[0]).toMatchObject({
@@ -48,34 +36,12 @@ describe("import data", () => {
     ].join("\n"));
 
     expect(result.candidates).toEqual([
-      {
-        name: "林舟",
-        university: "北京大学",
-        city: "北京",
-        sourceLine: 1,
-        rawLine: "1. 林舟 北京大学 北京",
-      },
-      {
-        name: "苏禾",
-        university: "浙江大学",
-        city: "杭州",
-        sourceLine: 2,
-        rawLine: "苏禾，浙江大学，杭州",
-      },
-      {
-        name: "顾言",
-        university: "复旦大学",
-        city: "上海市",
-        sourceLine: 3,
-        rawLine: "顾言-复旦大学-上海市",
-      },
+      { name: "林舟", university: "北京大学", city: "北京", sourceLine: 1, rawLine: "1. 林舟 北京大学 北京" },
+      { name: "苏禾", university: "浙江大学", city: "杭州", sourceLine: 2, rawLine: "苏禾，浙江大学，杭州" },
+      { name: "顾言", university: "复旦大学", city: "上海市", sourceLine: 3, rawLine: "顾言-复旦大学-上海市" },
     ]);
     expect(result.unparsed).toEqual([
-      {
-        sourceLine: 4,
-        rawLine: "无效行",
-        reason: "无法识别学生名称、录取院校和城市",
-      },
+      { sourceLine: 4, rawLine: "无效行", reason: "无法识别学生名称、录取院校和城市" },
     ]);
   });
 
@@ -85,16 +51,11 @@ describe("import data", () => {
   });
 
   it("recognizes labeled natural-language records without requiring a delimiter", () => {
-    const result = parseStudentText("姓名：林舟，就读院校：北京大学，城市：北京");
+    const rawLine = "姓名：林舟，就读院校：北京大学，城市：北京";
+    const result = parseStudentText(rawLine);
 
     expect(result.candidates).toEqual([
-      {
-        name: "林舟",
-        university: "北京大学",
-        city: "北京",
-        sourceLine: 1,
-        rawLine: "姓名：林舟，就读院校：北京大学，城市：北京",
-      },
+      { name: "林舟", university: "北京大学", city: "北京", sourceLine: 1, rawLine },
     ]);
   });
 
@@ -102,12 +63,8 @@ describe("import data", () => {
     const result = parseStudentText("姓名,院校,城市,去向类型\n周晴,哈佛大学,美国·波士顿,海外");
 
     expect(result.candidates).toEqual([{
-      name: "周晴",
-      university: "哈佛大学",
-      city: "美国·波士顿",
-      locationScope: "international",
-      sourceLine: 2,
-      rawLine: "周晴,哈佛大学,美国·波士顿,海外",
+      name: "周晴", university: "哈佛大学", city: "美国·波士顿", locationScope: "international",
+      sourceLine: 2, rawLine: "周晴,哈佛大学,美国·波士顿,海外",
     }]);
   });
 });
@@ -149,18 +106,11 @@ describe("destination scope values", () => {
 
 describe("import data robustness", () => {
   it("reads a reordered aliased header instead of relying on column position", () => {
-    const result = parseStudentText([
-      "城市,名字,学校,省",
-      "杭州,苏禾,浙江大学,浙江省",
-    ].join("\n"));
+    const result = parseStudentText("城市,名字,学校,省\n杭州,苏禾,浙江大学,浙江省");
 
     expect(result.candidates).toEqual([{
-      name: "苏禾",
-      university: "浙江大学",
-      city: "杭州",
-      province: "浙江省",
-      sourceLine: 2,
-      rawLine: "杭州,苏禾,浙江大学,浙江省",
+      name: "苏禾", university: "浙江大学", city: "杭州", province: "浙江省",
+      sourceLine: 2, rawLine: "杭州,苏禾,浙江大学,浙江省",
     }]);
     expect(result.unparsed).toEqual([]);
   });
@@ -186,10 +136,7 @@ describe("import data robustness", () => {
   });
 
   it("drops a province column for overseas rows because they have no Chinese province", () => {
-    const result = parseStudentText([
-      "姓名,院校,城市,省份,去向类型",
-      "周晴,哈佛大学,美国·波士顿,马萨诸塞州,海外",
-    ].join("\n"));
+    const result = parseStudentText("姓名,院校,城市,省份,去向类型\n周晴,哈佛大学,美国·波士顿,马萨诸塞州,海外");
 
     expect(result.candidates[0]).toEqual(expect.objectContaining({ locationScope: "international" }));
     expect(result.candidates[0]).not.toHaveProperty("province");
@@ -240,10 +187,7 @@ describe("import data robustness", () => {
   });
 
   it("ignores rows whose cells are only whitespace", () => {
-    const result = parseStudentText([
-      "姓名,院校,城市",
-      "   ,北京大学,北京",
-    ].join("\n"));
+    const result = parseStudentText("姓名,院校,城市\n   ,北京大学,北京");
 
     expect(result.candidates).toEqual([]);
     expect(result.unparsed).toHaveLength(1);
@@ -252,10 +196,7 @@ describe("import data robustness", () => {
   it("keeps an empty leading column of a tab-separated row aligned", () => {
     // Dropping the leading tab would shift every cell left by one, which reads
     // the university as the student's name instead of failing loudly.
-    const result = parseStudentText([
-      "学号\t姓名\t院校\t城市\t省份",
-      "\t林舟\t北京大学\t北京市\t北京市",
-    ].join("\n"));
+    const result = parseStudentText("学号\t姓名\t院校\t城市\t省份\n\t林舟\t北京大学\t北京市\t北京市");
 
     expect(result.candidates).toEqual([
       expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市", province: "北京市" }),
@@ -317,12 +258,7 @@ describe("quoted csv rows", () => {
     ].join("\n"));
 
     expect(result.candidates).toEqual([
-      expect.objectContaining({
-        name: "北京大学 （深圳研究生院）",
-        university: "林舟",
-        city: "深圳市",
-        sourceLine: 2,
-      }),
+      expect.objectContaining({ name: "北京大学 （深圳研究生院）", university: "林舟", city: "深圳市", sourceLine: 2 }),
       expect.objectContaining({ name: "苏禾", sourceLine: 4 }),
     ]);
     expect(result.unparsed).toEqual([]);
@@ -392,10 +328,7 @@ describe("blank and incomplete import rows", () => {
   });
 
   it("names the missing fields of a city-only row instead of dropping it silently", () => {
-    const result = parseStudentText([
-      "姓名,院校,城市",
-      ",,杭州市",
-    ].join("\n"));
+    const result = parseStudentText("姓名,院校,城市\n,,杭州市");
 
     expect(result.candidates).toEqual([]);
     expect(result.unparsed).toEqual([
@@ -412,5 +345,54 @@ describe("blank and incomplete import rows", () => {
 
     expect(result.candidates).toHaveLength(1);
     expect(result.unparsed).toEqual([]);
+  });
+});
+
+describe("empty cells in a header-less paste", () => {
+  it("reports a row with an empty cell instead of shifting its later columns left", () => {
+    // Dropping the empty 院校 cell pulled 城市 into its place and the overseas
+    // marker into 城市: 林舟 imported as a student studying at 北京市, and
+    // nothing warned about it because the shifted row looked complete.
+    const result = parseStudentText("苏禾,浙江大学,杭州市,\n林舟,,北京市,海外");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: "林舟,,北京市,海外", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+
+  it("keeps a three-column row with a gap out of the candidates", () => {
+    const result = parseStudentText("苏禾,浙江大学,杭州市\n林舟,,北京市");
+
+    expect(result.candidates).toEqual([expect.objectContaining({ name: "苏禾", city: "杭州市" })]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: "林舟,,北京市", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+
+  it("still reads a paste padded with a column no row fills", () => {
+    // A blank 序号 column and a trailing separator shift nothing, so both
+    // rosters have to keep importing whole.
+    const leading = parseStudentText(",林舟,北京大学,北京市\n,苏禾,浙江大学,杭州市");
+    const trailing = parseStudentText("林舟,北京大学,北京市,\n苏禾,浙江大学,杭州市,");
+
+    for (const result of [leading, trailing]) {
+      expect(result.candidates).toEqual([
+        expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+        expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+      ]);
+      expect(result.unparsed).toEqual([]);
+    }
+  });
+
+  it("tells a padding column apart from a gap in the same paste", () => {
+    const result = parseStudentText(",林舟,北京大学,北京市\n,苏禾,,杭州市");
+
+    expect(result.candidates).toEqual([expect.objectContaining({ name: "林舟", city: "北京市" })]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: ",苏禾,,杭州市", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
   });
 });

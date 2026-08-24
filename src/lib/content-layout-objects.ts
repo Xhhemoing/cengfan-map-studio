@@ -1,5 +1,9 @@
 import { DEFAULT_CARD_EXPRESSION_TEMPLATES } from "./card-expression";
-import { buildConnectorGeometry, type ConnectorSegment, type Point } from "./connector-geometry";
+import {
+  buildConnectorGeometry,
+  CONNECTOR_ANCHOR_EXEMPT_RADIUS,
+  trimSegmentsNearAnchor,
+} from "./connector-geometry";
 import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame } from "./display-frame";
 import { buildLayoutGroups } from "./layout";
 import {
@@ -154,54 +158,14 @@ export function estimateDestinationCardLayouts(project: ProjectDocument): Prepar
 }
 
 /**
- * 共锚点豁免半径：多张卡的连接线汇入同一个地图锚点时，锚点附近的会合不算冲突
- * （connector-geometry 的去重逻辑同样豁免 24px 内的尾段）。layout-health 的线段
- * 相交判定包含端点接触，所以喂给它之前先把锚点端裁掉这一段。
+ * 锚点端的裁剪与豁免半径都住在 `connector-geometry`（引线几何的自然归属地），
+ * 这里转出去只是保持体检侧的既有入口。
  *
  * 每条线只裁自己那个锚点，所以省份锚点分开之后仍然成立：同省多张卡（按城市
  * 分组）逐字共用锚点，紧挨着的两个省份锚点（香港/澳门相距约 7px）也落在同一
  * 个豁免圈量级内；真正跨图幅交叉的引线离两个锚点都远，一段都不会被裁掉。
  */
-export const CONNECTOR_ANCHOR_EXEMPT_RADIUS = 24;
-
-function clipPointOnCircle(segment: ConnectorSegment, anchor: Point, radius: number, root: 1 | -1): Point | null {
-  const dx = segment.end.x - segment.start.x;
-  const dy = segment.end.y - segment.start.y;
-  const fx = segment.start.x - anchor.x;
-  const fy = segment.start.y - anchor.y;
-  const a = dx * dx + dy * dy;
-  if (a <= 0) return null;
-  const b = 2 * (fx * dx + fy * dy);
-  const c = fx * fx + fy * fy - radius * radius;
-  const discriminant = b * b - 4 * a * c;
-  if (discriminant < 0) return null;
-  const t = (-b + root * Math.sqrt(discriminant)) / (2 * a);
-  if (t <= 0 || t >= 1) return null;
-  return { x: segment.start.x + dx * t, y: segment.start.y + dy * t };
-}
-
-/** 把折线在 anchor 半径内的部分裁掉：整段在圈内的丢弃，跨圈的截断到圆周。 */
-export function trimSegmentsNearAnchor(
-  segments: readonly ConnectorSegment[],
-  anchor: Point,
-  radius: number,
-): ConnectorSegment[] {
-  const radiusSquared = radius * radius;
-  const inside = (point: Point) => (point.x - anchor.x) ** 2 + (point.y - anchor.y) ** 2 < radiusSquared;
-  return segments.flatMap((segment) => {
-    const startInside = inside(segment.start);
-    const endInside = inside(segment.end);
-    if (startInside && endInside) return [];
-    if (!startInside && !endInside) return [segment];
-    const clipped = endInside
-      ? clipPointOnCircle(segment, anchor, radius, -1)
-      : clipPointOnCircle(segment, anchor, radius, 1);
-    if (!clipped) return [];
-    return endInside
-      ? [{ start: segment.start, end: clipped }]
-      : [{ start: clipped, end: segment.end }];
-  });
-}
+export { CONNECTOR_ANCHOR_EXEMPT_RADIUS, trimSegmentsNearAnchor };
 
 export interface ContentLayoutInput {
   objects: LayoutHealthObject[];
@@ -231,7 +195,15 @@ export function buildContentLayoutInput(project: ProjectDocument): ContentLayout
     const geometry = buildConnectorGeometry({ card: bounds, anchor, style: project.cards.connectorStyle });
     const segments = trimSegmentsNearAnchor(geometry.segments, anchor, CONNECTOR_ANCHOR_EXEMPT_RADIUS);
     if (segments.length > 0) {
-      connectors.push({ id: `connector-${key}`, segments, visible: project.cards.connectorWidth > 0 });
+      // 带上出发卡与锚点，体检才能把「引线贴着自己的卡身」和「共锚点花束」从
+      // 穿卡判定里摘出去，只留下真正压过别人卡片的那一类。
+      connectors.push({
+        id: `connector-${key}`,
+        cardId: key,
+        anchor,
+        segments,
+        visible: project.cards.connectorWidth > 0,
+      });
     }
   }
 

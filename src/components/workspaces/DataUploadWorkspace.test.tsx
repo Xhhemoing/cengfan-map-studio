@@ -206,6 +206,42 @@ describe("DataUploadWorkspace", () => {
     expect(onUpdateStudent).toHaveBeenCalledWith("student-1", { province: "火星省" });
   });
 
+  it("announces an applied province override through a persistent polite live region", () => {
+    const onUpdateStudent = vi.fn();
+    const { container } = renderWorkspace({
+      issues: [
+        { studentId: "student-1", studentName: "林舟", kind: "unresolved-location", detail: "无法定位城市：火星市", severity: "warning" },
+      ],
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), onUpdateStudent },
+    });
+
+    // The region must already exist (empty) before the interaction so assistive
+    // tech tracks the change, and it must sit outside the mapping rows: a
+    // successful apply remounts the row (keyed on the student's province), and
+    // the apply button's aria-label hides its visible "已指定" flip anyway.
+    const announcer = container.querySelector("[data-mapping-announcement]")!;
+    expect(announcer).not.toBeNull();
+    expect(announcer.getAttribute("role")).toBe("status");
+    expect(announcer.getAttribute("aria-live")).toBe("polite");
+    expect(announcer.classList.contains("sr-only")).toBe(true);
+    expect(announcer.textContent).toBe("");
+    expect(announcer.closest(".data-upload-workspace__mapping-row")).toBeNull();
+
+    const input = container.querySelector('input[aria-label="为 林舟 指定省份"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, "火星省");
+    flushSync(() => input.dispatchEvent(new Event("input", { bubbles: true })));
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="为 林舟 应用省份覆盖"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(onUpdateStudent).toHaveBeenCalledWith("student-1", { province: "火星省" });
+    expect(announcer.isConnected).toBe(true);
+    expect(announcer.textContent).toBe("已为 林舟 指定省份：火星省");
+
+    // Switching rail tabs keeps the region mounted, so no stale re-announce on return.
+    flushSync(() => container.querySelector<HTMLButtonElement>("#data-rail-assets-tab")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(container.querySelector("[data-mapping-announcement]")).toBe(announcer);
+  });
+
   it("tags every quality row with a stable issue id so the UI can locate it", () => {
     const { container } = renderWorkspace({
       issues: [

@@ -36,12 +36,12 @@ describe("layout performance benchmark", () => {
       .toEqual(new Set([`${fixture.anchor.x},${fixture.anchor.y}`]));
   });
 
-  it("reports cache-key serialization metadata without asserting elapsed time", () => {
-    const report = runCardLayoutCacheKeyBenchmark(40, 1, 2);
+  it("reports the 400-card cache-key fixture shape without asserting elapsed time", () => {
+    const report = runCardLayoutCacheKeyBenchmark(undefined, 1, 2);
 
     expect(report).toMatchObject({
       methodology: "stable cache-key serialization with and without pinned coordinates before worker dispatch; solver and cache lookup excluded",
-      cardCount: 40,
+      cardCount: 400,
       polygonCount: 96,
       verticesPerPolygon: 16,
       warmupIterations: 1,
@@ -56,7 +56,7 @@ describe("layout performance benchmark", () => {
         },
         {
           fixedPositions: "all-cards",
-          fixedPositionCount: 40,
+          fixedPositionCount: 400,
           keyBytes: expect.any(Number),
           p50Ms: expect.any(Number),
           p95Ms: expect.any(Number),

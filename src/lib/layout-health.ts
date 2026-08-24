@@ -1,3 +1,8 @@
+import {
+  CONNECTOR_ANCHOR_EXEMPT_RADIUS,
+  segmentRectOverlapLength,
+  trimSegmentsNearAnchor,
+} from "./connector-geometry";
 import { mmToPx, normalizePrintBleedMm } from "./print-bleed";
 
 export type LayoutHealthIssueKind =
@@ -6,6 +11,7 @@ export type LayoutHealthIssueKind =
   | "occlusion"
   | "unreadable-text"
   | "connector-conflict"
+  | "connector-crosses-card"
   | "object-in-bleed";
 
 export type LayoutHealthSeverity = "warning" | "error";
@@ -38,6 +44,10 @@ export interface LayoutHealthConnector {
   id: string;
   segments: Array<{ start: LayoutHealthPoint; end: LayoutHealthPoint }>;
   visible?: boolean;
+  /** 引线出发的那张卡片。它的边框就是引线起点，贴着自己走不算穿卡。 */
+  cardId?: string;
+  /** 地理锚点。锚点周围的会合区是共锚点花束，不参与穿卡判定。 */
+  anchor?: LayoutHealthPoint;
 }
 
 export interface LayoutHealthInput {
@@ -165,6 +175,55 @@ function connectorConflict(left: LayoutHealthConnector, right: LayoutHealthConne
 }
 
 /**
+ * 引线要压进卡片正身多少像素才算「穿过去」。
+ *
+ * 判定用的是卡内弦长而不是「碰到没有」：擦过一个角、或者沿着边框走一小截，
+ * 画面上看不出线压在卡上，报出来只会把真正从卡片正中穿过去的那条淹掉。4px
+ * 是连接线自身描边的量级。
+ */
+const CARD_CROSSING_MIN_CHORD = 4;
+
+/**
+ * 参与穿卡判定的折线：先把锚点周围的会合区裁掉。
+ *
+ * 共锚点的一束引线必然在锚点处交汇，而锚点常常正落在某张卡片身上（卡片就摆在
+ * 自己省份上方）。那种「最后十几像素扎进卡里」是花束的固有形状，不是排版事故；
+ * 同一半径之外的部分照常判定，所以真的从卡片正身穿过去仍然会报。
+ */
+function crossingSegments(connector: LayoutHealthConnector) {
+  return connector.anchor
+    ? trimSegmentsNearAnchor(connector.segments, connector.anchor, CONNECTOR_ANCHOR_EXEMPT_RADIUS)
+    : connector.segments;
+}
+
+function boundingBox(segments: readonly { start: LayoutHealthPoint; end: LayoutHealthPoint }[]): LayoutHealthBounds {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const segment of segments) {
+    for (const point of [segment.start, segment.end]) {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * 两个盒子完全错开。和 {@link overlaps} 不同，这里贴边接触算「没错开」：一条正
+ * 压在卡片边框上走的引线，包围盒是零宽的，不能被当成够不着而提前筛掉。
+ */
+function separated(left: LayoutHealthBounds, right: LayoutHealthBounds): boolean {
+  return left.x > right.x + right.width
+    || left.x + left.width < right.x
+    || left.y > right.y + right.height
+    || left.y + left.height < right.y;
+}
+
+/**
  * Whether an overlap between two objects on the same layer is worth reporting.
  *
  * 展示框 share one `cards.zIndex`, so a pair of stacked cards always compares
@@ -255,6 +314,27 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "connector-conflict",
         severity: "warning",
         detail: `${left.id} 与 ${right.id} 的连接线发生冲突`,
+      });
+    }
+  }
+
+  const visibleCards = visibleObjects.filter((entry) => entry.object.kind === "card");
+  for (const connector of visibleConnectors) {
+    const segments = crossingSegments(connector);
+    if (segments.length === 0) continue;
+    // curve 会被采样成 16 段，逐段对每张卡做裁剪很快就上万次。要留下 4px 弦长，
+    // 整条线的包围盒必然与卡片相交，一次包围盒比较就能筛掉绝大多数卡片。
+    const reach = boundingBox(segments);
+    for (const { object, bounds } of visibleCards) {
+      if (object.id === connector.cardId || separated(reach, bounds)) continue;
+      // 折线的各段互不重叠，逐段弦长相加就是这条线压在卡内的总长度。
+      const chord = segments.reduce((total, segment) => total + segmentRectOverlapLength(segment, bounds), 0);
+      if (chord < CARD_CROSSING_MIN_CHORD) continue;
+      issues.push({
+        id: `${connector.id}:${object.id}`,
+        kind: "connector-crosses-card",
+        severity: "warning",
+        detail: `${connector.cardId ?? connector.id} 的连接线从 ${object.id} 上穿过`,
       });
     }
   }

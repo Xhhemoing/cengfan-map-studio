@@ -86,6 +86,152 @@ describe("layout health", () => {
     ]));
   });
 
+  describe("connector crossing a card", () => {
+    const canvas = { width: 900, height: 600, safeMargin: 8 };
+    const card = (id: string, x: number, y: number) => ({
+      id,
+      kind: "card" as const,
+      zIndex: 30,
+      bounds: { x, y, width: 160, height: 80 },
+    });
+
+    it("reports a leader line that runs through a different card's body", () => {
+      const issues = checkLayoutHealth({
+        canvas,
+        objects: [card("card-a", 60, 260), card("card-b", 360, 260)],
+        connectors: [{
+          id: "connector-card-a",
+          cardId: "card-a",
+          anchor: { x: 800, y: 300 },
+          segments: [{ start: { x: 220, y: 300 }, end: { x: 800, y: 300 } }],
+        }],
+      });
+
+      expect(issues.filter((issue) => issue.kind === "connector-crosses-card")).toEqual([
+        expect.objectContaining({
+          id: "connector-card-a:card-b",
+          severity: "warning",
+          detail: "card-a 的连接线从 card-b 上穿过",
+        }),
+      ]);
+    });
+
+    it("stays quiet when the line only grazes a corner of the other card", () => {
+      // 45° 斜线从 (220,300) 升向 (500,20)，恰好削掉 card-b 左上角 2×2 的一块，
+      // 卡内弦长不到 3px：画面上看不出线压在卡上，报出来只是噪声。
+      const issues = checkLayoutHealth({
+        canvas,
+        objects: [card("card-a", 60, 260), card("card-b", 320, 198)],
+        connectors: [{
+          id: "connector-card-a",
+          cardId: "card-a",
+          anchor: { x: 500, y: 20 },
+          segments: [{ start: { x: 220, y: 300 }, end: { x: 500, y: 20 } }],
+        }],
+      });
+
+      expect(issues.filter((issue) => issue.kind === "connector-crosses-card")).toEqual([]);
+    });
+
+    it("stays quiet about the card the line starts from, even when it hugs that card's frame", () => {
+      const issues = checkLayoutHealth({
+        canvas,
+        objects: [card("card-a", 60, 260)],
+        connectors: [{
+          id: "connector-card-a",
+          cardId: "card-a",
+          anchor: { x: 220, y: 100 },
+          // 起点落在自己的右边框上，先贴着边框上行 60px 再离开。
+          segments: [
+            { start: { x: 220, y: 300 }, end: { x: 220, y: 240 } },
+            { start: { x: 220, y: 240 }, end: { x: 220, y: 100 } },
+          ],
+        }],
+      });
+
+      expect(issues.filter((issue) => issue.kind === "connector-crosses-card")).toEqual([]);
+    });
+
+    it("exempts the bouquet zone where shared-anchor lines meet on top of a card", () => {
+      const anchor = { x: 400, y: 300 };
+      const bouquet = (anchorCardX: number) => checkLayoutHealth({
+        canvas,
+        // anchor-card 正压在共用锚点上，锚点落在它左边框内侧。
+        objects: [card("far-card", 60, 260), card("anchor-card", anchorCardX, 260)],
+        connectors: [
+          { id: "connector-far-card", cardId: "far-card", anchor, segments: [{ start: { x: 220, y: 300 }, end: anchor }] },
+          { id: "connector-anchor-card", cardId: "anchor-card", anchor, segments: [{ start: { x: anchorCardX, y: 300 }, end: anchor }] },
+        ],
+      }).filter((issue) => issue.kind === "connector-crosses-card");
+
+      // 锚点在 anchor-card 内 10px：far-card 的引线只在豁免圈里蹭到它。
+      expect(bouquet(390)).toEqual([]);
+      // 同一束、同一个锚点，但 anchor-card 向左挪到锚点内 80px：豁免圈之外还有
+      // 56px 实打实压在卡身上，仍要报。豁免的是半径，不是「共锚点」这个身份。
+      expect(bouquet(320)).toEqual([
+        expect.objectContaining({ id: "connector-far-card:anchor-card" }),
+      ]);
+    });
+
+    it("reports a line that runs along another card's frame, whose bounding box is flat", () => {
+      // 引线贴着 card-b 左边框竖直走 60px：包围盒零宽，粗筛不能把它当成够不着。
+      const issues = checkLayoutHealth({
+        canvas,
+        objects: [card("card-a", 60, 60), card("card-b", 360, 260)],
+        connectors: [{
+          id: "connector-card-a",
+          cardId: "card-a",
+          anchor: { x: 360, y: 420 },
+          segments: [{ start: { x: 360, y: 140 }, end: { x: 360, y: 420 } }],
+        }],
+      });
+
+      expect(issues.filter((issue) => issue.kind === "connector-crosses-card").map((issue) => issue.id))
+        .toEqual(["connector-card-a:card-b"]);
+    });
+
+    it("skips hidden cards and hidden connectors", () => {
+      const crossing = {
+        id: "connector-card-a",
+        cardId: "card-a",
+        anchor: { x: 800, y: 300 },
+        segments: [{ start: { x: 220, y: 300 }, end: { x: 800, y: 300 } }],
+      };
+
+      expect(checkLayoutHealth({
+        canvas,
+        objects: [card("card-a", 60, 260), { ...card("card-b", 360, 260), visible: false }],
+        connectors: [crossing],
+      }).filter((issue) => issue.kind === "connector-crosses-card")).toEqual([]);
+
+      expect(checkLayoutHealth({
+        canvas,
+        objects: [card("card-a", 60, 260), card("card-b", 360, 260)],
+        connectors: [{ ...crossing, visible: false }],
+      }).filter((issue) => issue.kind === "connector-crosses-card")).toEqual([]);
+    });
+
+    it("measures the card against its manual position, like every other check", () => {
+      const issues = checkLayoutHealth({
+        canvas,
+        cardsPositions: { "card-b": { x: 360, y: 260 } },
+        objects: [
+          card("card-a", 60, 260),
+          { ...card("card-b", 0, 0), positionKey: "card-b" },
+        ],
+        connectors: [{
+          id: "connector-card-a",
+          cardId: "card-a",
+          anchor: { x: 800, y: 300 },
+          segments: [{ start: { x: 220, y: 300 }, end: { x: 800, y: 300 } }],
+        }],
+      });
+
+      expect(issues.filter((issue) => issue.kind === "connector-crosses-card").map((issue) => issue.id))
+        .toEqual(["connector-card-a:card-b"]);
+    });
+  });
+
   describe("print bleed", () => {
     it("warns about cards and text that sit in the bleed or crowd the trim box", () => {
       expect(mmToPx(3)).toBeCloseTo(11.339, 3);

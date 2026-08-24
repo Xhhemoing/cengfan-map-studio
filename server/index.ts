@@ -19,6 +19,7 @@ import { createRateLimiter } from "./ai/rate-limit";
 import { createAiLogger } from "./ai/ai-observability";
 import { createRoomStore } from "./collaboration";
 import { createCollaborationRouter } from "./collaboration-routes";
+import { isHostAllowed } from "./host-validation";
 import { handleRequestMethod } from "./route-methods";
 import {
   HTTP_ERROR_CODES,
@@ -205,6 +206,7 @@ export function createAiServer(options: AiServerOptions = {}) {
     const pathname = new URL(url, "http://localhost").pathname;
     const requestId = requestIdFor(request);
     const send = createJsonSender(request, response, corsOrigins, requestId);
+    if (!isHostAllowed(request, server)) return send(421, { error: { code: "MISDIRECTED_REQUEST", message: "Host 请求头不受信任" } });
     const sendAi = (status: number, body: unknown) => send(status, { ...(isRecord(body) ? body : {}), requestId });
     if (handleRequestMethod(request, response, pathname, Boolean(staticDir), send)) return;
     const aiPath = pathname.startsWith("/api/ai/");

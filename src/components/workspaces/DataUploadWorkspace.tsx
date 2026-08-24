@@ -23,11 +23,13 @@ function MappingIssueRow({
   issue,
   onUpdateStudent,
   onSelectStudent,
+  onAnnounce,
 }: {
   student?: Student;
   issue: DataIssue;
   onUpdateStudent: (id: string, patch: Partial<Pick<Student, "province">>) => void;
   onSelectStudent: (id: string) => void;
+  onAnnounce: (message: string) => void;
 }) {
   const [province, setProvince] = useState(student?.province ?? "");
   const [saved, setSaved] = useState(false);
@@ -35,6 +37,7 @@ function MappingIssueRow({
     const next = province.trim();
     if (!next) return;
     onUpdateStudent(student?.id ?? issue.studentId, { province: next });
+    onAnnounce(`已为 ${issue.studentName} 指定省份：${next}`);
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1600);
   };
@@ -172,6 +175,7 @@ export function DataUploadRail({
 }: DataUploadRailProps) {
   const [railTab, setRailTab] = useState<"quality" | "assets">("quality");
   const [assetProvince, setAssetProvince] = useState("");
+  const [mappingAnnouncement, setMappingAnnouncement] = useState("");
 
   const handleRailTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -227,6 +231,15 @@ export function DataUploadRail({
           素材库
         </button>
       </div>
+      {/*
+       * The 指定省份 button hides its visible "已指定" flip behind an aria-label,
+       * and a successful apply remounts the row (it is keyed on the student's
+       * province), so the applied-override announcement must live outside the
+       * rows — in a persistent polite region that also survives tab switches.
+       */}
+      <span className="sr-only" role="status" aria-live="polite" data-mapping-announcement>
+        {mappingAnnouncement}
+      </span>
       {railTab === "quality" ? (
         <section className="data-upload-workspace__quality" id="data-rail-quality" role="tabpanel" aria-labelledby="data-rail-quality-tab">
           <PanelHeader title="数据质量" meta={`${issues.length} 项待检查`} />
@@ -265,6 +278,7 @@ export function DataUploadRail({
                     issue={issue}
                     onUpdateStudent={dataWorkspaceProps.onUpdateStudent}
                     onSelectStudent={handleSelectStudent}
+                    onAnnounce={setMappingAnnouncement}
                   />
                 ))}
               </div>

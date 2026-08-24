@@ -234,7 +234,7 @@ describe("server request security", () => {
 
     const response = await rawHttpExchange(origin, [
       "GET http://attacker.example/api/not-found HTTP/1.1",
-      "Host: studio.example",
+      "Host: localhost",
       "Connection: close",
       "",
       "",
@@ -258,6 +258,23 @@ describe("server request security", () => {
     ].join("\r\n"));
 
     expect(response).toMatch(/^HTTP\/1\.1 400 /);
+  });
+
+  it("rejects DNS-rebinding Host headers on a loopback listener", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawRequest(origin, "/api/health", "GET", undefined, {
+      Host: "evil.example",
+      Origin: "http://evil.example",
+    });
+
+    expect(response.status).toBe(421);
+    expect(JSON.parse(response.body)).toMatchObject({
+      error: { code: "MISDIRECTED_REQUEST" },
+    });
+    expect(response.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
   it("rejects an oversized request target at the HTTP parser", async () => {

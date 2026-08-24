@@ -121,12 +121,11 @@ function joinQuotedLines(lines: string[]): SourceLine[] {
   return joined;
 }
 
+/** Delimiters a paste may use, in the order they are believed. */
+const CELL_DELIMITERS = ["\t", ",", "，", ";"];
+
 function detectDelimiter(line: string): string | null {
-  if (line.includes("\t")) return "\t";
-  if (line.includes(",")) return ",";
-  if (line.includes("，")) return "，";
-  if (line.includes(";")) return ";";
-  return null;
+  return CELL_DELIMITERS.find((delimiter) => line.includes(delimiter)) ?? null;
 }
 
 interface DelimitedScan {
@@ -187,43 +186,60 @@ function splitCells(line: string, delimiter: string | null): string[] {
   return splitDelimitedLine(line, delimiter);
 }
 
-function splitParts(line: string, delimiter: string | null): string[] {
-  if (delimiter) {
-    return splitDelimitedLine(line, delimiter).filter(Boolean);
-  }
+type PaddingColumns = Map<string, ReadonlySet<number>>;
 
-  return line
-    .replace(/^\d+[\.、\)]\s*/, "")
-    .split(/[\s,，、;；\-\|]+/)
-    .map(trimImportCell)
-    .filter(Boolean);
+/**
+ * Columns no line of the paste fills, kept per delimiter. Such a column is
+ * padding an export left behind — an empty 序号 column on the left, the
+ * trailing separator of a CSV row — and dropping it lets the positional reader
+ * find 姓名/院校/城市 where they really start.
+ *
+ * A cell blank on only some lines is the opposite: a gap in a column the rest
+ * of the paste uses. Dropping that one pulls every later cell of the row a
+ * column left, which imported "林舟,,北京市,海外" as a student studying at
+ * 北京市 in 海外 — a complete-looking record nothing warned about. So the gap
+ * stays, {@link toCandidate} sees the blank, and the row is reported instead.
+ */
+function paddingColumnsByDelimiter(lines: readonly SourceLine[]): PaddingColumns {
+  const filled = new Map<string, Set<number>>();
+  const blank = new Map<string, Set<number>>();
+  for (const { text } of lines) {
+    const delimiter = detectDelimiter(text);
+    if (!delimiter) continue;
+    if (!blank.has(delimiter)) {
+      filled.set(delimiter, new Set());
+      blank.set(delimiter, new Set());
+    }
+    splitDelimitedLine(text, delimiter).forEach((cell, index) => {
+      (cell ? filled : blank).get(delimiter)!.add(index);
+    });
+  }
+  for (const [delimiter, empty] of blank) {
+    for (const index of filled.get(delimiter)!) empty.delete(index);
+  }
+  return blank;
 }
 
-function toCandidate(
-  parts: string[],
-  sourceLine: number,
-  rawLine: string,
-): ImportCandidate | null {
+function splitParts(line: string, delimiter: string | null, padding?: PaddingColumns): string[] {
+  if (delimiter) {
+    // Only padding goes; every remaining cell keeps its column, blank ones included.
+    const dropped = padding?.get(delimiter);
+    return splitDelimitedLine(line, delimiter).filter((_, index) => !dropped?.has(index));
+  }
+  return line.replace(/^\d+[\.、\)]\s*/, "").split(/[\s,，、;；\-\|]+/).map(trimImportCell).filter(Boolean);
+}
+
+function toCandidate(parts: string[], sourceLine: number, rawLine: string): ImportCandidate | null {
   if (parts.length < 3) return null;
   const [name, university, city, scope] = parts;
   if (!name || !university || !city) return null;
   const locationScope = parseLocationScopeValue(scope);
-  return {
-    name,
-    university,
-    city,
-    ...(locationScope ? { locationScope } : {}),
-    sourceLine,
-    rawLine,
-  };
+  return { name, university, city, ...(locationScope ? { locationScope } : {}), sourceLine, rawLine };
 }
 
 /** Builds a candidate from a detected header mapping; returns null when a required cell is blank. */
 export function candidateFromColumns(
-  cells: string[],
-  lookup: StudentColumnLookup,
-  sourceLine: number,
-  rawLine: string,
+  cells: string[], lookup: StudentColumnLookup, sourceLine: number, rawLine: string,
 ): ImportCandidate | null {
   const read = (column: StudentColumn): string => readStudentColumn(cells, lookup, column);
   const name = read("name");
@@ -234,20 +250,12 @@ export function candidateFromColumns(
   // A Chinese province column is an optional override; overseas rows never need one.
   const province = locationScope === "international" ? "" : read("province");
   return {
-    name,
-    university,
-    city,
-    ...(province ? { province } : {}),
-    ...(locationScope ? { locationScope } : {}),
-    sourceLine,
-    rawLine,
+    name, university, city, ...(province ? { province } : {}),
+    ...(locationScope ? { locationScope } : {}), sourceLine, rawLine,
   };
 }
 
-function parseLabeledCandidate(
-  line: string,
-  sourceLine: number,
-): ImportCandidate | null {
+function parseLabeledCandidate(line: string, sourceLine: number): ImportCandidate | null {
   const fields = new Map<string, string>();
   const labelPattern = /(姓名|学生(?:姓名)?|name|就读院校|就读学校|录取院校|院校|学校|university|school|城市|所在城市|city|省份|省|province|去向类型|destination type)\s*[：:]/giu;
   const matches = Array.from(line.matchAll(labelPattern));
@@ -267,13 +275,8 @@ function parseLabeledCandidate(
     ? ""
     : (fields.get("省份") ?? fields.get("省") ?? fields.get("province") ?? "");
   return {
-    name,
-    university,
-    city,
-    ...(province ? { province } : {}),
-    ...(locationScope ? { locationScope } : {}),
-    sourceLine,
-    rawLine: line,
+    name, university, city, ...(province ? { province } : {}),
+    ...(locationScope ? { locationScope } : {}), sourceLine, rawLine: line,
   };
 }
 
@@ -324,6 +327,7 @@ export function parseStudentText(text: string): TextImportResult {
   const unparsed: UnparsedLine[] = [];
   const header = detectTextHeader(lines);
   const headerIsComplete = header !== null && missingRequiredColumns(header.mapping).length === 0;
+  const padding = paddingColumnsByDelimiter(lines);
 
   lines.forEach(({ text, sourceLine }, index) => {
     if (header && index === header.lineIndex) return;
@@ -370,7 +374,7 @@ export function parseStudentText(text: string): TextImportResult {
     }
 
     if (!mappedPartially) {
-      const parts = splitParts(text, detectDelimiter(text));
+      const parts = splitParts(text, detectDelimiter(text), padding);
       const candidate = toCandidate(parts, sourceLine, text);
       if (candidate) {
         candidates.push(candidate);
