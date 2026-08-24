@@ -1,0 +1,50 @@
+# 画布渲染 / 展示框样式性能优化 — 进度文档
+
+**分支:** `cursor/canvas-render-display-46a1`（对应 SOP `agent/canvas-render-display`）  
+**目标:** 3 次 × 3 轮多模型并发循环，持续优化画布渲染与展示框样式。前期侧重画布渲染与展示框样式。  
+**许可证:** AGPL-3.0-only。不引入支付/套餐。
+
+## 模型配置
+
+| 简称 | 实际 slug | 每轮数量 | 推荐职能 |
+| --- | --- | --- | --- |
+| fable | `claude-fable-5-thinking-xhigh` | 2 | 架构规划、多维审计、SOTA 标准与验收 |
+| opus-fast | `claude-opus-5-thinking-high-fast` | 2 | 核心业务落地、算法攻坚、高覆盖单测 |
+| gpt-sol | `gpt-5.6-sol-xhigh-fast` | 2 | 自动化探针/脚本、基准测试、边界探索 |
+
+严禁静默降级。子代理输出首行必须声明实际使用的模型 slug。
+
+## 文件所有权（防并发冲突）
+
+| 角色 | 可写路径 | 禁止 |
+| --- | --- | --- |
+| fable-A | `.agent_workspace/cycleN-roundM-fable-a.md` | 生产代码 |
+| fable-B | `.agent_workspace/cycleN-roundM-fable-b.md` | 生产代码 |
+| opus-fast-A | `src/components/canvas/PosterCanvas.tsx`、`src/components/canvas/DestinationCard*.tsx`、`src/components/canvas/CanvasDragPreview.*`、相关 canvas 测试 | `src/lib/display-frame.ts`、展示框工作台组件 |
+| opus-fast-B | `src/lib/display-frame.ts`、`src/lib/display-frame-style.ts`（新建）、`src/components/workspaces/DisplayFrame*`、`src/components/workspaces/ReferenceCardStyle*`、`src/components/workspaces/FlowFrame*`、展示框相关 CSS/测试 | `PosterCanvas.tsx` |
+| gpt-sol-A | `scripts/perf-canvas-bench.ts`、`src/lib/canvas-render-metrics.ts`（新建）、对应测试 | UI 组件大重构 |
+| gpt-sol-B | `src/components/canvas/*.boundary.test.tsx`、`src/lib/display-frame*.bench.test.ts`、探针脚本 | 与 opus 重叠的生产实现 |
+
+## 循环状态
+
+- [ ] Cycle 1 Round 1 — 初始构建与基线探索
+- [ ] Cycle 1 Round 2 — 靶向重构与深度优化
+- [ ] Cycle 1 Round 3 — SOTA 打磨与交叉核验
+- [ ] Cycle 2 Round 1
+- [ ] Cycle 2 Round 2
+- [ ] Cycle 2 Round 3
+- [ ] Cycle 3 Round 1
+- [ ] Cycle 3 Round 2
+- [ ] Cycle 3 Round 3
+- [ ] 归档、结构化 PR
+
+## 已知基线（主调度器预研）
+
+- `PosterCanvas.tsx` 约 1588 行（超过 400 行拆分规范），展示框卡片 SVG 内联渲染。
+- 已有 `CanvasDragPreview` RAF/interval 调度、`memo` 图层、`useCardLayoutWorker`、`PosterCanvas.performance.test.tsx`（拖拽时地图层不重绘）。
+- 展示框：`src/lib/display-frame.ts`、`DisplayFrameSubcanvas`（局部 RAF 预览已落地）、`ReferenceCardStyleWorkspace`、`display-frame-workspace` CSS。
+- `npm run perf:layout` 仅覆盖 `solveCardLayout`，尚无画布/展示框渲染基准。
+
+## Round 结论简报
+
+（各轮结束后由主调度器填写）
