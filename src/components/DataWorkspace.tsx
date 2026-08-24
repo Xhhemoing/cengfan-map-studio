@@ -366,6 +366,9 @@ export function DataWorkspace({
     // 一键导入同样要回显未识别行的计数与明细，不允许静默丢弃（I-10-02）。
     setUnparsedLines(parsed.unparsed);
     const unparsedNote = parsed.unparsed.length > 0 ? `，${parsed.unparsed.length} 行未识别（见下方明细）` : "";
+    // 去向类型枚举外的可读提示在没有确认面板的一键路径也要回显（I-10-01）。
+    const scopeWarnings = Array.from(new Set(parsed.candidates.flatMap((candidate) => candidate.warnings ?? [])));
+    const warningNote = scopeWarnings.length > 0 ? `；${scopeWarnings.slice(0, 3).join("；")}` : "";
     if (parsed.candidates.length === 0) {
       setMessage(`没有从${sourceLabel}识别到可导入的学生记录${unparsedNote}`);
       return;
@@ -381,7 +384,7 @@ export function DataWorkspace({
     }
     setReviewRows([]);
     setImportText("");
-    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录${unparsedNote}`);
+    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录${unparsedNote}${warningNote}`);
   };
 
   return (
