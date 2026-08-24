@@ -23,6 +23,28 @@ vi.mock("../lib/image-color", () => ({
   optimizeNeighborThemeColors: vi.fn((themes: unknown) => themes),
 }));
 
+/** Mimics a browser image decoder so the real downscale pipeline can run under jsdom. */
+function stubDownscalePipeline({ width, height, encoded }: { width: number; height: number; encoded: string }) {
+  vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width, height, close: vi.fn() })));
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => ({
+      drawImage: vi.fn(),
+      getImageData: () => ({ data: new Uint8ClampedArray([12, 34, 56, 255]) }),
+    }),
+    toDataURL: (mime: string) => {
+      if (mime !== "image/jpeg") throw new Error("unsupported type");
+      return encoded;
+    },
+  };
+  const createElement = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation((tagName: string) => (
+    tagName === "canvas" ? canvas as unknown as HTMLCanvasElement : createElement(tagName)
+  ));
+  return canvas;
+}
+
 function renderPanel(overrides: Partial<React.ComponentProps<typeof AssetPanel>> = {}) {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -188,7 +210,7 @@ describe("AssetPanel", () => {
     root.unmount();
   });
 
-  it("imports uploaded raster images into the library and creates a canvas element immediately", () => {
+  it("imports uploaded raster images into the library and creates a canvas element immediately", async () => {
     const onAddUserAsset = vi.fn();
     const originalFileReader = globalThis.FileReader;
     class ImmediateFileReader {
@@ -205,13 +227,15 @@ describe("AssetPanel", () => {
     flushSync(() => {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    expect(onAddUserAsset).toHaveBeenCalledWith(expect.objectContaining({
-      label: "班级合影",
-      kind: "decoration",
-      src: "data:image/png;base64,abc",
-    }));
-    expect(onCreateDecoration).toHaveBeenCalledWith(expect.objectContaining({ label: "班级合影", kind: "decoration" }));
-    expect(container.textContent).toContain("已导入画布：班级合影");
+    await vi.waitFor(() => {
+      expect(onAddUserAsset).toHaveBeenCalledWith(expect.objectContaining({
+        label: "班级合影",
+        kind: "decoration",
+        src: "data:image/png;base64,abc",
+      }));
+      expect(onCreateDecoration).toHaveBeenCalledWith(expect.objectContaining({ label: "班级合影", kind: "decoration" }));
+      expect(container.textContent).toContain("已导入画布：班级合影");
+    });
     root.unmount();
     vi.stubGlobal("FileReader", originalFileReader);
   });
@@ -267,6 +291,106 @@ describe("AssetPanel", () => {
     expect(container.textContent).toContain("已导入画布：校徽");
     root.unmount();
     vi.stubGlobal("FileReader", originalFileReader);
+  });
+
+  it("downscales oversized canvas uploads before they enter the project", async () => {
+    const onAddUserAsset = vi.fn();
+    const onCreateDecoration = vi.fn();
+    class ImmediateFileReader {
+      result = `data:image/jpeg;base64,${"A".repeat(1_600_000)}`;
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>)); }
+    }
+    vi.stubGlobal("FileReader", ImmediateFileReader);
+    const canvas = stubDownscalePipeline({ width: 6000, height: 3000, encoded: "data:image/jpeg;base64,downscaled" });
+    const { container, root } = renderPanel({ onAddUserAsset, onCreateDecoration });
+
+    const input = container.querySelector("#asset-global-upload") as HTMLInputElement;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], "毕业合影.jpg", { type: "image/jpeg" })] });
+    flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+
+    await vi.waitFor(() => {
+      expect(onAddUserAsset).toHaveBeenCalledWith(expect.objectContaining({ src: "data:image/jpeg;base64,downscaled" }));
+      expect(onCreateDecoration).toHaveBeenCalledWith(expect.objectContaining({ src: "data:image/jpeg;base64,downscaled" }));
+    });
+    expect(canvas).toMatchObject({ width: 2560, height: 1280 });
+
+    root.unmount();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("downscales oversized province textures before saving them to the library", async () => {
+    const onAddUserAsset = vi.fn();
+    const onApplyProvinceAppearance = vi.fn();
+    class ImmediateFileReader {
+      result = `data:image/jpeg;base64,${"A".repeat(1_600_000)}`;
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>)); }
+    }
+    vi.stubGlobal("FileReader", ImmediateFileReader);
+    class ImmediateImage {
+      naturalWidth = 2560;
+      naturalHeight = 1280;
+      width = 2560;
+      height = 1280;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    }
+    vi.stubGlobal("Image", ImmediateImage);
+    const canvas = stubDownscalePipeline({ width: 5120, height: 2560, encoded: "data:image/jpeg;base64,texture-small" });
+    const { container, root } = renderPanel({ selectedProvince: "浙江省", onAddUserAsset, onApplyProvinceAppearance });
+
+    const matting = container.querySelector("#asset-matting") as HTMLInputElement;
+    flushSync(() => {
+      matting.checked = false;
+      matting.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const input = container.querySelector("#asset-province-upload") as HTMLInputElement;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], "西湖.jpg", { type: "image/jpeg" })] });
+    flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+
+    await vi.waitFor(() => {
+      expect(onAddUserAsset).toHaveBeenCalledWith(expect.objectContaining({
+        kind: "province-texture",
+        src: "data:image/jpeg;base64,texture-small",
+      }));
+    });
+    expect(canvas).toMatchObject({ width: 2560, height: 1280 });
+
+    root.unmount();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("refuses SVG imports that exceed the stored byte ceiling", () => {
+    const onAddUserAsset = vi.fn();
+    const onCreateDecoration = vi.fn();
+    class ImmediateFileReader {
+      result = `data:image/svg+xml;base64,${"A".repeat(3_000_000)}`;
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>); }
+    }
+    vi.stubGlobal("FileReader", ImmediateFileReader);
+    const { container, root } = renderPanel({ onAddUserAsset, onCreateDecoration });
+
+    const input = container.querySelector("#asset-svg-canvas-upload") as HTMLInputElement;
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [new File(["<svg />"], "巨幅.svg", { type: "image/svg+xml" })],
+    });
+    flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+
+    expect(onAddUserAsset).not.toHaveBeenCalled();
+    expect(onCreateDecoration).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("SVG 体积过大");
+
+    root.unmount();
+    vi.unstubAllGlobals();
   });
 
   it("exposes a map-level uniform texture size toggle and fields", () => {

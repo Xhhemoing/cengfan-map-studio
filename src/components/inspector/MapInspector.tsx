@@ -5,6 +5,7 @@ import { autoFitAlignment } from "../../lib/map-alignment";
 import type { MapImageAlignment, MapSettings, MapRenderSource } from "../../lib/scene-document";
 import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
 import { getProvinceNames } from "../../lib/map-data";
+import { downscaleImageDataUrl } from "../../lib/image-downscale";
 import { heatPreviewSteps, normalizeHeatScale } from "../../lib/heat-scale";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { FileDropzone } from "../FileDropzone";
@@ -68,6 +69,7 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
   const provinceNames = getProvinceNames();
   const [selectedProvince, setSelectedProvince] = useState("");
   const [isEdgeStylePickerOpen, setIsEdgeStylePickerOpen] = useState(false);
+  const [imageNotice, setImageNotice] = useState("");
   const heatScale = normalizeHeatScale(map.heatScale);
   const heatPreview = heatPreviewSteps(heatScale);
   const patchHeatScale = (patch: Partial<typeof heatScale>) => {
@@ -116,9 +118,18 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
   const uploadMapImage = (file: File | null) => {
     if (!file) return;
     const reader = new FileReader();
+    reader.onerror = () => setImageNotice("读取图片失败，请重试");
     reader.onload = async () => {
-      const src = String(reader.result ?? "");
-      if (!src) return;
+      const original = String(reader.result ?? "");
+      if (!original) return;
+      let src: string;
+      try {
+        src = await downscaleImageDataUrl(original, { kind: "map" });
+      } catch (error) {
+        setImageNotice(error instanceof Error ? error.message : "地图图片导入失败");
+        return;
+      }
+      setImageNotice("");
       const size = await loadImageSize(src);
       const alignment = autoFitAlignment({
         mapWidth: map.width,
@@ -406,6 +417,7 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
         accept="image/*"
         onFile={(file) => uploadMapImage(file)}
       />
+      {imageNotice && <p className="property-panel__hint" role="status" data-map-image-notice>{imageNotice}</p>}
       </>}
       {isImageSource(renderSource) && (
         <>

@@ -5,6 +5,28 @@ import { createProjectDocument } from "../../lib/project-document";
 import { computeGuestPanelMetrics } from "../../lib/render-geometry";
 import { GuestsInspector } from "./GuestsInspector";
 
+/** Mimics a browser image decoder so the real downscale pipeline can run under jsdom. */
+function stubDownscalePipeline({ width, height, encoded }: { width: number; height: number; encoded: string }) {
+  vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width, height, close: vi.fn() })));
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => ({
+      drawImage: vi.fn(),
+      getImageData: () => ({ data: new Uint8ClampedArray([12, 34, 56, 255]) }),
+    }),
+    toDataURL: (mime: string) => {
+      if (mime !== "image/jpeg") throw new Error("unsupported type");
+      return encoded;
+    },
+  };
+  const createElement = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation((tagName: string) => (
+    tagName === "canvas" ? canvas as unknown as HTMLCanvasElement : createElement(tagName)
+  ));
+  return canvas;
+}
+
 describe("GuestsInspector", () => {
   it("defers editable fields while keeping visibility immediate", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
@@ -114,6 +136,42 @@ describe("GuestsInspector", () => {
     });
 
     flushSync(() => root.unmount());
+  });
+
+  it("downscales uploaded avatars to the avatar edge before storing them", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const guests = { ...project.guests, people: [{ id: "g1", name: "王老师", visibility: true }] };
+    const onPatch = vi.fn();
+    class ImmediateFileReader {
+      result = `data:image/jpeg;base64,${"A".repeat(1_600_000)}`;
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>)); }
+    }
+    vi.stubGlobal("FileReader", ImmediateFileReader);
+    const canvas = stubDownscalePipeline({ width: 3000, height: 3000, encoded: "data:image/jpeg;base64,avatar-small" });
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={guests} onPatch={onPatch} />));
+
+    const upload = container.querySelector<HTMLInputElement>('[data-guest-avatar-upload="g1"]')!;
+    Object.defineProperty(upload, "files", {
+      configurable: true,
+      value: [new File(["x"], "王老师.jpg", { type: "image/jpeg" })],
+    });
+    flushSync(() => upload.dispatchEvent(new Event("change", { bubbles: true })));
+
+    await vi.waitFor(() => {
+      expect(onPatch).toHaveBeenCalledWith({
+        people: [{ id: "g1", name: "王老师", visibility: true, avatarSrc: "data:image/jpeg;base64,avatar-small" }],
+      });
+    });
+    expect(canvas).toMatchObject({ width: 512, height: 512 });
+
+    flushSync(() => root.unmount());
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("reports the canvas-visible headcount and warns on an empty roster", () => {

@@ -1,5 +1,6 @@
 import { Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
 import { createId } from "../../lib/ids";
+import { applyImageWithinBudget } from "../../lib/image-downscale";
 import { visibleGuestPeople } from "../../lib/render-geometry";
 import type { GuestPanelSettings, GuestPerson } from "../../lib/scene-document";
 import { DeferredInput, DeferredTextarea } from "../DeferredInput";
@@ -10,7 +11,11 @@ const readAvatarFile = (file: File | null | undefined, done: (src: string) => vo
   if (!file.type.startsWith("image/")) return;
   const reader = new FileReader();
   reader.onerror = () => undefined;
-  reader.onload = () => done(String(reader.result ?? ""));
+  reader.onload = () => {
+    const source = String(reader.result ?? "");
+    if (!source) return;
+    applyImageWithinBudget(source, { kind: "avatar" }, done);
+  };
   reader.readAsDataURL(file);
 };
 

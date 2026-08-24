@@ -11,6 +11,28 @@ vi.mock("../../lib/image-color", () => ({
   extractImageColor: vi.fn(async () => "#d05a45"),
 }));
 
+/** Mimics a browser image decoder so the real downscale pipeline can run under jsdom. */
+function stubDownscalePipeline({ width, height, encoded }: { width: number; height: number; encoded: string }) {
+  vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width, height, close: vi.fn() })));
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => ({
+      drawImage: vi.fn(),
+      getImageData: () => ({ data: new Uint8ClampedArray([12, 34, 56, 255]) }),
+    }),
+    toDataURL: (mime: string) => {
+      if (mime !== "image/jpeg") throw new Error("unsupported type");
+      return encoded;
+    },
+  };
+  const createElement = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation((tagName: string) => (
+    tagName === "canvas" ? canvas as unknown as HTMLCanvasElement : createElement(tagName)
+  ));
+  return canvas;
+}
+
 describe("ProvinceInspector", () => {
   it("saves uploaded textures into the shared material library", async () => {
     const onPatch = vi.fn();
@@ -69,6 +91,55 @@ describe("ProvinceInspector", () => {
     root.unmount();
     vi.stubGlobal("FileReader", originalFileReader);
     vi.stubGlobal("Image", originalImage);
+  });
+
+  it("downscales oversized textures before saving and applying them", async () => {
+    const onPatch = vi.fn();
+    const onAddUserAsset = vi.fn();
+    class ImmediateFileReader {
+      result = `data:image/jpeg;base64,${"A".repeat(1_600_000)}`;
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>)); }
+    }
+    vi.stubGlobal("FileReader", ImmediateFileReader);
+    class ImmediateImage {
+      naturalWidth = 2560;
+      naturalHeight = 1440;
+      width = 2560;
+      height = 1440;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    }
+    vi.stubGlobal("Image", ImmediateImage);
+    const canvas = stubDownscalePipeline({ width: 5120, height: 2880, encoded: "data:image/jpeg;base64,texture-small" });
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <ProvinceInspector province="浙江省" onPatch={onPatch} onAddUserAsset={onAddUserAsset} />,
+    ));
+    const matting = container.querySelector("#province-matting") as HTMLInputElement;
+    flushSync(() => {
+      matting.checked = false;
+      matting.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const input = container.querySelector("#province-texture-upload") as HTMLInputElement;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], "西湖.jpg", { type: "image/jpeg" })] });
+    flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+
+    await vi.waitFor(() => {
+      expect(onAddUserAsset).toHaveBeenCalledWith(expect.objectContaining({ src: "data:image/jpeg;base64,texture-small" }));
+      expect(onPatch).toHaveBeenCalledWith(expect.objectContaining({
+        appearance: expect.objectContaining({ src: "data:image/jpeg;base64,texture-small" }),
+      }));
+    });
+    expect(canvas).toMatchObject({ width: 2560, height: 1440 });
+
+    root.unmount();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("exposes numeric size, opacity, and overflow controls for active textures", () => {

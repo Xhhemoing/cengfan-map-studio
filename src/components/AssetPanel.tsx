@@ -7,6 +7,7 @@ import {
   type UserAsset,
 } from "../lib/assets";
 import { removeBackground } from "../lib/background-removal";
+import { checkImageBudget, downscaleImageDataUrl } from "../lib/image-downscale";
 import {
   extractImageColor,
   extractImageTheme,
@@ -268,11 +269,11 @@ export function AssetPanel({
           setMessage("图片内容为空，未保存");
           return;
         }
-        let src = original;
+        let src = await downscaleImageDataUrl(original, { kind: "decoration" });
         let mattingApplied = false;
         if (canvasMatting) {
           try {
-            src = await removeBackground(original);
+            src = await removeBackground(src);
             mattingApplied = true;
           } catch {
             setMessage("自动抠图失败，已使用原图导入画板");
@@ -307,6 +308,12 @@ export function AssetPanel({
         const src = String(reader.result || "");
         if (!src) {
           setMessage("SVG 内容为空，未导入");
+          return;
+        }
+        // SVG markup is stored verbatim, so an oversized file can only be refused.
+        const check = checkImageBudget(src, { kind: "decoration" });
+        if (check.verdict === "reject") {
+          setMessage(check.message ?? "SVG 体积过大，未导入");
           return;
         }
         const asset = createUserAsset({
@@ -363,13 +370,14 @@ export function AssetPanel({
           setMessage("图片内容为空，未保存");
           return;
         }
-        let src = original;
+        let src = await downscaleImageDataUrl(original, { kind: "texture" });
         if (matting) {
           setProcessing(true);
+          const scaled = src;
           try {
-            src = await removeBackground(original);
+            src = await removeBackground(scaled);
           } catch {
-            src = original;
+            src = scaled;
             setMessage("自动抠图失败，已使用原图并保存到素材库");
           } finally {
             setProcessing(false);

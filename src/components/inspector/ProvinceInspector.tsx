@@ -3,6 +3,7 @@ import { RotateCcw } from "lucide-react";
 import { createUserAsset, listSystemAssets, type UserAsset } from "../../lib/assets";
 import { removeBackground } from "../../lib/background-removal";
 import { extractImageColor } from "../../lib/image-color";
+import { downscaleImageDataUrl } from "../../lib/image-downscale";
 import type { ProvinceAppearance, ProvinceStyle, ProvinceTextureUniformSize } from "../../lib/scene-document";
 import {
   createTextureAppearance,
@@ -68,13 +69,14 @@ export function ProvinceInspector({ province, style, onPatch, onAddUserAsset, un
           setMessage("图片内容为空，未保存");
           return;
         }
-        let src = original;
+        let src = await downscaleImageDataUrl(original, { kind: "texture" });
         if (matting) {
           setProcessing(true);
+          const scaled = src;
           try {
-            src = await removeBackground(original);
+            src = await removeBackground(scaled);
           } catch {
-            src = original;
+            src = scaled;
             setMessage("自动抠图失败，已使用原图并保存到素材库");
           } finally {
             setProcessing(false);

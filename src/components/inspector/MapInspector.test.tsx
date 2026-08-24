@@ -25,7 +25,97 @@ const baseMap: MapSettings = {
   provinceStyles: {},
 };
 
+/** Mimics a browser image decoder so the real downscale pipeline can run under jsdom. */
+function stubDownscalePipeline({ width, height, encoded }: { width: number; height: number; encoded: string }) {
+  vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width, height, close: vi.fn() })));
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => ({
+      drawImage: vi.fn(),
+      getImageData: () => ({ data: new Uint8ClampedArray([12, 34, 56, 255]) }),
+    }),
+    toDataURL: (mime: string) => {
+      if (mime !== "image/jpeg") throw new Error("unsupported type");
+      return encoded;
+    },
+  };
+  const createElement = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation((tagName: string) => (
+    tagName === "canvas" ? canvas as unknown as HTMLCanvasElement : createElement(tagName)
+  ));
+  return canvas;
+}
+
 describe("MapInspector", () => {
+  it("downscales an uploaded map image before it becomes the render source", async () => {
+    const onPatch = vi.fn();
+    class ImmediateFileReader {
+      result = `data:image/jpeg;base64,${"A".repeat(1_600_000)}`;
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>)); }
+    }
+    vi.stubGlobal("FileReader", ImmediateFileReader);
+    class ImmediateImage {
+      naturalWidth = 2560;
+      naturalHeight = 1600;
+      width = 2560;
+      height = 1600;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    }
+    vi.stubGlobal("Image", ImmediateImage);
+    const canvas = stubDownscalePipeline({ width: 5120, height: 3200, encoded: "data:image/jpeg;base64,map-small" });
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} />));
+
+    const input = container.querySelector("#map-image-upload") as HTMLInputElement;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], "手绘地图.jpg", { type: "image/jpeg" })] });
+    flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+
+    await vi.waitFor(() => {
+      expect(onPatch).toHaveBeenCalledWith(expect.objectContaining({
+        renderSource: expect.objectContaining({ kind: "image", src: "data:image/jpeg;base64,map-small" }),
+      }));
+    });
+    expect(canvas).toMatchObject({ width: 2560, height: 1600 });
+
+    root.unmount();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("reports an oversized SVG map instead of storing it", async () => {
+    const onPatch = vi.fn();
+    class ImmediateFileReader {
+      result = `data:image/svg+xml;base64,${"A".repeat(3_000_000)}`;
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() { queueMicrotask(() => this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>)); }
+    }
+    vi.stubGlobal("FileReader", ImmediateFileReader);
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} />));
+
+    const input = container.querySelector("#map-image-upload") as HTMLInputElement;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["<svg />"], "巨幅.svg", { type: "image/svg+xml" })] });
+    flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+
+    await vi.waitFor(() => {
+      expect(container.querySelector("[data-map-image-notice]")?.textContent).toContain("SVG 体积过大");
+    });
+    expect(onPatch).not.toHaveBeenCalled();
+
+    root.unmount();
+    vi.unstubAllGlobals();
+  });
+
   it("defers editable values until blur or Enter", () => {
     const onPatch = vi.fn();
     const container = document.createElement("div");

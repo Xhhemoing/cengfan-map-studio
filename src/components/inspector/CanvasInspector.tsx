@@ -1,5 +1,7 @@
 import { ImageUp, RotateCcw, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { CANVAS_SIZE_PRESETS, type CanvasSizePresetId } from "../../lib/grid";
+import { applyImageWithinBudget } from "../../lib/image-downscale";
 import type { CanvasSettings } from "../../lib/scene-document";
 import { FileDropzone } from "../FileDropzone";
 import { DeferredInput } from "../DeferredInput";
@@ -10,9 +12,25 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
   onPatch: (patch: Partial<CanvasSettings>) => void;
   onReset: () => void;
 }) {
+  const [notice, setNotice] = useState("");
+
   const setBackgroundImage = (file: File) => {
     const reader = new FileReader();
-    reader.onload = () => onPatch({ backgroundImageSrc: String(reader.result ?? "") || undefined });
+    reader.onerror = () => setNotice("读取图片失败，请重试");
+    reader.onload = () => {
+      const source = String(reader.result ?? "");
+      if (!source) {
+        onPatch({ backgroundImageSrc: undefined });
+        return;
+      }
+      setNotice("");
+      applyImageWithinBudget(
+        source,
+        { kind: "background" },
+        (backgroundImageSrc) => onPatch({ backgroundImageSrc }),
+        setNotice,
+      );
+    };
     reader.readAsDataURL(file);
   };
 
@@ -92,6 +110,7 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
             onClick={() => onPatch({ backgroundImageSrc: undefined })}
           >移除背景</CompactButton>
         )}
+        {notice && <p className="property-panel__hint" role="status" data-canvas-background-notice>{notice}</p>}
       </div>
       <label htmlFor="canvas-background-opacity">背景透明度
         <DeferredInput
