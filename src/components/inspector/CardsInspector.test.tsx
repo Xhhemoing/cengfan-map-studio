@@ -1,8 +1,29 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createProjectDocument } from "../../lib/project-document";
 import { CardsInspector } from "./CardsInspector";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted for
+  // the rest of the run — 14 cases mount here — racing React's scheduler against
+  // jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -15,8 +36,7 @@ describe("CardsInspector", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, zIndex: 12 };
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
     const input = container.querySelector("#cards-zindex") as HTMLInputElement;
@@ -36,15 +56,12 @@ describe("CardsInspector", () => {
     expect(onPatch).toHaveBeenCalledWith({ zIndex: 11 });
     flushSync(() => (container.querySelector("button[aria-label='数据框置底']") as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ zIndex: -100 });
-
-    flushSync(() => root.unmount());
   });
 
   it("offers compact layout independently from visual templates", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
     const presets = container.querySelector("#cards-template") as HTMLSelectElement;
@@ -73,15 +90,12 @@ describe("CardsInspector", () => {
     expect(showCount.checked).toBe(true);
     flushSync(() => showCount.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ showCount: false });
-
-    flushSync(() => root.unmount());
   });
 
   it("applies a reference style directly instead of opening the retired custom editor", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />,
     ));
@@ -96,15 +110,12 @@ describe("CardsInspector", () => {
       presentation: "emblem-list",
       displayFrame: undefined,
     }));
-
-    flushSync(() => root.unmount());
   });
 
   it("switches layout modes and limits auto balance to quadrant mode", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
     const mode = container.querySelector("#cards-layout-mode") as HTMLSelectElement;
@@ -128,15 +139,12 @@ describe("CardsInspector", () => {
       <CardsInspector cards={{ ...project.cards, layoutMode: "radial" }} onPatch={onPatch} onReset={vi.fn()} />,
     ));
     expect((container.querySelector("#cards-auto-balance") as HTMLInputElement).disabled).toBe(true);
-
-    flushSync(() => root.unmount());
   });
 
   it("offers an explicit switch for allowing cards over the map", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
     const toggle = container.querySelector("#cards-allow-map-overlap") as HTMLInputElement;
@@ -144,15 +152,12 @@ describe("CardsInspector", () => {
     expect(toggle.checked).toBe(false);
     flushSync(() => toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ allowMapOverlap: true });
-
-    flushSync(() => root.unmount());
   });
 
   it("offers an opt-in switch for province textures in data cards", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
     const toggle = container.querySelector("#cards-show-province-texture") as HTMLInputElement;
@@ -160,15 +165,12 @@ describe("CardsInspector", () => {
     expect(toggle.checked).toBe(false);
     flushSync(() => toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ showProvinceTexture: true });
-
-    flushSync(() => root.unmount());
   });
 
   it("defers numeric card edits until blur", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
     expect(container.querySelector('label[for="cards-maxWidth"]')?.textContent).toContain("卡片宽度");
@@ -183,15 +185,12 @@ describe("CardsInspector", () => {
     flushSync(() => whitespace.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ horizontalPadding: 24 });
     expect(container.querySelector("#cards-bottom-padding")).not.toBeNull();
-
-    flushSync(() => root.unmount());
   });
 
   it("exposes city subsections only for province-grouped cards", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
     const toggle = container.querySelector("#cards-city-subgroups") as HTMLInputElement;
@@ -202,27 +201,22 @@ describe("CardsInspector", () => {
 
     flushSync(() => root.render(<CardsInspector cards={{ ...project.cards, grouping: "city" }} onPatch={onPatch} onReset={vi.fn()} />));
     expect((container.querySelector("#cards-city-subgroups") as HTMLInputElement).disabled).toBe(true);
-    flushSync(() => root.unmount());
   });
 
   it("keeps expression and name presentation settings out of the compact inspector", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={vi.fn()} onReset={vi.fn()} />));
 
     expect(container.querySelector(".cards-expressions")).toBeNull();
     expect(container.querySelector(".cards-name-format")).toBeNull();
-
-    flushSync(() => root.unmount());
   });
 
 
   it("exposes per-field font selectors and patches fieldFonts", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <CardsInspector
         cards={project.cards}
@@ -265,15 +259,12 @@ describe("CardsInspector", () => {
         city: "font-system-kaiti",
       },
     });
-
-    flushSync(() => root.unmount());
   });
 
   it("keeps data-card font controls available when other advanced settings are collapsed", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} mode="global" collapsible />,
     ));
@@ -290,15 +281,12 @@ describe("CardsInspector", () => {
     expect(container.querySelector(".property-panel__advanced #cards-template")).toBeNull();
     expect(container.querySelector("#cards-template")).not.toBeNull();
     expect(container.querySelector(".property-panel__advanced #cards-connector-color")).toBeNull();
-
-    root.unmount();
   });
 
   it("keeps remaining advanced controls open by default", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} mode="global" />,
     ));
@@ -306,16 +294,13 @@ describe("CardsInspector", () => {
     expect(container.querySelector(".property-panel__advanced")).toBeNull();
     expect(container.querySelector(".cards-expressions")).toBeNull();
     expect(container.querySelector("#cards-field-fonts")).toBeNull();
-
-    root.unmount();
   });
 
   it("toggles no-wrap fields per visible field", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     project.cards = { ...project.cards, visibleFields: ["name", "university"], noWrapFields: ["name"] };
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
     const name = container.querySelector("#cards-nowrap-name") as HTMLInputElement;
@@ -331,21 +316,16 @@ describe("CardsInspector", () => {
     onPatch.mockClear();
     flushSync(() => (container.querySelector("#cards-nowrap-university") as HTMLInputElement).dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ noWrapFields: ["name", "university"] });
-
-    flushSync(() => root.unmount());
   });
 
   it("shares the same cards position pair between placement-only and full views", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={vi.fn()} onReset={vi.fn()} mode="placement" />));
     expect(container.textContent).toContain("数据框位置与尺寸");
     expect(container.querySelector('[data-property-pair="cards-position"] #cards-x')).not.toBeNull();
     expect(container.querySelector('[data-property-pair="cards-position"] #cards-y')).not.toBeNull();
     expect(container.querySelector('#cards-maxWidth')).not.toBeNull();
     expect(container.querySelector('[data-property-pair="cards-position"] #cards-maxWidth')).toBeNull();
-
-    flushSync(() => root.unmount());
   });
 });
