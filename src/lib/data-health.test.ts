@@ -209,6 +209,40 @@ describe("project data health", () => {
     ]);
   });
 
+  it("still reports the missing city of a row placed by a province override", () => {
+    // The override makes the location resolved, so 城市未匹配 stays silent on
+    // purpose; the row must not slip through unflagged because of it.
+    const project = createProjectDocument({
+      students: [
+        { id: "override-only", name: "林舟", university: "北京大学", city: "\u3000", province: "浙江省", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ unresolved: 0, missingRequired: 1 });
+    expect(listDataIssues(project).map((issue) => issue.id)).toEqual([
+      "missing-field:override-only",
+      "manual-province:override-only",
+    ]);
+    expect(listDataIssues(project)[0]).toMatchObject({ detail: "缺少城市" });
+  });
+
+  it("keeps an overseas record out of the unresolved count when a stale province survives", () => {
+    // Imports strip the province of an overseas destination, but a hand-edited
+    // or older project file can still carry one.
+    const project = createProjectDocument({
+      students: [
+        { id: "stale", name: "苏禾", university: "哈佛大学", city: "美国·波士顿", province: "浙江省", locationScope: "international", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ unresolved: 0, international: 1 });
+    expect(listDataIssues(project).map((issue) => issue.kind)).toEqual(["manual-province", "international"]);
+  });
+
   it("never asks an overseas record for a Chinese city or province", () => {
     const project = createProjectDocument({
       students: [

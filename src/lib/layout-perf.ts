@@ -1,4 +1,9 @@
 import type { CardLayoutBounds, CardPlacement } from "./card-layout";
+import type {
+  LayoutHealthConnector,
+  LayoutHealthInput,
+  LayoutHealthObject,
+} from "./layout-health";
 
 export interface LayoutInvariantOptions {
   /**
@@ -15,6 +20,73 @@ export interface LayoutInvariantOptions {
 }
 
 const EPSILON = 1e-7;
+
+export interface LayoutHealthBenchmarkFixture {
+  input: LayoutHealthInput;
+  laneCount: number;
+  cardCount: number;
+  connectorCount: number;
+  segmentsPerConnector: number;
+}
+
+/**
+ * Builds a map-independent health-check fixture from card rectangles and
+ * three-segment polylines. Each lane contributes one connector that crosses a
+ * different card, so connector-crosses-card remains represented as the
+ * fixture scales without loading production geography.
+ */
+export function makeLayoutHealthBenchmarkFixture(
+  laneCount = 60,
+): LayoutHealthBenchmarkFixture {
+  if (!Number.isInteger(laneCount) || laneCount <= 0) {
+    throw new Error("layout health laneCount must be a positive integer");
+  }
+
+  const objects: LayoutHealthObject[] = [];
+  const connectors: LayoutHealthConnector[] = [];
+  for (let lane = 0; lane < laneCount; lane += 1) {
+    const y = 40 + lane * 72;
+    const sourceId = `health-source-${lane}`;
+    const crossedId = `health-crossed-${lane}`;
+    objects.push(
+      {
+        id: sourceId,
+        kind: "card",
+        zIndex: 30,
+        bounds: { x: 40, y, width: 120, height: 48 },
+      },
+      {
+        id: crossedId,
+        kind: "card",
+        zIndex: 30,
+        bounds: { x: 300, y, width: 120, height: 48 },
+      },
+    );
+    const anchor = { x: 560, y: y + 30 };
+    connectors.push({
+      id: `health-connector-${lane}`,
+      cardId: sourceId,
+      anchor,
+      segments: [
+        { start: { x: 160, y: y + 24 }, end: { x: 230, y: y + 24 } },
+        { start: { x: 230, y: y + 24 }, end: { x: 230, y: y + 30 } },
+        { start: { x: 230, y: y + 30 }, end: anchor },
+      ],
+    });
+  }
+
+  return {
+    input: {
+      canvas: { width: 640, height: laneCount * 72 + 40, safeMargin: 20 },
+      objects,
+      connectors,
+    },
+    laneCount,
+    cardCount: objects.length,
+    connectorCount: connectors.length,
+    segmentsPerConnector: 3,
+  };
+}
 
 function rectanglesOverlap(left: CardPlacement, right: CardPlacement, gap: number): boolean {
   return left.x < right.x + right.width + gap

@@ -260,6 +260,24 @@ describe("server request security", () => {
     expect(response).toMatch(/^HTTP\/1\.1 400 /);
   });
 
+  it.each([
+    "localhost",
+    "127.0.0.1",
+    "localhost:8787",
+    "[::1]:8787",
+  ])("allows loopback Host header %s on a loopback listener", async (host) => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawRequest(origin, "/api/health", "GET", undefined, {
+      Host: host,
+    });
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({ ok: true });
+  });
+
   it("rejects DNS-rebinding Host headers on a loopback listener", async () => {
     const server = createAiServer();
     servers.push(server);

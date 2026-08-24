@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { CardLayoutBounds, CardPlacement } from "./card-layout";
-import { assertLayoutInvariants } from "./layout-perf";
+import {
+  assertLayoutInvariants,
+  makeLayoutHealthBenchmarkFixture,
+} from "./layout-perf";
 
 const bounds: CardLayoutBounds = {
   width: 500,
@@ -69,5 +72,39 @@ describe("assertLayoutInvariants", () => {
     expect(() => assertLayoutInvariants(split, bounds, {
       checkSameAnchorClusters: true,
     })).toThrow(/same-anchor cluster split.*cluster-a and cluster-b/);
+  });
+});
+
+describe("layout health benchmark fixture", () => {
+  it("builds scalable card rectangles and three-segment polylines", () => {
+    const fixture = makeLayoutHealthBenchmarkFixture(3);
+
+    expect(fixture).toMatchObject({
+      laneCount: 3,
+      cardCount: 6,
+      connectorCount: 3,
+      segmentsPerConnector: 3,
+      input: {
+        canvas: {
+          width: expect.any(Number),
+          height: expect.any(Number),
+          safeMargin: expect.any(Number),
+        },
+        objects: expect.any(Array),
+        connectors: expect.any(Array),
+      },
+    });
+    expect(fixture.input.objects).toHaveLength(6);
+    expect(fixture.input.connectors).toHaveLength(3);
+    expect(fixture.input.connectors?.[0]).toMatchObject({
+      id: expect.any(String),
+      cardId: expect.any(String),
+      anchor: { x: expect.any(Number), y: expect.any(Number) },
+      segments: [
+        { start: { x: expect.any(Number), y: expect.any(Number) }, end: { x: expect.any(Number), y: expect.any(Number) } },
+        { start: { x: expect.any(Number), y: expect.any(Number) }, end: { x: expect.any(Number), y: expect.any(Number) } },
+        { start: { x: expect.any(Number), y: expect.any(Number) }, end: { x: expect.any(Number), y: expect.any(Number) } },
+      ],
+    });
   });
 });

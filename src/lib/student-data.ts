@@ -100,8 +100,23 @@ export function resolveStudentLocation(student: Student): {
   return resolveCityLocation(trimImportCell(student.city));
 }
 
+/**
+ * Same folding rule as the roster health grouping in `data-duplicate.ts`: the
+ * name cleanup runs first (middle-dot variants, padding spaces, zero-width
+ * characters), then NFKC folds full-width letters and digits. Without the fold
+ * a school typed with a Chinese IME ("Ｈａｒｖａｒｄ") never matched its
+ * half-width twin, so the import review reported no duplicate while the health
+ * panel later flagged both records as 重复记录.
+ */
+function duplicateValue(value: string): string {
+  return normalizeStudentName(value)
+    .normalize("NFKC")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/\s+/g, "");
+}
+
 function duplicateKey(name: string, university: string): string {
-  return `${name}\u001f${university}`.toLocaleLowerCase("zh-CN").replace(/\s+/g, "");
+  return `${duplicateValue(name)}\u001f${duplicateValue(university)}`;
 }
 
 export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult {

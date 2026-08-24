@@ -7,6 +7,7 @@ import {
   validateStudentInput,
   type StudentInput,
 } from "./student-data";
+import { duplicateStudentIds } from "./data-duplicate";
 import type { Student } from "./project-data";
 
 describe("student data", () => {
@@ -232,6 +233,62 @@ describe("student data", () => {
     expect(result.issues.map((issue) => issue.field)).toEqual(["name", "university"]);
     expect(result.issues.every((issue) => issue.level === "error")).toBe(true);
     expect(result.issues.some((issue) => issue.code === "unresolved_city")).toBe(false);
+  });
+
+  it("flags a duplicate whose school differs only in full-width letters", () => {
+    // Typed with a Chinese IME left in full-width mode. Before the NFKC fold
+    // the import review said the roster was clean and the health panel then
+    // reported both rows as 重复记录.
+    const result = buildStudentRecords([
+      { name: "苏禾", university: "Harvard University", city: "美国·波士顿", locationScope: "international" },
+      { name: "苏禾", university: "Ｈａｒｖａｒｄ　Ｕｎｉｖｅｒｓｉｔｙ", city: "美国·波士顿", locationScope: "international" },
+    ]);
+
+    expect(result.issues.filter((issue) => issue.code === "duplicate_name")).toEqual([
+      expect.objectContaining({ level: "warning", message: "存在重复学生记录：苏禾 · Harvard University" }),
+    ]);
+  });
+
+  it("flags a duplicate whose school differs only in middle-dot variant", () => {
+    const result = buildStudentRecords([
+      { name: "苏禾", university: "圣彼得堡·国立大学", city: "俄罗斯·圣彼得堡", locationScope: "international" },
+      { name: "苏禾", university: "圣彼得堡・国立大学", city: "俄罗斯·圣彼得堡", locationScope: "international" },
+    ]);
+
+    expect(result.issues.filter((issue) => issue.code === "duplicate_name")).toHaveLength(1);
+  });
+
+  it("flags a duplicate whose name differs only in full-width letters", () => {
+    const result = buildStudentRecords([
+      { name: "Ｌｉｎ Ｚｈｏｕ", university: "北京大学", city: "北京市" },
+      { name: "Lin Zhou", university: "北京大学", city: "北京市" },
+    ]);
+
+    expect(result.issues.filter((issue) => issue.code === "duplicate_name")).toHaveLength(1);
+    // Only the grouping key is folded; each record keeps the spelling as typed.
+    expect(result.students.map((student) => student.name)).toEqual(["Ｌｉｎ Ｚｈｏｕ", "Lin Zhou"]);
+  });
+
+  it("agrees with the roster health grouping on which records are duplicates", () => {
+    const result = buildStudentRecords([
+      { name: "苏禾", university: "Harvard University", city: "美国·波士顿", locationScope: "international" },
+      { name: "苏禾", university: "Ｈａｒｖａｒｄ　Ｕｎｉｖｅｒｓｉｔｙ", city: "美国·波士顿", locationScope: "international" },
+      { name: "林舟", university: "北京大学", city: "北京市" },
+    ]);
+
+    const flaggedAtImport = result.issues.filter((issue) => issue.code === "duplicate_name").length > 0;
+
+    expect(flaggedAtImport).toBe(true);
+    expect(duplicateStudentIds(result.students).size).toBe(2);
+  });
+
+  it("keeps two genuinely different schools out of the duplicate warning", () => {
+    const result = buildStudentRecords([
+      { name: "苏禾", university: "北京大学", city: "北京市" },
+      { name: "苏禾", university: "北京师范大学", city: "北京市" },
+    ]);
+
+    expect(result.issues.some((issue) => issue.code === "duplicate_name")).toBe(false);
   });
 
   it("trims confirmed fields without persisting source-only input", () => {

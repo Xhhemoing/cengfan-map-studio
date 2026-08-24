@@ -113,16 +113,50 @@ export function resolveStyleLayerSelection(target: (typeof STYLE_LAYER_TARGETS)[
   return { type: "cards" };
 }
 
-/** 由排版问题 id 找到画布上应选中的对象；找不到时返回 null（保持当前选择不变）。 */
-export function resolveLayoutIssueSelection(project: ProjectDocument, issueId: string): SceneSelection | null {
-  const target = issueId.split(":").find((id) => (
-    id === "map"
+/** 连接线 id 的前缀（`connector-<卡片分组键>`）。连接线自身不是能选中的画布对象。 */
+const CONNECTOR_ID_PREFIX = "connector-";
+
+/**
+ * 排版问题 id 由涉及的对象 id 用 ":" 拼成（遮挡是「后:前」，穿卡是「连接线:被穿的卡」）。
+ *
+ * 卡片分组键取自名单里的省 / 市 / 院校名，用户数据里带 ":" 完全可能，逐段切开会把
+ * 这种键切碎、结果一个对象都认不出来。这里穷举跨分隔符的连续片段，同一起点先长后短，
+ * 让含 ":" 的完整键先于它的碎片被验证；起点靠前的先来，保持「取 id 里第一个对象」的既有次序。
+ */
+function issueIdFragments(issueId: string): string[] {
+  const parts = issueId.split(":");
+  const fragments: string[] = [];
+  for (let start = 0; start < parts.length; start += 1) {
+    for (let end = parts.length; end > start; end -= 1) {
+      fragments.push(parts.slice(start, end).join(":"));
+    }
+  }
+  return fragments;
+}
+
+function isSelectableLayoutTarget(project: ProjectDocument, id: string): boolean {
+  return id === "map"
     || id === "cards"
     || id === "guests"
     || Boolean(project.cards.positions?.[id])
     || project.textElements.some((text) => text.id === id)
-    || project.assetElements.some((asset) => asset.id === id)
-  ));
+    || project.assetElements.some((asset) => asset.id === id);
+}
+
+/**
+ * 由排版问题 id 找到画布上应选中的对象；找不到时返回 null（保持当前选择不变）。
+ *
+ * 先按 id 里出现的顺序找真对象，于是穿卡（`connector-<出发卡>:<被穿的卡>`）落在被穿的
+ * 那张卡上——那才是用户要挪的东西。都认不出来时再剥掉 `connector-` 前缀还原出发卡：
+ * 被穿的卡已经不在手工位置里、或者两端都是连接线（引线互相冲突）时，点「定位」仍有反应。
+ */
+export function resolveLayoutIssueSelection(project: ProjectDocument, issueId: string): SceneSelection | null {
+  const fragments = issueIdFragments(issueId);
+  const target = fragments.find((id) => isSelectableLayoutTarget(project, id))
+    ?? fragments
+      .filter((id) => id.startsWith(CONNECTOR_ID_PREFIX))
+      .map((id) => id.slice(CONNECTOR_ID_PREFIX.length))
+      .find((id) => isSelectableLayoutTarget(project, id));
   if (!target) return null;
   if (target === "map") return { type: "map" };
   if (target === "cards" || project.cards.positions?.[target]) return { type: "cards" };

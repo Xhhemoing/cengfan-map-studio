@@ -83,8 +83,14 @@ export function expandMergedCells(rows: string[][], merges: readonly SheetMergeR
   return expanded;
 }
 
+/**
+ * Tab-joins the matrix for the free-text fallback. Blank cells are kept — dropping them would pull
+ * every later cell a column left, so `林舟,,北京市` would read 北京市 as the 院校 — matching the
+ * alignment rule splitParts follows in import-data. Only trailing tabs are trimmed, so an all-blank
+ * row reads as an empty line and is dropped.
+ */
 function matrixToText(rows: string[][]): string {
-  return rows.map((row) => row.filter(Boolean).join("\t")).filter((line) => line.length > 0).join("\n");
+  return rows.map((row) => row.join("\t").replace(/\t+$/, "")).filter((line) => line.length > 0).join("\n");
 }
 
 function emptyMetadata(): Pick<ExcelImportResult, "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {

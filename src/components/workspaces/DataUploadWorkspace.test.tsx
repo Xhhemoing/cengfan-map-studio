@@ -347,6 +347,17 @@ describe("DataUploadWorkspace", () => {
     expect(mapping?.querySelector('[aria-label="省份分布"]')?.textContent).toContain("北京市");
   });
 
+  it("exposes every province distribution chip as a listitem of the 省份分布 list", () => {
+    // Two roster cities resolve to two provinces, so the pairing is exercised with more than one chip.
+    const { container } = renderWorkspace({
+      project: createProjectDocument({ students: rosterWithTwo, templateId: "original", dataView: "province" }),
+    });
+
+    const chips = Array.from(container.querySelector('[role="list"][aria-label="省份分布"]')!.children);
+    expect(chips.map((chip) => chip.getAttribute("role"))).toEqual(["listitem", "listitem"]);
+    expect(chips.every((chip) => chip.classList.contains("data-upload-workspace__province-chip"))).toBe(true);
+  });
+
   it("defaults the side rail to the quality tab and switches to the asset library", () => {
     const { container } = renderWorkspace();
 

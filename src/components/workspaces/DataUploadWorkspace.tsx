@@ -257,7 +257,7 @@ export function DataUploadRail({
             </div>
             <div className="data-upload-workspace__province-grid" role="list" aria-label="省份分布">
               {distributionEntries.map(([name, entry]) => (
-                <span key={name} className="data-upload-workspace__province-chip" data-overridden={entry.overridden ? "true" : undefined}>
+                <span key={name} className="data-upload-workspace__province-chip" role="listitem" data-overridden={entry.overridden ? "true" : undefined}>
                   <strong>{name}</strong>
                   <small>{entry.count} 人{entry.overridden ? " · 已覆盖" : ""}</small>
                 </span>

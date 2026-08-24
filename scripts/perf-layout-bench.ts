@@ -18,7 +18,14 @@ import {
 } from "../src/lib/card-layout";
 import { createCardLayoutCacheKey } from "../src/lib/card-layout-cache";
 import { posterPngExportSize } from "../src/lib/export-poster";
-import { assertLayoutInvariants } from "../src/lib/layout-perf";
+import {
+  assertLayoutInvariants,
+  makeLayoutHealthBenchmarkFixture,
+} from "../src/lib/layout-perf";
+import {
+  checkLayoutHealth,
+  type LayoutHealthIssueKind,
+} from "../src/lib/layout-health";
 import { resolvePrintBleedGeometry } from "../src/lib/print-bleed";
 import { runPrintPreflight } from "../src/lib/print-preflight";
 
@@ -29,6 +36,7 @@ export const DEFAULT_LAYOUT_BENCH_MODES: readonly CardLayoutMode[] = [
   "right-stack",
   "grid",
 ];
+export const DEFAULT_LAYOUT_HEALTH_BENCH_LANES = [12, 30, 60, 120] as const;
 
 export interface LayoutBenchmarkConfig {
   counts?: readonly number[];
@@ -93,6 +101,7 @@ export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
   clusteredAnchorFixture: ClusteredAnchorLayoutBenchmarkReport;
   workerMessageOverhead: WorkerMessageBenchmarkResult;
   cacheKeyGeneration: CardLayoutCacheKeyBenchmarkReport;
+  layoutHealth: LayoutHealthBenchmarkReport;
   printBleedExport: PrintBleedExportBenchmarkReport;
   printPreflight: PrintPreflightBenchmarkReport;
 }
@@ -113,6 +122,33 @@ export interface CardLayoutCacheKeyBenchmarkResult {
   keyBytes: number;
   p50Ms: number;
   p95Ms: number;
+}
+
+export interface LayoutHealthBenchmarkConfig {
+  laneCounts?: readonly number[];
+  warmupIterations?: number;
+  iterations?: number;
+}
+
+export interface LayoutHealthBenchmarkResult {
+  laneCount: number;
+  cardCount: number;
+  connectorCount: number;
+  segmentsPerConnector: number;
+  issueCount: number;
+  issueCounts: Partial<Record<LayoutHealthIssueKind, number>>;
+  p50Ms: number;
+  p95Ms: number;
+  minMs: number;
+  maxMs: number;
+}
+
+export interface LayoutHealthBenchmarkReport {
+  methodology: "synthetic card rectangles and three-segment polylines; checkLayoutHealth only; fixture creation and issue summarization excluded";
+  warmupIterations: number;
+  iterations: number;
+  laneCounts: number[];
+  results: LayoutHealthBenchmarkResult[];
 }
 
 export interface PrintBleedExportBenchmarkResult {
@@ -555,6 +591,68 @@ export function runLayoutBenchmark(config: LayoutBenchmarkConfig = {}): LayoutBe
   };
 }
 
+/**
+ * Times the full layout-health pass against a scalable synthetic scene. The
+ * production map and content-layout builders are intentionally absent: plain
+ * rectangles and polylines are sufficient to exercise connector conflicts and
+ * connector-crosses-card checks without a Vite-only geography import.
+ */
+export function runLayoutHealthBenchmark(
+  config: LayoutHealthBenchmarkConfig = {},
+): LayoutHealthBenchmarkReport {
+  const laneCounts = [...(config.laneCounts ?? DEFAULT_LAYOUT_HEALTH_BENCH_LANES)]
+    .map((count) => positiveInteger(count, "layout health lane count"));
+  const warmupIterations = positiveInteger(
+    config.warmupIterations ?? 3,
+    "layout health warmupIterations",
+  );
+  const iterations = positiveInteger(config.iterations ?? 20, "layout health iterations");
+  if (laneCounts.length === 0) throw new Error("layout health laneCounts must not be empty");
+
+  const results = laneCounts.map((laneCount): LayoutHealthBenchmarkResult => {
+    const fixture = makeLayoutHealthBenchmarkFixture(laneCount);
+    for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+      checkLayoutHealth(fixture.input);
+    }
+
+    const samples: number[] = [];
+    let issues: ReturnType<typeof checkLayoutHealth> = [];
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+      const startedAt = performance.now();
+      issues = checkLayoutHealth(fixture.input);
+      samples.push(performance.now() - startedAt);
+    }
+    const issueCounts: Partial<Record<LayoutHealthIssueKind, number>> = {};
+    for (const issue of issues) {
+      issueCounts[issue.kind] = (issueCounts[issue.kind] ?? 0) + 1;
+    }
+    if (!issueCounts["connector-crosses-card"]) {
+      throw new Error(`layout health/${laneCount}: fixture did not exercise connector-crosses-card`);
+    }
+
+    return {
+      laneCount,
+      cardCount: fixture.cardCount,
+      connectorCount: fixture.connectorCount,
+      segmentsPerConnector: fixture.segmentsPerConnector,
+      issueCount: issues.length,
+      issueCounts,
+      p50Ms: rounded(percentile(samples, 0.5)),
+      p95Ms: rounded(percentile(samples, 0.95)),
+      minMs: rounded(Math.min(...samples)),
+      maxMs: rounded(Math.max(...samples)),
+    };
+  });
+
+  return {
+    methodology: "synthetic card rectangles and three-segment polylines; checkLayoutHealth only; fixture creation and issue summarization excluded",
+    warmupIterations,
+    iterations,
+    laneCounts,
+    results,
+  };
+}
+
 export function runPrintBleedExportBenchmark(
   warmupIterations = 500,
   iterations = 5_000,
@@ -831,6 +929,7 @@ if (isDirectRun) {
     clusteredAnchorFixture: runClusteredAnchorBenchmark(),
     workerMessageOverhead: await runWorkerMessageBenchmark(),
     cacheKeyGeneration: runCardLayoutCacheKeyBenchmark(),
+    layoutHealth: runLayoutHealthBenchmark(),
     printBleedExport: runPrintBleedExportBenchmark(),
     printPreflight: runPrintPreflightBenchmark(),
   };

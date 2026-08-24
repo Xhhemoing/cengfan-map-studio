@@ -276,6 +276,24 @@ describe("binary import adapters", () => {
     expect(result.candidates).toHaveLength(2);
   });
 
+  it("keeps a blank cell through the free-text fallback so later columns stay aligned", () => {
+    // The CSV row 林舟,,北京市 reaches the fallback as a matrix row with an empty middle cell.
+    // Dropping the gap would shift 北京市 into the 院校 column; keeping it means the row stays
+    // three columns wide and is reported instead of silently misread.
+    const result = parseExcelWorkbookRows([
+      ["苏禾", "浙江大学", "杭州市"],
+      ["林舟", "", "北京市"],
+    ]);
+
+    expect(result.headerRowIndex).toBeUndefined();
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: "林舟\t\t北京市", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+
   it("re-exports the html table parser extracted into html-table-parse", () => {
     // Call sites import parseHtmlTableRows from binary-import; the identity check pins the
     // re-export to the extracted implementation (behaviour lives in html-table-parse.test.ts).
