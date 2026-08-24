@@ -18,7 +18,7 @@
 | Round 7 | complete | 2026-08-24 | 2026-08-24 | agent-session 拆分；印刷出血导出；出血健康警告；快照 flock |
 | Round 8 | complete | 2026-08-24 | 2026-08-24 | 印前体检；交付页出血尺寸；helpers 再拆；损坏快照跳过 |
 | Round 9 | complete | 2026-08-24 | 2026-08-24 | App 测试拆分；幽灵卡修复；导入行号/引号；JSON 415；交付 a11y |
-| Round 10 | integrating | 2026-08-24 | — | 健康检查真高度/同层重叠；交付出血预览；导入副列回落；CORS X-Request-Id |
+| Round 10 | complete | 2026-08-24 | 2026-08-24 | 健康检查真高度/同层重叠；交付出血预览；导入副列回落；CORS X-Request-Id |
 
 ## Round 1 结论摘要
 
@@ -78,15 +78,19 @@
 
 详见 [round9/BRIEF.md](round9/BRIEF.md)。集成：**tsc 绿、199×1658 tests 绿**。App 套件拆分（116 例保持 + 1 debug）；`packSides` 幽灵卡；导入引号换行/物理行号/零宽/残缺 HTML；JSON 415；交付出血成品标题与「见导出设置」。
 
-## 全局成果（九轮合计）
+## Round 10 结论简报
 
-| 指标 | main 基线 | Round 9 结束 |
+详见 [round10/BRIEF.md](round10/BRIEF.md)。集成：**tsc 绿、200×1699 tests 绿**。健康输入用真实卡高与连接线；同层 card 重叠可报；手摆卡成为求解障碍；交付预览画出出血；导入副列回落与筛选诚实；CORS `X-Request-Id`。
+
+## 全局成果（十轮合计）
+
+| 指标 | main 基线 | Round 10 结束 |
 | --- | ---: | ---: |
 | App.tsx 行数 | 2466 | **333** |
-| card-layout 门面 | 1297 | 模块化 + 幽灵卡修复 |
+| card-layout 门面 | 1297 | 模块化 + 手摆障碍 |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **396** |
-| 测试 | （基线已有大量单测） | **1658 passed / 199 files** |
+| 测试 | （基线已有大量单测） | **1699 passed / 200 files** |
 
 ## 回滚
 
