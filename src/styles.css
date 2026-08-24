@@ -3787,8 +3787,9 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
 .template-exchange__export:disabled { cursor: not-allowed; opacity: 0.6; }
 .template-exchange__import input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .template-exchange__import:focus-within { outline: 2px solid var(--editor-accent, #245d57); outline-offset: 1px; }
-.template-exchange__status:empty { display: none; }
 .template-exchange__status { margin: 0; color: var(--editor-ink, #314d60); font-size: 11px; line-height: 1.5; }
+/* 常驻 live region：无消息时收成不可见的 1px，既不撑出空行也不离开无障碍树。 */
+.template-exchange__status:empty { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; background: none; border: 0; clip-path: inset(50%); }
 
 /* Collaboration identity: local nickname input and role-text roster badges. */
 .collaboration-display-name { display: grid; gap: 4px; font-size: 11px; color: #315b67; }

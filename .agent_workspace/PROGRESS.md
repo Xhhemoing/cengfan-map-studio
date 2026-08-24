@@ -10,7 +10,7 @@
 |------|------|------|
 | C2-R1 | 补齐推迟项初始落地 | completed |
 | C2-R2 | 靶向修复与测试补齐 | completed |
-| C2-R3 | SOTA 打磨与浏览器验收 | in_progress |
+| C2-R3 | SOTA 打磨与浏览器验收 | completed |
 | C2-R2 | 靶向修复与测试补齐 | pending |
 | C2-R3 | SOTA 打磨与浏览器验收 | pending |
 

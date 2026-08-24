@@ -40,10 +40,6 @@
 .template-workspace__list button.is-selected { color: var(--editor-ink); border-color: var(--editor-accent); box-shadow: inset 3px 0 var(--editor-accent); }
 .template-workspace__list button span:nth-child(2) { display: grid; gap: 3px; }
 .template-workspace__list small { color: var(--editor-ink-muted); font-size: 10px; }
-.template-workspace__swatch { width: 44px; height: 38px; border-radius: 4px; background: linear-gradient(145deg, #eef2e8, #4f8b80); }
-.template-workspace__swatch--cartoon, .template-workspace__swatch--q { background: linear-gradient(145deg, #ffe9a8, #ee8066); }
-.template-workspace__swatch--grain { background: linear-gradient(145deg, #e9e2d1, #697c6d); }
-.template-workspace__swatch--scenery, .template-workspace__swatch--regional { background: linear-gradient(145deg, #dcebdc, #56866b); }
 .template-workspace__detail { display: grid; align-content: start; min-width: 0; padding: 22px; overflow: auto; }
 .template-workspace__impact { display: grid; grid-template-columns: minmax(180px, .7fr) 1fr; gap: 16px; max-width: 1100px; margin: 16px auto 0; padding: 14px; background: var(--editor-surface); border: 1px solid var(--editor-line); border-radius: 7px; }
 .template-workspace__impact p, .template-workspace__impact ul { margin: 0; }

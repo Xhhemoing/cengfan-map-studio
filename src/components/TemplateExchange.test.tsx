@@ -84,7 +84,29 @@ describe("TemplateExchange", () => {
   it("keeps a polite live region for import and export receipts", () => {
     const container = render(<TemplateExchange customTemplates={[]} onImport={vi.fn()} />);
 
-    expect(container.querySelector('[role="status"]')?.getAttribute("aria-live")).toBe("polite");
+    const region = container.querySelector<HTMLElement>('.template-exchange__status[role="status"]');
+    expect(region).not.toBeNull();
+    expect(region!.getAttribute("aria-live")).toBe("polite");
+    // 空态没有子节点，才会命中 styles.css 里视觉隐藏的 `:empty` 规则而不是被移出无障碍树。
+    expect(region!.childNodes).toHaveLength(0);
+    expect(region!.textContent).toBe("");
+    expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
+  });
+
+  it("reuses the idle live region node for both failure and success receipts", async () => {
+    const container = render(<TemplateExchange customTemplates={[]} onImport={vi.fn()} />);
+    const region = container.querySelector<HTMLElement>('.template-exchange__status[role="status"]')!;
+
+    await uploadFile(container, new File(["{ not json"], "坏文件.cengfan-template"));
+
+    expect(region.textContent).toContain("导入失败");
+    expect(container.querySelector('.template-exchange__status[role="status"]')).toBe(region);
+
+    const json = serializeTemplatePack(createTemplatePack({ record: makeRecord() }));
+    await uploadFile(container, new File([json], "卡通开学墙.cengfan-template", { type: "application/json" }));
+
+    expect(region.textContent).toContain("已导入模板");
+    expect(container.querySelector('.template-exchange__status[role="status"]')).toBe(region);
   });
 
   it("does not claim .cengfan project packages in its file picker", () => {
