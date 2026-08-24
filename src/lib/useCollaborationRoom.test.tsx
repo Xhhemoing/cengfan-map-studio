@@ -115,13 +115,19 @@ interface ServerScript {
   snapshot: ProjectPackage;
   operations: (afterVersion: number) => Response | Promise<Response>;
   room?: () => Response | Promise<Response>;
+  /** 第几次申请 events ticket(从 0 起)。房间被清理后 ticket 会开始报终局码。 */
+  ticket?: (attempt: number) => Response | Promise<Response>;
 }
 
 function installFetch(script: ServerScript): MockInstance {
+  let ticketAttempts = 0;
   const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     requestSignals.push({ url, signal: init?.signal ?? undefined });
     if (url.endsWith(`/api/rooms/${ROOM_ID}/events-ticket`)) {
+      const attempt = ticketAttempts;
+      ticketAttempts += 1;
+      if (script.ticket) return script.ticket(attempt);
       return json({ ticket: `ticket-${FakeEventSource.instances.length}` }, 201);
     }
     if (url.includes(`/api/rooms/${ROOM_ID}/operations`)) {
@@ -410,7 +416,184 @@ describe("useCollaborationRoom", () => {
 
     expect(harness.controller().collaborationOffline).toBe(false);
     expect(harness.controller().collaborationStatus).toBe("connected");
+    // 离线 → 在线的跳变对外可观测:调用方据此重发分区期间没能上传的修改。
+    expect(harness.controller().connectionHealCount).toBe(1);
     expect(harness.refs.versionRef.current).toBe(2);
+    harness.unmount();
+  });
+
+  it("enters a terminal expired state when the backfill finds the room gone", async () => {
+    vi.useFakeTimers();
+    installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      operations: () => json({ error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } }, 404),
+    });
+    const harness = mountHook(samplePackage());
+    window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`, ROOM_TOKEN);
+    flushSync(() => harness.controller().setRoomInput(ROOM_ID));
+    harness.controller().joinRoom();
+    await vi.waitUntil(() => FakeEventSource.instances.length > 0, { timeout: 2_000, interval: 1 });
+
+    FakeEventSource.instances[0]!.fail();
+    await vi.waitUntil(() => harness.controller().roomExpired, { timeout: 2_000, interval: 1 });
+
+    // 房间已经不存在:既不是"离线"(等网络回来也没用),也不能再承诺自动重连。
+    expect(harness.controller().collaborationOffline).toBe(false);
+    expect(harness.controller().collaborationMessage).toContain("房间已过期");
+    expect(harness.controller().collaborationMessage).not.toContain("正在自动重连");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    // 失效的房间凭证不再留在本机,"加入"不会继续给出可点的假象。
+    expect(window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`)).toBeNull();
+    harness.unmount();
+  });
+
+  it("enters the terminal state when the reconnect ticket reports the room is gone", async () => {
+    vi.useFakeTimers();
+    installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      // 房间被清理时补齐请求也可能一直悬着:终局判定必须来自 ticket,而不是靠补齐兜底。
+      operations: () => neverSettles(),
+      ticket: (attempt) => (attempt === 0
+        ? json({ ticket: "ticket-0" }, 201)
+        : json({ error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } }, 404)),
+    });
+    const harness = mountHook(samplePackage());
+    window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`, ROOM_TOKEN);
+    flushSync(() => harness.controller().setRoomInput(ROOM_ID));
+    harness.controller().joinRoom();
+    await vi.waitUntil(() => FakeEventSource.instances.length > 0, { timeout: 2_000, interval: 1 });
+
+    FakeEventSource.instances[0]!.fail();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitUntil(() => harness.controller().roomExpired, { timeout: 2_000, interval: 1 });
+
+    expect(harness.controller().collaborationStatus).toBe("error");
+    expect(harness.controller().collaborationMessage).toContain("房间已过期");
+    expect(harness.controller().collaborationOffline).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("nudges an immediate reconnect and backfill when the browser reports the network is back", async () => {
+    vi.useFakeTimers();
+    let reachable = false;
+    const request = installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      operations: (afterVersion) => {
+        if (!reachable) throw new TypeError("Failed to fetch");
+        return json({
+          id: ROOM_ID,
+          version: 2,
+          afterVersion,
+          operations: [setOp(["renderSettings", "fixedFps"], 44)],
+        });
+      },
+    });
+    const harness = mountHook(samplePackage());
+    window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`, ROOM_TOKEN);
+    flushSync(() => harness.controller().setRoomInput(ROOM_ID));
+    harness.controller().joinRoom();
+    await vi.waitUntil(() => FakeEventSource.instances.length > 0, { timeout: 2_000, interval: 1 });
+    await vi.waitUntil(() => harness.refs.versionRef.current === 1, { timeout: 2_000, interval: 1 });
+
+    FakeEventSource.instances[0]!.fail();
+    await vi.waitUntil(() => harness.controller().collaborationOffline, { timeout: 2_000, interval: 1 });
+    const streamsWhileOffline = FakeEventSource.instances.length;
+    const ticketsWhileOffline = request.mock.calls.filter(([input]) => String(input).endsWith("/events-ticket")).length;
+
+    reachable = true;
+    flushSync(() => window.dispatchEvent(new Event("online")));
+    // 一毫秒的退避都不等:恢复的那一刻就重挂流并补齐。
+    await vi.advanceTimersByTimeAsync(0);
+    expect(request.mock.calls.filter(([input]) => String(input).endsWith("/events-ticket")).length)
+      .toBe(ticketsWhileOffline + 1);
+
+    await vi.waitUntil(() => harness.refs.versionRef.current === 2, { timeout: 2_000, interval: 1 });
+    expect(FakeEventSource.instances.length).toBeGreaterThan(streamsWhileOffline);
+    expect(FakeEventSource.live()).toHaveLength(1);
+    expect(harness.controller().collaborationOffline).toBe(false);
+    expect(harness.controller().connectionHealCount).toBe(1);
+    expect(harness.refs.baselineRef.current?.renderSettings.fixedFps).toBe(44);
+    harness.unmount();
+  });
+
+  it("never resurrects a terminal room from an online event", async () => {
+    vi.useFakeTimers();
+    const request = installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      operations: () => json({ error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } }, 404),
+    });
+    const harness = mountHook(samplePackage());
+    window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`, ROOM_TOKEN);
+    flushSync(() => harness.controller().setRoomInput(ROOM_ID));
+    harness.controller().joinRoom();
+    await vi.waitUntil(() => FakeEventSource.instances.length > 0, { timeout: 2_000, interval: 1 });
+
+    FakeEventSource.instances[0]!.fail();
+    await vi.waitUntil(() => harness.controller().roomExpired, { timeout: 2_000, interval: 1 });
+    const callsWhenExpired = request.mock.calls.length;
+
+    flushSync(() => window.dispatchEvent(new Event("online")));
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(request.mock.calls).toHaveLength(callsWhenExpired);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(harness.controller().collaborationMessage).toContain("房间已过期");
+    harness.unmount();
+  });
+
+  it("folds a caller-reported transport failure into the same offline story", async () => {
+    installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+    });
+    const harness = mountHook(samplePackage());
+    await joinRoom(harness);
+    await vi.waitFor(() => expect(harness.refs.versionRef.current).toBe(1));
+
+    // 上传路径(事务提交)在调用方那一侧,它的分区失败要并进同一个离线叙事。
+    flushSync(() => harness.controller().setCollaborationOffline(true));
+    expect(harness.controller().collaborationOffline).toBe(true);
+    expect(harness.controller().collaborationStatus).toBe("error");
+    expect(harness.controller().collaborationMessage).toContain("网络已断开");
+    expect(harness.controller().connectionHealCount).toBe(0);
+
+    flushSync(() => harness.controller().setCollaborationOffline(false));
+    expect(harness.controller().collaborationOffline).toBe(false);
+    expect(harness.controller().connectionHealCount).toBe(1);
+    // 已经在线时再报一次在线不算恢复,调用方不会因此重发第二遍。
+    flushSync(() => harness.controller().setCollaborationOffline(false));
+    expect(harness.controller().connectionHealCount).toBe(1);
+    harness.unmount();
+  });
+
+  it("keeps the terminal state out of reach of a caller-reported offline flag", async () => {
+    vi.useFakeTimers();
+    installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      operations: () => json({ error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } }, 404),
+    });
+    const harness = mountHook(samplePackage());
+    window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`, ROOM_TOKEN);
+    flushSync(() => harness.controller().setRoomInput(ROOM_ID));
+    harness.controller().joinRoom();
+    await vi.waitUntil(() => FakeEventSource.instances.length > 0, { timeout: 2_000, interval: 1 });
+
+    FakeEventSource.instances[0]!.fail();
+    await vi.waitUntil(() => harness.controller().roomExpired, { timeout: 2_000, interval: 1 });
+
+    flushSync(() => harness.controller().setCollaborationOffline(true));
+
+    expect(harness.controller().collaborationOffline).toBe(false);
+    expect(harness.controller().collaborationMessage).toContain("房间已过期");
     harness.unmount();
   });
 });
