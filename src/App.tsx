@@ -734,6 +734,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
       } catch (error) {
         if (outdated()) return;
         if (!(error instanceof CollaborationClientError) || error.code !== "VERSION_CONFLICT") {
+          // 回执是本端最早能拿到的终局证据:房间没了/凭证失效/房间已关闭,后面每一笔事务都
+          // 注定失败。只画一句 error.message 的话,面板还是"已连接"的样子,送出 effect 下一次
+          // 编辑照旧武装,用户会一直往一间死房里编辑,直到流自己发现过期。先落终局再说话。
+          if (error instanceof CollaborationClientError && collaboration.reportTerminalRejection(error.code)) return;
           // 传输层失败和服务端拒绝是两回事:本地修改仍然有效,连接一回来这批增量就会被
           // 愈合信号重新投出去,面板要照实说,别让用户以为改动已经丢了。上传方向单独断掉
           // (流还活着)时也必须置位离线态,否则这种半边分区既没有离线提示,恢复时也
