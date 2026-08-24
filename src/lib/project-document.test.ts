@@ -34,6 +34,67 @@ function renameStudentTransaction(name: string): ProjectTransaction {
   };
 }
 
+function createRichProject(): ProjectDocument {
+  const project = createProjectDocument({
+    students,
+    templateId: "original",
+    dataView: "province",
+  });
+  return {
+    ...project,
+    map: {
+      ...project.map,
+      provinceStyles: {
+        浙江省: { appearance: { kind: "manual-color", color: "#88aaff" }, labelFontId: "font-map" },
+        北京市: {
+          appearance: {
+            kind: "texture",
+            assetId: "asset-province",
+            src: "data:image/png;base64,cHJvdmluY2U=",
+            fit: "cover",
+          },
+        },
+      },
+    },
+    guests: {
+      ...project.guests,
+      customText: "毕业快乐",
+      people: [{ id: "guest-1", name: "王老师", title: "班主任", visibility: true }],
+    },
+    textElements: [
+      ...project.textElements,
+      {
+        id: "text-custom",
+        role: "custom",
+        content: "山高水长",
+        x: 200,
+        y: 300,
+        fontSize: 24,
+        color: "#123456",
+        fontWeight: 600,
+        textAlign: "center",
+        maxWidth: 400,
+        visibility: true,
+      },
+    ],
+    assetElements: [{
+      id: "asset-1",
+      assetId: "uploaded-1",
+      label: "校徽",
+      src: "data:image/png;base64,YXNzZXQ=",
+      kind: "decoration",
+      x: 120,
+      y: 180,
+      width: 80,
+      height: 80,
+      rotation: 5,
+      opacity: 0.9,
+      zIndex: 3,
+      visibility: true,
+    }],
+  };
+}
+
 describe("project document history", () => {
   afterEach(() => vi.useRealTimers());
 
@@ -96,6 +157,40 @@ describe("project document history", () => {
     expect(project.students[0]?.name).toBe("林舟");
   });
 
+  it("isolates prior documents and history from hostile transaction references", () => {
+    const base = createRichProject();
+    const first = applyTransaction(base, renameStudentTransaction("稳定状态"));
+    const firstBefore = structuredClone(first);
+    const returnedStudent = { ...first.students[0]!, name: "返回状态" };
+    let retainedInput: ProjectDocument | undefined;
+
+    const next = applyTransaction(first, {
+      id: "tx-hostile",
+      label: "恶意事务",
+      source: "manual",
+      apply: (input) => {
+        retainedInput = input;
+        input.students[0]!.name = "输入内修改";
+        input.guests.people[0]!.name = "输入内嘉宾修改";
+        input.history.past[0]!.snapshot.students[0]!.name = "破坏旧历史";
+        return { ...input, students: [returnedStudent] };
+      },
+    });
+
+    expect(first).toEqual(firstBefore);
+    expect(next.history.past[0]?.snapshot.students[0]?.name).toBe("林舟");
+    expect(next.history.past[1]?.snapshot.students[0]?.name).toBe("稳定状态");
+    const committedHistory = structuredClone(next.history);
+
+    returnedStudent.name = "提交后修改返回引用";
+    retainedInput!.students[0]!.name = "提交后修改输入引用";
+    retainedInput!.map.provinceStyles!.浙江省 = { appearance: { kind: "manual-color", color: "#000000" } };
+    retainedInput!.history.past[0]!.snapshot.students[0]!.name = "再次破坏旧历史";
+
+    expect(first).toEqual(firstBefore);
+    expect(next.history).toEqual(committedHistory);
+  });
+
   it("reuses immutable history entries instead of cloning every prior snapshot", () => {
     const base = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const first = applyTransaction(base, renameStudentTransaction("第一次"));
@@ -109,8 +204,11 @@ describe("project document history", () => {
   });
 
   it("coalesces consecutive transactions with the same history group", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-27T12:00:00Z"));
     const base = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const first = applyTransaction(base, { ...renameStudentTransaction("第一次"), historyGroup: "student-1:name" });
+    vi.advanceTimersByTime(800);
     const second = applyTransaction(first, { ...renameStudentTransaction("第二次"), historyGroup: "student-1:name" });
 
     expect(second.history.past).toHaveLength(1);
@@ -155,22 +253,22 @@ describe("project document history", () => {
     expect(redone.history.future).toEqual([]);
   });
 
-  it("clears redo branch when a new transaction is applied after undo", () => {
-    const base = createProjectDocument({
-      students,
-      templateId: "original",
-      dataView: "province",
+  it("does not coalesce when a redo branch exists and clears that branch", () => {
+    const base = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const first = applyTransaction(base, { ...renameStudentTransaction("第一次"), historyGroup: "student-1:name" });
+    const second = applyTransaction(first, { ...renameStudentTransaction("第二次"), historyGroup: "student-1:city" });
+    const undone = undoTransaction(second);
+    const next = applyTransaction(undone, {
+      ...renameStudentTransaction("分叉"),
+      historyGroup: "student-1:name",
     });
-    const renamed = applyTransaction(base, renameStudentTransaction("林舟舟"));
-    const undone = undoTransaction(renamed);
-    const next = applyTransaction(undone, renameStudentTransaction("林舟舟舟"));
 
-    expect(next.students[0]?.name).toBe("林舟舟舟");
-    expect(next.history.past).toHaveLength(1);
+    expect(next.students[0]?.name).toBe("分叉");
+    expect(next.history.past).toHaveLength(2);
     expect(next.history.future).toEqual([]);
   });
 
-  it("keeps at most 50 history entries", () => {
+  it("trims history to the newest 50 entries", () => {
     let project: ProjectDocument = createProjectDocument({
       students,
       templateId: "original",
@@ -182,7 +280,39 @@ describe("project document history", () => {
     }
 
     expect(project.history.past).toHaveLength(50);
+    expect(project.history.past.map((entry) => entry.id)).toEqual(
+      Array.from({ length: 50 }, (_, index) => `tx-学生${index + 5}`),
+    );
     expect(project.students[0]?.name).toBe("学生54");
+  });
+
+  it("keeps rich scene data stable across undo, redo, and undo", () => {
+    const base = createRichProject();
+    const changed = applyTransaction(base, {
+      id: "tx-rich",
+      label: "修改丰富场景",
+      source: "manual",
+      apply: (current) => ({
+        ...current,
+        map: { ...current.map, opacity: 0.42 },
+        guests: { ...current.guests, customText: "再会" },
+        textElements: current.textElements.map((text) =>
+          text.id === "text-custom" ? { ...text, content: "前程似锦" } : text
+        ),
+        assetElements: current.assetElements.map((asset) => ({ ...asset, rotation: 45 })),
+      }),
+    });
+
+    const firstUndo = undoTransaction(changed);
+    const redone = redoTransaction(firstUndo);
+    const secondUndo = undoTransaction(redone);
+
+    expect(secondUndo).toEqual(firstUndo);
+    expect(secondUndo.map.provinceStyles).toEqual(base.map.provinceStyles);
+    expect(secondUndo.guests).toEqual(base.guests);
+    expect(secondUndo.textElements).toEqual(base.textElements);
+    expect(secondUndo.assetElements).toEqual(base.assetElements);
+    expect(redone).toMatchObject({ map: { opacity: 0.42 }, guests: { customText: "再会" } });
   });
 
   it("restores legacy history snapshots with a safe scene before undo", () => {
