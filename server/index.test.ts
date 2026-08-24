@@ -1704,6 +1704,80 @@ describe("unified application server", () => {
     }
   });
 
+  // 心跳原来走 roomStore.get,顺手 touch 了房间:只要有人挂着 SSE，这间房就永不过期，
+  // TTL 与 maxRooms 在生产里等于失效。现在心跳只 sweep，房间照常到点过期并终局 closed。
+  it("lets an idle room expire while only the SSE heartbeat is running", async () => {
+    const server = createAiServer({ roomTtlMs: 300, roomEventsHeartbeatMs: 50 });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const ticket = await createEventsTicket(origin, created.room.id, created.access.accessToken);
+
+    const controller = new AbortController();
+    const events = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(ticket)}&version=0`, { signal: controller.signal });
+    const reader = events.body!.getReader();
+    const decoder = new TextDecoder();
+    try {
+      let stream = "";
+      let done = false;
+      // 期间只有心跳在跑：没有任何一次房间请求来懒触发驱逐。
+      while (!done && !stream.includes("event: closed")) {
+        const chunk = await reader.read();
+        done = chunk.done;
+        stream += decoder.decode(chunk.value, { stream: true });
+      }
+      expect(stream).toContain("event: ping");
+      expect(stream).toContain("event: closed");
+      expect(stream).toContain("\"closed\":true");
+      await expect(reader.read()).resolves.toMatchObject({ done: true });
+
+      const afterExpiry = await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(created.access.accessToken) });
+      expect(afterExpiry.status).toBe(404);
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => undefined);
+    }
+  });
+
+  it("rate-limits invitation minting on the room creation window", async () => {
+    const server = createAiServer({
+      rateLimiters: { rooms: createRateLimiter({ limit: 2, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "invite-flood" });
+    const invite = () => rawPost(origin, `/api/rooms/${created.room.id}/invitations`, { role: "editor" }, roomHeaders(created.access.accessToken));
+
+    expect((await invite()).status).toBe(201);
+    const limited = await invite();
+    expect(limited.status).toBe(429);
+    expect(JSON.parse(limited.body)).toMatchObject({ error: { code: "ROOM_RATE_LIMITED" } });
+    expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  it("caps the pending invitations of one room", async () => {
+    const server = createAiServer({
+      maxRoomInvitationsPerRoom: 1,
+      rateLimiters: { rooms: createRateLimiter({ limit: 100, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "invite-cap" });
+    const invite = () => rawPost(origin, `/api/rooms/${created.room.id}/invitations`, { role: "editor" }, roomHeaders(created.access.accessToken));
+
+    const first = await invite();
+    expect(first.status).toBe(201);
+    const rejected = await invite();
+    expect(rejected.status).toBe(429);
+    expect(JSON.parse(rejected.body)).toMatchObject({ error: { code: "ROOM_LIMIT_REACHED" } });
+
+    // 兑换掉唯一一张邀请后名额释放，房主可以继续发下一张。
+    const token = (JSON.parse(first.body) as { token: string }).token;
+    const joined = await rawPost(origin, `/api/rooms/${created.room.id}/join`, { inviteToken: token, clientId: "editor", displayName: "编辑同学" });
+    expect(joined.status).toBe(200);
+    expect((await invite()).status).toBe(201);
+  });
+
   it("requires the workspace token for AI endpoints in locked-down production", async () => {
     const server = createAiServer({
       workspaceApiToken: "workspace-test-token",

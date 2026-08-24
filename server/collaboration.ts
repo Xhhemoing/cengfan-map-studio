@@ -119,6 +119,7 @@ export interface RoomStoreOptions {
   maxSubscribers?: number;
   roomTtlMs?: number;
   invitationTtlMs?: number;
+  maxInvitationsPerRoom?: number;
   now?: () => number;
 }
 
@@ -130,6 +131,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const maxSubscribers = options.maxSubscribers ?? 50;
   const roomTtlMs = options.roomTtlMs ?? 30 * 60 * 1000;
   const invitationTtlMs = options.invitationTtlMs ?? 24 * 60 * 60 * 1000;
+  const maxInvitationsPerRoom = Math.max(1, Math.floor(options.maxInvitationsPerRoom ?? 100));
   const now = options.now ?? Date.now;
   const rooms = new Map<string, CollaborationRoom>();
   const listeners = new Map<string, Set<Listener>>();
@@ -196,6 +198,23 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     purgeExpired();
     const room = rooms.get(id.toUpperCase());
     if (room) touch(room.id);
+    return room ? copyRoom(room) : undefined;
+  };
+
+  /**
+   * 只驱逐过期房间,不刷新任何房间的活跃时间。给周期性任务(SSE 心跳)用:
+   * 心跳若走 get,每一跳都会 touch 自己那间房,TTL 永远追不上心跳间隔,
+   * 挂着 SSE 的房间就永不过期,maxRooms 会被僵尸标签占死。
+   * 回滚:心跳换回 get(roomId) 即可恢复“心跳保活房间”的旧行为。
+   */
+  const sweep = () => {
+    purgeExpired();
+  };
+
+  /** 只读探查,同样不 touch。房间已过期时返回 undefined。 */
+  const peek = (id: string) => {
+    purgeExpired();
+    const room = rooms.get(id.toUpperCase());
     return room ? copyRoom(room) : undefined;
   };
 
@@ -277,9 +296,21 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     if (role !== "editor" && role !== "viewer") throw new CollaborationError("INVALID_TRANSACTION", "邀请角色无效");
     authorize(id, accessToken, "invite");
     const key = id.toUpperCase();
+    const roomInvitations = invitations.get(key);
+    // 过期邀请此前只在 join 命中它时才删,没人来兑换就一直躺在表里;
+    // 签发前先清一遍,再按房间封顶,房主的凭证才不会被无限堆积撑爆内存。
+    if (roomInvitations) {
+      const nowMs = now();
+      for (const [hash, invitation] of roomInvitations) {
+        if (invitation.expiresAt <= nowMs) roomInvitations.delete(hash);
+      }
+      if (roomInvitations.size >= maxInvitationsPerRoom) {
+        throw new CollaborationError("ROOM_LIMIT_REACHED", "房间未兑换的邀请数量已达到上限");
+      }
+    }
     const token = generateSecret();
     const expiresAtMs = now() + invitationTtlMs;
-    invitations.get(key)?.set(hashSecret(token), { role, expiresAt: expiresAtMs });
+    roomInvitations?.set(hashSecret(token), { role, expiresAt: expiresAtMs });
     return { token, role, expiresAt: new Date(expiresAtMs).toISOString() };
   };
 
@@ -556,7 +587,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     };
   };
 
-  return { create, get, createInvitation, join, authorize, apply, subscribe, listParticipants, refreshMember, leave, setAccess, getOperations, subscribeLifecycle } as RoomStore;
+  return { create, get, peek, sweep, createInvitation, join, authorize, apply, subscribe, listParticipants, refreshMember, leave, setAccess, getOperations, subscribeLifecycle } as RoomStore;
 }
 
 export interface RoomStore {
@@ -564,6 +595,10 @@ export interface RoomStore {
   /** @deprecated Compatibility overload for older in-process callers. HTTP routes never use it. */
   create<T>(snapshot: T | undefined, clientId: string): CollaborationRoom<T>;
   get: (id: string) => CollaborationRoom | undefined;
+  /** 读取房间但不刷新活跃时间。 */
+  peek: (id: string) => CollaborationRoom | undefined;
+  /** 驱逐过期房间(含终局 closed 广播)但不刷新任何房间的活跃时间。 */
+  sweep: () => void;
   createInvitation: (id: string, accessToken: string, role: Exclude<CollaborationRole, "owner">) => RoomInvitation;
   join<T>(id: string, input: RoomJoinRequest): CreatedRoom<T>;
   authorize: (id: string, accessToken: string, capability: CollaborationCapability) => RoomParticipant;

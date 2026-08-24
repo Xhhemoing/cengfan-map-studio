@@ -85,6 +85,8 @@ export interface AiServerOptions {
   roomTtlMs?: number;
   roomInvitationTtlMs?: number;
   roomEventsTicketTtlMs?: number;
+  roomEventsHeartbeatMs?: number;
+  maxRoomInvitationsPerRoom?: number;
   maxRoomEventsTickets?: number;
   maxRoomEventsTicketsPerRoom?: number;
   trustProxy?: boolean;
@@ -111,6 +113,8 @@ const DEFAULT_MAX_ROOM_SUBSCRIBERS = 50;
 const DEFAULT_ROOM_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_ROOM_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ROOM_EVENTS_TICKET_TTL_MS = 60 * 1000;
+const DEFAULT_ROOM_EVENTS_HEARTBEAT_MS = 20_000;
+const DEFAULT_MAX_ROOM_INVITATIONS_PER_ROOM = 100;
 const DEFAULT_MAX_ROOM_EVENTS_TICKETS = 10_000;
 const DEFAULT_MAX_ROOM_EVENTS_TICKETS_PER_ROOM = 200;
 const DEFAULT_ROOM_TICKET_RATE_LIMIT = 120;
@@ -394,8 +398,10 @@ export function createAiServer(options: AiServerOptions = {}) {
     maxSubscribers: options.maxRoomSubscribers ?? Number(process.env.MAX_ROOM_SUBSCRIBERS ?? DEFAULT_MAX_ROOM_SUBSCRIBERS),
     roomTtlMs: options.roomTtlMs ?? Number(process.env.ROOM_TTL_MS ?? DEFAULT_ROOM_TTL_MS),
     invitationTtlMs: options.roomInvitationTtlMs ?? DEFAULT_ROOM_INVITATION_TTL_MS,
+    maxInvitationsPerRoom: options.maxRoomInvitationsPerRoom ?? DEFAULT_MAX_ROOM_INVITATIONS_PER_ROOM,
   });
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
+  const roomEventsHeartbeatMs = Math.max(1, Math.floor(options.roomEventsHeartbeatMs ?? DEFAULT_ROOM_EVENTS_HEARTBEAT_MS));
   const roomEventsTickets = new Map<string, { roomId: string; accessToken: string; expiresAt: number }>();
   // 每个房间独立计数：全局池被单个房间铸满会让全服 SSE 都换不到 ticket，
   // 分池后狂铸的房间先撞自己的上限，其他房间照常签发。
@@ -640,6 +646,14 @@ export function createAiServer(options: AiServerOptions = {}) {
         }
         if (!isRecord(body) || (body.role !== "editor" && body.role !== "viewer")) {
           send(400, { error: { code: "VALIDATION_ERROR", message: "邀请角色无效" } });
+          return;
+        }
+        // 邀请签发和建房一样是无成本的写入点:不限流的话，拿到房主凭证就能按请求速率无限铸邀请。
+        // 与建房共用同一个 IP 窗口，狂铸邀请会先撞上建房配额。
+        const invitationLimit = roomCreateRateLimiter.check(clientIp(request, trustProxy));
+        if (!invitationLimit.allowed) {
+          aiLogger.log("room.rate_limited", { roomId: loggedRoomId, errorCode: "ROOM_RATE_LIMITED" });
+          sendThrottled(429, { error: { code: "ROOM_RATE_LIMITED", message: "创建邀请过于频繁，请稍后重试。" } }, invitationLimit.retryAfterMs, roomCreateRateLimiter.windowMs);
           return;
         }
         try {
@@ -921,12 +935,17 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         heartbeat = setInterval(() => {
-          roomStore.get(eventsMatch[1]!);
+          // sweep 只驱逐过期房间、不 touch:走 get 的话每一跳都把本房间续命,
+          // 挂着 SSE 的房间永不过期,TTL 与 maxRooms 在生产里等于失效。
+          roomStore.sweep();
+          // sweep 可能刚把本房间清掉并派发终局 closed,endStream 已经 end 了响应,
+          // 这时再 write 会抛 ERR_STREAM_WRITE_AFTER_END。
+          if (streamEnded) return;
           // 注释行心跳(": heartbeat")不会在 EventSource 上派发任何事件,客户端因此分不清
           // 「连接安静」与「TCP 半开已死」。发成真实事件,客户端看门狗才有活性信号可数。
           // 回滚:换回 response.write(": heartbeat\n\n")(同时要关掉客户端看门狗)。
           response.write("event: ping\ndata: {}\n\n");
-        }, 20_000);
+        }, roomEventsHeartbeatMs);
         request.on("close", () => {
           if (heartbeat) clearInterval(heartbeat);
           streamEnded = true;

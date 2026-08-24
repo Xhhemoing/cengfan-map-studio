@@ -375,6 +375,64 @@ describe("collaboration room store", () => {
       .toThrowError(expect.objectContaining({ code: "ROOM_NOT_FOUND" }));
   });
 
+  // 心跳过去走 get,每一跳都把自己那间房 touch 成活跃,TTL 再短也追不上心跳间隔。
+  it("expires a room through sweep even when swept more often than the TTL", () => {
+    let tick = 1_000;
+    const heartbeatMs = 200;
+    const store = createRoomStore({
+      generateId: () => "SWEEP1",
+      generateSecret: () => "owner-access",
+      roomTtlMs: 1_000,
+      now: () => tick,
+    });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const listener = vi.fn();
+    store.subscribeLifecycle("SWEEP1", owner.access.accessToken, listener);
+
+    for (let elapsed = heartbeatMs; elapsed <= 800; elapsed += heartbeatMs) {
+      tick = 1_000 + elapsed;
+      store.sweep();
+      expect(store.peek("SWEEP1")).toMatchObject({ id: "SWEEP1" });
+    }
+    expect(listener).not.toHaveBeenCalled();
+
+    tick = 1_000 + 1_001;
+    store.sweep();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({
+      kind: "closed",
+      room: expect.objectContaining({ id: "SWEEP1", closed: true }),
+    }));
+    expect(store.peek("SWEEP1")).toBeUndefined();
+    expect(store.get("SWEEP1")).toBeUndefined();
+  });
+
+  it("drops expired invitations and caps the pending invitations of one room", () => {
+    let tick = 1_000;
+    let issued = 0;
+    const store = createRoomStore({
+      generateId: () => "INVCAP",
+      generateSecret: () => `secret-${issued++}`,
+      invitationTtlMs: 500,
+      maxInvitationsPerRoom: 2,
+      now: () => tick,
+    });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const first = store.createInvitation("INVCAP", owner.access.accessToken, "viewer");
+    store.createInvitation("INVCAP", owner.access.accessToken, "viewer");
+
+    expect(() => store.createInvitation("INVCAP", owner.access.accessToken, "viewer"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_LIMIT_REACHED" }));
+
+    // 两张都过期后,下一次签发先把它们淘汰掉,名额自然让出来。
+    tick += 501;
+    const afterExpiry = store.createInvitation("INVCAP", owner.access.accessToken, "editor");
+    expect(afterExpiry.role).toBe("editor");
+    expect(() => store.join("INVCAP", { inviteToken: first.token, clientId: "late", displayName: "迟到" }))
+      .toThrowError(expect.objectContaining({ code: "INVITATION_INVALID" }));
+    expect(store.join("INVCAP", { inviteToken: afterExpiry.token, clientId: "editor", displayName: "编辑同学" }).access.role).toBe("editor");
+  });
+
   it("permits an invited editor to update a room and rejects a viewer write", () => {
     const secrets = ["owner-access", "editor-invite", "viewer-invite", "editor-access", "viewer-access"];
     const store = createRoomStore({
