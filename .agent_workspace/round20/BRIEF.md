@@ -1,23 +1,30 @@
-# Round 20 任务简报（进行中）
+# Round 20 结论简报
 
-- **前置**: Round 19 已验证：tsc 绿、eslint --max-warnings 0、211 files / 1853 tests
-- **分支**: `cursor/agent-sota-polish-cbcd`（禁止 commit/stash/新分支）
+- **时间**: 2026-08-24
+- **前置**: Round 19 BRIEF（211 files / 1853 tests）
 - **模型**: 2× claude-fable-5-thinking-xhigh · 2× claude-opus-5-thinking-high-fast · 2× gpt-5.6-sol-xhigh-fast
+- **集成**: `tsc` app+node 0 error；`npx eslint . --max-warnings 0`；全量 vitest **212 files / 1866 tests passed**（73.79s）
 
-## 真实缺口
+## 相对 Round 19
 
-1. `layoutGrid` 用自制左右判定 `x + width/2 >= map.centerX ? "right" : "left"`，**从不**标 top/bottom，且用的是 clamp 前的格子坐标。宽浅地图上边距格会被标成 left/right，连接线方向错。应在 clamp 后 `space.sideOf(area)`。
-2. `useCollaborationRoom.ts` 又写了一份 `loadBrowserValue`，与 `app-initialization.ts` 重复。
-3. `ProjectMenu.tsx`、`workbench/WorkbenchHeader.tsx` 里带可见文字的按钮，Lucide 图标没有 `aria-hidden`。
-4. 禁止 Playwright、支付、CMYK、拆 china-universities。实现文件 ≤400。不要改 stackAtMargin clamp 堆底。
+| 代理 | Round 19 | Round 20 |
+| --- | --- | --- |
+| R20-fable-arch | 返回钮已拆 | `useCollaborationRoom` 复用 `loadBrowserValue` |
+| R20-fable-sota | 顶栏图标 hidden | 项目菜单 + 工作台顶栏装饰图标 |
+| R20-opus-layout | orderResult space 必填 | `layoutGrid` clamp 后 `sideOf` |
+| R20-opus-data | ASCII 序号 | `\p{Nd}` 全角数字序号 |
+| R20-gpt-perf | — | 诚实跳过 |
+| R20-gpt-server | Vary gzip | 500 JSON 固定文案，不泄路径 |
 
-## 路径隔离
+## 验证链
 
-| 代理 | 允许 |
-| --- | --- |
-| R20-fable-arch | `src/lib/useCollaborationRoom.ts` 及相关测试。删除本地 `loadBrowserValue`，改 import。禁止改 pack。 |
-| R20-fable-sota | `src/components/ProjectMenu.tsx`、`src/components/workbench/WorkbenchHeader.tsx`、对应测试。装饰图标 aria-hidden。 |
-| R20-opus-layout | `src/lib/card-layout-pack.ts` + 测试。`layoutGrid` 用 sideOf。pack.ts ≤400。禁止 cache。 |
-| R20-opus-data | import-data 找另一处静默错（如全角数字序号）；没有则诚实跳过并写明搜过什么。保持 ≤400。 |
-| R20-gpt-perf | bench。无 CI 时限。诚实跳过也可。 |
-| R20-gpt-server | `server/**` 找一个真实洞；没有则诚实跳过。index.ts ≤400。 |
+| failure | cause | fix | recheck |
+| --- | --- | --- | --- |
+| 宽浅地图网格卡标 left | 自制左右中线，忽略 top | sideOf(clamped seat) | pack 新例绿；card-layout* 绿 |
+| `１ 林舟 北京大学 北京市` 姓名=１ | SERIAL_CELL 只用 \\d | \\p{Nd} | import 套件绿 |
+| workspace 500 含路径 | message 透传 Node 错误 | 固定「服务器内部错误」 | security 500 断言不包含 dataDir |
+
+## 仍未达印刷级 SOTA
+
+- 无真浏览器 E2E；协作 flock 只保证单机。
+- 饱和溢出仍堆在 `y = maxY`。浏览器 PNG 仍为 sRGB。
