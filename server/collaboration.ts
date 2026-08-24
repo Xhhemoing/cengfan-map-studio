@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   applyCollaborationOperations,
   areValidCollaborationOperations,
@@ -102,12 +102,6 @@ function hashSecret(secret: string): string {
   return createHash("sha256").update(secret).digest("hex");
 }
 
-function tokenMatches(secret: string, expectedHash: string): boolean {
-  const actual = Buffer.from(hashSecret(secret), "utf8");
-  const expected = Buffer.from(expectedHash, "utf8");
-  return actual.byteLength === expected.byteLength && timingSafeEqual(actual, expected);
-}
-
 function publicParticipant(participant: RoomParticipant): RoomParticipant {
   return { ...participant };
 }
@@ -172,7 +166,6 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const get = (id: string) => {
     purgeExpired();
     const room = rooms.get(id.toUpperCase());
-    if (room) touch(room.id);
     return room ? copyRoom(room) : undefined;
   };
 
@@ -180,10 +173,13 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const key = id.toUpperCase();
     const records = accessRecords.get(key);
     if (!records) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
-    for (const [tokenHash, participant] of records) {
-      if (tokenMatches(accessToken, tokenHash)) return participant;
-    }
-    throw new CollaborationError("ROOM_FORBIDDEN", "房间访问凭证无效");
+    // Store and compare only fixed-width SHA-256 outputs. A Map may not compare
+    // strings in constant time, but digest mismatch positions reveal nothing
+    // about token prefixes; hashing once preserves that timing-safety intent
+    // without making authorization cost grow with the participant roster.
+    const participant = records.get(hashSecret(accessToken));
+    if (!participant) throw new CollaborationError("ROOM_FORBIDDEN", "房间访问凭证无效");
+    return participant;
   };
 
   const authorize = (id: string, accessToken: string, capability: CollaborationCapability): RoomParticipant => {
@@ -270,21 +266,18 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       throw new CollaborationError("INVITATION_INVALID", "邀请凭证无效");
     }
     const roomInvitations = invitations.get(key);
-    let invitationHash: string | undefined;
-    let invitation: InvitationRecord | undefined;
-    for (const [candidateHash, candidate] of roomInvitations ?? []) {
-      if (tokenMatches(input.inviteToken, candidateHash)) {
-        invitationHash = candidateHash;
-        invitation = candidate;
-        break;
-      }
-    }
-    if (!invitation || !invitationHash) throw new CollaborationError("INVITATION_INVALID", "邀请凭证无效或已被使用");
+    const invitationHash = hashSecret(input.inviteToken);
+    const invitation = roomInvitations?.get(invitationHash);
+    if (!invitation) throw new CollaborationError("INVITATION_INVALID", "邀请凭证无效或已被使用");
     if (invitation.expiresAt <= now()) {
       roomInvitations?.delete(invitationHash);
       throw new CollaborationError("INVITATION_EXPIRED", "邀请凭证已过期");
     }
-    roomInvitations?.delete(invitationHash);
+    // Consume before generating access or mutating the roster. Since join is
+    // synchronous, competing requests cannot both pass this deletion point.
+    if (!roomInvitations?.delete(invitationHash)) {
+      throw new CollaborationError("INVITATION_INVALID", "邀请凭证无效或已被使用");
+    }
     const accessToken = generateSecret();
     const participant: RoomParticipant = {
       id: input.clientId,
@@ -415,6 +408,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
     const seenAt = new Date(now()).toISOString();
     const memberClientId = clientId || participant.id;
+    if (participant.role !== "owner" && memberClientId !== participant.id) {
+      throw new CollaborationError("ROOM_FORBIDDEN", "只能刷新自己的成员状态");
+    }
     const existingMember = room.members.find((member) => member.clientId === memberClientId);
     const nextRoom = existingMember
       ? { ...room, members: room.members.map((member) => member.clientId === memberClientId ? { ...member, lastSeenAt: seenAt } : member) }
@@ -431,6 +427,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     const leavingClientId = clientId || participant.id;
+    if (participant.role !== "owner" && leavingClientId !== participant.id) {
+      throw new CollaborationError("ROOM_FORBIDDEN", "只能移除自己的成员状态");
+    }
     const nextRoom = { ...room, members: room.members.filter((member) => member.clientId !== leavingClientId) };
     rooms.set(key, nextRoom);
     touch(key);
@@ -481,6 +480,9 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     const key = id.toUpperCase();
     if (!rooms.has(key)) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     const roomListeners = lifecycleListeners.get(key) ?? new Set<LifecycleListener>();
+    if (!roomListeners.has(listener) && roomListeners.size >= maxSubscribers) {
+      throw new CollaborationError("SUBSCRIBER_LIMIT_REACHED", "共享房间连接数已达到上限");
+    }
     roomListeners.add(listener);
     lifecycleListeners.set(key, roomListeners);
     return () => {

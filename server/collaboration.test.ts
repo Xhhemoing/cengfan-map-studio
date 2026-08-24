@@ -3,6 +3,45 @@ import { describe, expect, it, vi } from "vitest";
 import { createRoomStore } from "./collaboration";
 import type { CollaborationOperation } from "../src/lib/collaboration-operations";
 
+const authorizeBench = process.env.COLLAB_AUTH_BENCH === "1" ? it : it.skip;
+
+authorizeBench("benchmarks authorize with 50 participants", () => {
+  let nextSecret = 0;
+  const store = createRoomStore({
+    generateId: () => "BENCH1",
+    generateSecret: () => `bench-secret-${nextSecret++}`,
+  });
+  const owner = store.create({}, { clientId: "owner", displayName: "Owner" });
+  let targetToken = owner.access.accessToken;
+  for (let index = 1; index < 50; index += 1) {
+    const invitation = store.createInvitation("BENCH1", owner.access.accessToken, "viewer");
+    targetToken = store.join("BENCH1", {
+      inviteToken: invitation.token,
+      clientId: `viewer-${index}`,
+      displayName: `Viewer ${index}`,
+    }).access.accessToken;
+  }
+
+  for (let index = 0; index < 250; index += 1) {
+    store.authorize("BENCH1", targetToken, "read");
+  }
+
+  let operations = 0;
+  const startedAt = process.hrtime.bigint();
+  let elapsedNs = 0n;
+  do {
+    for (let index = 0; index < 100; index += 1) {
+      store.authorize("BENCH1", targetToken, "read");
+    }
+    operations += 100;
+    elapsedNs = process.hrtime.bigint() - startedAt;
+  } while (elapsedNs < 1_000_000_000n);
+
+  const operationsPerSecond = operations / (Number(elapsedNs) / 1_000_000_000);
+  console.log(`authorize-50 ops/sec: ${operationsPerSecond.toFixed(0)}`);
+  expect(operationsPerSecond).toBeGreaterThan(0);
+});
+
 describe("collaboration room store", () => {
   it("creates a room with the owner as its first member", () => {
     const secrets = ["owner-access"];
@@ -58,6 +97,62 @@ describe("collaboration room store", () => {
     expect(store.leave("MEM003", owner.access.accessToken, "nobody").members.map((member) => member.clientId)).toEqual(["owner"]);
   });
 
+  it("does not let a viewer remove the owner from the member roster", () => {
+    const secrets = ["owner-access", "viewer-invite", "viewer-access"];
+    const store = createRoomStore({ generateId: () => "AUTH01", generateSecret: () => secrets.shift()! });
+    const owner = store.create({}, { clientId: "owner", displayName: "Owner" });
+    const invitation = store.createInvitation("AUTH01", owner.access.accessToken, "viewer");
+    const viewer = store.join("AUTH01", {
+      inviteToken: invitation.token,
+      clientId: "viewer",
+      displayName: "Viewer",
+    });
+
+    expect(() => store.leave("AUTH01", viewer.access.accessToken, "owner"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+    expect(store.get("AUTH01")?.members.map((member) => member.clientId)).toEqual(["owner", "viewer"]);
+  });
+
+  it("does not let a viewer refresh an arbitrary client id", () => {
+    const secrets = ["owner-access", "viewer-invite", "viewer-access"];
+    const store = createRoomStore({ generateId: () => "AUTH02", generateSecret: () => secrets.shift()! });
+    const owner = store.create({}, { clientId: "owner", displayName: "Owner" });
+    const invitation = store.createInvitation("AUTH02", owner.access.accessToken, "viewer");
+    const viewer = store.join("AUTH02", {
+      inviteToken: invitation.token,
+      clientId: "viewer",
+      displayName: "Viewer",
+    });
+
+    expect(() => store.refreshMember("AUTH02", viewer.access.accessToken, "forged-client"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+    expect(store.get("AUTH02")?.members.map((member) => member.clientId)).toEqual(["owner", "viewer"]);
+  });
+
+  it("does not keep a room alive when get is followed by invalid authorization probes", () => {
+    let now = 0;
+    const store = createRoomStore({
+      generateId: () => "AUTH03",
+      generateSecret: () => "owner-access",
+      roomTtlMs: 100,
+      now: () => now,
+    });
+    store.create({}, { clientId: "owner", displayName: "Owner" });
+
+    // This is the HTTP read order: get the room, then validate the presented token.
+    for (const probeAt of [90, 180, 270]) {
+      now = probeAt;
+      store.get("AUTH03");
+      try {
+        store.authorize("AUTH03", "invalid-access", "read");
+      } catch {
+        // Invalid probes are expected; only their effect on the TTL matters here.
+      }
+    }
+
+    expect(store.get("AUTH03")).toBeUndefined();
+  });
+
   it("lets only the owner set readonly/close; closed rooms reject writes, joins, and further access changes", () => {
     const secrets = ["owner-access", "editor-invite", "editor-access", "late-invite"];
     const store = createRoomStore({ generateId: () => "ACC01", generateSecret: () => secrets.shift()! });
@@ -82,6 +177,22 @@ describe("collaboration room store", () => {
     const lateInvite = store.createInvitation("ACC01", owner.access.accessToken, "viewer");
     expect(() => store.join("ACC01", { inviteToken: lateInvite.token, clientId: "late", displayName: "迟到" }))
       .toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
+  });
+
+  it("lets a participant leave cleanly after the room has closed", () => {
+    const secrets = ["owner-access", "viewer-invite", "viewer-access"];
+    const store = createRoomStore({ generateId: () => "CLOSE1", generateSecret: () => secrets.shift()! });
+    const owner = store.create({}, { clientId: "owner", displayName: "Owner" });
+    const invitation = store.createInvitation("CLOSE1", owner.access.accessToken, "viewer");
+    const viewer = store.join("CLOSE1", {
+      inviteToken: invitation.token,
+      clientId: "viewer",
+      displayName: "Viewer",
+    });
+    store.setAccess("CLOSE1", owner.access.accessToken, "owner", "close");
+
+    expect(store.leave("CLOSE1", viewer.access.accessToken, "viewer").members)
+      .toEqual([expect.objectContaining({ clientId: "owner" })]);
   });
 
   it("still admits viewers into a readonly room", () => {
@@ -223,6 +334,33 @@ describe("collaboration room store", () => {
     expect(() => store.join("INVITE1", { inviteToken: expired.token, clientId: "late", displayName: "迟到" })).toThrowError(expect.objectContaining({ code: "INVITATION_EXPIRED" }));
   });
 
+  it("allows only one concurrent join to consume an invitation", async () => {
+    const secrets = ["owner-access", "single-invite", "winner-access"];
+    const store = createRoomStore({ generateId: () => "INVITE2", generateSecret: () => secrets.shift()! });
+    const owner = store.create({}, { clientId: "owner", displayName: "Owner" });
+    const invitation = store.createInvitation("INVITE2", owner.access.accessToken, "viewer");
+
+    const outcomes = await Promise.allSettled([
+      Promise.resolve().then(() => store.join("INVITE2", {
+        inviteToken: invitation.token,
+        clientId: "viewer-a",
+        displayName: "Viewer A",
+      })),
+      Promise.resolve().then(() => store.join("INVITE2", {
+        inviteToken: invitation.token,
+        clientId: "viewer-b",
+        displayName: "Viewer B",
+      })),
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    const rejected = outcomes.find((outcome) => outcome.status === "rejected");
+    expect(rejected).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({ code: "INVITATION_INVALID" }),
+    });
+  });
+
   it("enforces a maximum room count", () => {
     const store = createRoomStore({ maxRooms: 1, generateId: () => "LIMIT01" });
     store.create({ title: "first" }, "client-a");
@@ -243,6 +381,25 @@ describe("collaboration room store", () => {
     unsubscribe();
   });
 
+  it("enforces the subscriber cap for lifecycle listeners and releases capacity", () => {
+    const store = createRoomStore({
+      maxSubscribers: 1,
+      generateId: () => "SUBSCR2",
+      generateSecret: () => "owner-access",
+    });
+    const owner = store.create({}, { clientId: "owner", displayName: "Owner" });
+    const firstListener = () => {};
+    const secondListener = () => {};
+    const unsubscribe = store.subscribeLifecycle("SUBSCR2", owner.access.accessToken, firstListener);
+
+    expect(() => store.subscribeLifecycle("SUBSCR2", owner.access.accessToken, secondListener))
+      .toThrowError(expect.objectContaining({ code: "SUBSCRIBER_LIMIT_REACHED" }));
+    unsubscribe();
+
+    const unsubscribeSecond = store.subscribeLifecycle("SUBSCR2", owner.access.accessToken, secondListener);
+    unsubscribeSecond();
+  });
+
   it("expires idle rooms and releases their listeners", () => {
     let now = 1_000;
     const store = createRoomStore({ roomTtlMs: 100, now: () => now, generateId: () => "EXPIRE1" });
@@ -253,6 +410,40 @@ describe("collaboration room store", () => {
     expect(store.get("EXPIRE1")).toBeUndefined();
     expect(() => unsubscribe()).not.toThrow();
     expect(() => store.create({ title: "new" }, "client-b")).not.toThrow();
+  });
+
+  it("purges access, invitations, and operation history together with an expired room", () => {
+    let now = 0;
+    const secrets = ["old-owner-access", "old-invitation", "new-owner-access"];
+    const store = createRoomStore({
+      roomTtlMs: 100,
+      now: () => now,
+      generateId: () => "EXPIRE2",
+      generateSecret: () => secrets.shift()!,
+    });
+    const oldOwner = store.create({}, { clientId: "old-owner", displayName: "Old Owner" });
+    const oldInvitation = store.createInvitation("EXPIRE2", oldOwner.access.accessToken, "viewer");
+    store.apply("EXPIRE2", oldOwner.access.accessToken, {
+      txId: "old-operation",
+      clientId: "old-owner",
+      baseVersion: 0,
+      operations: [{ type: "set", path: ["old"], value: true }],
+    });
+
+    now = 101;
+    const newOwner = store.create({}, { clientId: "new-owner", displayName: "New Owner" });
+
+    expect(() => store.authorize("EXPIRE2", oldOwner.access.accessToken, "read"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_FORBIDDEN" }));
+    expect(() => store.join("EXPIRE2", {
+      inviteToken: oldInvitation.token,
+      clientId: "stale-viewer",
+      displayName: "Stale Viewer",
+    })).toThrowError(expect.objectContaining({ code: "INVITATION_INVALID" }));
+    expect(store.getOperations("EXPIRE2", newOwner.access.accessToken, 0)).toEqual({
+      version: 0,
+      operations: [],
+    });
   });
 
   it("applies incremental operations without replacing untouched room data", () => {
