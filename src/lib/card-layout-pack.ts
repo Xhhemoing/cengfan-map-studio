@@ -33,13 +33,13 @@ function marginSeat(card: CardLayoutInput, space: LayoutSpace): CardPlacement {
 
 /**
  * Reorder solver output back to the caller's input order, tolerating gaps.
- * Without a `space` a missing id can only fall back to the origin, which lies
- * outside the padded canvas with a side unrelated to where the card is drawn.
+ * A card no placement came back for is seated at the margin, so every result
+ * lands inside the padded canvas with a side that matches where it is drawn.
  */
 export function orderResult(
   cards: readonly CardLayoutInput[],
   placements: readonly CardPlacement[],
-  space?: LayoutSpace,
+  space: LayoutSpace,
 ): CardPlacement[] {
   const byId = new Map<string, CardPlacement[]>();
   for (const placement of placements) {
@@ -47,8 +47,7 @@ export function orderResult(
     if (bucket) bucket.push(placement);
     else byId.set(placement.id, [placement]);
   }
-  return cards.map((card) => byId.get(card.id)?.shift()
-    ?? (space ? marginSeat(card, space) : { ...card, x: 0, y: 0, side: "right" as CardSide }));
+  return cards.map((card) => byId.get(card.id)?.shift() ?? marginSeat(card, space));
 }
 
 /** Candidate coordinates ordered by closeness to `target`, capped for cost. */

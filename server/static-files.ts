@@ -127,14 +127,15 @@ export function serveStatic(
   }
   if (!statSync(filePath).isFile()) return false;
 
-  const shouldGzip = acceptsGzip(request)
-    && /\.(?:html|js|css|json|svg)$/i.test(filePath)
+  const gzipEligible = /\.(?:html|js|css|json|svg)$/i.test(filePath)
     && statSync(filePath).size > 128;
+  const shouldGzip = gzipEligible && acceptsGzip(request);
   response.writeHead(200, {
     ...securityHeaders(),
     "Content-Type": contentTypeFor(filePath),
     "Cache-Control": cacheControlFor(filePath),
-    ...(shouldGzip ? { "Content-Encoding": "gzip", Vary: "Accept-Encoding" } : {}),
+    ...(gzipEligible ? { Vary: "Accept-Encoding" } : {}),
+    ...(shouldGzip ? { "Content-Encoding": "gzip" } : {}),
   });
   const stream = createReadStream(filePath);
   if (shouldGzip) stream.pipe(createGzip()).pipe(response);

@@ -9,7 +9,7 @@ import { ProjectMenu } from "../ProjectMenu";
 import { SkinSelector } from "../SkinSelector";
 import { ThemeToggle } from "../ThemeToggle";
 import { ToolbarButton, ToolbarGroup } from "../StudioUi";
-import { WorkbenchBackButton } from "../../lib/app-initialization";
+import { WorkbenchBackButton } from "./WorkbenchBackButton";
 import type { LocalWorkspaceOverwriteState } from "../../lib/incremental-workspace-sync";
 import type { ProjectHistorySummary } from "../../lib/studio-editor-helpers";
 import type { UsePosterExportResult } from "../../lib/usePosterExport";
@@ -93,7 +93,7 @@ export function AssistantEntryButton({
       aria-expanded={open}
       onClick={onOpen}
     >
-      <Bot size={17} />
+      <Bot size={17} aria-hidden />
     </button>
   );
 }
@@ -120,13 +120,13 @@ export function HistoryActionsGroup({
       <ToolbarGroup label="历史与缩放" className="topbar-action-group--history">
         <ToolbarButton
           label={history.undoLabel}
-          icon={<Undo2 size={18} />}
+          icon={<Undo2 size={18} aria-hidden />}
           disabled={!history.canUndo}
           onClick={() => { announceHistory(history.undoLabel); onUndo(); }}
         />
         <ToolbarButton
           label={history.redoLabel}
-          icon={<Redo2 size={18} />}
+          icon={<Redo2 size={18} aria-hidden />}
           disabled={!history.canRedo}
           onClick={() => { announceHistory(history.redoLabel); onRedo(); }}
         />

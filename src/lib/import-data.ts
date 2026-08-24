@@ -151,16 +151,8 @@ function scanDelimitedLine(line: string, delimiter: string): { cells: string[]; 
       }
       continue;
     }
-    if (char === '"' && current.trim() === "") {
-      quoted = true;
-      current = "";
-      continue;
-    }
-    if (char === delimiter) {
-      cells.push(current);
-      current = "";
-      continue;
-    }
+    if (char === '"' && current.trim() === "") { quoted = true; current = ""; continue; }
+    if (char === delimiter) { cells.push(current); current = ""; continue; }
     current += char;
   }
   cells.push(current);
@@ -228,12 +220,20 @@ const FREEFORM_SEPARATOR = /\s+[-–—]+\s+|[\s、]+/;
  * Cells of one source line. A delimited line keeps every column, blank ones
  * included, so the positional reader stays aligned and only unusable columns
  * go; an unlabeled line holds no columns, so its runs of spaces collapse.
+ *
+ * Whitespace opens no column to compare across rows, so a 序号 leading an unlabeled line gives
+ * itself away by shape alone: bare digits ahead of enough words to still fill 姓名/院校/城市.
+ * Only the positional reader passes `usable`, and only it is shifted by keeping the number.
  */
 function splitCells(line: string, delimiter: string | null, usable?: UsableColumns): string[] {
   const content = line.replace(LIST_MARKER, "");
-  if (!delimiter) return content.split(FREEFORM_SEPARATOR).map(trimImportCell).filter(Boolean);
-  const columns = usable?.get(delimiter);
-  return splitDelimitedLine(content, delimiter).filter((_, index) => columns?.has(index) ?? true);
+  if (delimiter) {
+    const columns = usable?.get(delimiter);
+    return splitDelimitedLine(content, delimiter).filter((_, index) => columns?.has(index) ?? true);
+  }
+  const parts = content.split(FREEFORM_SEPARATOR).map(trimImportCell).filter(Boolean);
+  const numbered = usable && parts.length > REQUIRED_STUDENT_COLUMNS.length && SERIAL_CELL.test(parts[0]!);
+  return numbered ? parts.slice(1) : parts;
 }
 
 function toCandidate(parts: string[], sourceLine: number, rawLine: string): ImportCandidate | null {

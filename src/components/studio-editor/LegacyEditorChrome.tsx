@@ -9,7 +9,7 @@ import { ToolbarButton, ToolbarGroup } from "../StudioUi";
 import { WorkflowStageStepper } from "../WorkflowStageStepper";
 import { WorkflowStepper, type WorkflowPanelId } from "../WorkflowStepper";
 import { ZoomControls } from "../ZoomControls";
-import { WorkbenchBackButton } from "../../lib/app-initialization";
+import { WorkbenchBackButton } from "./WorkbenchBackButton";
 import { dataViews, provinceNames, type ActivePanel } from "../../lib/app-constants";
 import { duplicateAssetElement } from "../../lib/asset-elements";
 import { fitZoomPercent } from "../../lib/grid";
@@ -210,13 +210,13 @@ export function LegacyEditorChrome({
           <ToolbarGroup label="历史与缩放">
             <ToolbarButton
               label={ctx.undoLabel}
-              icon={<Undo2 size={18} />}
+              icon={<Undo2 size={18} aria-hidden />}
               disabled={!ctx.canUndo}
               onClick={() => { announceHistory(ctx.undoLabel); ctx.onUndo(); }}
             />
             <ToolbarButton
               label={ctx.redoLabel}
-              icon={<Redo2 size={18} />}
+              icon={<Redo2 size={18} aria-hidden />}
               disabled={!ctx.canRedo}
               onClick={() => { announceHistory(ctx.redoLabel); ctx.onRedo(); }}
             />
@@ -237,7 +237,7 @@ export function LegacyEditorChrome({
             <ToolbarButton
               className="inspector-toggle"
               label={mobileInspectorOpen ? "关闭属性面板" : "打开属性面板"}
-              icon={mobileInspectorOpen ? <PanelRightClose size={17} /> : <PanelRight size={17} />}
+              icon={mobileInspectorOpen ? <PanelRightClose size={17} aria-hidden /> : <PanelRight size={17} aria-hidden />}
               aria-expanded={mobileInspectorOpen}
               aria-controls="editor-inspector"
               onClick={() => setMobileInspectorOpen((open) => !open)}
@@ -253,7 +253,7 @@ export function LegacyEditorChrome({
 
           <ToolbarGroup label="导出">
             <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}>
-              <ImageDown size={16} /> {posterExport.exportingPng ? "导出中..." : "导出 PNG"}
+              <ImageDown size={16} aria-hidden /> {posterExport.exportingPng ? "导出中..." : "导出 PNG"}
             </button>
           </ToolbarGroup>
         </div>

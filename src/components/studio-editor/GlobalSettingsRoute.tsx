@@ -6,7 +6,7 @@
 import { GlobalSettingsScreen, type GlobalSettingsSection } from "../GlobalSettingsScreen";
 import { WorkflowStageStepper } from "../WorkflowStageStepper";
 import { provinceNames } from "../../lib/app-constants";
-import { WorkbenchBackButton } from "../../lib/app-initialization";
+import { WorkbenchBackButton } from "./WorkbenchBackButton";
 import type { MapTemplateId } from "../../lib/project-data";
 import { createSystemTemplate } from "../../lib/template-document";
 import type { CustomTemplateRecord } from "../../lib/template-store";

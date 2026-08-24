@@ -459,6 +459,60 @@ describe("number columns in a header-less paste", () => {
   });
 });
 
+describe("a 序号 leading a whitespace-separated line", () => {
+  it("drops the number instead of importing it as the name", () => {
+    // Spaces open no column to compare, so the serial kept the 姓名 slot and pushed
+    // every later value one field left: a student called 1 attending 林舟.
+    const result = parseStudentText("1 林舟 北京大学 北京市\n2 苏禾 浙江大学 杭州市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    // The reported line still holds the serial, so it maps back to what the user pasted.
+    expect(result.candidates[0]?.rawLine).toBe("1 林舟 北京大学 北京市");
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("drops a 学号 as readily as a 序号 and keeps the overseas marker aligned", () => {
+    const result = parseStudentText("20260001 林舟 北京大学 北京市 中国去向\n20260002 周晴 哈佛大学 波士顿 海外");
+
+    expect(result.candidates[0]).toEqual(expect.objectContaining({ name: "林舟", city: "北京市" }));
+    expect(result.candidates[0]).not.toHaveProperty("locationScope");
+    expect(result.candidates[1]).toEqual(expect.objectContaining({ name: "周晴", locationScope: "international" }));
+  });
+
+  it("keeps the number of a line that has no word to spare", () => {
+    // Nothing is left to read as 姓名 once the digits go, so "001" is taken at face
+    // value: an anonymized roster imports rather than disappearing.
+    const result = parseStudentText("001 北京大学 北京市\n002 浙江大学 杭州市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "001", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "002", university: "浙江大学", city: "杭州市" }),
+    ]);
+  });
+
+  it("leaves a number that a whitespace header already names to the header mapping", () => {
+    const result = parseStudentText("序号 姓名 院校 城市\n1 林舟 北京大学 北京市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市", sourceLine: 2 }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("keeps a tab-separated row split on its tabs rather than on the space after the serial", () => {
+    // Reading "1" as a list marker would eat the tab behind it and glue 林舟 to the
+    // university, so the number has to go as a cell, not as punctuation.
+    const result = parseStudentText("1\t林舟 舟\t北京大学\t北京市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟 舟", university: "北京大学", city: "北京市" }),
+    ]);
+  });
+});
+
 describe("hyphens in an unlabeled line", () => {
   it("keeps a hyphenated name whole instead of reading it as two fields", () => {
     // Splitting on the hyphen made 克莱尔 her university and 巴黎高等师范 her

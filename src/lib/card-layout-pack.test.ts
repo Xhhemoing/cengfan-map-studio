@@ -385,10 +385,4 @@ describe("orderResult", () => {
     // Cards the solver did place keep whatever side it decided on.
     expect(ordered.slice(0, 2).map((card) => card.side)).toEqual([placeholderSide, placeholderSide]);
   });
-
-  it("keeps the legacy origin seat when no space is available to measure", () => {
-    const [dropped] = orderResult([inputCard("dropped")], []);
-
-    expect([dropped!.x, dropped!.y]).toEqual([0, 0]);
-  });
 });

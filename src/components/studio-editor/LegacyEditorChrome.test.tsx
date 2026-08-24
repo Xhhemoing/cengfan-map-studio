@@ -171,3 +171,28 @@ describe("LegacyEditorChrome history announcements", () => {
     expect(region?.textContent?.replace(/\u00A0/g, "")).toBe("已撤销：移动卡片");
   });
 });
+
+describe("LegacyEditorChrome decorative topbar icons", () => {
+  it("hides icons inside labelled topbar buttons from AT", () => {
+    const { container } = renderChrome();
+
+    // Buttons already expose an accessible name (aria-label or visible text);
+    // their Lucide icons must be aria-hidden so AT does not double-speak them.
+    const labelled = [
+      'button[aria-label="撤销：更新地图"]',
+      'button[aria-label="重做：更新地图"]',
+      'button[aria-label="打开属性面板"]',
+    ];
+    for (const selector of labelled) {
+      const icon = container.querySelector(`.topbar-actions ${selector} svg`);
+      expect(icon).not.toBeNull();
+      expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    }
+
+    // The export button is named by its visible text, not aria-label.
+    const exportButton = [...container.querySelectorAll<HTMLButtonElement>(".topbar-actions .primary-button")]
+      .find((button) => button.textContent?.includes("导出 PNG"));
+    expect(exportButton).not.toBeUndefined();
+    expect(exportButton?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+  });
+});

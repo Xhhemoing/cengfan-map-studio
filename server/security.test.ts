@@ -361,6 +361,7 @@ describe("server request security", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers["content-encoding"]).toBe(expectedEncoding);
+    expect(response.headers.vary).toBe("Accept-Encoding");
   });
 
   it("keeps the AI body cap when the configured byte limit is invalid", async () => {
