@@ -13,11 +13,11 @@ const occupied = { x: 300, y: 220, width: 300, height: 260 };
 /** Takes the bottom of the left column away, leaving room for three cards. */
 const lowerLeftZone = { x: 20, y: 500, width: 280, height: 180 };
 
-function makeSpace(occupiedAreas: CardArea[] = [occupied]): LayoutSpace {
+function makeSpace(occupiedAreas: CardArea[] = [occupied], mapArea: CardArea = occupied): LayoutSpace {
   return new LayoutSpace({
     width: 900,
     height: 700,
-    map: occupied,
+    map: mapArea,
     occupiedAreas,
     margin: 20,
     gap: 12,
@@ -112,6 +112,21 @@ describe("packSideCards", () => {
 });
 
 describe("packSides", () => {
+  /** Leaves no legal spot anywhere, so every card falls out of side packing. */
+  const fullyOccupied: CardArea = { x: 0, y: 0, width: 900, height: 700 };
+  /** A wide, shallow map: the margin column runs along its *top* edge. */
+  const wideMap: CardArea = { x: 100, y: 300, width: 700, height: 100 };
+
+  function strandedCards(count: number): CardLayoutInput[] {
+    return Array.from({ length: count }, (_, index) => ({
+      id: `c${index}`,
+      anchorX: 700,
+      anchorY: 300,
+      width: 120,
+      height: 100,
+    }));
+  }
+
   it("overflows the card that broke the block, not the one at its index", () => {
     const placements = packSides(leftColumnBoard, makeSpace([occupied, lowerLeftZone]), "quadrant", {});
     const byId = new Map(placements.map((placement) => [placement.id, placement]));
@@ -163,16 +178,8 @@ describe("packSides", () => {
   it("labels stacked leftovers by their seat once the canvas is saturated", () => {
     // Nothing can be placed anywhere, so the first card exhausts the free-spot
     // scan, latches `saturated`, and the rest go straight to the margin stack.
-    const space = makeSpace([{ x: 0, y: 0, width: 900, height: 700 }]);
-    const cards: CardLayoutInput[] = Array.from({ length: 3 }, (_, index) => ({
-      id: `c${index}`,
-      anchorX: 700,
-      anchorY: 300,
-      width: 150,
-      height: 120,
-    }));
-
-    const placements = packSides(cards, space, "quadrant", {});
+    const space = makeSpace([fullyOccupied]);
+    const placements = packSides(strandedCards(3), space, "quadrant", {});
 
     expect(placements).toHaveLength(3);
     for (const placement of placements) {
@@ -180,6 +187,28 @@ describe("packSides", () => {
       expect(placement.side).toBe(space.sideOf(placement));
       expect(placement.side).not.toBe("right");
     }
+  });
+
+  it("sides stacked leftovers above a wide, shallow map by their seats", () => {
+    // The same saturated canvas with the map as a band across the middle: the
+    // margin column the leftovers stack into runs north of it, not west of it.
+    // Seeding the probe with a side before it has a seat pointed every one of
+    // these leader lines out of an edge the card does not sit against.
+    const space = makeSpace([fullyOccupied], wideMap);
+
+    const placements = packSides(strandedCards(4), space, "quadrant", {});
+
+    expect(placements).toHaveLength(4);
+    for (const placement of placements) {
+      expect(placement.x).toBe(space.margin);
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+    const sides = placements.map((placement) => placement.side);
+    expect(sides).toContain("top");
+    // The column runs past the map, so its tail is genuinely below it.
+    expect(sides).toContain("bottom");
+    expect(sides).not.toContain("right");
+    expect(sides).not.toContain("left");
   });
 
   it("never places a card twice across randomized boards", () => {

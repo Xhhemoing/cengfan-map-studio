@@ -14,7 +14,7 @@ import type { WorkflowProgress, WorkflowStepId } from "../../lib/workflow-progre
 import type { WorkflowStageId } from "../../lib/workflow-stages";
 import type { StudioChrome } from "../../hooks/use-studio-chrome";
 import type { StageSlotsContext } from "./stage-slots";
-import { StudioBrand } from "./StudioStatusScreens";
+import { StudioBrand } from "./StudioBrand";
 
 const SYSTEM_TEMPLATE_OPTIONS = (["original", "cartoon", "grain", "q", "scenery"] as const).map((templateId) => ({
   id: templateId,

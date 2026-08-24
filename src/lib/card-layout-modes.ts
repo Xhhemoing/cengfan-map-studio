@@ -8,7 +8,7 @@
  * neighbour instead of being lost.
  */
 import { centerOf, clamp, overlaps } from "./card-layout-geometry";
-import { containFree, stackAtMargin } from "./card-layout-pack";
+import { containFree, marginSeat, stackAtMargin } from "./card-layout-pack";
 import { PlacementIndex, type LayoutSpace } from "./card-layout-space";
 import {
   MIN_GAP,
@@ -332,13 +332,14 @@ export function packSides(
   // Any cards still unplaced get a contained free spot (non-overlapping scan).
   // Once one scan comes up empty the canvas is saturated, so the rest skip
   // straight to the stacked last resort instead of rescanning a full canvas.
-  // The probe's `side` is a placeholder: these cards belong to no column, so
-  // both fallbacks re-derive it from the spot they end up choosing.
+  // These cards belong to no column, so the probe is the same margin seat every
+  // other exit falls back to and both fallbacks re-derive the side from the
+  // spot they end up choosing.
   const placedIds = new Set(placed.items.map((placement) => placement.id));
   let saturated = false;
   for (const card of cards) {
     if (placedIds.has(card.id)) continue;
-    const probe: CardPlacement = { ...card, x: space.margin, y: space.margin, side: "right" };
+    const probe = marginSeat(card, space);
     const placement = saturated ? stackAtMargin(probe, space, placed) : containFree(probe, space, placed);
     if (!saturated && (space.blocked(placement) || placed.hits(placement, space.gap))) saturated = true;
     placed.add(placement);

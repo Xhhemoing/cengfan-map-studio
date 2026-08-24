@@ -25,7 +25,7 @@ const DENSE_RAILS_PER_AXIS = 16;
 const DENSE_REPACK_CARDS = 60;
 
 /** Seat for a card no placement came back for; the side follows the seat. */
-function marginSeat(card: CardLayoutInput, space: LayoutSpace): CardPlacement {
+export function marginSeat(card: CardLayoutInput, space: LayoutSpace): CardPlacement {
   const seat = { ...card, x: space.clampX(space.margin, card.width), y: space.clampY(space.margin, card.height) };
   return { ...seat, side: space.sideOf(seat) };
 }
@@ -67,10 +67,9 @@ function isFree(card: CardArea, space: LayoutSpace, placed: PlacementIndex): boo
  * as soon as no remaining track can beat the best hit.
  *
  * The repair is a fallback, so the incoming `side` is a placeholder rather than
- * a column assignment — `packSides` labels every card it could not seat
- * `"right"` before it has a position. Each exit therefore re-derives the side
- * from where the card actually lands, or the leader line would leave from an
- * edge facing away from the anchor.
+ * a column assignment — leftover probes now arrive via {@link marginSeat}. Each
+ * exit still re-derives the side from where the card actually lands, or the
+ * leader line would leave from an edge facing away from the anchor.
  */
 export function containFree(
   placement: CardPlacement,

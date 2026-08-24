@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { ReactElement } from "react";
-import { ProjectMissingScreen, StudioBrand } from "./StudioStatusScreens";
+import { ProjectMissingScreen } from "./StudioStatusScreens";
+import { StudioBrand } from "./StudioBrand";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 

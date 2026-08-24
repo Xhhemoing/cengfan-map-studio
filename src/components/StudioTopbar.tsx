@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { StudioBrand } from "./studio-editor/StudioStatusScreens";
+import { StudioBrand } from "./studio-editor/StudioBrand";
 
 export type StudioTopbarProps = {
   /** Assistant / advanced-function entry (opens the assistant drawer). */

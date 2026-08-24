@@ -225,6 +225,61 @@ describe("import data robustness", () => {
   });
 });
 
+describe("fullwidth colon separated rows", () => {
+  it("splits a row typed with the fullwidth colon into three fields", () => {
+    const rawLine = "林舟：北京大学：北京市";
+    const result = parseStudentText(rawLine);
+
+    expect(result.candidates).toEqual([
+      { name: "林舟", university: "北京大学", city: "北京市", sourceLine: 1, rawLine },
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("still reads a labeled row by its labels instead of splitting on the colon after each one", () => {
+    const rawLine = "姓名：林舟，就读院校：北京大学，城市：北京";
+    const result = parseStudentText(rawLine);
+
+    expect(result.candidates).toEqual([
+      { name: "林舟", university: "北京大学", city: "北京", sourceLine: 1, rawLine },
+    ]);
+  });
+
+  it("keeps a labeled row and a colon-separated row of the same paste apart", () => {
+    const result = parseStudentText([
+      "姓名：苏禾，学校：浙江大学，城市：杭州市",
+      "林舟：北京大学：北京市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("aligns the 去向类型 column of a colon-separated overseas roster", () => {
+    const result = parseStudentText([
+      "姓名：院校：城市：去向类型",
+      "周晴：哈佛大学：波士顿：海外",
+      "苏禾：浙江大学：杭州市：国内",
+    ].join("\n"));
+
+    expect(result.candidates[0]).toEqual(expect.objectContaining({
+      name: "周晴", university: "哈佛大学", city: "波士顿", locationScope: "international",
+    }));
+    expect(result.candidates[1]).not.toHaveProperty("locationScope");
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("leaves an ASCII colon inside a cell alone", () => {
+    // 18:30 and 1:2 are a time and a ratio, not two columns.
+    expect(parseDelimitedTable("林舟,北京大学,北京市 09:00")).toEqual([
+      expect.objectContaining({ city: "北京市 09:00" }),
+    ]);
+  });
+});
+
 describe("quoted csv rows", () => {
   it("keeps a delimiter that sits inside a quoted cell", () => {
     expect(splitDelimitedLine('"李,四",北京大学,北京市', ",")).toEqual(["李,四", "北京大学", "北京市"]);

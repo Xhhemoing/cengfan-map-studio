@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { overlaps } from "./card-layout-geometry";
-import { containFree, layoutGrid, orderResult, stackAtMargin, sweepPack } from "./card-layout-pack";
+import { containFree, layoutGrid, marginSeat, orderResult, stackAtMargin, sweepPack } from "./card-layout-pack";
 import { LayoutSpace, PlacementIndex, validateHard } from "./card-layout-space";
 import type { CardArea, CardLayoutInput, CardPlacement } from "./card-layout-types";
 
@@ -19,9 +19,9 @@ function makeSpace(occupiedAreas: CardArea[] = [map], mapArea: CardArea = map): 
 
 /**
  * Both fallbacks are reached with a leftover card, and a leftover card has no
- * column: `packSides` stamps `"right"` on it before it has any position. The
- * placeholder must not survive, because `side` steers the leader line's exit
- * edge.
+ * column, so whatever `side` arrives on the probe is meaningless. These tests
+ * feed the stale value in to prove it never survives, because `side` steers
+ * the leader line's exit edge.
  */
 const placeholderSide = "right" as const;
 
@@ -326,6 +326,33 @@ function inputCard(id: string, overrides: Partial<CardLayoutInput> = {}): CardLa
 function placementFor(card: CardLayoutInput, x: number, y: number): CardPlacement {
   return { ...card, x, y, side: placeholderSide };
 }
+
+describe("marginSeat", () => {
+  it("seats the card at the margin with the side that seat actually lands on", () => {
+    // A wide, shallow map turns the top-left margin corner into the map's *top*.
+    const wideMap: CardArea = { x: 100, y: 300, width: 700, height: 100 };
+    const space = makeSpace([wideMap], wideMap);
+
+    const seat = marginSeat(inputCard("seated"), space);
+
+    expect(seat.x).toBe(space.margin);
+    expect(seat.y).toBe(space.margin);
+    expect(seat.side).toBe("top");
+    expect(seat.side).toBe(space.sideOf(seat));
+  });
+
+  it("keeps a card too large for the canvas at the margin instead of past it", () => {
+    // `maxX`/`maxY` fall below the margin here, so the clamp has to resolve to
+    // the margin rather than to a negative upper bound.
+    const space = makeSpace();
+
+    const seat = marginSeat(inputCard("huge", { width: 2000, height: 1800 }), space);
+
+    expect(seat.x).toBe(space.margin);
+    expect(seat.y).toBe(space.margin);
+    expect(seat.side).toBe(space.sideOf(seat));
+  });
+});
 
 describe("orderResult", () => {
   it("seats a card the solver dropped inside the padded canvas, not at the origin", () => {

@@ -19,6 +19,7 @@ import { createRateLimiter } from "./ai/rate-limit";
 import { createAiLogger } from "./ai/ai-observability";
 import { createRoomStore } from "./collaboration";
 import { createCollaborationRouter } from "./collaboration-routes";
+import { clientIp } from "./client-ip";
 import { isHostAllowed } from "./host-validation";
 import { handleRequestMethod } from "./route-methods";
 import {
@@ -43,14 +44,6 @@ export function resolvePort(value: string | undefined = process.env.PORT): numbe
   return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : DEFAULT_PORT;
 }
 const DEFAULT_DATA_DIR = fileURLToPath(new URL("../.data", import.meta.url));
-
-function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
-  const forwarded = trustProxy ? request.headers["x-forwarded-for"] : undefined;
-  const forwardedIp = (Array.isArray(forwarded) ? forwarded.join(",") : forwarded)
-    ?.split(",").map((hop) => hop.trim()).filter(Boolean).pop();
-  const real = trustProxy && !forwardedIp ? request.headers["x-real-ip"] : undefined;
-  return (forwardedIp || (Array.isArray(real) ? real.at(-1) : real)?.trim() || request.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
-}
 
 export interface AiServerOptions {
   staticDir?: string;

@@ -25,7 +25,7 @@ import type { StudioChrome } from "../../hooks/use-studio-chrome";
 import { LegacyProjectExportDialog } from "./LegacyProjectExportDialog";
 import { LegacySidebarPanels } from "./LegacySidebarPanels";
 import { SkipToStageLink } from "./SkipToStageLink";
-import { StudioBrand } from "./StudioStatusScreens";
+import { StudioBrand } from "./StudioBrand";
 import { STUDIO_STAGE_TARGET_ID } from "./stage-target";
 import type { StageSlotsContext } from "./stage-slots";
 

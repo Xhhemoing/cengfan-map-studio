@@ -100,7 +100,7 @@ export function TypographyPanel({
         {fonts.filter((font) => font.source === "user").map((font) => (
           <div key={font.id} className="asset-panel__font-row">
             <span className="asset-panel__font-preview" style={{ fontFamily: `\"${font.family}\"` }}>{font.label}</span>
-            <button type="button" aria-label={`删除字体 ${font.label}`} title="删除字体" onClick={() => onDeleteUserFont?.(font.id)}><Trash2 size={14} /></button>
+            <button type="button" aria-label={`删除字体 ${font.label}`} title="删除字体" onClick={() => onDeleteUserFont?.(font.id)}><Trash2 size={14} aria-hidden /></button>
           </div>
         ))}
         {message && <p className="property-panel__hint" role="status">{message}</p>}
