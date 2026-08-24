@@ -394,6 +394,85 @@ describe("pasted html tables", () => {
     expect(result.candidates[1]).not.toHaveProperty("locationScope");
   });
 
+  it("keeps the whole outer row when a cell holds a nested table", () => {
+    // A Word/WPS export wraps a multi-line cell in a <table> of its own.
+    // Reading the outer row up to the next <tr> cut it off at that cell and
+    // dropped every later column without reporting anything.
+    expect(parseHtmlTableRows(
+      "<table><tr><th>姓名</th><th>院校</th><th>城市</th><th>备注</th></tr>"
+      + "<tr><td>林舟</td><td>北京大学</td><td>北京市</td>"
+      + "<td><table><tr><td>2026 秋</td></tr></table></td></tr>"
+      + "<tr><td><table><tr><td>甲班</td></tr></table>苏禾</td><td>浙江大学</td><td>杭州市</td><td></td></tr>"
+      + "</table>",
+    )).toEqual([
+      ["姓名", "院校", "城市", "备注"],
+      ["林舟", "北京大学", "北京市", "2026 秋"],
+      ["甲班 苏禾", "浙江大学", "杭州市", ""],
+    ]);
+  });
+
+  it("imports every row of a roster wrapped in a layout table", () => {
+    // Old school pages put the roster inside a full-width layout table.
+    const result = parseHtmlTable(
+      '<table width="100%"><tr><td class="content">'
+      + "<table><tr><th>姓名</th><th>院校</th><th>城市</th></tr>"
+      + "<tr><td>林舟</td><td>北京大学</td><td>北京市</td></tr>"
+      + "<tr><td>苏禾</td><td>浙江大学</td><td>杭州市</td></tr></table>"
+      + "</td></tr></table>",
+    );
+
+    expect(result.headerRowIndex).toBe(1);
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["林舟", "苏禾"]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("reports the rows of a nested grid instead of hiding them in one cell", () => {
+    // A nested table that is a grid of its own cannot be told apart from a roster in a layout
+    // wrapper, so its rows are kept as rows: a noisy 未识别 line is recoverable, a roster folded
+    // into a single cell is not. The row holding it is complete either way.
+    const result = parseHtmlTable(
+      "<table><tr><td>姓名</td><td>院校</td><td>城市</td><td>备注</td></tr>"
+      + "<tr><td>林舟</td><td>北京大学</td><td>北京市</td>"
+      + "<td><table><tr><td>面试</td><td>10-01</td></tr><tr><td>入学</td><td>09-01</td></tr></table></td></tr></table>",
+    );
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "面试\t10-01", reason: "缺少城市" },
+      { sourceLine: 4, rawLine: "入学\t09-01", reason: "缺少城市" },
+    ]);
+  });
+
+  it("keeps a nested table from swallowing the rows that follow it", () => {
+    const rows = parseHtmlTableRows(
+      "<table><tr><td>姓名</td><td>院校</td><td>城市</td></tr>"
+      + "<tr><td>林舟</td><td><table><tr><td>北京大学</td></tr></table></td><td>北京市</td></tr>"
+      + "<tr><td>苏禾</td><td>浙江大学</td><td>杭州市</td></tr></table>",
+    );
+
+    expect(rows).toEqual([
+      ["姓名", "院校", "城市"],
+      ["林舟", "北京大学", "北京市"],
+      ["苏禾", "浙江大学", "杭州市"],
+    ]);
+  });
+
+  it("keeps both tables when a page ships two rosters side by side", () => {
+    const result = parseHtmlTable(
+      "<table><tr><th>姓名</th><th>院校</th><th>城市</th></tr>"
+      + "<tr><td>林舟</td><td>北京大学</td><td>北京市</td></tr></table>"
+      + "<h3>研究生</h3>"
+      + "<table><tr><th>姓名</th><th>院校</th><th>城市</th></tr>"
+      + "<tr><td>苏禾</td><td>浙江大学</td><td>杭州市</td></tr></table>",
+    );
+
+    // The repeated header of the second table is a header, not a student called 姓名.
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["林舟", "苏禾"]);
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("reports no table for clipboard markup that carries none", () => {
     expect(parseHtmlTableRows("<div><p>林舟 北京大学 北京</p></div>")).toBeNull();
     expect(parseHtmlTableRows("<table></table>")).toBeNull();

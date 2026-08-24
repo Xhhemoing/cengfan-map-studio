@@ -19,6 +19,7 @@
 | Round 8 | complete | 2026-08-24 | 2026-08-24 | 印前体检；交付页出血尺寸；helpers 再拆；损坏快照跳过 |
 | Round 9 | complete | 2026-08-24 | 2026-08-24 | App 测试拆分；幽灵卡修复；导入行号/引号；JSON 415；交付 a11y |
 | Round 10 | complete | 2026-08-24 | 2026-08-24 | 健康检查真高度/同层重叠；交付出血预览；导入副列回落；CORS X-Request-Id |
+| Round 11 | integrating | 2026-08-24 | — | Agent 健康与手摆钉扎；省份连接锚点；嵌套表；join 限流 |
 
 ## Round 1 结论摘要
 

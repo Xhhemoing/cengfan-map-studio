@@ -217,6 +217,55 @@ describe("DeliveryWorkspace", () => {
     expect(plainPreview.querySelector('[data-print-bleed-overlay]')).toBeNull();
   });
 
+  it("keeps keyboard focus on the poster: the bleed chrome adds no tab stops and stays static", () => {
+    const bled = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    bled.canvas.printBleedMm = 3;
+    const container = renderWorkspace({ project: bled });
+    const preview = container.querySelector('section[aria-label="最终预览"]')!;
+    const stage = preview.querySelector('[data-print-bleed-stage]')!;
+    const overlay = stage.querySelector<SVGSVGElement>('svg[data-print-bleed-overlay]')!;
+
+    // 叠加层不可聚焦（focusable=false 兼容旧引擎、无 tabindex），舞台里也没有任何新增的可交互元素。
+    expect(overlay.getAttribute("focusable")).toBe("false");
+    expect(overlay.hasAttribute("tabindex")).toBe(false);
+    expect(stage.querySelectorAll("a, button, input, select, textarea, [tabindex]")).toHaveLength(0);
+
+    // 预览滚动框里被命名的图像仍是成品画布本身，且不在任何 aria-hidden 子树内；装饰层对读屏隐藏。
+    const poster = preview.querySelector<SVGSVGElement>("svg.poster")!;
+    expect(poster.getAttribute("role")).toBe("img");
+    expect(poster.getAttribute("aria-label")).toBeTruthy();
+    expect(poster.closest('[aria-hidden="true"]')).toBeNull();
+    expect(overlay.getAttribute("aria-hidden")).toBe("true");
+
+    // 印前示意是静态几何：无 SMIL 动画、无内联过渡/动画，reduced-motion 下渲染结果不变。
+    expect(overlay.querySelector("animate, animateTransform, animateMotion, set")).toBeNull();
+    expect(overlay.getAttribute("style") ?? "").not.toMatch(/transition|animation/);
+  });
+
+  it("shrinks the bleed stage on narrow screens so the trim stays fully visible", () => {
+    const bled = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    bled.canvas.printBleedMm = 3;
+    const container = renderWorkspace({ project: bled });
+    const geometry = resolvePrintBleedGeometry({ x: 0, y: 0, width: 1500, height: 1000 }, { printBleedMm: 3 });
+    const stage = container.querySelector<HTMLElement>('[data-print-bleed-stage]')!;
+
+    // 舞台上限是媒体框宽度、下限可缩到 0：窄屏时整体缩小，而不是溢出后被裁掉或只能横向滚动。
+    const styleText = stage.querySelector("style")?.textContent ?? "";
+    expect(styleText).toContain(
+      `.delivery-workspace__bleed-stage { position: relative; width: min(100%, ${geometry.media.width}px); min-width: 0; }`,
+    );
+
+    // 叠加 SVG 的固有宽度会把画布网格的 auto 轨道撑到媒体宽，min(100%, …) 永远收不小；
+    // 舞台注入的样式把轨道钉成 minmax(0, 1fr)，让 min() 真正生效。
+    expect(styleText).toContain(
+      ".delivery-workspace__canvas:has(> .delivery-workspace__bleed-stage) { grid-template-columns: minmax(0, 1fr); }",
+    );
+
+    // 出血为 0 时既没有舞台也没有任何注入样式，预览保持原样。
+    const plain = renderWorkspace();
+    expect(plain.querySelector('section[aria-label="最终预览"] style')).toBeNull();
+  });
+
   it("locates object-in-bleed print issues with severity in the accessible name", () => {
     const onLocate = vi.fn();
     const printIssues: LayoutHealthIssue[] = [

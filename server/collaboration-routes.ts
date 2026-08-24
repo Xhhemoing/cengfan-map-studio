@@ -131,6 +131,11 @@ export function createCollaborationRouter(options: CollaborationRouterOptions) {
 
     const joinMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/join$/);
     if (request.method === "POST" && joinMatch) {
+      const joinLimit = options.roomCreateRateLimiter.check(`join:${options.clientIp(request)}`);
+      if (!joinLimit.allowed) {
+        send(429, { error: { code: "ROOM_JOIN_RATE_LIMITED", message: "加入房间尝试过于频繁，请稍后重试。" } });
+        return true;
+      }
       const body = await readJson(request, maxBodyBytes);
       if (!isRecord(body)
         || typeof body.inviteToken !== "string" || !body.inviteToken.trim()

@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createRateLimiter } from "./ai/rate-limit";
 import { createAiServer } from "./index";
 
 interface RawResponse {
@@ -340,6 +341,28 @@ describe("server request security", () => {
     });
 
     expect(response.status).toBe(201);
+  });
+
+  it("rate-limits repeated public room join attempts", async () => {
+    const server = createAiServer({
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify({
+      inviteToken: "invalid-invite",
+      clientId: "attacker",
+      displayName: "attacker",
+    }));
+
+    const first = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body);
+    const limited = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body);
+
+    expect(first.status).toBe(404);
+    expect(limited.status).toBe(429);
+    expect(JSON.parse(limited.body)).toMatchObject({
+      error: { code: "ROOM_JOIN_RATE_LIMITED" },
+    });
   });
 
   it.each([

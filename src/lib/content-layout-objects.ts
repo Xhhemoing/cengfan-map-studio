@@ -8,9 +8,11 @@ import {
   type LayoutHealthIssue,
   type LayoutHealthObject,
 } from "./layout-health";
+import type { MapFeature, Position } from "./map-data";
 import { prepareDestinationCards, type PreparedDestinationCard } from "./poster-card-rows";
 import { deriveCardFrameLayout } from "./poster-display-frame";
 import type { ProjectDocument } from "./project-document";
+import type { MapSettings } from "./scene-document";
 
 /** 与 PosterCanvas 相同的水平内边距推导：displayFrame 缺省时按卡片设置生成固定框。 */
 function resolveMeasureHorizontalPadding(cards: ProjectDocument["cards"]): number {
@@ -21,12 +23,114 @@ function resolveMeasureHorizontalPadding(cards: ProjectDocument["cards"]): numbe
 }
 
 /**
- * 用产品渲染同一套测量函数（prepareDestinationCards）计算每张目的地卡的真实宽高。
+ * 省级行政中心经纬度，逐字取自 `src/assets/china.geojson` 每个要素的
+ * `properties.center`——渲染层的连接线锚点投影的就是这个点。
  *
- * 卡片宽高只依赖学生分组、字段换行与排版设置，不依赖地理数据；因此传入空的
- * features 与恒 null 的投影即可跳过 geojson 解析与墨卡托投影。锚点此时统一回落
- * 到地图中心（map.x + width/2 —— 地图围绕自身中心缩放，中心是缩放不动点），
- * 恰好可作为连接线体检的地图侧锚点近似。
+ * 内联一份是为了让排版体检拿到与画布一致的省份锚点，而不必在体检路径上
+ * JSON.parse 582KB 的 geojson（体检会在 Agent 循环、交付页、健康面板里反复
+ * 跑）。这不是第二份地理事实：`content-layout-objects.test.ts` 里有一条用例
+ * 直接读真 geojson、走渲染层的 `fitFeatureProjection` 逐省比对，数据一旦漂移
+ * 立刻红。键是 `toShortProvinceName` 之后的短名。
+ */
+const PROVINCE_CENTER_COORDINATES: Readonly<Record<string, Position>> = {
+  安徽: [117.283042, 31.86119],
+  澳门: [113.54909, 22.198951],
+  北京: [116.405285, 39.904989],
+  重庆: [106.504962, 29.533155],
+  福建: [119.306239, 26.075302],
+  甘肃: [103.823557, 36.058039],
+  广东: [113.280637, 23.125178],
+  广西: [108.320004, 22.82402],
+  贵州: [106.713478, 26.578343],
+  海南: [110.33119, 20.031971],
+  河北: [114.502461, 38.045474],
+  河南: [113.665412, 34.757975],
+  黑龙江: [126.642464, 45.756967],
+  湖北: [114.298572, 30.584355],
+  湖南: [112.982279, 28.19409],
+  吉林: [125.3245, 43.886841],
+  江苏: [118.767413, 32.041544],
+  江西: [115.892151, 28.676493],
+  辽宁: [123.429096, 41.796767],
+  内蒙古: [111.670801, 40.818311],
+  宁夏: [106.278179, 38.46637],
+  青海: [101.778916, 36.623178],
+  山东: [117.000923, 36.675807],
+  山西: [112.549248, 37.857014],
+  陕西: [108.948024, 34.263161],
+  上海: [121.472644, 31.231706],
+  四川: [104.065735, 30.659462],
+  台湾: [121.509062, 25.044332],
+  天津: [117.190182, 39.125596],
+  西藏: [91.132212, 29.660361],
+  香港: [114.173355, 22.320048],
+  新疆: [87.617733, 43.792818],
+  云南: [102.712251, 25.040609],
+  浙江: [120.153576, 30.287459],
+};
+
+/**
+ * 只带 `center` 的省份要素表。`prepareDestinationCards` 的锚点分支只用到
+ * `findProvinceFeature` 的省名匹配与 `feature.center`，几何体不参与计算，
+ * 所以这里给一个空多边形；省名匹配（全名/短名/带后缀）沿用产品实现。
+ */
+const PROVINCE_ANCHOR_FEATURES: MapFeature[] = Object.entries(PROVINCE_CENTER_COORDINATES)
+  .map(([shortName, center]) => ({
+    type: "Feature" as const,
+    id: shortName,
+    name: shortName,
+    shortName,
+    center,
+    geometry: { type: "Polygon" as const, coordinates: [] },
+  }));
+
+/**
+ * 全量省份要素在 d3 `geoMercator().scale(150).translate([0, 0])` 下的投影包围盒。
+ * `folded` 对应 `collapseSouthChinaSea`：南海诸岛折进右下角小图后，主图南边界
+ * 抬到 `SOUTH_SEA_LAT_THRESHOLD`（北纬 18.15°），整幅图的适配比例随之改变。
+ */
+const CHINA_PROJECTED_BOUNDS = {
+  open: { left: 192.4287, right: 353.6796, top: -166.6915, bottom: -10.0176 },
+  folded: { left: 192.4287, right: 353.6796, top: -166.6915, bottom: -48.3141 },
+} as const;
+
+const MERCATOR_SCALE = 150;
+const DEGREES_TO_RADIANS = Math.PI / 180;
+
+/** d3 `geoMercator().scale(150).translate([0, 0])` 的点变换（y 轴向下）。 */
+function projectMercator([longitude, latitude]: Position): Position {
+  return [
+    MERCATOR_SCALE * longitude * DEGREES_TO_RADIANS,
+    -MERCATOR_SCALE * Math.log(Math.tan(Math.PI / 4 + (latitude * DEGREES_TO_RADIANS) / 2)),
+  ];
+}
+
+/**
+ * 复刻 MapLayer 的 `fitFeatureProjection(mainland, [[0, 0], [width, height]])`。
+ *
+ * d3 的 `fitExtent` 只做等比缩放 + 居中，缩放比与位移完全由要素集合的投影包围盒
+ * 决定；包围盒是常量，于是整个投影退化成一个闭式仿射变换，不需要要素几何。
+ */
+function fitMapProjection(map: Pick<MapSettings, "width" | "height" | "collapseSouthChinaSea">) {
+  const bounds = map.collapseSouthChinaSea === true ? CHINA_PROJECTED_BOUNDS.folded : CHINA_PROJECTED_BOUNDS.open;
+  const scale = Math.min(map.width / (bounds.right - bounds.left), map.height / (bounds.bottom - bounds.top));
+  const offsetX = (map.width - scale * (bounds.left + bounds.right)) / 2;
+  const offsetY = (map.height - scale * (bounds.top + bounds.bottom)) / 2;
+  return (coordinate: Position): Position => {
+    const [x, y] = projectMercator(coordinate);
+    return [scale * x + offsetX, scale * y + offsetY];
+  };
+}
+
+/**
+ * 用产品渲染同一套测量函数（prepareDestinationCards）计算每张目的地卡的真实
+ * 宽高，以及它在地图上的省份锚点。
+ *
+ * 卡片宽高只依赖学生分组、字段换行与排版设置，与地理数据无关。锚点则用
+ * {@link PROVINCE_CENTER_COORDINATES} + {@link fitMapProjection} 复刻渲染层的
+ * 墨卡托投影：不解析 geojson，也不再把所有卡片压到地图中心。认不出的省份
+ * （海外、自定义省名）仍按产品实现回落到地图中心——地图围绕自身中心缩放，
+ * 中心是缩放不动点。
  */
 export function estimateDestinationCardLayouts(project: ProjectDocument): PreparedDestinationCard[] {
   // 与 poster-card-placement 的渲染门槛一致：这两种情形画布上不渲染目的地卡。
@@ -36,9 +140,10 @@ export function estimateDestinationCardLayouts(project: ProjectDocument): Prepar
     groups: buildLayoutGroups(project.students, project.cards.grouping),
     cards: project.cards,
     expressionTemplates: { title: templates.title, city: templates.city, row: templates.row },
-    features: [],
-    projection: () => null,
-    centroid: () => [0, 0],
+    features: PROVINCE_ANCHOR_FEATURES,
+    projection: fitMapProjection(project.map),
+    // 兜底几何路径用不到（闭式投影恒返回有限值），给地图中心与省份缺失时同解。
+    centroid: () => [project.map.width / 2, project.map.height / 2],
     map: project.map,
     canvasWidth: project.canvas.width,
     safeMargin: project.canvas.safeMargin,
@@ -52,6 +157,10 @@ export function estimateDestinationCardLayouts(project: ProjectDocument): Prepar
  * 共锚点豁免半径：多张卡的连接线汇入同一个地图锚点时，锚点附近的会合不算冲突
  * （connector-geometry 的去重逻辑同样豁免 24px 内的尾段）。layout-health 的线段
  * 相交判定包含端点接触，所以喂给它之前先把锚点端裁掉这一段。
+ *
+ * 每条线只裁自己那个锚点，所以省份锚点分开之后仍然成立：同省多张卡（按城市
+ * 分组）逐字共用锚点，紧挨着的两个省份锚点（香港/澳门相距约 7px）也落在同一
+ * 个豁免圈量级内；真正跨图幅交叉的引线离两个锚点都远，一段都不会被裁掉。
  */
 export const CONNECTOR_ANCHOR_EXEMPT_RADIUS = 24;
 

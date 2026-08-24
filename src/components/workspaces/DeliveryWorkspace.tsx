@@ -235,13 +235,18 @@ function BleedPreviewStage({ geometry, children }: { geometry: PrintBleedGeometr
     `M ${bleed.x} ${bleed.y} h ${bleed.width} v ${bleed.height} h ${-bleed.width} Z ` +
     `M ${trim.x} ${trim.y} h ${trim.width} v ${trim.height} h ${-trim.width} Z`;
   return (
-    <div
-      className="delivery-workspace__bleed-stage"
-      data-print-bleed-stage
-      style={{ position: "relative", width: `min(100%, ${media.width}px)` }}
-    >
-      {/* 移动端样式会把 .poster 固定为 760px，这里必须让画布精确填满成品占位框，否则示意层错位。 */}
-      <style>{".delivery-workspace__bleed-stage .poster { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; }"}</style>
+    <div className="delivery-workspace__bleed-stage" data-print-bleed-stage>
+      {/* 舞台全部布局规则集中在这份注入样式里（jsdom 的 CSSOM 解析不了 min()，内联会被静默丢弃）：
+          1) 舞台宽度以媒体框为上限、可缩到 0；
+          2) 移动端样式会把 .poster 固定为 760px，必须让画布精确填满成品占位框，否则示意层错位；
+          3) 叠加 SVG 的固有宽度（媒体框）会把画布网格的 auto 轨道撑到媒体宽，min(100%, …) 便永远
+             收不小、窄屏只能横向滚动甚至被 overflow: hidden 裁掉；把轨道钉成 minmax(0, 1fr) 后
+             舞台整体缩小，成品与裁切标记始终完整可见。 */}
+      <style>{
+        `.delivery-workspace__bleed-stage { position: relative; width: min(100%, ${media.width}px); min-width: 0; }` +
+        ".delivery-workspace__bleed-stage .poster { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; }" +
+        ".delivery-workspace__canvas:has(> .delivery-workspace__bleed-stage) { grid-template-columns: minmax(0, 1fr); }"
+      }</style>
       {/* 成品画布占位：媒体框内按 trim/media 比例定位，先于叠加层渲染，preview 里第一个 svg 仍是海报本身。 */}
       <div
         style={{

@@ -98,12 +98,18 @@ export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
 }
 
 export interface CardLayoutCacheKeyBenchmarkReport {
-  methodology: "stable cache-key serialization before worker dispatch; solver and cache lookup excluded";
+  methodology: "stable cache-key serialization with and without pinned coordinates before worker dispatch; solver and cache lookup excluded";
   cardCount: number;
   polygonCount: number;
   verticesPerPolygon: number;
   warmupIterations: number;
   iterations: number;
+  results: CardLayoutCacheKeyBenchmarkResult[];
+}
+
+export interface CardLayoutCacheKeyBenchmarkResult {
+  fixedPositions: "absent" | "all-cards";
+  fixedPositionCount: number;
   keyBytes: number;
   p50Ms: number;
   p95Ms: number;
@@ -597,7 +603,12 @@ export function runPrintBleedExportBenchmark(
  * Measures work that remains on the main thread before a large layout can be
  * served from cache or dispatched to the worker. The dense polygon bounds make
  * the stable-key fixture include the largest structured input used elsewhere
- * in this benchmark, while deliberately excluding solver and worker time.
+ * in this benchmark. It compares the base request with every card pinned so
+ * the fixedPositions serialization added to the production key is observable.
+ *
+ * Do not import buildContentLayoutInput/listContentLayoutIssues here: their
+ * poster-card-rows dependency imports china.geojson?raw through map-data, which
+ * the standalone tsx CLI cannot load without a Vite-specific harness.
  */
 export function runCardLayoutCacheKeyBenchmark(
   cardCount = 400,
@@ -609,36 +620,58 @@ export function runCardLayoutCacheKeyBenchmark(
   positiveInteger(iterations, "cache-key iterations");
   const cards = makeLayoutBenchmarkCards(cardCount, 20260824);
   const { bounds } = makeDensePolygonBenchmarkFixture(20260824);
-  const input = {
-    cards,
-    bounds,
-    options: {
-      mode: "quadrant" as const,
-      autoBalance: true,
-      connectorStyle: "curve" as const,
-      connectorWidth: 1.5,
-    },
+  const options = {
+    mode: "quadrant" as const,
+    autoBalance: true,
+    connectorStyle: "curve" as const,
+    connectorWidth: 1.5,
   };
-  for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
-    createCardLayoutCacheKey(input);
-  }
-  const samples: number[] = [];
-  let key = createCardLayoutCacheKey(input);
-  for (let iteration = 0; iteration < iterations; iteration += 1) {
-    const startedAt = performance.now();
-    key = createCardLayoutCacheKey(input);
-    samples.push(performance.now() - startedAt);
-  }
+  const fixedPositions = Object.fromEntries(cards.map((card) => [
+    card.id,
+    {
+      x: card.anchorX - card.width / 2,
+      y: card.anchorY - card.height / 2,
+    },
+  ]));
+  const variants = [
+    {
+      fixedPositions: "absent" as const,
+      fixedPositionCount: 0,
+      input: { cards, bounds, options },
+    },
+    {
+      fixedPositions: "all-cards" as const,
+      fixedPositionCount: cards.length,
+      input: { cards, bounds, options: { ...options, fixedPositions } },
+    },
+  ];
+  const results = variants.map((variant): CardLayoutCacheKeyBenchmarkResult => {
+    for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+      createCardLayoutCacheKey(variant.input);
+    }
+    const samples: number[] = [];
+    let key = createCardLayoutCacheKey(variant.input);
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+      const startedAt = performance.now();
+      key = createCardLayoutCacheKey(variant.input);
+      samples.push(performance.now() - startedAt);
+    }
+    return {
+      fixedPositions: variant.fixedPositions,
+      fixedPositionCount: variant.fixedPositionCount,
+      keyBytes: Buffer.byteLength(key),
+      p50Ms: rounded(percentile(samples, 0.5)),
+      p95Ms: rounded(percentile(samples, 0.95)),
+    };
+  });
   return {
-    methodology: "stable cache-key serialization before worker dispatch; solver and cache lookup excluded",
+    methodology: "stable cache-key serialization with and without pinned coordinates before worker dispatch; solver and cache lookup excluded",
     cardCount,
     polygonCount: bounds.occupiedPolygons?.length ?? 0,
     verticesPerPolygon: bounds.occupiedPolygons?.[0]?.rings[0]?.length ?? 0,
     warmupIterations,
     iterations,
-    keyBytes: Buffer.byteLength(key),
-    p50Ms: rounded(percentile(samples, 0.5)),
-    p95Ms: rounded(percentile(samples, 0.95)),
+    results,
   };
 }
 

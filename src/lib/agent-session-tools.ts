@@ -1,6 +1,6 @@
 import { applyDataViewChange } from "./catalog-usage";
 import { solveCardLayout, type CardLayoutInput, type CardLayoutMode } from "./card-layout";
-import { checkLayoutHealth, type LayoutHealthInput, type LayoutHealthObject } from "./layout-health";
+import { listContentLayoutIssues } from "./content-layout-objects";
 import type { StudioAsset } from "./assets";
 import { duplicateStudentIds } from "./data-duplicate";
 import type { AgentToolCall, RiskLevel } from "./agent-risk";
@@ -121,40 +121,16 @@ function runAutoLayout(project: ProjectDocument, mode: string): { project: Proje
     gap: Math.max(10, project.cards.gap),
     occupiedAreas: project.guests.visibility ? [{ x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 }] : [],
     allowMapOverlap: project.cards.allowMapOverlap === true,
-  }, { mode: (mode || project.cards.layoutMode || "quadrant") as CardLayoutMode, autoBalance: project.cards.autoBalance !== false });
+  }, {
+    mode: (mode || project.cards.layoutMode || "quadrant") as CardLayoutMode,
+    autoBalance: project.cards.autoBalance !== false,
+    // 用户手工拖放过的卡片钉在原坐标，其余卡片绕开它们排版，与画布求解一致。
+    fixedPositions: project.cards.positions,
+  });
   const positions = Object.fromEntries(result.placements.map((placement) => [placement.id, { x: placement.x, y: placement.y }]));
   return {
     project: { ...project, cards: { ...project.cards, positions } },
     placements: result.placements,
-  };
-}
-
-function healthInput(project: ProjectDocument): LayoutHealthInput {
-  const objects: LayoutHealthObject[] = [
-    { id: "map", kind: "map", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
-    { id: "cards", kind: "card", zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } },
-    ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
-    ...project.textElements.map((text) => ({
-      id: text.id,
-      kind: "text" as const,
-      zIndex: 40,
-      bounds: { x: text.x, y: text.y - text.fontSize, width: text.maxWidth, height: text.fontSize * 1.3 },
-      visible: text.visibility,
-      content: text.content,
-      textColor: text.color,
-      backgroundColor: project.canvas.backgroundColor,
-    })),
-    ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
-  ];
-  return {
-    canvas: {
-      width: project.canvas.width,
-      height: project.canvas.height,
-      safeMargin: project.canvas.safeMargin,
-      printBleedMm: project.canvas.printBleedMm,
-    },
-    objects,
-    cardsPositions: project.cards.positions,
   };
 }
 
@@ -202,7 +178,8 @@ export function executeAgentToolCall(project: ProjectDocument, call: AgentToolCa
       return { project, result: { id: call.id, ok: true, content: JSON.stringify({ ok: true, domain, properties: SCENE_DOMAIN_PROPS[domain as SceneDomain] ?? [] }) } };
     }
     if (call.name === "check_health") {
-      return { project, result: { id: call.id, ok: true, content: JSON.stringify({ ok: true, issues: checkLayoutHealth(healthInput(project)) }) } };
+      // 与交付路径共用同一体检入口：实测卡片宽高、连接线冲突与出血检查完全一致。
+      return { project, result: { id: call.id, ok: true, content: JSON.stringify({ ok: true, issues: listContentLayoutIssues(project) }) } };
     }
     if (call.name === "find_assets") {
       const province = String(args.province ?? "").trim();
@@ -223,9 +200,16 @@ export function executeAgentToolCall(project: ProjectDocument, call: AgentToolCa
       return { project: applyDataViewChange(project, String(args.view) as DataViewId), result: { id: call.id, ok: true, content: JSON.stringify({ ok: true, view: args.view }) } };
     }
     if (call.name === "auto_layout") {
-      const hadManualPositions = Object.keys(project.cards.positions ?? {}).length > 0;
+      const previousPositions = project.cards.positions ?? {};
       const layout = runAutoLayout(project, String(args.mode ?? "quadrant"));
-      return { project: layout.project, result: { id: call.id, ok: true, content: JSON.stringify({ ok: true, placements: layout.placements, lostManualLayout: hadManualPositions }) } };
+      const nextPositions = layout.project.cards.positions ?? {};
+      // fixedPositions 钉住后手工位置原样保留；只有确实被丢弃或挪动的键
+      // （如没有对应分组的残留键）才算丢手工布局。
+      const lostManualLayout = Object.entries(previousPositions).some(([key, point]) => {
+        const next = nextPositions[key];
+        return !next || next.x !== point.x || next.y !== point.y;
+      });
+      return { project: layout.project, result: { id: call.id, ok: true, content: JSON.stringify({ ok: true, placements: layout.placements, lostManualLayout }) } };
     }
     if (call.name === "manage_students") {
       const action = String(args.action ?? "");
