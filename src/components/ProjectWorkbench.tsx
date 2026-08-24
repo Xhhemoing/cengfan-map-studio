@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEmptyProject, createSampleProject, duplicateStoredProject, type ProjectStore, type StoredProject } from "../lib/project-store";
-import { downloadProjectPackage, parseProjectPackage, projectPackageDisplayName } from "../lib/project-package";
+import { downloadProjectPackage, parseProjectPackage, projectPackageDisplayName, type ProjectPackage } from "../lib/project-package";
 import { createId } from "../lib/ids";
 import { PROJECT_PACKAGE_IMPORT_LIMIT, checkImportFileSize } from "../lib/import-file-limits";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
@@ -22,6 +22,15 @@ interface DialogRequest {
   restoreFocus: () => void;
 }
 
+/**
+ * warnings 只描述某一次解析（剥离了哪些超限字体/素材），不是工程包内容。
+ * 落进 IndexedDB 会被后续导出原样带走，让下一位使用者看到与自己无关的剥离说明。
+ */
+function withoutImportWarnings(pack: ProjectPackage): ProjectPackage {
+  const { warnings: _warnings, ...stored } = pack;
+  return stored;
+}
+
 function formatUpdatedAt(value: string): string {
   const time = Date.parse(value);
   if (!Number.isFinite(time)) return "";
@@ -38,6 +47,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   const [projects, setProjects] = useState<StoredProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [renameRequest, setRenameRequest] = useState<DialogRequest | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<DialogRequest | null>(null);
@@ -131,7 +141,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
         name: label,
         createdAt: savedAt,
         updatedAt: savedAt,
-        pack: localEntry.pack,
+        pack: withoutImportWarnings(localEntry.pack),
       };
       await store.put(created);
       openProject(created.id);
@@ -215,6 +225,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
 
   const importProject = async (file: File | null) => {
     if (!file) return;
+    setImportWarnings([]);
     try {
       // 先判体积再读盘：`file.text()` 与 `JSON.parse` 都要把整份工程同步装进内存，
       // 超限的文件读进来只会先卡死标签页，再抛一个用户看不懂的解析错误。
@@ -229,9 +240,10 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
         name: projectPackageDisplayName(file.name),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        pack,
+        pack: withoutImportWarnings(pack),
       });
       setError("");
+      setImportWarnings(pack.warnings ?? []);
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? `导入失败：${reason.message}` : "导入失败");
@@ -251,6 +263,12 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       <WorkbenchHeader importInputRef={importInputRef} onCreateProject={() => void createProject()} onImportProject={(file) => void importProject(file)} />
 
       {error && <section className="workbench-error" role="alert">{error}</section>}
+
+      {importWarnings.length > 0 && (
+        <section className="workbench-error workbench-error--notice" role="status">
+          导入成功，但已剥离超限内容：{importWarnings.join("；")}
+        </section>
+      )}
 
       {localEntry && <ContinueEditingCard entry={localEntry} onResume={() => void continueEditing()} />}
 

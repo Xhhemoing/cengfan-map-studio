@@ -3,8 +3,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { ProjectWorkbench } from "./ProjectWorkbench";
 import { createMemoryProjectStore, createSampleProject } from "../lib/project-store";
-import { serializeProjectPackage } from "../lib/project-package";
+import { serializeProjectPackage, type ProjectPackage } from "../lib/project-package";
 import { MAX_PROJECT_PACKAGE_BYTES } from "../lib/import-file-limits";
+import { loadLocalWorkspaceEntry } from "../lib/local-workspace-entry";
+
+vi.mock("../lib/local-workspace-entry", () => ({
+  loadLocalWorkspaceEntry: vi.fn(async () => null),
+}));
 
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
 function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, navigate = vi.fn()) {
@@ -26,6 +31,20 @@ function changeInput(input: HTMLInputElement, value: string): void {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
+}
+
+const duplicateFont = {
+  id: "font-1",
+  label: "手写体",
+  family: "font-1",
+  src: "data:font/ttf;base64,AA==",
+  format: "truetype" as const,
+  source: "user" as const,
+};
+
+/** 同一份字体字节挂在两个 id 上：解析时会被合并成一份，从而带出 `pack.warnings`。 */
+function packWithStrippedFonts(base: ProjectPackage): ProjectPackage {
+  return { ...base, fonts: [duplicateFont, { ...duplicateFont, id: "font-2", label: "手写体副本", family: "font-2" }] };
 }
 
 /** 真造一份 24MB 文件会把测试拖垮，只改 `size` 就够触发体积闸门。 */
@@ -156,6 +175,70 @@ describe("ProjectWorkbench", () => {
       expect(projects).toHaveLength(2);
       expect(projects.some((p) => p.name === "project")).toBe(true);
     });
+  });
+
+  it("导入后展示被剥离的内容，且不把 warnings 写进项目库", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const file = new File([serializeProjectPackage(packWithStrippedFonts(sample.pack))], "合并字体.json", { type: "application/json" });
+    const { container, input } = await renderWithImportInput(store);
+    selectFile(input, file);
+
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error--notice")).not.toBeNull());
+    const notice = container.querySelector(".workbench-error--notice")!;
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(notice.textContent).toContain("导入成功，但已剥离超限内容");
+    expect(notice.textContent).toContain("字体与包内其他字体内容相同");
+    // 剥离是提示不是失败，报错横幅不该跟着亮起。
+    expect(container.querySelector('.workbench-error[role="alert"]')).toBeNull();
+
+    const imported = (await store.list()).find((project) => project.name === "合并字体")!;
+    expect("warnings" in imported.pack).toBe(false);
+    expect(imported.pack.fonts).toHaveLength(1);
+  });
+
+  it("没有剥离时不挂提示条", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const file = new File([serializeProjectPackage(sample.pack)], "干净工程.json", { type: "application/json" });
+    const { container, input } = await renderWithImportInput(store);
+    selectFile(input, file);
+
+    await vi.waitFor(async () => expect(await store.list()).toHaveLength(2));
+    expect(container.querySelector(".workbench-error--notice")).toBeNull();
+  });
+
+  it("换一份干净工程包后清掉上一次的剥离提示", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const { container, input } = await renderWithImportInput(store);
+    selectFile(input, new File([serializeProjectPackage(packWithStrippedFonts(sample.pack))], "合并字体.json", { type: "application/json" }));
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error--notice")).not.toBeNull());
+
+    selectFile(input, new File([serializeProjectPackage(sample.pack)], "干净工程.json", { type: "application/json" }));
+    await vi.waitFor(async () => expect(await store.list()).toHaveLength(3));
+    expect(container.querySelector(".workbench-error--notice")).toBeNull();
+  });
+
+  it("继续编辑本地内容时不把 warnings 存进项目库", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    vi.mocked(loadLocalWorkspaceEntry).mockResolvedValueOnce({
+      // exportedAt 与播种的示例项目错开，否则会被当成同一份内容直接打开而不入库。
+      pack: { ...sample.pack, exportedAt: "2026-07-27T00:00:00.000Z", warnings: ["1 个字体与包内其他字体内容相同，已合并为一份，相关文字改用保留的那份"] },
+      source: "mirror",
+    });
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="继续编辑本地内容"]')).not.toBeNull());
+
+    click(container.querySelector('[aria-label="继续编辑本地内容"]')!);
+
+    await vi.waitFor(async () => expect((await store.list()).some((project) => project.name.startsWith("本地内容"))).toBe(true));
+    const resumed = (await store.list()).find((project) => project.name.startsWith("本地内容"))!;
+    expect("warnings" in resumed.pack).toBe(false);
   });
 
   it("拒绝超过上限的工程包，且不把文件读进内存", async () => {

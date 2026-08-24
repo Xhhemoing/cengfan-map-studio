@@ -194,6 +194,26 @@ function packageFile(students: ProjectDocument["students"], name = "工程.json"
   return new File([serializeProjectPackage(pack)], name, { type: "application/json" });
 }
 
+/** 同一份字体字节挂在两个 id 上：解析时会被合并成一份，从而带出 `pack.warnings`。 */
+function packageFileWithStrippedFonts(name = "带剥离的工程.json"): File {
+  const font = {
+    id: "font-1",
+    label: "手写体",
+    family: "font-1",
+    src: "data:font/ttf;base64,AA==",
+    format: "truetype" as const,
+    source: "user" as const,
+  };
+  const pack = createProjectPackage({
+    project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
+    assets: [],
+    fonts: [font, { ...font, id: "font-2", label: "手写体副本", family: "font-2" }],
+    customTemplates: [],
+    renderSettings: DEFAULT_RENDER_SETTINGS,
+  });
+  return new File([serializeProjectPackage(pack)], name, { type: "application/json" });
+}
+
 /** 只伪造 `size`，校验在读盘前就发生，内容多大无所谓。 */
 function oversizedFile(bytes: number): File {
   const file = packageFile([]);
@@ -248,6 +268,48 @@ describe("usePosterExport 工程包导入防护", () => {
     expect(applyImportedPackage).toHaveBeenCalledTimes(1);
     expect(result().projectImportConfirmation).toBeNull();
     expect(statusMessages.at(-1)).toContain("完整工程包已导入：2 条名单");
+    // 没有剥离时不该凭空多出一句说明。
+    expect(statusMessages.at(-1)).not.toContain("已剥离");
+  });
+
+  it("在确认之前就报出解析期被剥离的内容", async () => {
+    const applyImportedPackage = vi.fn();
+    const result = await mountExport(projectWithCanvas(1200, 800), applyImportedPackage);
+
+    await act(async () => { result().importProjectPackage(packageFileWithStrippedFonts()); });
+    await flushReader();
+
+    expect(applyImportedPackage).not.toHaveBeenCalled();
+    expect(result().projectImportConfirmation?.warnings).toEqual([expect.stringContaining("字体与包内其他字体内容相同")]);
+    expect(statusMessages.at(-1)).toContain("工程包「带剥离的工程.json」解析完成");
+    expect(statusMessages.at(-1)).toContain("已剥离超限内容：");
+    expect(statusMessages.at(-1)).toContain("字体与包内其他字体内容相同");
+  });
+
+  it("确认后落地的工程包不带 warnings，成功文案带上剥离说明", async () => {
+    const applyImportedPackage = vi.fn();
+    const result = await mountExport(projectWithCanvas(1200, 800), applyImportedPackage);
+
+    await act(async () => { result().importProjectPackage(packageFileWithStrippedFonts()); });
+    await flushReader();
+    await act(async () => { result().confirmProjectImport(); });
+
+    const applied = applyImportedPackage.mock.calls[0]![0] as ProjectPackage;
+    // warnings 只描述这一次解析，进了工作区就会被后续导出/镜像原样带走。
+    expect("warnings" in applied).toBe(false);
+    expect(applied.fonts).toHaveLength(1);
+    expect(statusMessages.at(-1)).toContain("完整工程包已导入：0 条名单、0 个素材、1 个字体、0 个模板");
+    expect(statusMessages.at(-1)).toContain("已剥离超限内容：");
+    expect(statusMessages.at(-1)).toContain("字体与包内其他字体内容相同");
+  });
+
+  it("确认框里没有剥离说明时 warnings 是空数组", async () => {
+    const result = await mountExport(projectWithCanvas(1200, 800));
+
+    await act(async () => { result().importProjectPackage(packageFile([])); });
+    await flushReader();
+
+    expect(result().projectImportConfirmation?.warnings).toEqual([]);
   });
 
   it("leaves the workspace untouched when the confirmation is cancelled", async () => {

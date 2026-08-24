@@ -39,6 +39,13 @@ export interface ProjectImportConfirmation {
   assetCount: number;
   fontCount: number;
   templateCount: number;
+  /** 解析时被剥离的超限字体/素材说明，非空时确认框要一并展示。 */
+  warnings: string[];
+}
+
+/** 剥离说明只描述这一次解析结果，拼在状态文案末尾，空数组时不留痕迹。 */
+function describeStripped(warnings: string[] | undefined): string {
+  return warnings && warnings.length > 0 ? `；已剥离超限内容：${warnings.join("；")}` : "";
 }
 
 export interface UsePosterExportResult {
@@ -147,6 +154,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
         // 替换整个工程是破坏性动作，交给调用方渲染的确认框决定，
         // 而不是在 FileReader 回调里阻塞式 `window.confirm`。
         setPendingProjectImport({ pack, fileName: file.name });
+        // 剥离发生在解析期：用户要在按下「导入并替换」之前就知道这份包少了什么。
+        if (pack.warnings?.length) reportStatus(`工程包「${file.name}」解析完成${describeStripped(pack.warnings)}`);
       } catch (error) {
         reportStatus(error instanceof Error ? error.message : "工程包导入失败");
       }
@@ -160,9 +169,11 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const confirmProjectImport = () => {
     if (!pendingProjectImport) return;
     const { pack } = pendingProjectImport;
+    // warnings 只描述这一次解析，落到工作区就会被后续导出/镜像当成包内容带走。
+    const { warnings, ...applied } = pack;
     setPendingProjectImport(null);
-    applyImportedPackage(pack);
-    reportStatus(`完整工程包已导入：${pack.project.students.length} 条名单、${pack.assets.length} 个素材、${pack.fonts.length} 个字体、${pack.customTemplates.length} 个模板`);
+    applyImportedPackage(applied);
+    reportStatus(`完整工程包已导入：${applied.project.students.length} 条名单、${applied.assets.length} 个素材、${applied.fonts.length} 个字体、${applied.customTemplates.length} 个模板${describeStripped(warnings)}`);
   };
 
   const cancelProjectImport = () => {
@@ -240,6 +251,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
         assetCount: pendingProjectImport.pack.assets.length,
         fontCount: pendingProjectImport.pack.fonts.length,
         templateCount: pendingProjectImport.pack.customTemplates.length,
+        warnings: pendingProjectImport.pack.warnings ?? [],
       }
       : null,
     confirmProjectImport,
