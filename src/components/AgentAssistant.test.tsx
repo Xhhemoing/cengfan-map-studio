@@ -578,6 +578,35 @@ describe("AgentAssistant", () => {
     root.unmount();
   });
 
+  it("drops an applied ghost when the assistant remounts into a different project (I-13-03)", async () => {
+    window.localStorage.clear();
+    let project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const onCommit = vi.fn((transaction: ProjectTransaction) => {
+      project = transaction.apply(project);
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "remount-ghost", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "方案完成" })));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const renderWith = (children: React.ReactNode) => flushSync(() => root.render(<AssistantConversationProvider>{children}</AssistantConversationProvider>));
+    renderWith(<AgentAssistant project={project} assets={[]} onCommit={onCommit} />);
+    openAssistant(container);
+    setMessage(container, "调整地图比例");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("方案完成"));
+    clickText(container, "确认应用");
+    expect(onCommit).toHaveBeenCalledTimes(1);
+
+    // 项目模式切换项目会经过加载壳：AI 面板先卸载，再挂载到另一个项目上。
+    renderWith(null);
+    const fresh = createProjectDocument({ students: [], templateId: "original", dataView: "city" });
+    renderWith(<AgentAssistant project={fresh} assets={[]} onCommit={onCommit} />);
+    await vi.waitFor(() => expect(container.textContent).not.toContain("已应用"));
+    await vi.waitFor(() => expect(container.textContent).toContain("新对话"));
+    root.unmount();
+  });
+
   it("uses each conversation mode as the source of truth and reports pending count", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const pending = vi.fn();

@@ -246,9 +246,13 @@ export function AgentAssistant({
   useEffect(() => {
     if (!hydrated) return;
     const currentDigest = currentProjectDigest;
-    if (projectDigestRef.current === null) {
+    // 项目切换有两条路径：同一挂载内 project prop 变化（digest ref 不等），以及
+    // 经过加载壳卸载重挂载（digest ref 为 null，但共享状态里仍留着绑定旧项目的
+    // 对话）。两条路径都要走同一套跨项目重绑/丢弃逻辑（I-13-03）。
+    const remountRebind = projectDigestRef.current === null && conversations.some((conversation) => conversation.projectDigest !== currentDigest);
+    if (projectDigestRef.current === null && !remountRebind) {
       projectDigestRef.current = currentDigest;
-    } else if (projectDigestRef.current !== currentDigest) {
+    } else if (remountRebind || projectDigestRef.current !== currentDigest) {
       projectGenerationRef.current += 1;
       activeRunRef.current?.cancel();
       projectDigestRef.current = currentDigest;
