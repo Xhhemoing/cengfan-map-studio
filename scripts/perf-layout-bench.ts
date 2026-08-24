@@ -8,6 +8,9 @@
  *   - `obstacle` : province-ring polygons + protected areas, which is what
  *                  `PosterCanvas` always sends, so `solveCardLayout` takes the
  *                  `optimizedLayout` path (candidate scoring + connector geometry).
+ *
+ * The first measured count in each process pays the solver's JIT warmup and is
+ * therefore not comparable across builds; compare the later counts.
  */
 import {
   solveCardLayout,
