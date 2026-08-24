@@ -1,28 +1,37 @@
-# Round 10 任务简报（进行中）
+# Round 10 结论简报
 
 - **时间**: 2026-08-24
-- **前置**: Round 9 已集成：tsc 绿、199 files / 1658 tests
+- **前置**: Round 9 BRIEF（199 files / 1658 tests）
 - **模型**: 2× claude-fable-5-thinking-xhigh · 2× claude-opus-5-thinking-high-fast · 2× gpt-5.6-sol-xhigh-fast
-- **分支**: `cursor/agent-sota-polish-cbcd`（禁止新建分支 / commit / stash）
+- **集成**: 主调度接线 `fixedPositions` → 生产 `poster-card-placement` + cache key；`tsc` app+node 0 error。全量 vitest 见后续 verification commit。
 
-## 仍未达印刷级 SOTA（本轮可推进的真实缺口）
+## 相对 Round 9
 
-1. 健康检查把每张卡高度写成 **180**，且 `checkLayoutHealth` 同 z 重叠直接 `continue` → 手工叠卡不报。
-2. `listContentLayoutIssues` **不传 connectors** → `connector-conflict` 产品路径不可达。
-3. 交付预览舞台仍按成品框渲染，出血只在文案里。
-4. 重复表头时主列为空不回落到同名副列。
-5. `GlobalDataScreen` 的 `issueFilter` 会把质量面板骗成「数据状态良好」。
-6. CORS `Allow-Headers` 未包含 `X-Request-Id`，浏览器带该头会预检失败。
+| 代理 | 项 | Round 9 | Round 10 |
+| --- | --- | --- | --- |
+| R10-fable-arch | 健康输入 | 卡高一律 180、无 connectors | `content-layout-objects.ts`：真实位置 + `prepareDestinationCards` 测高；连接线进 `checkLayoutHealth` |
+| R10-fable-sota | 交付预览 | 出血只在文案 | 出血>0 时预览画出出血环与裁切标记；PosterCanvas viewBox 仍是成品框 |
+| R10-opus-layout | 同层重叠 / 手拖 | 同 z 直接 continue；求解看不见手摆卡 | 同层仅 card-card 报 occlusion；`card-layout-pinned` + `fixedPositions` |
+| R10-opus-data | 导入诚实 | 重复表头丢列；筛选空态称「良好」 | 主列空回落同名副列；质量面板区分筛选空与真健康；残缺映射行不再错位；否定「未出国」 |
+| R10-gpt-perf | worker 阈值 | 24，无运输成本对照 | 运输 vs 求解对照；阈值仍 24（运输不是数量级问题） |
+| R10-gpt-server | CORS | Allow-Headers 无请求 id | 加入 `X-Request-Id`；预检回归 |
 
-## 路径隔离（严禁跨组改文件）
+## 主调度接线
 
-| 代理 | 允许 |
-| --- | --- |
-| R10-fable-arch | `src/lib/studio-editor-helpers.ts`、新建 `src/lib/content-layout-objects.ts`、对应测试、`src/App.debug.test.tsx`、`src/test-utils/**` |
-| R10-fable-sota | `src/components/workspaces/DeliveryWorkspace.tsx`、其测试、`USER_GUIDE.md` |
-| R10-opus-layout | `src/lib/layout-health.ts`、其测试、`src/lib/card-layout*.ts`、`src/lib/card-layout-manual.ts`、对应测试。禁止 bench 脚本 |
-| R10-opus-data | `src/lib/import-headers.ts`、`src/lib/import-data.ts`、`src/lib/data-health.ts`、`src/lib/student-data.ts`、`src/lib/binary-import.ts`、`src/components/GlobalDataScreen.tsx`、`src/components/DataQualityPanel.tsx`、对应测试 |
-| R10-gpt-perf | `scripts/perf-layout-bench.ts`、其测试、`src/lib/layout-perf.ts`、`src/lib/card-layout-cache.ts`、`src/components/canvas/useCardLayoutWorker.ts`（仅阈值/探测） |
-| R10-gpt-server | `server/**` |
+opus-layout 的 `fixedPositions` 原先只在库内。已写入：
 
-静态目录 `china-universities` / `university-emblems` / `china-locations` 禁止拆。禁止 Playwright、支付、CMYK/ICC。
+- `poster-card-placement.ts` 把 `project.cards.positions` 传给求解
+- `createCardLayoutCacheKey` 包含固定坐标，避免拖拽命中旧缓存
+
+## 纪律
+
+- 未引入 Playwright / CMYK / ICC。
+- 实现文件均 ≤400。
+- JSON 415 未放宽。
+
+## 仍未达印刷级 SOTA
+
+- 无真浏览器 E2E；协作锁只保证单机；饱和压盖无法物理消除。
+- `agent-session-tools` 健康输入仍可能用 180 / 无连接线（本轮允许路径外）。
+- 连接线几何用地图中心作锚点近似，非各省份质心。
+- 浏览器 PNG 仍为 sRGB。

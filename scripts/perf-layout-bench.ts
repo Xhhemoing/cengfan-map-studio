@@ -72,7 +72,9 @@ export interface LayoutBenchmarkReport {
 
 export interface WorkerMessageBenchmarkResult {
   methodology: "worker_threads request and placement-shaped response; solver excluded";
+  comparisonMethodology: "same-fixture main-thread solveCardLayout; invariant checks excluded from timing";
   count: number;
+  mode: "quadrant";
   startupIterations: number;
   warmupIterations: number;
   iterations: number;
@@ -80,6 +82,10 @@ export interface WorkerMessageBenchmarkResult {
   startupP95Ms: number;
   warmP50Ms: number;
   warmP95Ms: number;
+  mainThreadSolveP50Ms: number;
+  mainThreadSolveP95Ms: number;
+  startupToSolveP95Ratio: number;
+  warmTransportToSolveP95Ratio: number;
 }
 
 export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
@@ -347,6 +353,7 @@ function workerRoundTrip(worker: Worker, payload: object, requestId: number): Pr
  * roster size, while excluding solver work from the timing.
  */
 export async function runWorkerMessageBenchmark(
+  // Keep this default aligned with DEFAULT_WORKER_CARD_THRESHOLD.
   count = 24,
   startupIterations = 7,
   warmupIterations = 2,
@@ -356,17 +363,20 @@ export async function runWorkerMessageBenchmark(
   positiveInteger(startupIterations, "worker startupIterations");
   positiveInteger(warmupIterations, "worker warmupIterations");
   positiveInteger(iterations, "worker iterations");
+  const cards = makeLayoutBenchmarkCards(count);
+  const bounds = makeLayoutBenchmarkBounds();
+  const options = {
+    mode: "quadrant" as const,
+    autoBalance: true,
+    connectorStyle: "curve" as const,
+    connectorWidth: 1.5,
+  };
   const payload = {
     type: "solve",
     key: `worker-probe-${count}`,
-    cards: makeLayoutBenchmarkCards(count),
-    bounds: makeLayoutBenchmarkBounds(),
-    options: {
-      mode: "quadrant",
-      autoBalance: true,
-      connectorStyle: "curve",
-      connectorWidth: 1.5,
-    },
+    cards,
+    bounds,
+    options,
   };
   const startupSamples: number[] = [];
   let requestId = 0;
@@ -392,16 +402,50 @@ export async function runWorkerMessageBenchmark(
     await worker.terminate();
   }
 
+  for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+    solveCardLayout(cards, bounds, options);
+  }
+  const mainThreadSolveSamples: number[] = [];
+  let mainThreadResult: CardLayoutResult | undefined;
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const startedAt = performance.now();
+    mainThreadResult = solveCardLayout(cards, bounds, options);
+    mainThreadSolveSamples.push(performance.now() - startedAt);
+  }
+  if (!mainThreadResult || mainThreadResult.placements.length !== cards.length) {
+    throw new Error(`quadrant/${count}: main-thread comparison returned an invalid placement count`);
+  }
+  assertLayoutInvariants(
+    mainThreadResult.placements,
+    bounds,
+    { checkOverlaps: mainThreadResult.status === "solved" },
+  );
+
+  const startupP50Ms = rounded(percentile(startupSamples, 0.5));
+  const startupP95 = percentile(startupSamples, 0.95);
+  const startupP95Ms = rounded(startupP95);
+  const warmP50Ms = rounded(percentile(warmSamples, 0.5));
+  const warmP95 = percentile(warmSamples, 0.95);
+  const warmP95Ms = rounded(warmP95);
+  const mainThreadSolveP50Ms = rounded(percentile(mainThreadSolveSamples, 0.5));
+  const mainThreadSolveP95 = percentile(mainThreadSolveSamples, 0.95);
+  const mainThreadSolveP95Ms = rounded(mainThreadSolveP95);
   return {
     methodology: "worker_threads request and placement-shaped response; solver excluded",
+    comparisonMethodology: "same-fixture main-thread solveCardLayout; invariant checks excluded from timing",
     count,
+    mode: "quadrant",
     startupIterations,
     warmupIterations,
     iterations,
-    startupP50Ms: rounded(percentile(startupSamples, 0.5)),
-    startupP95Ms: rounded(percentile(startupSamples, 0.95)),
-    warmP50Ms: rounded(percentile(warmSamples, 0.5)),
-    warmP95Ms: rounded(percentile(warmSamples, 0.95)),
+    startupP50Ms,
+    startupP95Ms,
+    warmP50Ms,
+    warmP95Ms,
+    mainThreadSolveP50Ms,
+    mainThreadSolveP95Ms,
+    startupToSolveP95Ratio: rounded(startupP95 / mainThreadSolveP95),
+    warmTransportToSolveP95Ratio: rounded(warmP95 / mainThreadSolveP95),
   };
 }
 

@@ -121,6 +121,30 @@ describe("destination scope values", () => {
     expect(parseLocationScopeValue("")).toBeUndefined();
     expect(parseLocationScopeValue(undefined)).toBeUndefined();
   });
+
+  it("reads a negative answer to 是否出国 as a China destination", () => {
+    // The negative answers spell the marker out in full; reading them as a
+    // match moves a student who never left the country off the province map.
+    expect(parseLocationScopeValue("未出国")).toBeUndefined();
+    expect(parseLocationScopeValue("未出国留学")).toBeUndefined();
+    expect(parseLocationScopeValue("不出国")).toBeUndefined();
+    expect(parseLocationScopeValue("国内（非海外）")).toBeUndefined();
+    expect(parseLocationScopeValue("not abroad")).toBeUndefined();
+    // Only an adjacent negation counts, so a qualifier keeps the row overseas.
+    expect(parseLocationScopeValue("非全日制海外硕士")).toBe("international");
+    expect(parseLocationScopeValue("已出国")).toBe("international");
+  });
+
+  it("keeps a whole roster of 是否出国 answers on the right side of the map", () => {
+    const result = parseStudentText([
+      "姓名,院校,城市,是否出国",
+      "苏禾,浙江大学,杭州市,未出国",
+      "周晴,哈佛大学,波士顿,已出国",
+    ].join("\n"));
+
+    expect(result.candidates[0]).not.toHaveProperty("locationScope");
+    expect(result.candidates[1]).toEqual(expect.objectContaining({ locationScope: "international" }));
+  });
 });
 
 describe("import data robustness", () => {
@@ -182,6 +206,37 @@ describe("import data robustness", () => {
     expect(result.unparsed).toEqual([
       { sourceLine: 3, rawLine: "只有姓名,,", reason: "缺少院校、城市" },
     ]);
+  });
+
+  it("never re-reads an incomplete mapped row by position", () => {
+    // Positional reading shifts every value one column left, which imported the
+    // student number as the name and the university as the city — with no
+    // warning at all, because the invented record looked complete.
+    const result = parseStudentText([
+      "学号,姓名,院校,城市",
+      "20260001,林舟,北京大学,北京市",
+      "20260002,苏禾,浙江大学,",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "20260002,苏禾,浙江大学,", reason: "缺少城市" },
+    ]);
+  });
+
+  it("still reads a labeled line that the header mapping cannot place", () => {
+    // The row follows neither the header's delimiter nor its columns, so the
+    // self-describing labels are the only honest reading of it.
+    const result = parseStudentText([
+      "姓名,院校,城市",
+      "林舟,北京大学,北京市",
+      "姓名：苏禾，学校：浙江大学，城市：杭州市",
+    ].join("\n"));
+
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["林舟", "苏禾"]);
+    expect(result.unparsed).toEqual([]);
   });
 
   it("ignores rows whose cells are only whitespace", () => {

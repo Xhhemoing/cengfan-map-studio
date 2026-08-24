@@ -14,6 +14,36 @@ export type RequiredStudentColumn = (typeof REQUIRED_STUDENT_COLUMNS)[number];
 export type StudentColumnIndexes = Partial<Record<StudentColumn, number>>;
 
 /**
+ * Extra source columns spelled exactly like the one a field claimed, in sheet
+ * order. Stacking or merging two exports duplicates whole columns and fills
+ * them unevenly, so the claimed column can be blank on a row whose twin holds
+ * the value.
+ *
+ * Only a repeated header counts: a different alias of the same field may mean
+ * something else entirely (生源地 is where a student comes from, not where they
+ * are going), and reading it would import a wrong city instead of reporting a
+ * missing one.
+ */
+export type StudentColumnAlternates = Partial<Record<StudentColumn, readonly number[]>>;
+
+/** A header mapping: the column each field claimed plus its repeated twins. */
+export interface StudentColumnMapping {
+  indexes: StudentColumnIndexes;
+  alternates?: StudentColumnAlternates;
+}
+
+/** Row readers accept a full mapping or a bare index map. */
+export type StudentColumnLookup = StudentColumnIndexes | StudentColumnMapping;
+
+function lookupIndexes(lookup: StudentColumnLookup): StudentColumnIndexes {
+  return "indexes" in lookup ? lookup.indexes : lookup;
+}
+
+function lookupAlternates(lookup: StudentColumnLookup, column: StudentColumn): readonly number[] {
+  return ("indexes" in lookup ? lookup.alternates?.[column] : undefined) ?? [];
+}
+
+/**
  * Header aliases used by every roster source. Values are compared after
  * {@link normalizeHeaderCell}, so spacing, casing, BOM, brackets and trailing
  * "必填"-style markers do not have to be listed.
@@ -188,13 +218,39 @@ function findFuzzyMatch(column: StudentColumn, cells: string[], claimed: Set<num
 }
 
 /**
+ * Collects the unclaimed columns repeating a claimed column's header, so a
+ * blank cell can fall back to its twin instead of losing the row.
+ */
+function collectAlternates(
+  normalized: string[],
+  indexes: StudentColumnIndexes,
+  claimed: ReadonlySet<number>,
+): StudentColumnAlternates {
+  const alternates: StudentColumnAlternates = {};
+  for (const column of STUDENT_COLUMN_ORDER) {
+    const index = indexes[column];
+    if (index === undefined) continue;
+    const header = normalized[index];
+    if (!header) continue;
+    const twins = normalized.flatMap((cell, columnIndex) =>
+      columnIndex !== index && !claimed.has(columnIndex) && cell === header ? [columnIndex] : [],
+    );
+    if (twins.length > 0) alternates[column] = twins;
+  }
+  return alternates;
+}
+
+/**
  * Maps header cells to student columns. Every source column is claimed by at
  * most one field so an ambiguous header (e.g. "去向" next to "学校") cannot be
  * silently read as two different fields. Exact alias matches are resolved for
  * all fields first; only then may a remaining field claim a decorated header
  * such as "录取院校名称" by substring.
+ *
+ * A repeated header stays on its first column, and the copies are recorded as
+ * {@link StudentColumnAlternates} for {@link readStudentColumn} to fall back on.
  */
-export function detectHeaderColumns(headers: string[]): StudentColumnIndexes {
+export function detectHeaderMapping(headers: string[]): StudentColumnMapping {
   const normalized = headers.map((cell) => normalizeHeaderCell(String(cell ?? "")));
   const indexes: StudentColumnIndexes = {};
   const claimed = new Set<number>();
@@ -216,11 +272,16 @@ export function detectHeaderColumns(headers: string[]): StudentColumnIndexes {
     if (match) fuzzyMatches += 1;
     claim(column, match);
   }
-  if (exactMatches === 0 && fuzzyMatches < MIN_FUZZY_ONLY_COLUMNS) return {};
-  return indexes;
+  if (exactMatches === 0 && fuzzyMatches < MIN_FUZZY_ONLY_COLUMNS) return { indexes: {}, alternates: {} };
+  return { indexes, alternates: collectAlternates(normalized, indexes, claimed) };
 }
 
-export function missingRequiredColumns(indexes: StudentColumnIndexes): RequiredStudentColumn[] {
+export function detectHeaderColumns(headers: string[]): StudentColumnIndexes {
+  return detectHeaderMapping(headers).indexes;
+}
+
+export function missingRequiredColumns(lookup: StudentColumnLookup): RequiredStudentColumn[] {
+  const indexes = lookupIndexes(lookup);
   return REQUIRED_STUDENT_COLUMNS.filter((column) => indexes[column] === undefined);
 }
 
@@ -231,9 +292,9 @@ export function isExactHeaderAlias(column: StudentColumn, value: string): boolea
 }
 
 /** How many required columns of a mapped row are spelled exactly like a header. */
-export function countExactHeaderCells(cells: string[], indexes: StudentColumnIndexes): number {
+export function countExactHeaderCells(cells: string[], lookup: StudentColumnLookup): number {
   return REQUIRED_STUDENT_COLUMNS.filter((column) =>
-    isExactHeaderAlias(column, readStudentColumn(cells, indexes, column)),
+    isExactHeaderAlias(column, readStudentColumn(cells, lookup, column)),
   ).length;
 }
 
@@ -246,8 +307,8 @@ const SUMMARY_ROW_NAMES = new Set(
 );
 
 /** True when the row is a totals line rather than a student. */
-export function isSummaryRow(cells: string[], indexes: StudentColumnIndexes): boolean {
-  return SUMMARY_ROW_NAMES.has(normalizeHeaderCell(readStudentColumn(cells, indexes, "name")));
+export function isSummaryRow(cells: string[], lookup: StudentColumnLookup): boolean {
+  return SUMMARY_ROW_NAMES.has(normalizeHeaderCell(readStudentColumn(cells, lookup, "name")));
 }
 
 /**
@@ -259,14 +320,14 @@ export function isSummaryRow(cells: string[], indexes: StudentColumnIndexes): bo
  */
 export function rowRestatesHeader(
   cells: string[],
-  indexes: StudentColumnIndexes,
+  lookup: StudentColumnLookup,
   headerCells: readonly string[] = [],
 ): boolean {
   return REQUIRED_STUDENT_COLUMNS.every((column) => {
-    const value = readStudentColumn(cells, indexes, column);
+    const { value, index } = readStudentCell(cells, lookup, column);
     if (!value) return false;
     if (isExactHeaderAlias(column, value)) return true;
-    const headerCell = trimImportCell(headerCells[indexes[column] ?? -1]);
+    const headerCell = trimImportCell(headerCells[index]);
     return headerCell !== "" && normalizeHeaderCell(value) === normalizeHeaderCell(headerCell);
   });
 }
@@ -276,18 +337,37 @@ export function looksLikeStudentHeader(cells: string[]): boolean {
   return Object.keys(detectHeaderColumns(cells)).length >= 2;
 }
 
-export function readStudentColumn(cells: string[], indexes: StudentColumnIndexes, column: StudentColumn): string {
-  const index = indexes[column];
-  if (index === undefined) return "";
-  return trimImportCell(cells[index]);
+/**
+ * Reads a field and reports which source column it came from. The claimed
+ * column wins whenever it holds anything, so a sheet filling both twins keeps
+ * the mapping the header promised; only a blank claimed cell looks further.
+ */
+function readStudentCell(
+  cells: string[],
+  lookup: StudentColumnLookup,
+  column: StudentColumn,
+): { value: string; index: number } {
+  const index = lookupIndexes(lookup)[column];
+  if (index === undefined) return { value: "", index: -1 };
+  const value = trimImportCell(cells[index]);
+  if (value !== "") return { value, index };
+  for (const alternate of lookupAlternates(lookup, column)) {
+    const spare = trimImportCell(cells[alternate]);
+    if (spare !== "") return { value: spare, index: alternate };
+  }
+  return { value: "", index };
+}
+
+export function readStudentColumn(cells: string[], lookup: StudentColumnLookup, column: StudentColumn): string {
+  return readStudentCell(cells, lookup, column).value;
 }
 
 /**
  * Names the required cells a mapped row left blank, so a skipped row can say
  * why instead of disappearing silently.
  */
-export function missingRequiredCells(cells: string[], indexes: StudentColumnIndexes): RequiredStudentColumn[] {
-  return REQUIRED_STUDENT_COLUMNS.filter((column) => readStudentColumn(cells, indexes, column) === "");
+export function missingRequiredCells(cells: string[], lookup: StudentColumnLookup): RequiredStudentColumn[] {
+  return REQUIRED_STUDENT_COLUMNS.filter((column) => readStudentColumn(cells, lookup, column) === "");
 }
 
 export function describeMissingCells(columns: readonly RequiredStudentColumn[]): string {

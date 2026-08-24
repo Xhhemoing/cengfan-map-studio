@@ -191,6 +191,38 @@ describe("server request security", () => {
     }
   });
 
+  it("allows request ID preflights only for configured origins", async () => {
+    const allowedOrigin = "https://studio.example";
+    const server = createAiServer({ corsOrigins: [allowedOrigin] });
+    servers.push(server);
+    const origin = await startServer(server);
+    const preflightHeaders = {
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "x-request-id,content-type",
+    };
+
+    const allowed = await rawRequest(origin, "/api/ai/agent", "OPTIONS", undefined, {
+      Origin: allowedOrigin,
+      ...preflightHeaders,
+    });
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers["access-control-allow-origin"]).toBe(allowedOrigin);
+    expect(allowed.headers["access-control-allow-methods"]).toBe("GET,PUT,POST,OPTIONS");
+    expect(allowed.headers["access-control-allow-headers"]?.toLowerCase().split(/,\s*/)).toEqual(
+      expect.arrayContaining(["x-request-id", "content-type"]),
+    );
+
+    const disallowed = await rawRequest(origin, "/api/ai/agent", "OPTIONS", undefined, {
+      Origin: "https://untrusted.example",
+      ...preflightHeaders,
+    });
+    expect(disallowed.status).toBe(204);
+    expect(Object.fromEntries(
+      Object.entries(disallowed.headers).filter(([name]) => name.startsWith("access-control-")),
+    )).toEqual({});
+    expect(disallowed.headers.vary).toBeUndefined();
+  });
+
   it("keeps absolute-form API targets inside the API namespace", async () => {
     const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-absolute-url-"));
     directories.push(staticDir);

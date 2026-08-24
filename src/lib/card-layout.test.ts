@@ -1176,3 +1176,111 @@ describe("solver state isolation", () => {
     expect(space.polygonCrossings(leaving, inside)).toBe(0);
   });
 });
+
+/**
+ * A dragged card is drawn where the user dropped it whatever the solver says,
+ * so a solve that does not know about it will happily bury it under the next
+ * card it places. These pin the coordinates the canvas actually renders.
+ */
+describe("hand-placed cards", () => {
+  const roster = Array.from({ length: 6 }, (_, index) => cardInput({
+    id: `card-${index}`,
+    anchorX: 420 + (index % 3) * 320,
+    anchorY: 200 + Math.floor(index / 3) * 380,
+  }));
+
+  /**
+   * The spot the unaware solve hands to another card, so a pin placed there is
+   * guaranteed to be contested rather than parked on canvas nobody wanted.
+   */
+  function contestedSpot(mode: CardLayoutMode, canvas: CardLayoutBounds, rival: string): { x: number; y: number } {
+    const unaware = solveCardLayout(roster, canvas, { mode });
+    const taken = unaware.placements.find((placement) => placement.id === rival)!;
+    return { x: taken.x, y: taken.y };
+  }
+
+  it("keeps a pinned card where it was dropped and moves the card that wanted the spot", () => {
+    const contested = contestedSpot("quadrant", bounds, "card-1");
+    const fixedPositions = { "card-2": contested };
+    const result = solveCardLayout(roster, bounds, { mode: "quadrant", fixedPositions });
+    const pinned = result.placements.find((placement) => placement.id === "card-2")!;
+    const rival = result.placements.find((placement) => placement.id === "card-1")!;
+
+    expect(result.placements.map((placement) => placement.id)).toEqual(roster.map((card) => card.id));
+    expect({ x: pinned.x, y: pinned.y }).toEqual(contested);
+    expect({ x: rival.x, y: rival.y }).not.toEqual(contested);
+    assertHardConstraints(result.placements, bounds);
+  });
+
+  it("clears the whole gap around a pinned card, not merely its rectangle", () => {
+    const contested = contestedSpot("quadrant", bounds, "card-1");
+    const result = solveCardLayout(roster, bounds, { mode: "quadrant", fixedPositions: { "card-2": contested } });
+    const pinned = result.placements.find((placement) => placement.id === "card-2")!;
+    const withGap = {
+      x: pinned.x - bounds.gap,
+      y: pinned.y - bounds.gap,
+      width: pinned.width + bounds.gap * 2,
+      height: pinned.height + bounds.gap * 2,
+    };
+
+    for (const placement of result.placements) {
+      if (placement.id === "card-2") continue;
+      expect({ id: placement.id, hit: overlaps(placement, withGap) }).toEqual({ id: placement.id, hit: false });
+    }
+  });
+
+  it("keeps a pinned card exactly where it was dropped, even off the canvas margin", () => {
+    // The renderer draws the saved coordinate either way, so quietly moving it
+    // here would only make the solver's obstacle disagree with the canvas.
+    const fixedPositions = { "card-1": { x: -40, y: 12 } };
+    const result = solveCardLayout(roster, bounds, { mode: "quadrant", fixedPositions });
+    const pinned = result.placements.find((placement) => placement.id === "card-1")!;
+
+    expect({ x: pinned.x, y: pinned.y }).toEqual(fixedPositions["card-1"]);
+    expect(result.status).toBe("solved");
+  });
+
+  it.each<CardLayoutMode>(["quadrant", "radial", "right-stack", "grid"])(
+    "packs around pinned cards in %s mode, obstacles and all",
+    (mode) => {
+      const occupied = [{ x: 560, y: 170, width: 430, height: 540 }];
+      const fixedPositions = {
+        "card-1": { x: 120, y: 620 },
+        "card-4": { x: 1120, y: 180 },
+      };
+      const canvas = { ...bounds, occupiedAreas: occupied };
+      const result = solveCardLayout(roster, canvas, { mode, fixedPositions });
+
+      for (const [id, point] of Object.entries(fixedPositions)) {
+        const pinned = result.placements.find((placement) => placement.id === id)!;
+        expect({ id, x: pinned.x, y: pinned.y }).toEqual({ id, ...point });
+      }
+      assertHardConstraints(result.placements, canvas, occupied);
+    },
+  );
+
+  it("leaves the solve untouched when no card is pinned", () => {
+    const plain = solveCardLayout(roster, bounds, { mode: "quadrant" });
+
+    expect(solveCardLayout(roster, bounds, { mode: "quadrant", fixedPositions: {} })).toEqual(plain);
+    expect(solveCardLayout(roster, bounds, { mode: "quadrant", fixedPositions: { absent: { x: 10, y: 10 } } }))
+      .toEqual(plain);
+    expect(solveCardLayout(roster, bounds, {
+      mode: "quadrant",
+      fixedPositions: { "card-0": { x: Number.NaN, y: 40 } },
+    })).toEqual(plain);
+  });
+
+  it("is deterministic and still solves when every card is pinned", () => {
+    const fixedPositions = Object.fromEntries(roster.map((card, index) => [
+      card.id,
+      { x: 60 + (index % 3) * 300, y: 60 + Math.floor(index / 3) * 300 },
+    ]));
+    const result = solveCardLayout(roster, bounds, { mode: "quadrant", fixedPositions });
+
+    expect(result.status).toBe("solved");
+    expect(result.placements.map((placement) => ({ x: placement.x, y: placement.y })))
+      .toEqual(roster.map((card) => fixedPositions[card.id]));
+    expect(solveCardLayout(roster, bounds, { mode: "quadrant", fixedPositions })).toEqual(result);
+  });
+});

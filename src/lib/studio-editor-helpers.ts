@@ -5,7 +5,6 @@ import { diffCollaborationDocument, type CollaborationOperation } from "./collab
 import type { WorkspaceSession } from "./workspace-session";
 import type { WorkflowStageId } from "./workflow-stages";
 import type { CustomTemplateRecord } from "./template-store";
-import { checkLayoutHealth } from "./layout-health";
 import { snapPoint } from "./grid";
 import type { UserFont } from "./fonts";
 import type { ProjectDocument } from "./project-document";
@@ -13,8 +12,9 @@ import { createProjectPackageEnvelope, type ProjectPackage } from "./project-pac
 import type { RenderSettings } from "./render-settings";
 import type { SceneSelection } from "./scene-document";
 
-// 门面（facade）：模板构建与事务工厂已按领域拆分，公开导出保持不变。
+// 门面（facade）：模板构建、事务工厂与排版体检输入已按领域拆分，公开导出保持不变。
 export { buildCustomTemplateDraft, buildResolvedTemplate } from "./studio-editor-helpers-templates";
+export { listContentLayoutIssues } from "./content-layout-objects";
 export {
   createAppendStudentsTransaction,
   createApplySystemTemplateTransaction,
@@ -103,35 +103,6 @@ export function addAssetToLibrary(current: UserAsset[], asset: UserAsset): { ass
     || item.src === asset.src && item.kind === asset.kind && JSON.stringify(item.provinceIds) === JSON.stringify(asset.provinceIds));
   if (duplicate) return { assets: current, message: `素材库已有相同素材：${asset.label}` };
   return { assets: [...current, asset], message: `已加入素材库：${asset.label}` };
-}
-
-export function listContentLayoutIssues(project: ProjectDocument) {
-  return checkLayoutHealth({
-    canvas: {
-      width: project.canvas.width,
-      height: project.canvas.height,
-      safeMargin: project.canvas.safeMargin,
-      printBleedMm: project.canvas.printBleedMm,
-    },
-    cardsPositions: project.cards.positions,
-    objects: [
-      { id: "map", kind: "map", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
-      ...Object.keys(project.cards.positions ?? {}).map((id) => ({ id, kind: "card" as const, positionKey: id, zIndex: project.cards.zIndex, bounds: { x: 0, y: 0, width: project.cards.maxWidth, height: 180 } })),
-      ...(Object.keys(project.cards.positions ?? {}).length === 0 ? [{ id: "cards", kind: "card" as const, zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } }] : []),
-      ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
-      ...project.textElements.map((text) => ({
-        id: text.id,
-        kind: "text" as const,
-        zIndex: 40,
-        bounds: { x: text.textAlign === "right" ? text.x - text.maxWidth : text.textAlign === "center" ? text.x - text.maxWidth / 2 : text.x, y: text.y - text.fontSize, width: text.maxWidth, height: text.fontSize * 1.3 },
-        visible: text.visibility,
-        content: text.content,
-        textColor: text.color,
-        backgroundColor: project.canvas.backgroundColor,
-      })),
-      ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
-    ],
-  });
 }
 
 export function resolveStyleLayerSelection(target: (typeof STYLE_LAYER_TARGETS)[number]): SceneSelection {

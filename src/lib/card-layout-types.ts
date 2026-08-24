@@ -62,6 +62,15 @@ export type CardLayoutStatus = "solved" | "fallback";
 
 export interface CardLayoutOptions {
   mode?: CardLayoutMode;
+  /**
+   * Cards the user has already placed by hand, keyed by card id.
+   *
+   * They keep the given coordinates and become obstacles the rest of the layout
+   * has to pack around, so a later solve cannot drop a card onto one.
+   * `createCardLayoutCacheKey` includes this field so a drag invalidates the
+   * previous auto-layout cache entry.
+   */
+  fixedPositions?: Readonly<Record<string, CardPoint>>;
   /** Optimize the left/right split line to equalize column heights (quadrant only). */
   autoBalance?: boolean;
   /** Override the vertical band that routes cards to top/bottom instead of left/right. */

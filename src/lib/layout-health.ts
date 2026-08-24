@@ -164,6 +164,19 @@ function connectorConflict(left: LayoutHealthConnector, right: LayoutHealthConne
   return left.segments.some((leftSegment) => right.segments.some((rightSegment) => segmentsIntersect(leftSegment, rightSegment)));
 }
 
+/**
+ * Whether an overlap between two objects on the same layer is worth reporting.
+ *
+ * 展示框 share one `cards.zIndex`, so a pair of stacked cards always compares
+ * equal and would otherwise never warn — the case a user most needs to see.
+ * Other kinds stay exempt: their reported heights are estimates, and one text
+ * or 素材 drawn over another on the same layer is usually deliberate, so
+ * warning on every such pair would bury the real overlaps in noise.
+ */
+function sameLayerOcclusionMatters(left: LayoutHealthObject, right: LayoutHealthObject): boolean {
+  return left.kind === "card" && right.kind === "card";
+}
+
 export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[] {
   const issues: LayoutHealthIssue[] = [];
   const visibleObjects = input.objects
@@ -218,9 +231,10 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
       if (!overlaps(left.bounds, right.bounds)) continue;
       const leftZ = left.object.zIndex ?? 0;
       const rightZ = right.object.zIndex ?? 0;
-      if (leftZ === rightZ) continue;
-      const back = leftZ < rightZ ? left.object : right.object;
-      const front = leftZ < rightZ ? right.object : left.object;
+      if (leftZ === rightZ && !sameLayerOcclusionMatters(left.object, right.object)) continue;
+      // Equal z means paint order decides, and that is input order.
+      const back = leftZ <= rightZ ? left.object : right.object;
+      const front = leftZ <= rightZ ? right.object : left.object;
       issues.push({
         id: `${back.id}:${front.id}`,
         kind: "occlusion",

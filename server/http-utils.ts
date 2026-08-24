@@ -57,7 +57,7 @@ export function corsHeaders(request: http.IncomingMessage, corsOrigins: readonly
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET,PUT,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-API-Key, Prefer, X-Cengfan-Room-Token",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-API-Key, Prefer, X-Cengfan-Room-Token, X-Request-Id",
     "Access-Control-Max-Age": "600",
     Vary: "Origin",
   };

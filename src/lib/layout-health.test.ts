@@ -39,6 +39,39 @@ describe("layout health", () => {
     ]));
   });
 
+  it("reports two overlapping cards on the shared card layer, using paint order for front/back", () => {
+    const issues = checkLayoutHealth({
+      canvas: { width: 600, height: 480, safeMargin: 8 },
+      objects: [
+        { id: "card-a", kind: "card", zIndex: 30, bounds: { x: 100, y: 100, width: 200, height: 180 } },
+        { id: "card-b", kind: "card", zIndex: 30, bounds: { x: 220, y: 200, width: 200, height: 180 } },
+      ],
+    });
+
+    expect(issues.filter((issue) => issue.kind === "occlusion")).toEqual([
+      expect.objectContaining({ id: "card-a:card-b", detail: "card-b 遮挡了 card-a" }),
+    ]);
+  });
+
+  it("stays quiet about same-layer text and asset overlap, whose heights are only estimates", () => {
+    const issues = checkLayoutHealth({
+      canvas: { width: 600, height: 480, safeMargin: 8 },
+      objects: [
+        { id: "text-a", kind: "text", zIndex: 40, bounds: { x: 100, y: 100, width: 200, height: 40 } },
+        { id: "text-b", kind: "text", zIndex: 40, bounds: { x: 120, y: 110, width: 200, height: 40 } },
+        { id: "asset-a", kind: "asset", zIndex: 10, bounds: { x: 300, y: 300, width: 120, height: 120 } },
+        { id: "asset-b", kind: "asset", zIndex: 10, bounds: { x: 340, y: 340, width: 120, height: 120 } },
+        // Same layer as the texts, so the card/text pairs stay exempt too.
+        { id: "card-over-text", kind: "card", zIndex: 40, bounds: { x: 110, y: 105, width: 120, height: 60 } },
+        // A layer above, where the overlap is unambiguous and still reported.
+        { id: "badge", kind: "asset", zIndex: 90, bounds: { x: 350, y: 350, width: 60, height: 60 } },
+      ],
+    });
+
+    expect(issues.filter((issue) => issue.kind === "occlusion").map((issue) => issue.id))
+      .toEqual(["asset-a:badge", "asset-b:badge"]);
+  });
+
   it("uses cards.positions as the stable manual position selector", () => {
     const issues = checkLayoutHealth({
       canvas: { width: 300, height: 240, safeMargin: 12 },

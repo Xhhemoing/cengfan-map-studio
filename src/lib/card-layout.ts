@@ -29,6 +29,7 @@
  *   - `card-layout-pack`      whole-canvas repack, sweep and shelf strategies
  *   - `card-layout-scoring`   connector-quality scores for layouts and candidates
  *   - `card-layout-optimizer` connector-aware best-of-N placement search
+ *   - `card-layout-pinned`    hand-placed cards as obstacles for the solve
  *   - `card-layout-manual`    clamping for hand-dragged cards
  */
 import { finiteOr } from "./card-layout-geometry";
@@ -46,6 +47,7 @@ import {
   optimizedLayout,
   type ConnectorSearchTrace,
 } from "./card-layout-optimizer";
+import { mergePinnedCards, planPinnedCards } from "./card-layout-pinned";
 import { betterLayout, layeredPack, provablyInfeasible } from "./card-layout-saturation";
 import { LayoutSpace, validateHard } from "./card-layout-space";
 import {
@@ -289,9 +291,15 @@ export function solveCardLayout(
   const mode: CardLayoutMode = options.mode ?? "quadrant";
   const inputs = sanitizeCards(cards);
   const debug: SearchDebug = { decision: "skipped-empty", trace: null, improved: false };
-  const result = inputs.length === 0
+  // Hand-placed cards keep their coordinates and are solved around, not for.
+  const pinned = planPinnedCards(inputs, bounds, options.fixedPositions);
+  const solvable = pinned?.free ?? inputs;
+  const solved = solvable.length === 0
     ? { status: "solved" as const, placements: [], mode }
-    : solve(inputs, bounds, mode, options, debug);
+    : solve(solvable, pinned?.bounds ?? bounds, mode, options, debug);
+  const result = pinned
+    ? { ...solved, placements: mergePinnedCards(pinned, solved.placements) }
+    : solved;
   __layoutDebug.last = { mode, status: result.status, cards: inputs.length, ...debug };
   return result;
 }
@@ -325,7 +333,11 @@ export function solveDestinationCardLayout(
   bounds: CardLayoutBounds,
   options: DestinationLayoutOptions = {},
 ): DestinationLayoutResult {
-  const result = solveCardLayout(cards, bounds, { mode: options.mode ?? "quadrant", autoBalance: options.autoBalance });
+  const result = solveCardLayout(cards, bounds, {
+    mode: options.mode ?? "quadrant",
+    autoBalance: options.autoBalance,
+    fixedPositions: options.fixedPositions,
+  });
   return { status: result.status === "solved" ? "solved" : "crossing-fallback", placements: result.placements };
 }
 
@@ -334,7 +346,11 @@ export function layoutDestinationCards(
   bounds: CardLayoutBounds,
   options: DestinationLayoutOptions = {},
 ): CardPlacement[] {
-  return layoutCards(cards, bounds, { mode: options.mode ?? "quadrant", autoBalance: options.autoBalance });
+  return layoutCards(cards, bounds, {
+    mode: options.mode ?? "quadrant",
+    autoBalance: options.autoBalance,
+    fixedPositions: options.fixedPositions,
+  });
 }
 
 export function clampDestinationCardPosition(

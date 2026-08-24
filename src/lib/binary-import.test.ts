@@ -78,6 +78,22 @@ describe("binary import adapters", () => {
     expect(result.unmappedHeaders).toEqual(["备注"]);
   });
 
+  it("reads a merged export whose duplicated 姓名 columns are filled unevenly", () => {
+    const result = parseExcelWorkbookRows([
+      ["姓名", "姓名", "院校", "城市"],
+      ["林舟", "", "北京大学", "北京市"],
+      ["", "苏禾", "浙江大学", "杭州市"],
+    ]);
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+    // The twin backs the claimed column up, so it is in use rather than ignored.
+    expect(result.unmappedHeaders).toEqual([]);
+  });
+
   it("recognizes common English headers and reports missing required columns", () => {
     const result = parseExcelWorkbookRows([
       ["student name", "school", "备注"],

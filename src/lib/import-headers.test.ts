@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   detectHeaderColumns,
+  detectHeaderMapping,
   looksLikeStudentHeader,
   missingRequiredColumns,
   normalizeHeaderCell,
   parseStudentText,
+  readStudentColumn,
 } from "./import-data";
 
 /**
@@ -152,6 +154,48 @@ describe("wide and repetitive headers", () => {
     ].join("\n"));
 
     expect(result.candidates).toEqual([expect.objectContaining({ name: "林舟", city: "北京市" })]);
+  });
+
+  it("falls back to a repeated header column when the claimed one is blank", () => {
+    const mapping = detectHeaderMapping(["姓名", "姓名", "院校", "城市"]);
+
+    expect(mapping).toEqual({ indexes: { name: 0, university: 2, city: 3 }, alternates: { name: [1] } });
+    // Both filled keeps the first column, so the mapping never depends on the row.
+    expect(readStudentColumn(["林舟", "曾用名", "北京大学", "北京市"], mapping, "name")).toBe("林舟");
+    expect(readStudentColumn(["", "林舟", "北京大学", "北京市"], mapping, "name")).toBe("林舟");
+    // A zero-width character is still a blank cell, exactly as it is elsewhere.
+    expect(readStudentColumn(["\u200b", "林舟", "北京大学", "北京市"], mapping, "name")).toBe("林舟");
+
+    const result = parseStudentText([
+      "姓名,姓名,院校,城市",
+      ",林舟,北京大学,北京市",
+      "苏禾,,浙江大学,杭州市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("only falls back to a column repeating the same header, never to a different alias", () => {
+    // 生源地 is where a student comes from, so a blank 城市 must stay a reported
+    // gap instead of quietly importing the hometown as the destination.
+    const mapping = detectHeaderMapping(["姓名", "高校", "生源地", "城市"]);
+
+    expect(mapping.alternates).toEqual({});
+    expect(readStudentColumn(["林舟", "北京大学", "杭州市", ""], mapping, "city")).toBe("");
+
+    const result = parseStudentText([
+      "姓名,高校,生源地,城市",
+      "林舟,北京大学,杭州市,",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: "林舟,北京大学,杭州市,", reason: "缺少城市" },
+    ]);
   });
 
   it("keeps a duplicated header on its first column and leaves the copy unused", () => {

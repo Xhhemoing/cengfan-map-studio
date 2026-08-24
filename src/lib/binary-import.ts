@@ -1,7 +1,7 @@
 import {
   candidateFromColumns,
   describeMissingCells,
-  detectHeaderColumns,
+  detectHeaderMapping,
   isBlankImportCell,
   isSummaryRow,
   missingRequiredCells,
@@ -13,7 +13,7 @@ import {
   type RequiredStudentColumn,
   type StudentColumn,
   type ImportCandidate,
-  type StudentColumnIndexes,
+  type StudentColumnMapping,
   type TextImportResult,
   type UnparsedLine,
 } from "./import-data";
@@ -117,7 +117,7 @@ function emptyMetadata(): Pick<ExcelImportResult, "columnMappings" | "unmappedHe
 interface DetectedHeader {
   rowIndex: number;
   headers: string[];
-  indexes: StudentColumnIndexes;
+  mapping: StudentColumnMapping;
 }
 
 /**
@@ -132,12 +132,12 @@ function findHeaderRow(rows: string[][]): DetectedHeader | null {
 
   let best: (DetectedHeader & { score: number }) | null = null;
   for (const candidate of candidates) {
-    const indexes = detectHeaderColumns(candidate.headers);
-    const score = Object.keys(indexes).length;
+    const mapping = detectHeaderMapping(candidate.headers);
+    const score = Object.keys(mapping.indexes).length;
     if (score < 2 || (best && score <= best.score)) continue;
-    best = { ...candidate, indexes, score };
+    best = { ...candidate, mapping, score };
   }
-  return best ? { rowIndex: best.rowIndex, headers: best.headers, indexes: best.indexes } : null;
+  return best ? { rowIndex: best.rowIndex, headers: best.headers, mapping: best.mapping } : null;
 }
 
 function createMetadata(
@@ -146,9 +146,12 @@ function createMetadata(
 ): Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {
   const mappedIndexes = new Set<number>();
   const columnMappings = (Object.keys(STUDENT_HEADER_ALIASES) as StudentColumn[]).flatMap((field) => {
-    const columnIndex = header.indexes[field];
+    const columnIndex = header.mapping.indexes[field];
     if (columnIndex === undefined) return [];
     mappedIndexes.add(columnIndex);
+    // A repeated column backs its twin up on blank rows, so it is in use too
+    // and must not be reported to the user as an ignored header.
+    for (const alternate of header.mapping.alternates?.[field] ?? []) mappedIndexes.add(alternate);
     const samples = rows
       .slice(header.rowIndex + 1)
       .map((row) => row[columnIndex] ?? "")
@@ -165,7 +168,7 @@ function createMetadata(
     headerRowIndex: header.rowIndex,
     columnMappings,
     unmappedHeaders: header.headers.filter((value, index) => value && !mappedIndexes.has(index)),
-    missingRequiredFields: missingRequiredColumns(header.indexes),
+    missingRequiredFields: missingRequiredColumns(header.mapping),
   };
 }
 
@@ -199,12 +202,12 @@ export function parseExcelWorkbookRows(input: unknown[][], options: ExcelParseOp
     const rawLine = row.filter(Boolean).join("\t");
     // Sheets built by stacking two exports repeat the header mid-table; that
     // row is a header, not a student called 姓名.
-    if (rowRestatesHeader(row, header.indexes, header.headers)) return;
-    if (isSummaryRow(row, header.indexes)) {
+    if (rowRestatesHeader(row, header.mapping, header.headers)) return;
+    if (isSummaryRow(row, header.mapping)) {
       unparsed.push({ sourceLine, rawLine, reason: "汇总行" });
       return;
     }
-    const candidate = candidateFromColumns(row, header.indexes, sourceLine, rawLine);
+    const candidate = candidateFromColumns(row, header.mapping, sourceLine, rawLine);
     if (candidate) {
       candidates.push(candidate);
       return;
@@ -212,7 +215,7 @@ export function parseExcelWorkbookRows(input: unknown[][], options: ExcelParseOp
     // Trailing blank sheet rows are normal; a row that holds data but misses a
     // required cell is reported so the import never drops it silently.
     if (row.every(isBlankImportCell)) return;
-    unparsed.push({ sourceLine, rawLine, reason: describeMissingCells(missingRequiredCells(row, header.indexes)) });
+    unparsed.push({ sourceLine, rawLine, reason: describeMissingCells(missingRequiredCells(row, header.mapping)) });
   });
 
   return {

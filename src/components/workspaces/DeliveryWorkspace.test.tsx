@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DeliveryRail, DeliveryWorkspace, type DeliveryWorkspaceProps } from "./DeliveryWorkspace";
 import { createProjectDocument } from "../../lib/project-document";
+import { cropMarkPathData, resolvePrintBleedGeometry } from "../../lib/print-bleed";
 import type { DataIssue } from "../../lib/data-health";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
 import type { PrintPreflightResult } from "../../lib/print-preflight";
@@ -185,6 +186,35 @@ describe("DeliveryWorkspace", () => {
     const plainPreview = plain.querySelector('section[aria-label="最终预览"]')!;
     expect(plainPreview.querySelector(".delivery-workspace__preview-heading")?.textContent).not.toContain("成品尺寸");
     expect(plainPreview.querySelector(".delivery-workspace__preview-note")).toBeNull();
+  });
+
+  it("draws a decorative bleed ring and crop marks around the trim when bleed is set", () => {
+    const bled = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    bled.canvas.printBleedMm = 3;
+    const container = renderWorkspace({ project: bled });
+    const preview = container.querySelector('section[aria-label="最终预览"]')!;
+
+    // 示意层与导出共用同一份出血几何（媒体框 viewBox + 裁切标记路径）。
+    const geometry = resolvePrintBleedGeometry({ x: 0, y: 0, width: 1500, height: 1000 }, { printBleedMm: 3 });
+    const stage = preview.querySelector('[data-print-bleed-stage]')!;
+    expect(stage).not.toBeNull();
+    const overlay = stage.querySelector<SVGSVGElement>('svg[data-print-bleed-overlay]')!;
+    expect(overlay.getAttribute("viewBox"))
+      .toBe(`${geometry.media.x} ${geometry.media.y} ${geometry.media.width} ${geometry.media.height}`);
+    expect(overlay.querySelector('[data-print-crop-marks-preview]')?.getAttribute("d")).toBe(cropMarkPathData(geometry));
+
+    // 叠加层纯装饰、指针穿透；海报画布仍是 preview 里第一个 svg，viewBox 保持成品框。
+    expect(overlay.getAttribute("aria-hidden")).toBe("true");
+    expect(overlay.style.pointerEvents).toBe("none");
+    const svgs = preview.querySelectorAll("svg");
+    expect(svgs[0].classList).toContain("poster");
+    expect(svgs[0].getAttribute("viewBox")).toBe("0 0 1500 1000");
+
+    // 出血为 0 时没有任何示意层。
+    const plain = renderWorkspace();
+    const plainPreview = plain.querySelector('section[aria-label="最终预览"]')!;
+    expect(plainPreview.querySelector('[data-print-bleed-stage]')).toBeNull();
+    expect(plainPreview.querySelector('[data-print-bleed-overlay]')).toBeNull();
   });
 
   it("locates object-in-bleed print issues with severity in the accessible name", () => {

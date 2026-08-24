@@ -41,6 +41,20 @@ export interface DataIssue {
 /** A {@link DataIssue} whose stable id is guaranteed by the type system. */
 export type ResolvedDataIssue = DataIssue & { id: string };
 
+const DATA_ISSUE_KIND_LABELS: Record<DataIssueKind, string> = {
+  "missing-field": "缺失必要字段",
+  "unresolved-location": "城市未匹配",
+  "manual-province": "省份覆盖",
+  international: "海外去向",
+  hidden: "隐藏记录",
+  duplicate: "重复记录",
+};
+
+/** Wording every screen uses for an issue kind, including filter chips. */
+export function dataIssueKindLabel(kind: DataIssueKind): string {
+  return DATA_ISSUE_KIND_LABELS[kind];
+}
+
 /** One student produces at most one issue per kind, so this pair is unique. */
 export function dataIssueId(kind: DataIssueKind, studentId: string): string {
   return `${kind}:${studentId}`;

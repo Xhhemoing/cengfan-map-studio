@@ -146,6 +146,7 @@ export function usePosterCardPlacement({
       autoBalance: project.cards.autoBalance !== false,
       connectorStyle: project.cards.connectorStyle,
       connectorWidth: project.cards.connectorWidth,
+      fixedPositions: project.cards.positions,
     };
     return {
       key: createCardLayoutCacheKey({ cards, bounds, options }),
@@ -167,6 +168,7 @@ export function usePosterCardPlacement({
     project.cards.connectorWidth,
     project.cards.gap,
     project.cards.layoutMode,
+    project.cards.positions,
   ]);
 
   const layoutState = useCardLayoutWorker(layoutRequest, exportMode);

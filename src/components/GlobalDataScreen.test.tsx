@@ -27,7 +27,10 @@ afterEach(() => {
   });
 });
 
-function render(issues: DataIssue[] = []): { container: HTMLDivElement; onSelectStudent: ReturnType<typeof vi.fn> } {
+function render(
+  issues: DataIssue[] = [],
+  health: DataHealthSummary = summary,
+): { container: HTMLDivElement; onSelectStudent: ReturnType<typeof vi.fn> } {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -37,7 +40,7 @@ function render(issues: DataIssue[] = []): { container: HTMLDivElement; onSelect
   flushSync(() => root.render(
     <GlobalDataScreen
       project={project}
-      summary={summary}
+      summary={health}
       issues={issues}
       dataViewLabel="省份卡片"
       selectedStudentId={null}
@@ -91,5 +94,50 @@ describe("GlobalDataScreen", () => {
 
     expect(onSelectStudent).toHaveBeenCalledWith("student-1");
     expect(container.textContent).toContain("学生数据中心");
+  });
+
+  it("does not report a clean roster after opening an empty overview bucket", () => {
+    const unresolved: DataIssue = {
+      studentId: "student-1",
+      studentName: "林舟",
+      kind: "unresolved-location",
+      detail: "无法定位城市：不存在",
+      severity: "warning",
+    };
+    const { container } = render([unresolved], { ...summary, unresolved: 1 });
+    // 重复记录 is empty, but the roster it filters is not.
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="查看重复记录"]')!.click());
+
+    expect(container.textContent).not.toContain("数据状态良好");
+    expect(container.textContent).toContain("没有「重复记录」记录");
+
+    flushSync(() => container.querySelector<HTMLButtonElement>("[data-clear-issue-filter]")!.click());
+    expect(container.textContent).toContain("林舟");
+    expect(container.querySelector('[data-issue-id="unresolved-location:student-1"]')).not.toBeNull();
+  });
+
+  it("shows every unresolved location in the mapping view regardless of the active filter", () => {
+    const unresolved: DataIssue = {
+      studentId: "student-1",
+      studentName: "林舟",
+      kind: "unresolved-location",
+      detail: "无法定位城市：不存在",
+      severity: "warning",
+    };
+    const hidden: DataIssue = {
+      studentId: "student-2",
+      studentName: "苏禾",
+      kind: "hidden",
+      detail: "记录已隐藏，不会出现在海报中",
+      severity: "info",
+    };
+    const { container } = render([unresolved, hidden], { ...summary, total: 2, unresolved: 1, hidden: 1 });
+    // Filtering on 隐藏记录 used to survive the jump to 地图映射 and empty it.
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="查看隐藏记录"]')!.click());
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="地图映射"]')!.click());
+
+    expect(container.textContent).not.toContain("数据状态良好");
+    expect(container.querySelector('[data-issue-id="unresolved-location:student-1"]')).not.toBeNull();
+    expect(container.querySelector('[data-issue-id="hidden:student-2"]')).toBeNull();
   });
 });

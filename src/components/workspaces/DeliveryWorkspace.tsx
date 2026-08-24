@@ -3,7 +3,12 @@ import type { ReactNode, RefObject } from "react";
 import type { DataIssue } from "../../lib/data-health";
 import { posterPngExportSize } from "../../lib/export-poster";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
-import { normalizePrintBleedMm } from "../../lib/print-bleed";
+import {
+  cropMarkPathData,
+  normalizePrintBleedMm,
+  resolvePrintBleedGeometry,
+  type PrintBleedGeometry,
+} from "../../lib/print-bleed";
 import type { PrintPreflightIssue, PrintPreflightResult } from "../../lib/print-preflight";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
@@ -217,6 +222,58 @@ export function DeliveryRail({
 }
 
 /**
+ * 出血示意舞台：按导出用的真实几何（`resolvePrintBleedGeometry` /
+ * `cropMarkPathData`）在成品画布四周画出出血环与裁切标记。导出时才由
+ * `applyPrintBleedToSvg` 在 SVG 副本上真正扩框，这里只叠加示意层：
+ * 叠加 SVG 纯装饰（aria-hidden、指针穿透），成品画布保持 trim viewBox。
+ */
+function BleedPreviewStage({ geometry, children }: { geometry: PrintBleedGeometry; children: ReactNode }) {
+  const { trim, bleed, media } = geometry;
+  const padPx = geometry.bleedPx + geometry.cropMarkLengthPx;
+  // evenodd 挖洞：外圈铺到出血框、内圈挖掉成品框，色带只盖出血区，不压画面。
+  const bleedRingPath =
+    `M ${bleed.x} ${bleed.y} h ${bleed.width} v ${bleed.height} h ${-bleed.width} Z ` +
+    `M ${trim.x} ${trim.y} h ${trim.width} v ${trim.height} h ${-trim.width} Z`;
+  return (
+    <div
+      className="delivery-workspace__bleed-stage"
+      data-print-bleed-stage
+      style={{ position: "relative", width: `min(100%, ${media.width}px)` }}
+    >
+      {/* 移动端样式会把 .poster 固定为 760px，这里必须让画布精确填满成品占位框，否则示意层错位。 */}
+      <style>{".delivery-workspace__bleed-stage .poster { width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; }"}</style>
+      {/* 成品画布占位：媒体框内按 trim/media 比例定位，先于叠加层渲染，preview 里第一个 svg 仍是海报本身。 */}
+      <div
+        style={{
+          position: "absolute",
+          left: `${(padPx / media.width) * 100}%`,
+          top: `${(padPx / media.height) * 100}%`,
+          width: `${(trim.width / media.width) * 100}%`,
+          height: `${(trim.height / media.height) * 100}%`,
+        }}
+      >
+        {children}
+      </div>
+      {/* 在流内撑起舞台尺寸（媒体框纵横比），同时晚于画布绘制，裁切线可压在画面边缘上。 */}
+      <svg
+        data-print-bleed-overlay
+        aria-hidden="true"
+        focusable="false"
+        viewBox={`${media.x} ${media.y} ${media.width} ${media.height}`}
+        width={media.width}
+        height={media.height}
+        style={{ position: "relative", display: "block", width: "100%", height: "auto", pointerEvents: "none" }}
+      >
+        <path d={bleedRingPath} fill="rgba(215, 141, 72, 0.24)" fillRule="evenodd" />
+        <rect x={bleed.x} y={bleed.y} width={bleed.width} height={bleed.height} fill="none" stroke="rgba(163, 99, 40, 0.55)" strokeWidth={1} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
+        <rect x={trim.x} y={trim.y} width={trim.width} height={trim.height} fill="none" stroke="#2e5d66" strokeWidth={1} strokeDasharray="8 5" vectorEffect="non-scaling-stroke" />
+        <path data-print-crop-marks-preview d={cropMarkPathData(geometry)} fill="none" stroke={geometry.cropMarkColor} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      </svg>
+    </div>
+  );
+}
+
+/**
  * Center content of the export stage: the 最终预览 poster canvas. The
  * 交付检查/导出设置/action buttons live in the unified right rail
  * (`DeliveryRail`).
@@ -227,6 +284,13 @@ export function DeliveryWorkspace({
   posterRef,
 }: DeliveryWorkspaceProps) {
   const bleedMm = normalizePrintBleedMm(project.canvas.printBleedMm);
+  const geometry = bleedMm > 0
+    ? resolvePrintBleedGeometry(
+        { x: 0, y: 0, width: project.canvas.width, height: project.canvas.height },
+        { printBleedMm: bleedMm },
+      )
+    : null;
+  const poster = <PosterCanvas project={project} posterRef={posterRef} exportMode userFonts={userFonts} />;
   return (
     <main className="delivery-workspace" aria-label="最终导出">
       <div className="delivery-workspace__body">
@@ -235,13 +299,15 @@ export function DeliveryWorkspace({
             <strong>最终预览</strong>
             <span>{bleedMm > 0 ? `成品尺寸 ${project.canvas.width} × ${project.canvas.height} px` : `${project.canvas.width} × ${project.canvas.height} px`}</span>
           </div>
-          {bleedMm > 0 && (
+          {geometry && (
             /* 预览画布始终按成品（trim）显示，出血只在导出时向外扩；不加说明会让「导出比预览大」像 bug。 */
             <p className="delivery-workspace__preview-note" style={{ margin: "-6px 0 10px", color: "var(--editor-ink-muted, #536970)" }}>
-              <small>预览为成品（裁切后）画面；导出将向外扩出 {bleedMm}mm 出血并绘制裁切标记，实际导出尺寸更大，精确像素见右侧「导出设置」。</small>
+              <small>预览四周的浅色环与角上短线为出血区、裁切标记示意；导出将向外扩出 {bleedMm}mm 出血并绘制裁切标记，实际导出尺寸更大，精确像素见右侧「导出设置」。</small>
             </p>
           )}
-          <div className="delivery-workspace__canvas"><PosterCanvas project={project} posterRef={posterRef} exportMode userFonts={userFonts} /></div>
+          <div className="delivery-workspace__canvas">
+            {geometry ? <BleedPreviewStage geometry={geometry}>{poster}</BleedPreviewStage> : poster}
+          </div>
         </section>
       </div>
     </main>

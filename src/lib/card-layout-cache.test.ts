@@ -71,6 +71,20 @@ describe("card layout cache", () => {
       bounds: { ...bounds, occupiedAreas: [{ x: 48, y: 781, width: 280, height: 120 }] },
       options,
     })).not.toBe(base);
+    expect(createCardLayoutCacheKey({
+      cards,
+      bounds,
+      options: { ...options, fixedPositions: { zhejiang: { x: 40, y: 80 } } },
+    })).not.toBe(base);
+    expect(createCardLayoutCacheKey({
+      cards,
+      bounds,
+      options: { ...options, fixedPositions: { zhejiang: { x: 40, y: 80 } } },
+    })).toBe(createCardLayoutCacheKey({
+      cards,
+      bounds,
+      options: { ...options, fixedPositions: { zhejiang: { x: 40, y: 80 } } },
+    }));
   });
 
   it("evicts the least recently used result after reaching its capacity", () => {

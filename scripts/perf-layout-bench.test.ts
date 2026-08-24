@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_WORKER_CARD_THRESHOLD } from "../src/components/canvas/useCardLayoutWorker";
 import {
   DEFAULT_LAYOUT_BENCH_MODES,
   makeClusteredAnchorBenchmarkFixture,
@@ -6,6 +7,7 @@ import {
   makeLayoutBenchmarkCards,
   runCardLayoutCacheKeyBenchmark,
   runLayoutBenchmark,
+  runWorkerMessageBenchmark,
 } from "./perf-layout-bench";
 
 describe("layout performance benchmark", () => {
@@ -45,6 +47,28 @@ describe("layout performance benchmark", () => {
       iterations: 2,
     });
     expect(report.keyBytes).toBeGreaterThan(0);
+  });
+
+  it("reports worker transport beside the same-fixture main-thread solve without timing budgets", async () => {
+    const report = await runWorkerMessageBenchmark(undefined, 1, 1, 2);
+
+    expect(report).toMatchObject({
+      methodology: "worker_threads request and placement-shaped response; solver excluded",
+      comparisonMethodology: "same-fixture main-thread solveCardLayout; invariant checks excluded from timing",
+      count: DEFAULT_WORKER_CARD_THRESHOLD,
+      mode: "quadrant",
+      startupIterations: 1,
+      warmupIterations: 1,
+      iterations: 2,
+      startupP50Ms: expect.any(Number),
+      startupP95Ms: expect.any(Number),
+      warmP50Ms: expect.any(Number),
+      warmP95Ms: expect.any(Number),
+      mainThreadSolveP50Ms: expect.any(Number),
+      mainThreadSolveP95Ms: expect.any(Number),
+      startupToSolveP95Ratio: expect.any(Number),
+      warmTransportToSolveP95Ratio: expect.any(Number),
+    });
   });
 
   it("runs the small layout matrix without a machine-dependent time budget", () => {

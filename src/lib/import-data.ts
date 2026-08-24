@@ -1,16 +1,7 @@
 import {
-  countExactHeaderCells,
-  describeMissingCells,
-  detectHeaderColumns,
-  isBlankImportCell,
-  isSummaryRow,
-  missingRequiredCells,
-  missingRequiredColumns,
-  readStudentColumn,
-  rowRestatesHeader,
-  trimImportCell,
-  type StudentColumn,
-  type StudentColumnIndexes,
+  countExactHeaderCells, describeMissingCells, detectHeaderMapping, isBlankImportCell, isSummaryRow,
+  missingRequiredCells, missingRequiredColumns, readStudentColumn, REQUIRED_STUDENT_COLUMNS, rowRestatesHeader,
+  trimImportCell, type StudentColumn, type StudentColumnLookup, type StudentColumnMapping,
 } from "./import-headers";
 
 export interface ImportCandidate {
@@ -35,32 +26,44 @@ export interface TextImportResult {
 }
 
 export {
-  countExactHeaderCells,
-  describeMissingCells,
-  detectHeaderColumns,
-  isBlankImportCell,
-  isExactHeaderAlias,
-  isSummaryRow,
-  looksLikeStudentHeader,
-  missingRequiredCells,
-  missingRequiredColumns,
-  normalizeHeaderCell,
-  readStudentColumn,
-  REQUIRED_COLUMN_LABELS,
-  REQUIRED_STUDENT_COLUMNS,
-  rowRestatesHeader,
-  STUDENT_HEADER_ALIASES,
-  trimImportCell,
+  countExactHeaderCells, describeMissingCells, detectHeaderColumns, detectHeaderMapping, isBlankImportCell,
+  isExactHeaderAlias, isSummaryRow, looksLikeStudentHeader, missingRequiredCells, missingRequiredColumns,
+  normalizeHeaderCell, readStudentColumn, REQUIRED_COLUMN_LABELS, REQUIRED_STUDENT_COLUMNS, rowRestatesHeader,
+  STUDENT_HEADER_ALIASES, trimImportCell,
 } from "./import-headers";
-export type { RequiredStudentColumn, StudentColumn, StudentColumnIndexes } from "./import-headers";
+export type { RequiredStudentColumn, StudentColumn, StudentColumnAlternates, StudentColumnIndexes, StudentColumnLookup, StudentColumnMapping } from "./import-headers";
 
 const INTERNATIONAL_TOKENS = ["海外", "境外", "国外", "出国", "留学", "international", "overseas", "abroad"];
+
+/**
+ * A 是否出国 column is answered in the negative as often as in the positive
+ * ("未出国", "非海外", "not abroad"), and those answers spell the overseas
+ * marker out in full. Counting them would move a student who never left the
+ * country off the China map without a warning.
+ */
+const NEGATED_OVERSEAS = new RegExp(`(不|非|未|没有?|无|否|not|non)\\s*(?:${INTERNATIONAL_TOKENS.join("|")})`, "g");
+
+/**
+ * Drops the markers a negation introduces, keeping the negation itself so it
+ * carries over to the next one: "未出国留学" loses 出国 and then 留学. Only an
+ * adjacent negation counts, so "非全日制海外硕士" stays overseas.
+ */
+function stripNegatedMarkers(value: string): string {
+  let current = value;
+  for (let pass = 0; pass < INTERNATIONAL_TOKENS.length; pass += 1) {
+    const next = current.replace(NEGATED_OVERSEAS, "$1");
+    if (next === current) break;
+    current = next;
+  }
+  return current;
+}
 
 /** Reads a 去向类型 cell. Anything that is not explicitly overseas stays a China destination. */
 export function parseLocationScopeValue(value: string | undefined): "international" | undefined {
   const normalized = (value ?? "").trim().toLocaleLowerCase("zh-CN");
   if (!normalized) return undefined;
-  return INTERNATIONAL_TOKENS.some((token) => normalized.includes(token)) ? "international" : undefined;
+  const stated = stripNegatedMarkers(normalized);
+  return INTERNATIONAL_TOKENS.some((token) => stated.includes(token)) ? "international" : undefined;
 }
 
 /** One physical line of the source, with the 1-based number it came from. */
@@ -218,11 +221,11 @@ function toCandidate(
 /** Builds a candidate from a detected header mapping; returns null when a required cell is blank. */
 export function candidateFromColumns(
   cells: string[],
-  indexes: StudentColumnIndexes,
+  lookup: StudentColumnLookup,
   sourceLine: number,
   rawLine: string,
 ): ImportCandidate | null {
-  const read = (column: StudentColumn): string => readStudentColumn(cells, indexes, column);
+  const read = (column: StudentColumn): string => readStudentColumn(cells, lookup, column);
   const name = read("name");
   const university = read("university");
   const city = read("city");
@@ -278,7 +281,7 @@ interface TextHeader {
   lineIndex: number;
   delimiter: string | null;
   cells: string[];
-  indexes: StudentColumnIndexes;
+  mapping: StudentColumnMapping;
 }
 
 const TEXT_HEADER_SEARCH_DEPTH = 5;
@@ -299,14 +302,14 @@ function detectTextHeader(lines: SourceLine[]): TextHeader | null {
     const delimiter = detectDelimiter(line.text);
     const cells = splitCells(line.text, delimiter);
     if (cells.filter(Boolean).length < 2) continue;
-    const indexes = detectHeaderColumns(cells);
-    const header = { lineIndex, delimiter, cells, indexes };
+    const mapping = detectHeaderMapping(cells);
+    const header = { lineIndex, delimiter, cells, mapping };
     if (lineIndex === 0) {
-      if (Object.keys(indexes).length >= 2) return header;
+      if (Object.keys(mapping.indexes).length >= 2) return header;
       continue;
     }
-    if (missingRequiredColumns(indexes).length > 0) continue;
-    if (countExactHeaderCells(cells, indexes) >= MIN_LATE_HEADER_EXACT_CELLS) return header;
+    if (missingRequiredColumns(mapping).length > 0) continue;
+    if (countExactHeaderCells(cells, mapping) >= MIN_LATE_HEADER_EXACT_CELLS) return header;
   }
   return null;
 }
@@ -320,7 +323,7 @@ export function parseStudentText(text: string): TextImportResult {
   const candidates: ImportCandidate[] = [];
   const unparsed: UnparsedLine[] = [];
   const header = detectTextHeader(lines);
-  const headerIsComplete = header !== null && missingRequiredColumns(header.indexes).length === 0;
+  const headerIsComplete = header !== null && missingRequiredColumns(header.mapping).length === 0;
 
   lines.forEach(({ text, sourceLine }, index) => {
     if (header && index === header.lineIndex) return;
@@ -332,23 +335,32 @@ export function parseStudentText(text: string): TextImportResult {
       return;
     }
     let missingReason: string | null = null;
+    /**
+     * The row filled some of the mapped columns, so it follows the header and
+     * its gap is real. Reading it by position would shift every value one
+     * column left — "学号,姓名,院校,城市" with an empty 城市 imports the student
+     * number as the name — so the positional reader is skipped below.
+     */
+    let mappedPartially = false;
 
     if (headerIsComplete) {
       const cells = splitCells(text, header!.delimiter);
       // Two exports stacked together repeat the header; it is not a student.
-      if (rowRestatesHeader(cells, header!.indexes, header!.cells)) return;
-      if (isSummaryRow(cells, header!.indexes)) {
+      if (rowRestatesHeader(cells, header!.mapping, header!.cells)) return;
+      if (isSummaryRow(cells, header!.mapping)) {
         unparsed.push({ sourceLine, rawLine: text, reason: "汇总行" });
         return;
       }
-      const mapped = candidateFromColumns(cells, header!.indexes, sourceLine, text);
+      const mapped = candidateFromColumns(cells, header!.mapping, sourceLine, text);
       if (mapped) {
         candidates.push(mapped);
         return;
       }
       // A row of only separators carries no data at all and is not a problem.
       if (cells.every(isBlankImportCell)) return;
-      missingReason = describeMissingCells(missingRequiredCells(cells, header!.indexes));
+      const missingCells = missingRequiredCells(cells, header!.mapping);
+      mappedPartially = missingCells.length < REQUIRED_STUDENT_COLUMNS.length;
+      missingReason = describeMissingCells(missingCells);
     }
 
     const labeledCandidate = parseLabeledCandidate(text, sourceLine);
@@ -357,11 +369,13 @@ export function parseStudentText(text: string): TextImportResult {
       return;
     }
 
-    const parts = splitParts(text, detectDelimiter(text));
-    const candidate = toCandidate(parts, sourceLine, text);
-    if (candidate) {
-      candidates.push(candidate);
-      return;
+    if (!mappedPartially) {
+      const parts = splitParts(text, detectDelimiter(text));
+      const candidate = toCandidate(parts, sourceLine, text);
+      if (candidate) {
+        candidates.push(candidate);
+        return;
+      }
     }
 
     unparsed.push({

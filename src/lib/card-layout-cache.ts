@@ -24,8 +24,23 @@ function polygonKey(polygon: CardPolygon): { rings: number[][][]; bounds?: [numb
   };
 }
 
+function fixedPositionsKey(
+  positions: CardLayoutOptions["fixedPositions"],
+): Array<[string, number, number]> | undefined {
+  if (!positions) return undefined;
+  const entries = Object.entries(positions)
+    .filter((entry): entry is [string, { x: number; y: number }] => {
+      const point = entry[1];
+      return Boolean(point) && Number.isFinite(point.x) && Number.isFinite(point.y);
+    })
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, point]) => [id, point.x, point.y] as [string, number, number]);
+  return entries.length === 0 ? undefined : entries;
+}
+
 /** Creates a stable key for solver inputs without including renderer-only styling. */
 export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutCacheInput): string {
+  const fixedPositions = fixedPositionsKey(options.fixedPositions);
   return JSON.stringify({
     cards: cards.map(({ id, anchorX, anchorY, width, height }) => [id, anchorX, anchorY, width, height]),
     bounds: {
@@ -44,6 +59,7 @@ export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutC
       ...(options.topBottomBandRatio === undefined ? {} : { topBottomBandRatio: options.topBottomBandRatio }),
       connectorStyle: options.connectorStyle ?? "curve",
       connectorWidth: options.connectorWidth ?? 1.5,
+      ...(fixedPositions ? { fixedPositions } : {}),
     },
   });
 }
