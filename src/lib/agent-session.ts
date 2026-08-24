@@ -7,7 +7,7 @@ import type { StudioAsset } from "./assets";
 import { duplicateStudentIds } from "./data-duplicate";
 import { createId } from "./ids";
 import { classifyAgentCall, highestRisk, type AgentToolCall, type RiskLevel } from "./agent-risk";
-import { buildProjectDigest, type ProjectDigestLayer } from "./project-digest";
+import { buildProjectDigest, digestFingerprint, type ProjectDigestLayer } from "./project-digest";
 import type { ProjectDocument, ProjectTransaction } from "./project-document";
 import { updateSceneTarget, type SceneSelection } from "./scene-document";
 import { SCENE_DOMAIN_PROPS, type SceneDomain } from "./scene-writable-props";
@@ -687,13 +687,21 @@ export class AgentSession {
             timedOut = true;
             roundController.abort();
           }, CLIENT_ROUND_TIMEOUT_MS);
+          const digest = buildProjectDigest(this.shadow, { layer: digestLayer });
+          // 指纹恒取 full 层：服务端拿它和上一轮回执比对，首轮发 full、续聊发 core 也能对上，
+          // 续聊第一轮的短声明才不会因为跨层而永远落空。同一份影子工程的两层投影共用渲染缓存，
+          // 多算一次 full 只是序列化开销。
+          // 回滚：删掉本段与请求体里的 digestFingerprint 字段，服务端会退回对 digest 本身取指纹。
+          const fullDigestFingerprint = digestFingerprint(
+            digestLayer === "full" ? digest : buildProjectDigest(this.shadow, { layer: "full" }),
+          );
           let response: Response;
           try {
             response = await fetch(this.options.endpoint ?? "/api/ai/agent", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               // 预算只认服务端回执：客户端镜像发过去也会被忽略，发了反而像是可协商的。
-              body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow, { layer: digestLayer }), messages: this.conversation, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
+              body: JSON.stringify({ userMessage: message, digest, digestFingerprint: fullDigestFingerprint, messages: this.conversation, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
               signal: roundController.signal,
             });
           } catch (cause) {

@@ -43,6 +43,7 @@ const SYSTEM_PROMPT = `你是“蹭饭图”毕业去向海报编辑器的 AI �
 
 规则：
 1. digest 已包含当前工程的投影值与各工具可写属性已写在工具说明里，并含 layout 节：layout.mapContentBounds 是地图内容框，layout.cardBlocks 是与 students.topProvinces 对齐的卡片实际方位（id/x/y/w/h/side，已叠加手工位置）；版面位置问题直接读 layout，其余 digest 能回答的问题也直接用 digest，不要重复 inspect_project；只有 digest 未覆盖的路径（例如 cards.padding、cards.connectorColor）才调用 inspect_project 读真实值。禁止凭记忆猜测 before。
+1.1 digest.layer 标明本轮投影分层。layer="core" 是精简层：layout.cardBlocks、textElements、assetElements 已被整段裁掉，空数组不代表画布上没有对应元素；真实数量一律看 layout.cardBlockCount、textElementCount、assetElementCount、students.total。只要计数大于 0 而明细为空，就必须调用 inspect_project（它始终返回 full 层明细）现取，禁止把空数组当成「没有」来回答或据此动手。layer="full" 时明细已在场，但计数大于样本长度仍说明尾部被裁，同样要 inspect_project 补齐。
 2. 一轮可以并行调用多个互不冲突的工具。
 3. 修改布局后调用 check_health 检查出界、遮挡、文字不可读和连线冲突。
 4. cards.positions 受保护，只能由 auto_layout 修改。已有手工位置时 auto_layout 会丢失它们，必须如实说明。
@@ -275,11 +276,16 @@ export async function runAgentTurn(
   }
 
   // digest 与上一轮完全一致时只发一句短声明：整包 JSON 上一轮已经进过 prompt，重发是纯重复付费。
+  // 精简层要额外挑明「空数组≠没有」，否则模型会把被裁掉的明细当成画布上不存在。
+  const coreLayer = request.digest?.layer === "core";
+  const coreLayerNote = coreLayer
+    ? "（本轮投影是精简层 layer=core：layout.cardBlocks、textElements、assetElements 已被整段裁掉，空数组不代表没有；实际数量看 layout.cardBlockCount、textElementCount、assetElementCount，需要明细请调用 inspect_project。）"
+    : "";
   const digestMessage: ChatMessage = {
     role: "user",
     content: request.digestUnchanged
-      ? "当前工程精简投影与上一轮相同，继续使用已给出的工程投影（只读；不要把它当作可直接写回的完整工程）。"
-      : `当前工程精简投影（只读；不要把它当作可直接写回的完整工程）：${JSON.stringify(request.digest)}`,
+      ? `当前工程精简投影与上一轮相同，继续使用已给出的工程投影（只读；不要把它当作可直接写回的完整工程）。${coreLayerNote}`
+      : `当前工程精简投影（只读；不要把它当作可直接写回的完整工程）：${JSON.stringify(request.digest)}${coreLayerNote}`,
   };
   const history = request.messages.filter((message) => message.role !== "system");
   const lastHistoryMessage = history.at(-1);

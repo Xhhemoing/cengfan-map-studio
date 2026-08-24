@@ -324,6 +324,55 @@ describe("buildProjectDigest layers", () => {
     expect(buildProjectDigest(project)).toEqual(buildProjectDigest(project, { layer: "full" }));
   });
 
+  it("labels every projection with its own layer", () => {
+    const project = busyProject();
+    expect(buildProjectDigest(project).layer).toBe("full");
+    expect(buildProjectDigest(project, { layer: "full" }).layer).toBe("full");
+    expect(buildProjectDigest(project, { layer: "core" }).layer).toBe("core");
+  });
+
+  it("keeps the card block total on the core layer so an empty list is not read as no cards", () => {
+    const project = busyProject();
+    const full = buildProjectDigest(project, { layer: "full" });
+    const core = buildProjectDigest(project, { layer: "core" });
+
+    expect(full.layout.cardBlockCount).toBeGreaterThan(0);
+    expect(full.layout.cardBlockCount).toBeGreaterThanOrEqual(full.layout.cardBlocks.length);
+    // 「有卡但明细被裁」：清单为空而总数非零，模型据此改走 inspect_project。
+    expect(core.layout.cardBlocks).toEqual([]);
+    expect(core.layout.cardBlockCount).toBe(full.layout.cardBlockCount);
+  });
+
+  it("reports zero card blocks on both layers when the canvas really has no cards", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+
+    for (const layer of ["full", "core"] as const) {
+      const digest = buildProjectDigest(project, { layer });
+      expect(digest.layout.cardBlocks).toEqual([]);
+      expect(digest.layout.cardBlockCount).toBe(0);
+    }
+  });
+
+  it("keeps the card block total after the budget drops the blocks themselves", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const oversized = {
+      ...project,
+      students: Array.from({ length: 10 }, (_, index) => ({
+        id: `s${index}`,
+        name: `同学${index}`,
+        university: "某大学",
+        city: "某市",
+        province: `超长省名${index}${"啊".repeat(400)}`,
+        visibility: true,
+      })),
+    };
+    const digest = buildProjectDigest(oversized);
+
+    expect(digest.layout.cardBlocks).toEqual([]);
+    expect(digest.layout.cardBlockCount).toBeGreaterThan(0);
+    expect(digestByteLength(digest)).toBeLessThanOrEqual(DIGEST_MAX_BYTES);
+  });
+
   it("keeps statistics and key geometry on the core layer while dropping the detail lists", () => {
     const project = busyProject();
     const full = buildProjectDigest(project, { layer: "full" });

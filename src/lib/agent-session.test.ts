@@ -14,6 +14,12 @@ function requestDigest(fetchMock: { mock: { calls: unknown[][] } }, index: numbe
   return (JSON.parse(String(init.body)) as { digest: ProjectDigest }).digest;
 }
 
+/** 取第 index 次 agent 请求体里与分层无关的 full 层指纹。 */
+function requestDigestFingerprint(fetchMock: { mock: { calls: unknown[][] } }, index: number): string | undefined {
+  const init = fetchMock.mock.calls[index]?.[1] as RequestInit;
+  return (JSON.parse(String(init.body)) as { digestFingerprint?: string }).digestFingerprint;
+}
+
 /** 一份带学生与文案的工程：full 层会投影卡片方位与文本明细，core 层应把它们裁空。 */
 function digestLayerProject(): ProjectDocument {
   const project = createProjectDocument({
@@ -525,16 +531,44 @@ describe("AgentSession", () => {
     const first = requestDigest(fetchMock, 0);
     const second = requestDigest(fetchMock, 1);
     // 首轮建立上下文：明细必须在场，否则模型没有可对齐的方位与文案。
+    expect(first.layer).toBe("full");
     expect(first.layout.cardBlocks.length).toBeGreaterThan(0);
     expect(first.textElements.length).toBeGreaterThan(0);
-    // 续聊只发统计与关键几何，明细整段裁掉。
+    // 续聊只发统计与关键几何，明细整段裁掉，但分层标记与总数留着供模型判断「裁了」而非「没有」。
+    expect(second.layer).toBe("core");
     expect(second.layout.cardBlocks).toEqual([]);
+    expect(second.layout.cardBlockCount).toBe(first.layout.cardBlockCount);
+    expect(second.layout.cardBlockCount).toBeGreaterThan(0);
     expect(second.textElements).toEqual([]);
     expect(second.assetElements).toEqual([]);
     expect(second.students).toEqual(first.students);
     expect(second.layout.mapContentBounds).toEqual(first.layout.mapContentBounds);
     expect(second.textElementCount).toBe(first.textElementCount);
     expect(JSON.stringify(second).length).toBeLessThan(JSON.stringify(first).length);
+  });
+
+  it("sends a layer-independent digest fingerprint so the server can dedupe across full→core", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-fingerprint", budgetReceipt: "v1.receipt.first", summary: "第一轮完成" }))
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-fingerprint", budgetReceipt: "v1.receipt.second", calls: [
+        { id: "c1", name: "update_map", arguments: { patch: { scale: 0.5 } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-fingerprint", budgetReceipt: "v1.receipt.third", summary: "续聊完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(digestLayerProject(), { mode: "conservative" });
+    await session.run("先看看现状");
+    await session.continue("再把地图调小一点");
+
+    const first = requestDigestFingerprint(fetchMock, 0);
+    const second = requestDigestFingerprint(fetchMock, 1);
+    const third = requestDigestFingerprint(fetchMock, 2);
+    expect(first).toMatch(/^fnv1a32:[0-9a-f]{8}$/);
+    // 首轮发 full、续聊发 core，工程没变，指纹必须一样，服务端才能命中短声明。
+    expect(requestDigest(fetchMock, 0).layer).toBe("full");
+    expect(requestDigest(fetchMock, 1).layer).toBe("core");
+    expect(second).toBe(first);
+    // 影子工程被工具改过之后指纹必须变，否则模型会拿到过期投影。
+    expect(third).not.toBe(first);
   });
 
   it("still answers core-dropped detail from the shadow project while continuing", async () => {

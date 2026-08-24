@@ -1,12 +1,10 @@
+/**
+ * 识别面板按本类型逐列渲染映射行,省份与其他列一视同仁:参与表头识别、取值,并在面板中可见。
+ * 回滚省份列时,把 `"province"` 从本联合类型中去掉即可。
+ */
 export type StudentColumn = "name" | "university" | "city" | "locationScope" | "province";
 
-/**
- * 省份是纯解析列:参与表头识别与取值,但不进入识别面板的列映射展示(展示层未接入)。
- * 回滚省份列时,把 `StudentColumn` 去掉 `"province"`,本别名可一并删除。
- */
-export type MappedStudentColumn = Exclude<StudentColumn, "province">;
-
-/** 省份选填,不进必填列:缺省份时仍按城市推断,不该把整行判为无效。 */
+/** 省份可选,不进必填列:缺省份时仍按城市推断,不该把整行判为无效。 */
 export const REQUIRED_COLUMNS = ["name", "university", "city"] as const;
 
 export type RequiredStudentColumn = (typeof REQUIRED_COLUMNS)[number];

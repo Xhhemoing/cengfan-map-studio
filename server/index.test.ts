@@ -516,6 +516,57 @@ describe("unified application server", () => {
     }
   });
 
+  it("matches the client fingerprint across the full→core layer switch and still notices real changes", async () => {
+    const server = createAiServer({
+      budgetReceiptSecret: "receipt-digest-layer-secret",
+      agentConfig: {
+        primary: { apiKey: "primary-key", baseUrl: "https://primary.example/v1", model: "primary-model", timeoutMs: 1000, maxTokens: 4000, retryMaxAttempts: 1 },
+        maxRounds: 20,
+        tokenBudget: 60000,
+        retryMaxAttempts: 1,
+        retryBaseDelayMs: 0,
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const assistantMessage = { role: "assistant", content: null, tool_calls: [{ id: "call-layer", type: "function", function: { name: "check_health", arguments: "{}" } }] };
+    const history = [assistantMessage, { role: "tool", tool_call_id: "call-layer", content: JSON.stringify({ ok: true }) }];
+    const fullDigest = { layer: "full", map: { scale: 1 }, textElements: [{ id: "t1", content: "标题" }], textElementCount: 1 };
+    const coreDigest = { layer: "core", map: { scale: 1 }, textElements: [], textElementCount: 1 };
+    const prompts: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      prompts.push(String(init.body));
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        text: async () => "",
+        json: async () => ({ choices: [{ message: { role: "assistant", content: "完成" } }], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }),
+      } as Response;
+    }) as typeof fetch;
+    try {
+      // 首轮 full，客户端另传的指纹恒基于 full 层。
+      const first = await rawPost(origin, "/api/ai/agent", { userMessage: "检查一下画布", taskId: "task-layer", digest: fullDigest, digestFingerprint: "fnv1a32:deadbeef", messages: [] });
+      const firstBody = JSON.parse(first.body) as { budgetReceipt: string };
+      expect(prompts[0]).toContain("\\\"scale\\\":1");
+
+      // 续聊改发 core：digest 本身与首轮不同，但工程没变，指纹一致就该命中短声明。
+      const continued = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-layer", budgetReceipt: firstBody.budgetReceipt, digest: coreDigest, digestFingerprint: "fnv1a32:deadbeef", messages: history });
+      expect(continued.status).toBe(200);
+      expect(prompts[1]).toContain("与上一轮相同");
+      expect(prompts[1]).not.toContain("\\\"scale\\\":1");
+
+      // 工程真的变了：指纹跟着变，整包投影必须重发。
+      const changed = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-layer", budgetReceipt: (JSON.parse(continued.body) as { budgetReceipt: string }).budgetReceipt, digest: { ...coreDigest, map: { scale: 0.85 } }, digestFingerprint: "fnv1a32:0000cafe", messages: history });
+      expect(changed.status).toBe(200);
+      expect(prompts[2]).toContain("\\\"scale\\\":0.85");
+      expect(prompts[2]).not.toContain("与上一轮相同");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("does not reset a signed budget when history is reduced to user messages", async () => {
     const server = createAiServer({ budgetReceiptSecret: "receipt-test-secret", agentConfig: { apiKey: undefined, baseUrl: "https://llm.example/v1", model: "test-model", timeoutMs: 1000, maxTokens: 4000 } });
     servers.push(server);

@@ -126,6 +126,10 @@ function changeSelect(select: HTMLSelectElement, value: string): void {
   });
 }
 
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
 afterEach(() => {
   roots.splice(0).forEach(({ root, container }) => {
     flushSync(() => root.unmount());
@@ -561,6 +565,115 @@ describe("App student editing", () => {
       expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "设为只读")).toBe(false);
       expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "关闭房间")).toBe(false);
       expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "邀请编辑者")).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    }
+  });
+
+  // 冲突路径:上传拿到 VERSION_CONFLICT 后应先补齐远端增量,再重试一次提交。
+  // 房间建好后编辑一名学生,触发防抖上传;第二次事务(baseVersion 1)固定返回 409。
+  function mountConflictingRoom(retryResponse: (body: Record<string, unknown>) => Response) {
+    const roomId = "CONF01";
+    const container = renderApp();
+    class QuietEventSource {
+      addEventListener() {}
+      onerror = null;
+      close() {}
+      constructor(public readonly url: string) {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    const transactions: Array<Record<string, unknown>> = [];
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/rooms")) {
+        return jsonResponse({
+          room: { id: roomId, version: 0, ready: true, members: [{ clientId: "c-owner", role: "owner", joinedAt: "t0", lastSeenAt: "t0" }] },
+          access: { accessToken: "owner-token", role: "owner", participantId: "p1", id: "p1", displayName: "创建者" },
+        });
+      }
+      if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        transactions.push(body);
+        if (body.snapshot !== undefined) return jsonResponse({ id: roomId, version: 1 });
+        if (body.baseVersion === 1) {
+          return jsonResponse({ error: { code: "VERSION_CONFLICT", message: "房间已被其他成员更新", currentVersion: 2 } }, 409);
+        }
+        return retryResponse(body);
+      }
+      if (url.includes(`/api/rooms/${roomId}/operations`)) {
+        return jsonResponse({
+          id: roomId,
+          version: 2,
+          afterVersion: 1,
+          operations: [{ type: "set", path: ["project", "map", "scale"], value: 1.2 }],
+        });
+      }
+      if (url.endsWith("/events-ticket")) return jsonResponse({ ticket: "ticket" }, 201);
+      return jsonResponse({});
+    });
+    globalThis.fetch = request as typeof fetch;
+    return { container, request, roomId, transactions };
+  }
+
+  async function editStudentInRoom(container: HTMLDivElement, request: ReturnType<typeof vi.fn>, name: string): Promise<void> {
+    click(container.querySelector('[aria-label="增量在线协作"]')!);
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "创建房间")!);
+    await vi.waitFor(() => expect(container.textContent).toContain("房间已创建"));
+    request.mockClear();
+    openPeopleData(container);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="编辑 林舟"]')!);
+    changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, name);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟"]')!);
+    closeGlobalSettings(container);
+  }
+
+  it("backfills the remote gap and retries the upload once after a version conflict", async () => {
+    const originalEventSource = globalThis.EventSource;
+    const originalFetch = globalThis.fetch;
+    const { container, request, roomId, transactions } = mountConflictingRoom(() => jsonResponse({ id: roomId, version: 3 }));
+    try {
+      await editStudentInRoom(container, request, "冲突林舟");
+      await vi.waitFor(() => expect(container.textContent).toContain("增量同步已完成"), { timeout: 5_000 });
+
+      const backfill = request.mock.calls.map(([input]) => String(input)).filter((url) => url.includes("/operations?"));
+      expect(backfill).toEqual([`/api/rooms/${roomId}/operations?afterVersion=1`]);
+      const uploads = transactions.filter((body) => Array.isArray(body.operations));
+      expect(uploads).toHaveLength(2);
+      expect(uploads[0]).toMatchObject({ baseVersion: 1 });
+      // 重试用补齐后的版本重新计算增量,只带上与远端互不冲突的本地改动。
+      expect(uploads[1]).toMatchObject({ baseVersion: 2 });
+      expect(uploads[1]!.operations).toContainEqual(expect.objectContaining({
+        type: "array-upsert",
+        path: ["project", "students"],
+        item: expect.objectContaining({ id: "student-1", name: "冲突林舟" }),
+      }));
+      expect(container.textContent).not.toContain("请重新加入房间确认最新版本");
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    }
+  });
+
+  it("stops at a manual conflict when the retry after backfilling still conflicts", async () => {
+    const originalEventSource = globalThis.EventSource;
+    const originalFetch = globalThis.fetch;
+    const { container, request, roomId, transactions } = mountConflictingRoom(() => jsonResponse(
+      { error: { code: "VERSION_CONFLICT", message: "房间已被其他成员更新", currentVersion: 3 } },
+      409,
+    ));
+    try {
+      await editStudentInRoom(container, request, "再冲突林舟");
+      await vi.waitFor(() => expect(container.textContent).toContain("请重新加入房间确认最新版本"), { timeout: 5_000 });
+
+      // 只补齐一次、只重试一次,不做无限重试。
+      expect(request.mock.calls.filter(([input]) => String(input).includes("/operations?"))).toHaveLength(1);
+      expect(transactions.filter((body) => Array.isArray(body.operations))).toHaveLength(2);
+      // 仍留在房间里,本地改动没有被丢弃,交由使用者人工确认。
+      expect(container.textContent).toContain(roomId);
+      expect(container.textContent).toContain("再冲突林舟");
     } finally {
       globalThis.fetch = originalFetch;
       vi.unstubAllGlobals();

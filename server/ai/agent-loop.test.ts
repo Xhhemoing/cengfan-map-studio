@@ -223,6 +223,43 @@ describe("runAgentTurn", () => {
     expect(prompt).toContain("layout.cardBlocks");
   });
 
+  it("tells the model that the core layer trimmed the detail and needs inspect_project", () => {
+    const prompt = String(buildSystemMessage().content);
+    expect(prompt).toContain("digest.layer");
+    expect(prompt).toContain("layer=\"core\"");
+    expect(prompt).toContain("layout.cardBlockCount");
+    // 「空数组不代表没有」必须和 inspect_project 一起出现，否则模型仍会把裁空当成没有。
+    expect(prompt).toContain("空数组不代表");
+    expect(prompt).toContain("inspect_project");
+  });
+
+  it("marks the core layer in the digest message on both the full and the short form", async () => {
+    let sent: Array<{ role: string; content?: string | null }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      sent = (JSON.parse(String(init.body)) as { messages: Array<{ role: string; content?: string | null }> }).messages;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ choices: [{ message: { role: "assistant", content: "完成" } }] }) };
+    }));
+    const coreDigest = { layer: "core", layout: { mapContentBounds: { x: 0, y: 0, width: 10, height: 10 }, cardBlocks: [], cardBlockCount: 4 }, textElements: [], textElementCount: 7 };
+
+    for (const digestUnchanged of [false, true]) {
+      await runAgentTurn(CONFIG, { userMessage: "继续", digest: coreDigest, messages: [], digestUnchanged });
+      const note = sent.find((message) => message.content?.includes("layer=core"));
+      expect(note?.content).toContain("layout.cardBlockCount");
+      expect(note?.content).toContain("inspect_project");
+    }
+  });
+
+  it("keeps the core-layer notice out of full-layer turns", async () => {
+    let sent: Array<{ role: string; content?: string | null }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      sent = (JSON.parse(String(init.body)) as { messages: Array<{ role: string; content?: string | null }> }).messages;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ choices: [{ message: { role: "assistant", content: "完成" } }] }) };
+    }));
+    await runAgentTurn(CONFIG, { userMessage: "继续", digest: { layer: "full", map: { scale: 1 } }, messages: [] });
+
+    expect(sent.some((message) => message.content?.includes("layer=core"))).toBe(false);
+  });
+
   it("injects the exact user message when the client sends an empty history", async () => {
     let sent: Array<{ role: string; content?: string | null }> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {

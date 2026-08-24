@@ -16,6 +16,8 @@ export const DIGEST_ELEMENT_LIMIT = 30;
  *   layout.mapContentBounds、guests 计数、text/asset 的 *Count），明细整段截断，
  *   续聊时工程未变可用它替代整包投影。
  *
+ * 两层都会写出 `layer` 与全部 `*Count`，模型据此区分「本来就没有」与「被裁掉了」。
+ *
  * 回滚：删掉 `BuildProjectDigestOptions`、`toCoreLayer` 与 `buildProjectDigest` 的第二个参数，
  * 只保留 full 分支即可；调用方不传参时行为与分层前完全一致，无需同步改动。
  */
@@ -27,6 +29,11 @@ export interface BuildProjectDigestOptions {
 }
 
 export interface ProjectDigest {
+  /**
+   * 本次投影所属分层，两层都写出。模型看到 `"core"` 就知道明细数组是被整段裁掉的，
+   * 空数组只代表「本层没投影」，要读明细必须调 inspect_project。
+   */
+  layer: ProjectDigestLayer;
   canvas: {
     width: number;
     height: number;
@@ -60,6 +67,12 @@ export interface ProjectDigest {
   layout: {
     mapContentBounds: DigestRect;
     cardBlocks: DigestCardBlock[];
+    /**
+     * 画布上求解出的卡片块总数，不受任何裁剪影响（topProvinces 前 10 之外的、
+     * 国际组、core 层清空、预算截断都仍计入）。`cardBlocks.length < cardBlockCount`
+     * 即「有卡但明细没投影」，`cardBlockCount === 0` 才是真的一张卡都没有。
+     */
+    cardBlockCount: number;
   };
   guests: {
     title: string;
@@ -150,6 +163,8 @@ function buildLayoutSection(
   const placements = new Map(facts.placements.map((placement) => [placement.id, effectiveCardPlacement(project, placement)]));
   const layout: ProjectDigest["layout"] = {
     mapContentBounds: roundRect(facts.geometry.mapContentBounds),
+    // 总数取求解出的全部方位块，与下面按 topProvinces 对齐的样本无关，裁剪也不会改它。
+    cardBlockCount: placements.size,
     cardBlocks: topProvinces.flatMap(({ province }): DigestCardBlock[] => {
       const fact = facts.cards.find((card) => !card.isInternational && (card.province || "未知") === province);
       const placement = fact ? placements.get(fact.group.key) : undefined;
@@ -172,12 +187,14 @@ function buildLayoutSection(
 /**
  * core 层裁剪：字段形状与 full 完全一致，只把明细清空，
  * 消费者仍可按 `textElements.length` / `layout.cardBlocks` 读取而不必判空。
- * 计数字段（textElementCount / assetElementCount / students.total）不受影响。
+ * 计数字段（layer / cardBlockCount / textElementCount / assetElementCount / students.total）
+ * 全部保留——它们正是模型区分「本来就没有」与「明细被裁」的唯一依据。
  */
 function toCoreLayer(digest: ProjectDigest): ProjectDigest {
   return {
     ...digest,
-    layout: { mapContentBounds: digest.layout.mapContentBounds, cardBlocks: [] },
+    layer: "core",
+    layout: { ...digest.layout, cardBlocks: [] },
     textElements: [],
     assetElements: [],
   };
@@ -197,6 +214,7 @@ export function buildProjectDigest(project: ProjectDocument, options: BuildProje
   const duplicateGroups = findDuplicateStudentGroups(project.students);
   const duplicateStudentCount = duplicateStudentIds(project.students).size;
   const full: ProjectDigest = {
+    layer: "full",
     canvas: {
       width: project.canvas.width,
       height: project.canvas.height,
@@ -269,6 +287,9 @@ export function buildProjectDigest(project: ProjectDocument, options: BuildProje
  * samples go first, then card blocks, then the province tail. Card blocks are
  * dropped before the provinces they align with, and every total plus the map
  * content box survives.
+ *
+ * `layer` 与各 `*Count`（含 layout.cardBlockCount）永远不参与裁剪，
+ * 否则模型无法把「预算裁掉的明细」与「本来就是空的」区分开。
  */
 function shrinkToBudget(digest: ProjectDigest): ProjectDigest {
   const current = {

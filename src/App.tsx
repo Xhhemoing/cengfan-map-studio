@@ -187,7 +187,12 @@ import {
   CollaborationClientError,
   submitRoomOperations,
 } from "./lib/collaboration-client";
-import { applyCollaborationOperations, diffCollaborationDocument } from "./lib/collaboration-operations";
+import {
+  applyCollaborationOperations,
+  collaborationOperationsOverlap,
+  diffCollaborationDocument,
+  type CollaborationOperation,
+} from "./lib/collaboration-operations";
 import { useCollaborationRoom } from "./lib/useCollaborationRoom";
 
 function StudioApp({ projectId }: { projectId?: string }) {
@@ -557,22 +562,13 @@ function StudioApp({ projectId }: { projectId?: string }) {
       return;
     }
     const timer = window.setTimeout(async () => {
-      const baseline = collaborationBaselineRef.current;
-      if (!baseline || collaborationRoomRef.current !== roomId) return;
-      const currentEnvelope = createProjectPackageEnvelope(latestWorkspaceRef.current);
-      const current: ProjectPackage = {
-        ...currentEnvelope,
-        exportedAt: baseline.exportedAt,
-        project: { ...currentEnvelope.project, history: { past: [], future: [] } },
+      const workspacePackage = (exportedAt: string): ProjectPackage => {
+        const envelope = createProjectPackageEnvelope(latestWorkspaceRef.current);
+        return { ...envelope, exportedAt, project: { ...envelope.project, history: { past: [], future: [] } } };
       };
-      const operations = diffCollaborationDocument(baseline, current);
-      if (operations.length === 0) return;
-      const txId = createId("collab-op");
-      collaboration.setCollaborationStatus("syncing");
-      collaboration.setCollaborationMessage(`正在同步 ${operations.length} 项增量修改`);
-      try {
+      const pushOperations = async (baseline: ProjectPackage, operations: CollaborationOperation[]) => {
         const acknowledged = await submitRoomOperations<ProjectPackage>(roomId, roomAccessToken, {
-          txId,
+          txId: createId("collab-op"),
           clientId: collaborationClientId,
           baseVersion: collaborationVersionRef.current,
           operations,
@@ -582,10 +578,57 @@ function StudioApp({ projectId }: { projectId?: string }) {
         collaboration.setRoomVersion(acknowledged.version);
         collaboration.setCollaborationStatus("connected");
         collaboration.setCollaborationMessage(acknowledged.rebasedFromVersion === undefined ? "增量同步已完成" : "已自动合并互不冲突的并发修改");
+      };
+      const markConflict = () => {
+        collaboration.setCollaborationStatus("conflict");
+        collaboration.setCollaborationMessage("同一内容被其他成员修改；已暂停上传，请重新加入房间确认最新版本");
+      };
+      // 冲突后先补齐远端增量,再基于新基线重试一次提交(只重试一次,不做无限重试)。
+      // 远端优先:与刚补齐的远端操作重叠的本地改动不自动重推,直接转人工确认。
+      // 回滚方式:删掉本函数,冲突分支改回直接 markConflict()。
+      const backfillThenRetryOnce = async () => {
+        const outcome = await collaboration.backfillGap("conflict");
+        const rebasedBaseline = outcome.baseline;
+        if (!outcome.ok || !rebasedBaseline || collaborationRoomRef.current !== roomId) {
+          markConflict();
+          return;
+        }
+        const rebasedCurrent = outcome.current ?? workspacePackage(rebasedBaseline.exportedAt);
+        const retryOperations = diffCollaborationDocument(rebasedBaseline, rebasedCurrent);
+        if (retryOperations.length === 0) {
+          collaboration.setCollaborationStatus("connected");
+          collaboration.setCollaborationMessage("已补齐远端修改，本地无待上传改动");
+          return;
+        }
+        const overlapsRemote = retryOperations.some((operation) => outcome.remoteOperations
+          .some((remote) => collaborationOperationsOverlap(operation, remote)));
+        if (overlapsRemote) {
+          markConflict();
+          return;
+        }
+        try {
+          await pushOperations(rebasedBaseline, retryOperations);
+        } catch (retryError) {
+          if (retryError instanceof CollaborationClientError && retryError.code === "VERSION_CONFLICT") {
+            markConflict();
+          } else {
+            collaboration.setCollaborationStatus("error");
+            collaboration.setCollaborationMessage(retryError instanceof Error ? retryError.message : "增量同步失败");
+          }
+        }
+      };
+
+      const baseline = collaborationBaselineRef.current;
+      if (!baseline || collaborationRoomRef.current !== roomId) return;
+      const operations = diffCollaborationDocument(baseline, workspacePackage(baseline.exportedAt));
+      if (operations.length === 0) return;
+      collaboration.setCollaborationStatus("syncing");
+      collaboration.setCollaborationMessage(`正在同步 ${operations.length} 项增量修改`);
+      try {
+        await pushOperations(baseline, operations);
       } catch (error) {
         if (error instanceof CollaborationClientError && error.code === "VERSION_CONFLICT") {
-          collaboration.setCollaborationStatus("conflict");
-          collaboration.setCollaborationMessage("同一内容被其他成员修改；已暂停上传，请重新加入房间确认最新版本");
+          await backfillThenRetryOnce();
         } else {
           collaboration.setCollaborationStatus("error");
           collaboration.setCollaborationMessage(error instanceof Error ? error.message : "增量同步失败");

@@ -828,6 +828,129 @@ describe("PosterCanvas", () => {
     container.remove();
   });
 
+  it("treats a zero-distance card click as selection only, without recording a manual position", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const onMoveCard = vi.fn();
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} onSelect={onSelect} />));
+
+    const card = container.querySelector<SVGGElement>("[data-destination-card]")!;
+    const before = card.getAttribute("transform");
+    Object.assign(card, { setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() });
+
+    flushSync(() => card.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 120, clientY: 120, pointerId: 1 })));
+    flushSync(() => card.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 120, clientY: 120, pointerId: 1 })));
+    flushSync(() => card.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(onMoveCard).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledWith({ type: "cards" });
+    expect(card.getAttribute("transform")).toBe(before);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("restores the card preview when a drag returns to its starting position", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const onMoveCard = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} />));
+
+    const card = container.querySelector<SVGGElement>("[data-destination-card]")!;
+    const before = card.getAttribute("transform");
+    Object.assign(card, { setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() });
+
+    flushSync(() => card.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 120, clientY: 120, pointerId: 1 })));
+    flushSync(() => card.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 190, clientY: 170, pointerId: 1 })));
+    flushSync(() => card.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 120, clientY: 120, pointerId: 1 })));
+    flushSync(() => card.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 120, clientY: 120, pointerId: 1 })));
+
+    expect(onMoveCard).not.toHaveBeenCalled();
+    expect(card.getAttribute("transform")).toBe(before);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("exposes every destination card to the keyboard with a Chinese label, Enter selection, and arrow-key stepping", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.cards = { ...project.cards, allowMapOverlap: true, positions: { 北京市: { x: 600, y: 400 } } };
+    project.textElements = [];
+    project.guests = { ...project.guests, visibility: false };
+    const onMoveCard = vi.fn();
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} onSelect={onSelect} />));
+
+    const card = container.querySelector<SVGGElement>('[data-destination-card="北京市"]')!;
+    expect(card.getAttribute("tabindex")).toBe("0");
+    expect(card.getAttribute("role")).toBe("button");
+    expect(card.getAttribute("aria-label")).toContain("北京市");
+    expect(card.getAttribute("aria-label")).toContain("1 人");
+
+    flushSync(() => card.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })));
+    expect(onSelect).toHaveBeenCalledWith({ type: "cards" });
+
+    flushSync(() => card.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: " " })));
+    expect(onSelect).toHaveBeenCalledTimes(2);
+
+    flushSync(() => card.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" })));
+    expect(onMoveCard).toHaveBeenLastCalledWith("北京市", 601, 400);
+
+    flushSync(() => card.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" })));
+    expect(onMoveCard).toHaveBeenLastCalledWith("北京市", 600, 399);
+
+    // Shift 放大步长,坐标仍走与拖拽同一套 clamp。
+    flushSync(() => card.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft", shiftKey: true })));
+    expect(onMoveCard).toHaveBeenLastCalledWith("北京市", 590, 400);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("steps a card by one grid cell when the editor grid is on", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.cards = { ...project.cards, allowMapOverlap: true, positions: { 北京市: { x: 600, y: 400 } } };
+    project.textElements = [];
+    project.guests = { ...project.guests, visibility: false };
+    const onMoveCard = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} showGrid gridSize={20} />));
+
+    const card = container.querySelector<SVGGElement>('[data-destination-card="北京市"]')!;
+    flushSync(() => card.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" })));
+    expect(onMoveCard).toHaveBeenLastCalledWith("北京市", 600, 420);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("omits card interaction attributes in export mode", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const onMoveCard = vi.fn();
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} exportMode onMoveCard={onMoveCard} onSelect={onSelect} />));
+
+    const card = container.querySelector<SVGGElement>("[data-destination-card]")!;
+    expect(card.getAttribute("tabindex")).toBeNull();
+    expect(card.getAttribute("role")).toBeNull();
+    expect(card.getAttribute("aria-label")).toBeNull();
+    expect(container.querySelector("[data-cards-layer]")?.getAttribute("role")).toBeNull();
+
+    flushSync(() => card.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" })));
+    expect(onMoveCard).not.toHaveBeenCalled();
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("keeps an allowed manual card position inside the map", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     project.cards = {

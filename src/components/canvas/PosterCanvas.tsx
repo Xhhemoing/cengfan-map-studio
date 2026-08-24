@@ -557,6 +557,22 @@ export function PosterCanvas({
     return point.matrixTransform(svg.getScreenCTM()?.inverse());
   };
 
+  // 数据框位置的唯一约束口径：指针拖拽与键盘步进共用，避免两条路径的边界规则漂移。
+  const clampCardPosition = (position: { x: number; y: number; width: number; height: number }) =>
+    clampDestinationCardPosition(position, {
+      width: project.canvas.width,
+      height: project.canvas.height,
+      map: mapContentBounds,
+      occupiedAreas: layoutOccupiedAreas,
+      occupiedPolygons: layoutOccupiedPolygons,
+      allowMapOverlap: project.cards.allowMapOverlap === true,
+      margin: project.canvas.safeMargin,
+      gap: Math.max(10, project.cards.gap),
+    });
+
+  // 键盘步进距离:开启网格时按一格走,否则 1px;按住 Shift 放大 10 倍。
+  const cardKeyboardStep = (fast: boolean) => (showGrid ? resolvedGridSize : 1) * (fast ? 10 : 1);
+
   const mapLayerZ = project.map.zIndex ?? CANVAS_LAYER_Z.map;
   const cardsLayerZ = project.cards.zIndex ?? CANVAS_LAYER_Z.cards;
 
@@ -619,6 +635,7 @@ export function PosterCanvas({
               data-cards-layer
               onClick={!exportMode ? () => onSelect?.({ type: "cards" }) : undefined}
               role={!exportMode && onSelect ? "button" : undefined}
+              aria-label={!exportMode && onSelect ? "数据框图层" : undefined}
             >
               {connectorEdge.filters.length > 0 && (
                 <defs data-connector-edge-filters>
@@ -665,6 +682,10 @@ export function PosterCanvas({
                     ? { ...connector, pathData: connectorPathToCenter(connector.pathData, connector.port, displayPlacement) }
                     : connector
                   : null;
+                // 编辑态下每张卡片都是可聚焦控件:Tab 可达、Enter/Space 选中、方向键步进移动。
+                // 导出态(exportMode)不输出任何交互属性,保证 SVG 纯净。
+                const cardInteractive = !exportMode && Boolean(onSelect || onMoveCard);
+                const cardLabel = `数据框 ${province || group.title}，${group.count} 人`;
                 const strokeNodes = [
                   ...(displayConnector ? connectorEdge.underlays.map((spec, index) => (
                     <path
@@ -710,6 +731,35 @@ export function PosterCanvas({
                       data-card-preset={project.cards.preset}
                       data-card-presentation={project.cards.presentation ?? "standard"}
                       className="destination-card"
+                      role={cardInteractive ? "button" : undefined}
+                      tabIndex={cardInteractive ? 0 : undefined}
+                      aria-label={cardInteractive ? cardLabel : undefined}
+                      onKeyDown={cardInteractive ? (event) => {
+                        if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onSelect?.({ type: "cards" });
+                          return;
+                        }
+                        const deltaX = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+                        const deltaY = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
+                        if ((deltaX === 0 && deltaY === 0) || !onMoveCard) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const step = cardKeyboardStep(event.shiftKey);
+                        // 与拖拽同一套 clamp:键盘移动也不会越过安全边距、文本与地图占位。
+                        const next = clampCardPosition({
+                          x: displayPlacement.x + deltaX * step,
+                          y: displayPlacement.y + deltaY * step,
+                          width: displayPlacement.width,
+                          height: displayPlacement.height,
+                        });
+                        const nextX = Math.round(next.x);
+                        const nextY = Math.round(next.y);
+                        // 被 clamp 顶回原位时不提交,避免键盘按键也产生空事务。
+                        if (nextX === Math.round(displayPlacement.x) && nextY === Math.round(displayPlacement.y)) return;
+                        onMoveCard(group.key, nextX, nextY);
+                      } : undefined}
                       onPointerDown={!exportMode && onMoveCard ? (event) => {
                         const point = canvasPoint(event);
                         if (!point) return;
@@ -742,20 +792,11 @@ export function PosterCanvas({
                         const point = canvasPoint(event);
                         if (!point) return;
                         const drag = cardDrag.current;
-                        const position = clampDestinationCardPosition({
+                        const position = clampCardPosition({
                           x: point.x - drag.offsetX,
                           y: point.y - drag.offsetY,
                           width: drag.width,
                           height: drag.height,
-                        }, {
-                          width: project.canvas.width,
-                          height: project.canvas.height,
-                          map: mapContentBounds,
-                          occupiedAreas: layoutOccupiedAreas,
-                          occupiedPolygons: layoutOccupiedPolygons,
-                          allowMapOverlap: project.cards.allowMapOverlap === true,
-                          margin: project.canvas.safeMargin,
-                          gap: Math.max(10, project.cards.gap),
                         });
                         drag.x = Math.round(position.x);
                         drag.y = Math.round(position.y);
@@ -764,7 +805,16 @@ export function PosterCanvas({
                       onPointerUp={!exportMode && onMoveCard ? (event) => {
                         if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
                         const drag = cardDrag.current;
-                        if (drag) onMoveCard(drag.id, drag.x, drag.y);
+                        // 零位移单击只做选中:不写 cards.positions,避免把自动布局的卡片钉成手动定位
+                        // (虚增 manualPositionCount、污染撤销栈,网格吸附时还会把卡片吸走)。
+                        // 自动布局坐标是小数,提交值取整,因此位移判定也按取整后的像素比较。
+                        const moved = drag !== null
+                          && (Math.round(drag.x) !== Math.round(drag.originalX) || Math.round(drag.y) !== Math.round(drag.originalY));
+                        if (drag && moved) {
+                          onMoveCard(drag.id, drag.x, drag.y);
+                        } else if (drag) {
+                          updateCardPreview({ id: drag.id, x: drag.originalX, y: drag.originalY });
+                        }
                         clearCardPreview();
                         cardDrag.current = null;
                       } : undefined}

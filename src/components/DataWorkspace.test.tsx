@@ -587,6 +587,35 @@ describe("DataWorkspace", () => {
     expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "苏禾", city: "杭州市" })]);
   });
 
+  it("shows the parsed province and destination scope on candidate rows without inventing missing ones", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(
+      container.querySelector("textarea")!,
+      "姓名,院校,城市,去向类型,省份\n苏禾,浙江大学,杭州,,江苏省\n周晴,哈佛大学,美国·波士顿,海外去向,\n林舟,北京大学,北京,,",
+    );
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("识别文本"))!);
+
+    const rows = container.querySelectorAll<HTMLElement>(".review-row");
+    expect(rows).toHaveLength(3);
+    // 省份错列(杭州被标成江苏省)要在导入前就看得见。
+    expect(rows[0]!.textContent).toContain("浙江大学 · 杭州");
+    expect(rows[0]!.querySelector(".review-row__scope")?.textContent).toBe("省份 江苏省");
+    expect(rows[1]!.querySelector(".review-row__scope")?.textContent).toBe("海外去向");
+    // 两列都没填的候选不补默认词,整行说明不渲染。
+    expect(rows[2]!.querySelector(".review-row__scope")).toBeNull();
+  });
+
   it("uses AI parsing for one-click import of text the local rules cannot read", async () => {
     const onAppendStudents = vi.fn();
     const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({

@@ -31,11 +31,35 @@ import {
   type RoomMember,
   type RoomParticipant,
 } from "./collaboration-client";
-import { rebaseRemoteCollaborationOperations } from "./collaboration-operations";
+import { rebaseRemoteCollaborationOperations, type CollaborationOperation } from "./collaboration-operations";
 import { createId } from "./ids";
 import type { ProjectPackage } from "./project-package";
 
 export type RoomCollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error" | "closed";
+
+/**
+ * 补齐动作的触发场景:
+ * - `disconnect`:SSE 断线后自动补齐,过程中先进入 `error` 等待浏览器重连;
+ * - `conflict`:上传遇到 `VERSION_CONFLICT` 时由调用方主动补齐,属于上传流程的一部分,
+ *   全程保持 `syncing`,最终状态由调用方决定。
+ */
+export type CollaborationBackfillReason = "disconnect" | "conflict";
+
+export interface CollaborationBackfillOutcome {
+  /** 本地版本是否已推进到远端最新版本。 */
+  ok: boolean;
+  version: number;
+  /** 本次补齐拉取到的远端增量;整包重载或无增量时为空数组。 */
+  remoteOperations: CollaborationOperation[];
+  /** 补齐后的远端基线;补齐失败时为 null。 */
+  baseline: ProjectPackage | null;
+  /**
+   * 补齐后本地工作区应处于的状态(远端基线 + 已 rebase 的本地改动)。
+   * React 状态要下一次渲染才写回 latestWorkspaceRef,调用方需要用它来立刻重算增量;
+   * 未改写工作区时为 null,表示调用方可直接使用自己的工作区快照。
+   */
+  current: ProjectPackage | null;
+}
 
 export interface UseCollaborationRoomRefs {
   baselineRef: MutableRefObject<ProjectPackage | null>;
@@ -82,6 +106,8 @@ export interface UseCollaborationRoomResult {
   createInvitation: (role: Exclude<CollaborationRole, "owner">) => void;
   leaveRoom: () => void;
   setAccess: (action: RoomAccessAction) => void;
+  /** 拉取并应用远端增量,把本地版本补齐到房间最新版本。 */
+  backfillGap: (reason?: CollaborationBackfillReason) => Promise<CollaborationBackfillOutcome>;
 }
 
 function loadBrowserValue<T>(load: () => T, fallback: T): T {
@@ -153,56 +179,84 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     receiveRoomUpdateRef.current = receiveRoomUpdate;
   });
 
+  const failedBackfill = (): CollaborationBackfillOutcome => ({
+    ok: false,
+    version: versionRef.current,
+    remoteOperations: [],
+    baseline: null,
+    current: null,
+  });
+
+  // 只依赖 ref 与稳定的 setState,因此订阅 effect 捕获旧闭包也不会读到过期状态。
+  const backfillCollaborationGap = async (
+    reason: CollaborationBackfillReason = "disconnect",
+  ): Promise<CollaborationBackfillOutcome> => {
+    const activeRoomId = roomRef.current;
+    const activeToken = accessTokenRef.current;
+    if (!activeRoomId || !activeToken || backfillInFlightRef.current) return failedBackfill();
+    backfillInFlightRef.current = true;
+    // 断线补齐先落到 error(提示浏览器重连);冲突补齐由上传流程发起,保持 syncing 不闪状态。
+    if (reason === "disconnect") setCollaborationStatus("error");
+    try {
+      const interval = await fetchRoomOperations(activeRoomId, activeToken, versionRef.current);
+      let baseline = baselineRef.current;
+      let rebasedCurrent: ProjectPackage | null = null;
+      if (interval.operations.length > 0 && baselineRef.current) {
+        const { currentPackage, applyPackage } = optionsRef.current;
+        const current = currentPackage(baselineRef.current.exportedAt);
+        const rebased = rebaseRemoteCollaborationOperations(baselineRef.current, current, interval.operations);
+        baselineRef.current = rebased.baseline;
+        suppressSendRef.current = true;
+        applyPackage(rebased.current, interval.version);
+        versionRef.current = interval.version;
+        baselineRef.current = rebased.baseline;
+        baseline = rebased.baseline;
+        rebasedCurrent = rebased.current;
+      } else {
+        versionRef.current = interval.version;
+        setRoomVersion(interval.version);
+      }
+      setCollaborationStatus(reason === "conflict" ? "syncing" : "connected");
+      setCollaborationMessage(reason === "conflict" ? "已补齐远端修改，正在重试上传" : "已补齐断线期间的修改");
+      return {
+        ok: true,
+        version: interval.version,
+        remoteOperations: interval.operations,
+        baseline,
+        current: rebasedCurrent,
+      };
+    } catch (error) {
+      if (error instanceof CollaborationClientError && error.code === "VERSION_CONFLICT") {
+        try {
+          const room = await fetchRoom<ProjectPackage>(activeRoomId, activeToken);
+          if (room.snapshot) {
+            suppressSendRef.current = true;
+            const applied = optionsRef.current.applyPackage(room.snapshot, room.version);
+            baselineRef.current = applied;
+            versionRef.current = room.version;
+            setCollaborationStatus("connected");
+            setCollaborationMessage("已重新加载完整快照");
+            // 整包重载后本地状态即远端状态,不再有可重试的增量。
+            return { ok: true, version: room.version, remoteOperations: [], baseline: applied, current: applied };
+          }
+        } catch {
+          setCollaborationStatus("error");
+          setCollaborationMessage("连接中断，浏览器会自动尝试重连");
+        }
+      } else {
+        setCollaborationStatus("error");
+        setCollaborationMessage("连接中断，浏览器会自动尝试重连");
+      }
+      return failedBackfill();
+    } finally {
+      backfillInFlightRef.current = false;
+    }
+  };
+
   useEffect(() => {
     if (!roomId || !roomAccessToken) return;
     roomRef.current = roomId;
     accessTokenRef.current = roomAccessToken;
-    const backfillCollaborationGap = async () => {
-      const activeRoomId = roomRef.current;
-      const activeToken = accessTokenRef.current;
-      if (!activeRoomId || !activeToken || backfillInFlightRef.current) return;
-      backfillInFlightRef.current = true;
-      setCollaborationStatus("error");
-      try {
-        const interval = await fetchRoomOperations(activeRoomId, activeToken, versionRef.current);
-        if (interval.operations.length > 0 && baselineRef.current) {
-          const { currentPackage, applyPackage } = optionsRef.current;
-          const current = currentPackage(baselineRef.current.exportedAt);
-          const rebased = rebaseRemoteCollaborationOperations(baselineRef.current, current, interval.operations);
-          baselineRef.current = rebased.baseline;
-          suppressSendRef.current = true;
-          applyPackage(rebased.current, interval.version);
-          versionRef.current = interval.version;
-          baselineRef.current = rebased.baseline;
-        } else {
-          versionRef.current = interval.version;
-          setRoomVersion(interval.version);
-        }
-        setCollaborationStatus("connected");
-        setCollaborationMessage("已补齐断线期间的修改");
-      } catch (error) {
-        if (error instanceof CollaborationClientError && error.code === "VERSION_CONFLICT") {
-          try {
-            const room = await fetchRoom<ProjectPackage>(activeRoomId, activeToken);
-            if (room.snapshot) {
-              suppressSendRef.current = true;
-              baselineRef.current = optionsRef.current.applyPackage(room.snapshot, room.version);
-              versionRef.current = room.version;
-              setCollaborationStatus("connected");
-              setCollaborationMessage("已重新加载完整快照");
-            }
-          } catch {
-            setCollaborationStatus("error");
-            setCollaborationMessage("连接中断，浏览器会自动尝试重连");
-          }
-        } else {
-          setCollaborationStatus("error");
-          setCollaborationMessage("连接中断，浏览器会自动尝试重连");
-        }
-      } finally {
-        backfillInFlightRef.current = false;
-      }
-    };
     return subscribeRoom<ProjectPackage>(roomId, roomAccessToken, (room) => receiveRoomUpdateRef.current(room), () => {
       void backfillCollaborationGap();
     }, {
@@ -432,5 +486,6 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     createInvitation,
     leaveRoom: leaveRoomAction,
     setAccess,
+    backfillGap: backfillCollaborationGap,
   };
 }

@@ -57,6 +57,24 @@ export function ExcelRecognitionPanel({ recognition }: { recognition: ExcelRecog
   );
 }
 
+/** 去向类型中文名:与导出模板的「中国去向 / 海外去向」一致,同一份数据不该两处叫法不同。 */
+const locationScopeLabels: Record<NonNullable<ImportReviewRow["locationScope"]>, string> = {
+  china: "中国去向",
+  international: "海外去向",
+};
+
+/**
+ * 候选行的省份与去向类型说明:只回显解析结果,没解析到就返回空串,不补默认词。
+ * 目的是让省份错列在导入前就看得见,而不是导入后才在名单里发现。
+ */
+function describeCandidateScope(row: ImportReviewRow): string {
+  const parts: string[] = [];
+  const province = row.province?.trim();
+  if (province) parts.push(`省份 ${province}`);
+  if (row.locationScope) parts.push(locationScopeLabels[row.locationScope]);
+  return parts.join(" · ");
+}
+
 export function ImportCandidateReview({
   rows,
   unparsedCount,
@@ -94,21 +112,26 @@ export function ImportCandidateReview({
     <div className="import-review">
       <PanelHeader title="确认候选" meta={`有效 ${summary.valid} · 未识别 ${unparsedCount} · 缺失字段 ${summary.missing} · 重复 ${summary.duplicate}`} />
       <div className="review-list">
-        {rows.map((row, index) => (
-          <label key={`${row.sourceLine}-${index}`} className="review-row">
-            <input
-              type="checkbox"
-              checked={row.accepted}
-              onChange={(event) => onToggleRow(index, event.target.checked)}
-            />
-            <span>
-              <strong>{row.name}</strong>
-              <small>
-                {row.university} · {row.city}
-              </small>
-            </span>
-          </label>
-        ))}
+        {rows.map((row, index) => {
+          const scope = describeCandidateScope(row);
+          return (
+            <label key={`${row.sourceLine}-${index}`} className="review-row">
+              <input
+                type="checkbox"
+                checked={row.accepted}
+                onChange={(event) => onToggleRow(index, event.target.checked)}
+              />
+              <span>
+                <strong>{row.name}</strong>
+                <small>
+                  {row.university} · {row.city}
+                </small>
+                {/* 省份/去向类型单独一行,缺省时整行不渲染,避免留下空占位。 */}
+                {scope && <small className="review-row__scope">{scope}</small>}
+              </span>
+            </label>
+          );
+        })}
       </div>
       <ActionGroup label="确认导入" className="review-actions">
         <ActionButton onClick={() => onApply("append")}>

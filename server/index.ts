@@ -852,8 +852,17 @@ export function createAiServer(options: AiServerOptions = {}) {
           ? { usedTokens: receipt.usedTokens, maxTokens: receipt.maxTokens, rounds: receipt.rounds, maxRounds: receipt.maxRounds, lastPromptTokens: receipt.lastPromptTokens }
           : { usedTokens: 0, maxTokens: agentRuntime.tokenBudget, rounds: 0, maxRounds: agentRuntime.maxRounds };
         // 回执里带上 digest 指纹：续聊时指纹一致说明工程没变，本轮不必再把整包投影塞进 prompt。
-        // 回滚：issue 时不写 historyHash 即可，旧回执没有该字段，指纹永远对不上，会退回每轮全量 digest。
-        const digestHash = digestFingerprint(parsed.value.digest);
+        // 但服务端只看得到「本轮实际发来的那一层」：首轮 full、续聊 core，直接对 digest 取指纹会
+        // 因为分层不同而永远对不上，续聊第一轮的去重必然落空。因此优先采用客户端另传的
+        // digestFingerprint——它恒定基于 full 层，跨 full→core 仍能反映「工程有没有变」。
+        // 该字段只影响本会话自己的 prompt（伪造它只会让自己拿到过期投影），故只做长度与字符集校验。
+        // 回滚：把 digestHash 改回只取 digestFingerprint(parsed.value.digest) 即可；
+        // 旧回执里的指纹自然对不上，行为退回「每轮全量 digest」，不会报错。
+        const clientDigestFingerprint = isRecord(body) && typeof body.digestFingerprint === "string"
+          && /^[A-Za-z0-9:._-]{1,128}$/.test(body.digestFingerprint)
+          ? body.digestFingerprint
+          : undefined;
+        const digestHash = clientDigestFingerprint ?? digestFingerprint(parsed.value.digest);
         const digestUnchanged = Boolean(receipt && receipt.historyHash === digestHash);
         aiLogger.log("ai.request.started", { requestId, taskId, roundIndex: parsed.value.budget.rounds, route: "primary", messageCount: parsed.value.messages.length, promptBytes: Buffer.byteLength(parsed.value.userMessage, "utf8") });
         const requestController = new AbortController();
