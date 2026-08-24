@@ -119,6 +119,15 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
     }
   };
 
+  const loadSampleProject = async () => {
+    try {
+      await store.put(createSampleProject());
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? `载入示例项目失败：${reason.message}` : "载入示例项目失败");
+    }
+  };
+
   const renameProject = async (project: StoredProject) => {
     const name = window.prompt("请输入新项目名称", project.name);
     if (name === null || !name.trim()) return;
@@ -192,7 +201,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
 
       {localEntry && <ContinueEditingCard entry={localEntry} onResume={() => void continueEditing()} />}
 
-      <ProjectGrid projects={sorted} loading={loading} hasError={Boolean(error)} openMenuId={openMenuId} formatUpdatedAt={formatUpdatedAt} onOpen={openProject} onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)} onRename={(project) => void renameProject(project)} onDuplicate={(project) => void duplicateProject(project)} onExport={exportProject} onDelete={(project) => void deleteProject(project)} />
+      <ProjectGrid projects={sorted} loading={loading} hasError={Boolean(error)} openMenuId={openMenuId} formatUpdatedAt={formatUpdatedAt} onOpen={openProject} onToggleMenu={(id) => setOpenMenuId((current) => current === id ? null : id)} onRename={(project) => void renameProject(project)} onDuplicate={(project) => void duplicateProject(project)} onExport={exportProject} onDelete={(project) => void deleteProject(project)} onLoadSample={() => void loadSampleProject()} />
     </main>
   );
 }

@@ -2,7 +2,7 @@ import { MapPinned } from "lucide-react";
 import type { StoredProject } from "../../lib/project-store";
 import { ProjectCard } from "./ProjectCard";
 
-export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete }: {
+export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete, onLoadSample }: {
   projects: StoredProject[];
   loading: boolean;
   hasError: boolean;
@@ -14,6 +14,7 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
   onDuplicate: (project: StoredProject) => void;
   onExport: (project: StoredProject) => void;
   onDelete: (project: StoredProject) => void;
+  onLoadSample: () => void;
 }) {
   return <section className="workbench-grid" aria-label="项目列表">
     {loading && projects.length === 0 ? (
@@ -27,6 +28,7 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
         <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} /></span>
         <strong>还没有项目</strong>
         <p>点击「新建项目」或「导入」开始制作毕业去向图。</p>
+        <button type="button" className="secondary-button" aria-label="载入示例项目" onClick={onLoadSample}>载入示例项目</button>
       </div>
     ) : projects.map((project) => (
       <ProjectCard

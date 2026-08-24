@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { MapTemplateId } from "../lib/project-data";
 
 export interface TemplateOption {
@@ -18,6 +19,7 @@ export function TemplatePicker({
   onApplyTemplate,
   onApplyCustomTemplate,
   onSaveTemplate,
+  exchange,
 }: {
   templates: TemplateOption[];
   currentTemplateId: string;
@@ -25,6 +27,8 @@ export function TemplatePicker({
   onApplyTemplate: (id: MapTemplateId) => void;
   onApplyCustomTemplate: (record: CustomTemplateOption) => void;
   onSaveTemplate: () => void;
+  /** Optional template file exchange area. Omitted by default, so existing mount points are unchanged. */
+  exchange?: ReactNode;
 }) {
   return (
     <div className="template-picker">
@@ -54,6 +58,7 @@ export function TemplatePicker({
       <button type="button" className="workflow-save-template" onClick={onSaveTemplate}>
         保存当前整体模板
       </button>
+      {exchange}
     </div>
   );
 }

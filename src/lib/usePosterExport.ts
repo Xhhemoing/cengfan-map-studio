@@ -5,6 +5,7 @@
  * `applyImportedPackage` and `reportStatus` callbacks.
  */
 import { useRef, useState, type RefObject } from "react";
+import { buildExportFileName } from "./export-filename";
 import { downloadDataUrl, downloadText, serializePosterSvg, svgToPngDataUrl } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
 import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
@@ -25,6 +26,8 @@ export interface UsePosterExportOptions {
   applyImportedPackage: (pack: ProjectPackage) => void;
   /** Reports user-facing status messages. */
   reportStatus: (message: string) => void;
+  /** Reads the latest project name when an export starts. */
+  getProjectName?: () => string | null;
 }
 
 export interface UsePosterExportResult {
@@ -48,7 +51,17 @@ export interface UsePosterExportResult {
 }
 
 export function usePosterExport(options: UsePosterExportOptions): UsePosterExportResult {
-  const { posterRef, project, userAssets, userFonts, customTemplates, renderSettings, applyImportedPackage, reportStatus } = options;
+  const {
+    posterRef,
+    project,
+    userAssets,
+    userFonts,
+    customTemplates,
+    renderSettings,
+    applyImportedPackage,
+    reportStatus,
+    getProjectName,
+  } = options;
   const [exportingPng, setExportingPng] = useState(false);
   const [exportState, setExportState] = useState<DeliveryExportState>("idle");
   const [exportError, setExportError] = useState<string>();
@@ -66,7 +79,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
-      downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
+      const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "svg" });
+      downloadText(source, fileName, "image/svg+xml;charset=utf-8");
       setExportState("success");
       reportStatus("SVG 已导出");
     } catch (error) {
@@ -143,7 +157,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
         height: project.canvas.height * pngScale,
         transparentBackground: transparentExport,
       });
-      downloadDataUrl(dataUrl, "我的毕业去向图.png");
+      const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "png", scale: pngScale });
+      downloadDataUrl(dataUrl, fileName);
       setExportState("success");
       reportStatus("PNG 已导出");
     } catch (error) {

@@ -44,6 +44,9 @@ import { createId } from "./lib/ids";
 import { editorProjectStore } from "./lib/editor-project-store";
 
 import { AssistantConversationProvider } from "./components/AgentAssistant";
+import { HelpFeedbackMenu } from "./components/HelpFeedbackMenu";
+import { loadDisplayName } from "./lib/collaboration-identity";
+import { mergeImportedTemplate } from "./lib/template-exchange-actions";
 import { ProjectMenu } from "./components/ProjectMenu";
 import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayoutTemplate";
@@ -648,6 +651,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       setSelection({ type: "canvas" });
     },
     reportStatus: setStatusMessage,
+    getProjectName: () => projectNameRef.current,
   });
 
   const canUndo = project.history.past.length > 0;
@@ -1528,6 +1532,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
     <>
       {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
       {projectExportActions}
+      <ToolbarGroup label="帮助与反馈">
+        <HelpFeedbackMenu onCopyEnvironment={() => setStatusMessage("已复制环境信息")} />
+      </ToolbarGroup>
       <ToolbarGroup label="界面主题" className="topbar-action-group--theme">
         <SkinSelector skin={skin} onChange={setSkin} />
         <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
@@ -1636,6 +1643,15 @@ function StudioApp({ projectId }: { projectId?: string }) {
           if (full) applyCustomTemplateRecord(full);
         }}
           onSaveTemplate={saveCurrentTemplate}
+          customTemplateRecords={customTemplates}
+          templateAuthor={loadDisplayName()}
+          onImportTemplateRecord={(record) => {
+            const { next, dropped } = mergeImportedTemplate(customTemplates, record);
+            setCustomTemplates(next);
+            setStatusMessage(dropped > 0
+              ? `已导入模板：${record.name}（已达 20 个上限，替换了最旧的模板）`
+              : `已导入模板：${record.name}`);
+          }}
           onOpenGlobalData={openGlobalData}
           themeMode={themeMode}
           resolvedTheme={resolvedTheme}
@@ -1665,7 +1681,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               project={project}
               summary={dataHealth}
               issues={dataIssues}
-              dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
+              dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true }}
               assetPanelProps={mapStyleAssetPanelProps}
               onCreateDecoration={handleCreateDecoration}
               onSelectStudent={setSelectedStudentId}

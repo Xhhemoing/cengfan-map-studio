@@ -10,7 +10,7 @@
 |------|------|------|
 | Round 1 | 初始调研与基线探索 | completed |
 | Round 2 | 靶向深化与优先级收敛 | completed |
-| Round 3 | SOTA 打磨与可合入落地 | in_progress |
+| Round 3 | SOTA 打磨与可合入落地 | completed |
 
 ## Round 3 子代理
 
@@ -49,4 +49,4 @@
 
 - Round 1：见 `ROUND1-BRIEF.md`（文档层完整、产品层无钩子；Round 3 候选 A–H）
 - Round 2：见 `ROUND2-BRIEF.md`（keep A/B/E/G，slim D/F/H，drop C；#8/#11 为冲突约束）
-- Round 3：待汇总
+- Round 3：见 `ROUND3-BRIEF.md`（A/B/D/E/F/G/H 已落地；C 放弃；266 项目标测试通过）

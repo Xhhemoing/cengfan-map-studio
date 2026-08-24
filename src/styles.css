@@ -3730,3 +3730,66 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   overflow: auto;
   overscroll-behavior: contain;
 }
+
+/* 帮助与反馈菜单：复用项目菜单的折叠范式，只补链接列表与环境信息块的样式。 */
+.help-menu { position: relative; }
+.help-menu > summary { list-style: none; cursor: pointer; }
+.help-menu > summary::-webkit-details-marker { display: none; }
+.help-menu[open] > summary { border-color: var(--editor-accent, #245d57); }
+.help-menu__popover {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 10px);
+  right: 0;
+  display: grid;
+  width: 232px;
+  padding: 8px;
+  color: var(--editor-ink, #263b4e);
+  background: var(--editor-surface-raised, #fff);
+  border: 1px solid var(--editor-line, #bdcbd3);
+  border-radius: 6px;
+  box-shadow: 0 16px 38px rgb(12 31 56 / 24%);
+}
+.help-menu__popover section { display: grid; gap: 6px; padding: 8px; }
+.help-menu__popover section + section { border-top: 1px solid var(--editor-line, #e1e7ea); }
+.help-menu__popover strong { font-size: 11px; color: var(--editor-ink-muted, #617485); }
+.help-menu__popover a,
+.help-menu__popover button {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--editor-ink, #314d60);
+  background: var(--editor-surface-muted, #f5f8f9);
+  border: 1px solid var(--editor-line, #d5dee3);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: none;
+}
+.help-menu__popover a:hover,
+.help-menu__popover button:hover { border-color: var(--editor-accent, #245d57); }
+.help-menu__environment small { color: var(--editor-ink-muted, #687887); font-size: 11px; line-height: 1.5; }
+.help-menu__environment-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.help-menu__environment-line button { width: 30px; padding: 0; justify-content: center; }
+.help-menu--workbench .help-menu__popover { right: auto; left: 0; }
+.template-exchange { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--editor-line, #d5dee3); }
+.template-exchange__title { margin: 0; color: var(--editor-ink, #314d60); font-size: 12px; }
+.template-exchange__note, .template-exchange__hint { margin: 0; color: var(--editor-ink-muted, #687887); font-size: 11px; line-height: 1.5; }
+.template-exchange__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.template-exchange__select { min-width: 120px; max-width: 100%; flex: 1 1 120px; padding: 4px 6px; border: 1px solid var(--editor-line, #d5dee3); border-radius: 4px; font-size: 11px; }
+.template-exchange__export, .template-exchange__import { display: inline-flex; min-height: 28px; align-items: center; padding: 0 10px; color: var(--editor-ink, #314d60); background: var(--editor-surface-muted, #f5f8f9); border: 1px solid var(--editor-line, #d5dee3); border-radius: 4px; cursor: pointer; font-size: 11px; }
+.template-exchange__export:disabled { cursor: not-allowed; opacity: 0.6; }
+.template-exchange__import input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.template-exchange__import:focus-within { outline: 2px solid var(--editor-accent, #245d57); outline-offset: 1px; }
+.template-exchange__status:empty { display: none; }
+.template-exchange__status { margin: 0; color: var(--editor-ink, #314d60); font-size: 11px; line-height: 1.5; }
+
+/* Collaboration identity: local nickname input and role-text roster badges. */
+.collaboration-display-name { display: grid; gap: 4px; font-size: 11px; color: #315b67; }
+.collaboration-display-name input { min-width: 0; height: 30px; padding: 0 9px; border: 1px solid #cbd6dc; border-radius: 4px; }
+.collaboration-display-name input:disabled { color: #6a7c8b; background: #f2f6f7; }
+.collaboration-roster { display: grid; gap: 4px; }
+.collaboration-members__name { overflow: hidden; text-overflow: ellipsis; }
+.collaboration-members__role { margin-left: auto; flex-shrink: 0; padding: 1px 6px; color: #33625d; background: #e4efec; border: 1px solid #c4dbd5; border-radius: 999px; font-size: 10px; }
