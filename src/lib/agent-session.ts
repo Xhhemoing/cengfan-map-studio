@@ -686,9 +686,17 @@ export class AgentSession {
     // 已经被压缩折叠掉的那一轮本来就不在历史里，无需回滚。
     const turnMessage: Record<string, unknown> = { role: "user", content: message };
     this.conversation.push(turnMessage);
+    // 影子工程与步骤同样要回滚：本轮已经落地的写工具留在 _steps 里，重试同一句需求会把相对量改动
+    // （挪动 x、缩放字号）叠加第二遍，而这些没有对应回答的孤儿步骤还会被 exportSnapshot 写进快照。
+    // 写入都是不可变替换（this.shadow = { ...this.shadow, ... }），所以存一个引用就够回到失败前。
+    // metrics 不回滚：轮次与 token 已经在服务端计过费，抹掉会让预算显示比真实消耗少。
+    const shadowMark = this.shadow;
+    const stepsMark = this._steps.length;
     const rollbackTurn = () => {
       const index = this.conversation.indexOf(turnMessage);
       if (index >= 0) this.conversation.splice(index);
+      this.shadow = shadowMark;
+      this._steps.length = stepsMark;
     };
     const controller = new AbortController();
     this.activeController = controller;

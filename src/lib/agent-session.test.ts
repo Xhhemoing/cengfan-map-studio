@@ -414,6 +414,46 @@ describe("AgentSession", () => {
     ]);
   });
 
+  it("rolls the shadow project and steps back when a continuation fails after a write tool ran", async () => {
+    const project = digestLayerProject();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-rollback", budgetReceipt: "v1.receipt.first", budget: { rounds: 1, usedTokens: 40 }, summary: "第一轮完成" }))
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-rollback", budgetReceipt: "v1.receipt.second", budget: { rounds: 2, usedTokens: 120 }, calls: [
+        { id: "orphan-step", name: "update_map", arguments: { patch: { scale: 0.5 } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({ error: { code: "AI_UPSTREAM_UNAVAILABLE", message: "上游不可用" } }) })
+      .mockResolvedValueOnce(response({ kind: "tool-call", taskId: "task-rollback", budgetReceipt: "v1.receipt.third", calls: [
+        { id: "retry-step", name: "update_map", arguments: { patch: { scale: 0.5 } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", taskId: "task-rollback", budgetReceipt: "v1.receipt.fourth", summary: "重试完成" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("先看看现状");
+    const scaleBeforeFailure = session.shadowProject.map.scale;
+    const roundsBeforeFailure = session.metrics.rounds;
+
+    await expect(session.continue("地图再小一点")).resolves.toMatchObject({ kind: "failed", error: expect.stringContaining("AI 服务暂时不可用") });
+    // 本轮已经落地的写工具必须一起回滚：留着它，重试同一句需求会把相对量改动叠加第二遍。
+    expect(session.shadowProject.map.scale).toBe(scaleBeforeFailure);
+    expect(session.steps).toEqual([]);
+    // 孤儿步骤不能进快照，否则恢复出来的会话会重放一次没有对应回答的改动。
+    expect(session.exportSnapshot().steps).toEqual([]);
+    expect(session.exportSnapshot().conversation).toEqual([
+      { role: "user", content: "先看看现状" },
+      { role: "assistant", content: "第一轮完成" },
+    ]);
+    // 轮次与 token 已经在服务端计过费，metrics 不跟着回滚。
+    expect(roundsBeforeFailure).toBe(1);
+    expect(session.metrics.rounds).toBe(2);
+    expect(session.metrics.usedTokens).toBe(120);
+    expect(session.canContinue).toBe(true);
+
+    await expect(session.continue("地图再小一点")).resolves.toMatchObject({ kind: "finish", summary: "重试完成" });
+    // 重试只留下这一次的步骤，改动也只应用了一遍。
+    expect(session.steps.map((step) => step.id)).toEqual(["retry-step"]);
+    expect(session.shadowProject.map.scale).toBe(0.5);
+  });
+
   it("pops the pending question and stops continuation when the receipt expires", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     vi.stubGlobal("fetch", vi.fn()
