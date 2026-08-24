@@ -48,7 +48,8 @@
 | 25 | 已完成 | 混编 ×5 | 任务段 lastIndex、设置焦点、删不安全镜像工厂、空白选画布、复查 |
 | 26 | 已完成 | 混编 ×5 | 包下载延迟 revoke、删字体确认、资源包体积、429 Retry-After、复查 |
 | 27 | 已完成 | 混编 ×5 | 协作版本 UI、对话持久化裁剪、嘉宾头像失败反馈、分区复查 |
-| 28 | 进行中 | opus ×5 | 上游失败假 finish、未就绪房间拒增量、校徽内联导出、CSV GBK、嘉宾键盘 |
+| 28 | 已完成 | opus ×5 | 上游失败假 finish、未就绪房间拒增量、校徽内联导出、CSV GBK、嘉宾键盘 |
+| 29 | 进行中 | 混编 ×5 | 无效凭证不续命、资源包字体 remap、分区复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -86,6 +87,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 28 轮假 finish、未就绪拒增量、校徽内联、CSV GBK、嘉宾键盘已合入；启动第 29 轮。
 - 2026-08-24：第 27 轮 roomVersion、对话裁剪、嘉宾头像反馈已合入；启动第 28 轮。
 - 2026-08-24：第 26 轮包下载 revoke、删字体确认、资源包体积、429 Retry-After 已合入；启动第 27 轮。
 - 2026-08-24：启动第 26 轮：包下载 revoke、删字体确认、资源包体积、429 Retry-After。
@@ -417,6 +419,24 @@
 | 校徽内联导出 | 新建 `src/lib/svg-image-inline.ts`、`src/lib/usePosterExport.ts` 及测试。不改 PosterCanvas。 |
 | CSV GBK | 新建 `src/lib/csv-decode.ts`、`DataImportPanel.tsx` 及测试。xlsx 路径不变。 |
 | 嘉宾键盘 | `src/components/canvas/PosterCanvas.tsx` 及测试。Enter/Space 选中，方向键移动。 |
+
+## 第 28 轮已合入
+
+- 多步任务中途上游失败抛回 502，不再本地假 finish。
+- 未就绪房间拒绝 operations。
+- 导出前内联校徽路径。
+- CSV UTF-8 / GB18030 解码。
+- 嘉宾面板键盘选中与移动。
+
+## 第 29 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 无效凭证不续命 | `server/index.ts`（GET 房间与 SSE 探查改 peek）、`server/index.test.ts`。不要改 collaboration.ts。 |
+| 资源包字体 remap | `src/App.tsx`（仅 `importResourcePack`）、可新建 `src/lib/apply-font-remap.ts` 及测试。用 merge 返回的 fontIdRemap 回写当前工程。 |
+| 剩余复查 A | 只读。AI/协作。避开本轮落地文件。 |
+| 剩余复查 B | 只读。画布/导出。避开本轮落地文件。 |
+| 剩余复查 C | 只读。导入/工作台/存储。避开本轮落地文件。 |
 
 ## 第 2 轮已合入
 
