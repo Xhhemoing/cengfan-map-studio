@@ -43,7 +43,8 @@
 | 20 | 已完成 | 混编 ×5 | 工作区镜像 CAS、工程包资源预算、Combobox/滑条 a11y、复查 |
 | 21 | 已完成 | opus ×5 | 续聊瞬时失败、对话框焦点圈闭、Excel 多表、工作区 CAS 接线、删死封装 |
 | 22 | 已完成 | fable ×5 | 达标后继续：分区复查下一轮可落地缺口 |
-| 23 | 进行中 | opus ×5 | 续聊回滚影子、禁并发会话、被踢 UI、心跳不续命、嘉宾零位移 |
+| 23 | 已完成 | opus ×5 | 续聊回滚影子、禁并发会话、被踢 UI、心跳不续命、嘉宾零位移 |
+| 24 | 进行中 | opus ×5 | SVG 延迟 revoke、工作台包体积、导出对话框、字体去重映射、同 z 重叠 |
 
 ### 第 1 轮工作流（只读）
 
@@ -81,6 +82,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 23 轮续聊回滚、禁并发、被踢 UI、心跳 sweep、嘉宾零位移已合入；启动第 24 轮。
 - 2026-08-24：第 22 轮五区复查齐；启动第 23 轮落地。
 - 2026-08-24：第 21 轮续聊重试、对话框焦点、Excel 多表、工作区 CAS 接线已合入；启动第 22 轮复查。
 - 2026-08-24：第 20 轮工作区 CAS API、工程包资源预算、Combobox/滑条已合入；启动第 21 轮。
@@ -300,6 +302,23 @@
 | 嘉宾零位移 | `src/components/canvas/PosterCanvas.tsx` 及测试。镜像卡片 moved 守卫。不改 App.tsx。 |
 
 本轮不改 P2、不计费、不改导出格式、不把导出对话框（需动 App.tsx）并进本轮。
+
+## 第 23 轮已合入
+
+- 续聊失败回滚 shadow/_steps；禁止并发第二会话；续聊保留用户取消的勾选。
+- 被踢端接 `onKicked` 清房间状态。
+- SSE 心跳改 sweep，不再 touch；邀请每房上限 100。
+- 嘉宾面板零位移单击不提交移动。
+
+## 第 24 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| SVG 延迟 revoke | `src/lib/export-poster.ts` 及测试。`downloadText` 走 `downloadBlob`。 |
+| 工作台包体积 | `src/components/ProjectWorkbench.tsx` 及测试。导入前复用 24MB `checkImportFileSize`。 |
+| 导出工程对话框 | `src/App.tsx`（仅挂载导出对话框到公共路径）、可新增 `ExportProjectDialog.tsx`、`usePosterExport.ts` 若只需接线。复用 WorkbenchDialog。 |
+| 字体去重映射 | `src/lib/project-package.ts`、`src/lib/resource-pack.ts` 及测试。同字节去重保留 id 映射，repair 时 remap。 |
+| 同 z 重叠 | `src/lib/layout-health.ts` 及测试。同 z 同 kind 重叠报 occlusion。不改 render-health 除非必须。 |
 
 ## 第 2 轮已合入
 
