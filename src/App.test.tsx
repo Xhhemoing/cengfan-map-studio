@@ -449,6 +449,151 @@ describe("App student editing", () => {
     }
   });
 
+  it("surfaces an in-panel error when a viewer toggles student visibility (I-11-01)", async () => {
+    const container = renderApp();
+    const roomId = "VIEW11";
+    const originalEventSource = globalThis.EventSource;
+    class QuietEventSource {
+      addEventListener() {}
+      onerror = null;
+      close() {}
+      constructor(public readonly url: string) {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    const remoteProject = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+    const originalFetch = globalThis.fetch;
+    const request = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/api/rooms/${roomId}/join`)) {
+        return new Response(JSON.stringify({ room: { id: roomId }, access: { accessToken: "viewer-token", role: "viewer", participantId: "viewer", id: "viewer", displayName: "查看者" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/api/rooms/${roomId}`)) {
+        return new Response(JSON.stringify({ id: roomId, version: 0, ready: true, snapshot: createProjectPackage({ project: remoteProject, assets: [], fonts: [], customTemplates: [], renderSettings: { mode: "normal", fixedFps: 20 } }), role: "viewer", participants: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/events-ticket")) return new Response(JSON.stringify({ ticket: "ticket" }), { status: 201, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    globalThis.fetch = request as typeof fetch;
+    try {
+      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作邀请凭证"]')!, "viewer-invite");
+      click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
+      await vi.waitFor(() => expect(container.textContent).toContain("已加入房间"));
+
+      openPeopleData(container);
+      expect(container.textContent).toContain(`${sampleStudents.length} 显示 / ${sampleStudents.length} 条`);
+
+      // 单个眼睛被拒：面板就地报错，眼睛仍是「隐藏」，可见计数不变。
+      click(container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 林舟"]')!);
+      await vi.waitFor(() => expect(container.querySelector(".data-message")?.textContent).toContain("当前仅查看，无法修改此工程"));
+      expect(container.querySelector('button[aria-label="隐藏 林舟"]')).not.toBeNull();
+      expect(container.textContent).toContain(`${sampleStudents.length} 显示 / ${sampleStudents.length} 条`);
+
+      // 全部隐藏同样被拒：面板报错、计数不变。
+      click(container.querySelector<HTMLButtonElement>('button[aria-label="全部隐藏"]')!);
+      await vi.waitFor(() => expect(container.querySelector(".data-message")?.textContent).toContain("当前仅查看，无法修改此工程"));
+      expect(container.textContent).toContain(`${sampleStudents.length} 显示 / ${sampleStudents.length} 条`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    }
+  });
+
+  it("reports the room-readonly reason instead of viewer copy when a readonly room rejects writes (I-11-02)", async () => {
+    const container = renderApp();
+    const roomId = "RDON11";
+    const originalEventSource = globalThis.EventSource;
+    class QuietEventSource {
+      addEventListener() {}
+      onerror = null;
+      close() {}
+      constructor(public readonly url: string) {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    const remoteProject = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+    const originalFetch = globalThis.fetch;
+    const request = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/api/rooms/${roomId}/join`)) {
+        return new Response(JSON.stringify({ room: { id: roomId }, access: { accessToken: "editor-token", role: "editor", participantId: "editor", id: "editor", displayName: "编辑者" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/api/rooms/${roomId}`)) {
+        return new Response(JSON.stringify({ id: roomId, version: 0, ready: true, snapshot: createProjectPackage({ project: remoteProject, assets: [], fonts: [], customTemplates: [], renderSettings: { mode: "normal", fixedFps: 20 } }), role: "editor", readonly: true, closed: false, participants: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/events-ticket")) return new Response(JSON.stringify({ ticket: "ticket" }), { status: 201, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    globalThis.fetch = request as typeof fetch;
+    try {
+      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作邀请凭证"]')!, "editor-invite");
+      click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
+      await vi.waitFor(() => expect(container.textContent).toContain("已加入房间"));
+
+      openPeopleData(container);
+      click(container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 林舟"]')!);
+
+      // 只读房间的编辑成员被拒时，文案必须说「房间只读」而不是「仅查看」。
+      await vi.waitFor(() => expect(container.querySelector(".data-message")?.textContent).toContain("房间已设为只读，无法修改此工程"));
+      expect(container.querySelector(".data-message")?.textContent).not.toContain("当前仅查看");
+      expect(container.textContent).toContain(`${sampleStudents.length} 显示 / ${sampleStudents.length} 条`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    }
+  });
+
+  it("reports the room-closed reason when a closed room rejects writes (I-11-02)", async () => {
+    const container = renderApp();
+    const roomId = "CLSD11";
+    const originalEventSource = globalThis.EventSource;
+    class QuietEventSource {
+      addEventListener() {}
+      onerror = null;
+      close() {}
+      constructor(public readonly url: string) {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    const remoteProject = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+    const originalFetch = globalThis.fetch;
+    const request = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/api/rooms/${roomId}/join`)) {
+        return new Response(JSON.stringify({ room: { id: roomId }, access: { accessToken: "editor-token", role: "editor", participantId: "editor", id: "editor", displayName: "编辑者" } }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/api/rooms/${roomId}`)) {
+        return new Response(JSON.stringify({ id: roomId, version: 0, ready: true, snapshot: createProjectPackage({ project: remoteProject, assets: [], fonts: [], customTemplates: [], renderSettings: { mode: "normal", fixedFps: 20 } }), role: "editor", readonly: false, closed: true, participants: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/events-ticket")) return new Response(JSON.stringify({ ticket: "ticket" }), { status: 201, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    globalThis.fetch = request as typeof fetch;
+    try {
+      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
+      changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作邀请凭证"]')!, "editor-invite");
+      click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
+      // 加入已关闭房间时协作浮层直接给出关闭状态。
+      await vi.waitFor(() => expect(container.textContent).toContain("房间已关闭，无法继续同步或编辑"));
+
+      openPeopleData(container);
+      click(container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 林舟"]')!);
+
+      // 已关闭房间被拒时，文案必须说「房间已关闭」而不是「仅查看」。
+      await vi.waitFor(() => expect(container.querySelector(".data-message")?.textContent).toContain("房间已关闭，无法修改此工程"));
+      expect(container.querySelector(".data-message")?.textContent).not.toContain("当前仅查看");
+      expect(container.textContent).toContain(`${sampleStudents.length} 显示 / ${sampleStudents.length} 条`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    }
+  });
+
   it("prefers an explicitly entered invitation over a persisted stale credential when rejoining (I-10-04)", async () => {
     const container = renderApp();
     const roomId = "EDIT01";

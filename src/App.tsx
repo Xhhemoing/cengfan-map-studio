@@ -653,11 +653,21 @@ function StudioApp({ projectId }: { projectId?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collaborationClientId, customTemplates, project, renderSettings, collaboration.roomAccessToken, collaboration.roomId, collaboration.roomRole, collaboration.roomReadonly, collaboration.roomClosed, userAssets, userFonts]);
 
-  // 仅查看时的拒绝必须全局可见（StatusToast），协作浮层可能是收起的；
+  // 被拒文案必须与真实房间状态一致（I-11-02）：已关闭 > 查看者 > 只读，
+  // 覆盖协作浮层消息时也用同一原因，不会把「房间已关闭/只读」冲成「仅查看」。
+  const commitRejectionReason = collaboration.roomClosed
+    ? "房间已关闭，无法修改此工程"
+    : collaboration.roomRole === "viewer"
+      ? "当前仅查看，无法修改此工程"
+      : collaboration.roomReadonly
+        ? "房间已设为只读，无法修改此工程"
+        : "当前仅查看，无法修改此工程";
+
+  // 拒绝必须全局可见（StatusToast），协作浮层可能是收起的；
   // 返回 false 让调用方（如数据面板）就地报错，避免「已更新」假成功。
   const rejectReadOnlyCommit = (): false => {
-    collaboration.setCollaborationMessage("当前仅查看，无法修改此工程");
-    setStatusMessage("当前仅查看，无法修改此工程");
+    collaboration.setCollaborationMessage(commitRejectionReason);
+    setStatusMessage(commitRejectionReason);
     return false;
   };
 
@@ -1422,6 +1432,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
     }),
     selectedStudentId,
     onSelectStudent: setSelectedStudentId,
+    // 面板就地报错时使用与拒绝原因一致的文案（I-11-01 / I-11-02）。
+    readOnlyMessage: commitRejectionReason,
   };
 
   const handleCreateDecoration = (asset: StudioAsset) => {
@@ -1782,6 +1794,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onToggleStudentVisibility={dataWorkspaceProps.onToggleVisibility}
         onDeleteStudent={dataWorkspaceProps.onDeleteStudent}
         onSetStudentsVisibility={dataWorkspaceProps.onSetStudentsVisibility}
+        readOnlyMessage={dataWorkspaceProps.readOnlyMessage}
         provinces={provinceNames}
         onApplyFont={applyFont}
         onUploadFont={(font) => {

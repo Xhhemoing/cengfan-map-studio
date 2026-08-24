@@ -102,6 +102,7 @@ export function GlobalSettingsScreen({
   onToggleStudentVisibility,
   onDeleteStudent,
   onSetStudentsVisibility,
+  readOnlyMessage,
   provinces,
   onApplyFont,
   onUploadFont,
@@ -138,9 +139,11 @@ export function GlobalSettingsScreen({
   onAppendStudents: (students: Student[]) => boolean | void;
   onReplaceStudents: (students: Student[]) => boolean | void;
   onUpdateStudent: (id: string, patch: Partial<Pick<Student, "name" | "university" | "city" | "province" | "locationScope">>) => boolean | void;
-  onToggleStudentVisibility: (id: string) => void;
+  onToggleStudentVisibility: (id: string) => boolean | void;
   onDeleteStudent: (id: string) => boolean | void;
-  onSetStudentsVisibility: (visibility: boolean) => void;
+  onSetStudentsVisibility: (visibility: boolean) => boolean | void;
+  /** 写入被拒时数据面板展示的原因文案（查看者 / 房间只读 / 房间已关闭）。 */
+  readOnlyMessage?: string;
   provinces: readonly string[];
   onApplyFont: (target: TypographyTarget, fontId: string, applyToAll: boolean) => void;
   onUploadFont?: (font: UserFont) => void;
@@ -294,6 +297,7 @@ export function GlobalSettingsScreen({
                     onToggleVisibility={onToggleStudentVisibility}
                     onDeleteStudent={onDeleteStudent}
                     onSetStudentsVisibility={onSetStudentsVisibility}
+                    readOnlyMessage={readOnlyMessage}
                     selectedStudentId={selectedStudentId}
                     onSelectStudent={onSelectStudent}
                   />

@@ -485,6 +485,68 @@ describe("DataWorkspace", () => {
     expect(container.querySelector(".data-message")?.textContent).toContain("当前仅查看，无法修改此工程");
   });
 
+  it("shows an in-panel error and keeps the eye state when visibility writes are rejected (I-11-01)", () => {
+    const onToggleVisibility = vi.fn(() => false);
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={onToggleVisibility}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn(() => false)}
+        confirmDelete={() => true}
+      />,
+    );
+
+    // 单个眼睛被拒：面板就地报错，按钮仍是「隐藏」（可见状态没变），计数不变。
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 林舟"]')!);
+    expect(onToggleVisibility).toHaveBeenCalledWith("student-1");
+    expect(container.querySelector(".data-message")?.textContent).toContain("当前仅查看，无法修改此工程");
+    expect(container.querySelector('button[aria-label="隐藏 林舟"]')).not.toBeNull();
+    expect(container.textContent).toContain("1 显示 / 1 条");
+
+    // 全部隐藏被拒：同样就地报错（独立渲染，排除上一次残留消息）。
+    const onSetStudentsVisibility = vi.fn(() => false);
+    const batchContainer = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={onSetStudentsVisibility}
+        confirmDelete={() => true}
+      />,
+    );
+    click(batchContainer.querySelector<HTMLButtonElement>('button[aria-label="全部隐藏"]')!);
+    expect(onSetStudentsVisibility).toHaveBeenCalledWith(false);
+    expect(batchContainer.querySelector(".data-message")?.textContent).toContain("当前仅查看，无法修改此工程");
+    expect(batchContainer.textContent).toContain("1 显示 / 1 条");
+  });
+
+  it("surfaces the actual rejection reason passed via readOnlyMessage (I-11-02)", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn(() => false)}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        readOnlyMessage="房间已设为只读，无法修改此工程"
+        confirmDelete={() => true}
+      />,
+    );
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 林舟"]')!);
+    expect(container.querySelector(".data-message")?.textContent).toContain("房间已设为只读，无法修改此工程");
+    expect(container.querySelector(".data-message")?.textContent).not.toContain("当前仅查看");
+  });
+
   it("edits a record with its stable id and allows manual province override", () => {
     const onUpdateStudent = vi.fn();
     const container = render(

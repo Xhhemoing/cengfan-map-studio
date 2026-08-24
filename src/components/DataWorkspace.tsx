@@ -56,8 +56,9 @@ const studentColumnLabels: Record<StudentColumn, string> = {
   locationScope: "去向类型",
 };
 
-// 协作房间里查看者的写操作会被 App 拒绝（回调返回 false）；
+// 协作房间里查看者/只读/已关闭状态的写操作会被 App 拒绝（回调返回 false）；
 // 数据面板必须就地报错，绝不能展示「已更新/已新增」假成功。
+// 具体文案由 readOnlyMessage 按真实拒绝原因传入（I-11-02），这里只是兜底。
 const READ_ONLY_MESSAGE = "当前仅查看，无法修改此工程";
 
 export function DataWorkspace({
@@ -68,6 +69,7 @@ export function DataWorkspace({
   onToggleVisibility,
   onDeleteStudent,
   onSetStudentsVisibility,
+  readOnlyMessage = READ_ONLY_MESSAGE,
   selectedStudentId = null,
   onSelectStudent = () => {},
   dataView = "province",
@@ -84,9 +86,11 @@ export function DataWorkspace({
   onReplaceStudents: (students: Student[]) => boolean | void;
   onAppendStudents: (students: Student[]) => boolean | void;
   onUpdateStudent: (id: string, patch: Partial<Pick<Student, "name" | "university" | "city" | "province" | "locationScope">>) => boolean | void;
-  onToggleVisibility: (id: string) => void;
+  onToggleVisibility: (id: string) => boolean | void;
   onDeleteStudent: (id: string) => boolean | void;
-  onSetStudentsVisibility: (visibility: boolean) => void;
+  onSetStudentsVisibility: (visibility: boolean) => boolean | void;
+  /** 写入被拒时面板展示的原因文案（查看者 / 房间只读 / 房间已关闭）。 */
+  readOnlyMessage?: string;
   selectedStudentId?: string | null;
   onSelectStudent?: (id: string) => void;
   dataView?: DataViewId;
@@ -209,8 +213,8 @@ export function DataWorkspace({
       province: draft.locationScope === "international" ? undefined : draft.province?.trim() || undefined,
     })));
     if (appended === false) {
-      setDraftError(READ_ONLY_MESSAGE);
-      setMessage(READ_ONLY_MESSAGE);
+      setDraftError(readOnlyMessage);
+      setMessage(readOnlyMessage);
       return;
     }
     setDraft(createEmptyStudentDraft());
@@ -242,9 +246,9 @@ export function DataWorkspace({
       setMessage("学生姓名、就读院校和城市不能为空");
       return;
     }
-    // 写入被拒绝（仅查看）时保持编辑态并报错，绝不能提示「已更新」。
+    // 写入被拒绝（仅查看/只读/已关闭）时保持编辑态并报错，绝不能提示「已更新」。
     if (onUpdateStudent(student.id, next) === false) {
-      setMessage(READ_ONLY_MESSAGE);
+      setMessage(readOnlyMessage);
       return;
     }
     setEditingStudentId(null);
@@ -330,11 +334,11 @@ export function DataWorkspace({
       // 取消替换时直接返回，不留下任何“替换摘要”残留状态。
       if (!confirmReplace({ currentCount: students.length, nextCount: next.length })) return;
       if (onReplaceStudents(next) === false) {
-        setMessage(READ_ONLY_MESSAGE);
+        setMessage(readOnlyMessage);
         return;
       }
     } else if (onAppendStudents(next) === false) {
-      setMessage(READ_ONLY_MESSAGE);
+      setMessage(readOnlyMessage);
       return;
     }
     setReviewRows([]);
@@ -379,7 +383,7 @@ export function DataWorkspace({
       return;
     }
     if (onAppendStudents(result.students) === false) {
-      setMessage(READ_ONLY_MESSAGE);
+      setMessage(readOnlyMessage);
       return;
     }
     setReviewRows([]);
@@ -639,10 +643,11 @@ export function DataWorkspace({
           placeholder="筛选姓名、就读院校或城市"
         />
         <ActionGroup label="名单批量操作">
-          <CompactButton aria-label="全部显示" icon={<Eye size={14} aria-hidden />} onClick={() => onSetStudentsVisibility(true)}>
+          {/* 批量可见性被拒时（I-11-01）面板必须就地报错，不能只靠会消失的全局 toast。 */}
+          <CompactButton aria-label="全部显示" icon={<Eye size={14} aria-hidden />} onClick={() => { if (onSetStudentsVisibility(true) === false) setMessage(readOnlyMessage); }}>
             全部显示
           </CompactButton>
-          <CompactButton aria-label="全部隐藏" icon={<EyeOff size={14} aria-hidden />} onClick={() => onSetStudentsVisibility(false)}>
+          <CompactButton aria-label="全部隐藏" icon={<EyeOff size={14} aria-hidden />} onClick={() => { if (onSetStudentsVisibility(false) === false) setMessage(readOnlyMessage); }}>
             全部隐藏
           </CompactButton>
           {filter && (
@@ -713,7 +718,7 @@ export function DataWorkspace({
                             <IconButton label={`保存 ${student.name} 省份`} icon={<Check size={14} />} onClick={(event) => {
                               event.stopPropagation();
                               if (onUpdateStudent(student.id, { province: provinceDraft.trim() || undefined }) === false) {
-                                setMessage(READ_ONLY_MESSAGE);
+                                setMessage(readOnlyMessage);
                                 return;
                               }
                               setProvinceEditingId(null);
@@ -746,8 +751,8 @@ export function DataWorkspace({
                       </td>
                       <td><div className="student-row__buttons">
                         <IconButton label={`编辑 ${student.name}`} icon={<Pencil size={14} />} onClick={(event) => { event.stopPropagation(); startEditing(student); }} />
-                        <IconButton label={`${isVisible ? "隐藏" : "显示"} ${student.name}`} icon={isVisible ? <EyeOff size={14} /> : <Eye size={14} />} onClick={(event) => { event.stopPropagation(); onToggleVisibility(student.id); }} />
-                        <IconButton label={`删除 ${student.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={(event) => { event.stopPropagation(); if (confirmDelete(student) && onDeleteStudent(student.id) === false) setMessage(READ_ONLY_MESSAGE); }} />
+                        <IconButton label={`${isVisible ? "隐藏" : "显示"} ${student.name}`} icon={isVisible ? <EyeOff size={14} /> : <Eye size={14} />} onClick={(event) => { event.stopPropagation(); if (onToggleVisibility(student.id) === false) setMessage(readOnlyMessage); }} />
+                        <IconButton label={`删除 ${student.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={(event) => { event.stopPropagation(); if (confirmDelete(student) && onDeleteStudent(student.id) === false) setMessage(readOnlyMessage); }} />
                       </div></td>
                     </>
                   )}
