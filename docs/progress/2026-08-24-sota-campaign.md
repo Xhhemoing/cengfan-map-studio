@@ -173,3 +173,7 @@
 - 确认列表 `role="group"` +「待确认导入 N 条」。
 
 P2 视觉核对仍不做。
+
+## 第 5 轮复查跟进
+
+复查确认第 5 轮三项提交态无回归。踢人撤令牌已在第 12 轮落地。剩余：关抽屉后改项目仍回写旧预览——工程指纹改由 Provider + `useAssistantProjectSync` 记账，落地前比对当前工程，过期则归 draft 且不调 `onPreview`。`leave` 对已关闭房间与 `refreshMember` 一样回 `ROOM_CLOSED`。
