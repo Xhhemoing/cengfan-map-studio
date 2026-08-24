@@ -17,6 +17,8 @@
  * Known miss: the retained 8 MiB calibration cell measured 56.6 ms occupancy
  * against the approximate 50 ms target. API-limit parity takes precedence;
  * off-thread serialization is intentionally out of scope for this fix.
+ * Reference run (2026-08-24): standard 8 MiB 33.19 ms / 8,385,253 bytes;
+ * history trim 33.12 ms / 5,277,193 bytes (inside the 12 MiB total budget).
  */
 import { performance } from "node:perf_hooks";
 import {
