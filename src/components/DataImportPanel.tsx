@@ -16,9 +16,13 @@ import {
   type ImportOutcome,
   type ImportSkip,
 } from "./DataImportReview";
+import { AiUploadConsentDialog, AiUploadConsentMemo, useAiUploadConsent } from "./DataImportConsent";
 import { ActionButton, ActionGroup, CompactButton, PanelHeader } from "./StudioUi";
 
 const UNCHECKED_REASON = "未勾选，未导入";
+
+/** 拒绝上送后用它替换来源说明，让回显里看得出原文没有离开本机。 */
+const LOCAL_ONLY_NOTE = "（原文未发送）";
 
 /**
  * 把 `confirmImportCandidates` 的拒收结果还原成逐行明细:未勾选的行与校验失败的行
@@ -89,6 +93,8 @@ export function DataImportPanel({
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
+  const consent = useAiUploadConsent(onMessage);
+  const aiBusy = isAiParsing || consent.isAsking;
 
   const setCandidates = (
     candidates: ImportCandidate[],
@@ -125,6 +131,10 @@ export function DataImportPanel({
       setCandidates(local.candidates, local.unparsed, "OCR 文本");
       return;
     }
+    if (!(await consent.requestConsent("ocr"))) {
+      setCandidates(local.candidates, local.unparsed, `OCR 文本${LOCAL_ONLY_NOTE}`);
+      return;
+    }
     setIsAiParsing(true);
     try {
       const aiParsed = await requestAiParse({ text: importText, source: "ocr" });
@@ -140,6 +150,12 @@ export function DataImportPanel({
   const prepareAiImport = async () => {
     if (!importText.trim()) {
       onMessage("请先粘贴需要智能识别的名单");
+      return;
+    }
+    if (!(await consent.requestConsent("paste"))) {
+      // 拒绝上送时退回本地规则，未识别的行照实留在回显里。
+      const local = parseStudentText(importText);
+      setCandidates(local.candidates, local.unparsed, `本地文本识别${LOCAL_ONLY_NOTE}`);
       return;
     }
     setIsAiParsing(true);
@@ -249,16 +265,18 @@ export function DataImportPanel({
     let parsed: { candidates: ImportCandidate[]; unparsed: UnparsedLine[] } = local;
     let sourceLabel = "本地文本识别";
     if (local.unparsed.length > 0) {
-      setIsAiParsing(true);
-      try {
-        const aiParsed = await requestAiParse({ text: importText, source: "paste" });
-        parsed = { candidates: aiParsed.candidates, unparsed: aiParsed.unparsed };
-        sourceLabel = `智能识别（${aiParsed.provider}）`;
-      } catch {
-        parsed = local;
-      } finally {
-        setIsAiParsing(false);
-      }
+      if (await consent.requestConsent("paste")) {
+        setIsAiParsing(true);
+        try {
+          const aiParsed = await requestAiParse({ text: importText, source: "paste" });
+          parsed = { candidates: aiParsed.candidates, unparsed: aiParsed.unparsed };
+          sourceLabel = `智能识别（${aiParsed.provider}）`;
+        } catch {
+          parsed = local;
+        } finally {
+          setIsAiParsing(false);
+        }
+      } else sourceLabel = `本地文本识别${LOCAL_ONLY_NOTE}`;
     }
     if (parsed.candidates.length === 0) {
       setOutcome({ title: "导入未执行", success: 0, skipped: mergeSkips(parsed.unparsed, []), warnings: [] });
@@ -325,16 +343,17 @@ export function DataImportPanel({
             />
             <ActionGroup label="导入处理" className="review-actions">
               <CompactButton icon={<FileUp size={14} aria-hidden />} onClick={prepareImport}>识别文本</CompactButton>
-              <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing}>
+              <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={aiBusy}>
                 {isAiParsing ? "智能识别中..." : "智能识别名单"}
               </CompactButton>
-              <CompactButton variant="secondary" onClick={prepareOcrImport} disabled={isAiParsing}>
+              <CompactButton variant="secondary" onClick={prepareOcrImport} disabled={aiBusy}>
                 {isAiParsing ? "OCR 识别中..." : "识别 OCR 文本"}
               </CompactButton>
-              <ActionButton onClick={importDirectly} disabled={isAiParsing}>
+              <ActionButton onClick={importDirectly} disabled={aiBusy}>
                 {isAiParsing ? "识别并导入中..." : "一键识别并导入"}
               </ActionButton>
             </ActionGroup>
+            <AiUploadConsentMemo gate={consent} />
             <div className="file-import-row">
               <FileDropzone
                 id="data-excel-upload"
@@ -358,6 +377,8 @@ export function DataImportPanel({
           </>
         )}
       </div>
+
+      <AiUploadConsentDialog gate={consent} />
 
       {excelRecognition && <ExcelRecognitionPanel recognition={excelRecognition} />}
 

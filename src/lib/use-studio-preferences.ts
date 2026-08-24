@@ -34,6 +34,33 @@ import {
   type ThemeMode,
 } from "./theme";
 
+/**
+ * 智能识别会把粘贴原文(含学生姓名)交给第三方模型,这里只保存用户对"是否允许发送"
+ * 的选择。不勾选"记住"时不落盘,下次仍会重新询问。
+ */
+export type AiParseConsent = "granted" | "denied";
+
+export const AI_PARSE_CONSENT_STORAGE_KEY = "cengfan-map-studio:ai-parse-consent";
+
+export function loadAiParseConsent(storage?: Storage): AiParseConsent | null {
+  try {
+    const value = (storage ?? window.localStorage).getItem(AI_PARSE_CONSENT_STORAGE_KEY);
+    return value === "granted" || value === "denied" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAiParseConsent(consent: AiParseConsent | null, storage?: Storage): void {
+  try {
+    const store = storage ?? window.localStorage;
+    if (consent === null) store.removeItem(AI_PARSE_CONSENT_STORAGE_KEY);
+    else store.setItem(AI_PARSE_CONSENT_STORAGE_KEY, consent);
+  } catch {
+    // 隐私模式或配额异常时退化为仅本次会话记住,不阻塞导入。
+  }
+}
+
 export interface EditorPanelLayoutControls {
   panelLayout: EditorPanelLayout;
   resizingPanel: PanelSide | null;

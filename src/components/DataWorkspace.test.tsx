@@ -1,10 +1,11 @@
 import { type ReactElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DataWorkspace } from "./DataWorkspace";
 import type { Student } from "../lib/project-data";
 import type { ParseDataResult } from "../lib/ai-client";
+import { AI_PARSE_CONSENT_STORAGE_KEY } from "../lib/use-studio-preferences";
 
 const students: Student[] = [
   {
@@ -18,11 +19,18 @@ const students: Student[] = [
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
+beforeEach(() => {
+  // 默认扮演"已经同意过发送原文"的老用户，这样多数用例断言的仍是识别与导入本身；
+  // 首次上送前的告知由 describe("智能识别上送告知") 里的用例单独覆盖。
+  window.localStorage.setItem(AI_PARSE_CONSENT_STORAGE_KEY, "granted");
+});
+
 afterEach(() => {
   roots.splice(0).forEach(({ root, container }) => {
     flushSync(() => root.unmount());
     container.remove();
   });
+  window.localStorage.clear();
 });
 
 function render(element: ReactElement): HTMLDivElement {
@@ -1343,5 +1351,203 @@ describe("DataWorkspace", () => {
     click(container.querySelector<HTMLButtonElement>('button[aria-label="保存 林舟 省份"]')!);
 
     expect(onUpdateStudent).toHaveBeenCalledWith("student-1", { province: undefined });
+  });
+});
+
+describe("智能识别上送告知", () => {
+  const partiallyParsable = "温言 南京大学 南京市\n还没定";
+
+  function aiCandidates(): ParseDataResult {
+    return {
+      provider: "local-fallback",
+      candidates: [
+        { name: "温言", university: "南京大学", city: "南京市", sourceLine: 1, rawLine: "温言 南京大学 南京市" },
+        { name: "还没定同学", university: "北京大学", city: "北京市", sourceLine: 2, rawLine: "还没定" },
+      ],
+      unparsed: [],
+    };
+  }
+
+  function renderWorkspace(requestAiParse: (input: { text: string; source: "paste" | "ocr" }) => Promise<ParseDataResult>) {
+    return render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+  }
+
+  function findButton(container: HTMLDivElement, text: string): HTMLButtonElement {
+    return Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes(text))!;
+  }
+
+  async function settle(): Promise<void> {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+  }
+
+  it("explains the upload before the first automatic upgrade instead of sending silently", () => {
+    window.localStorage.removeItem(AI_PARSE_CONSENT_STORAGE_KEY);
+    const requestAiParse = vi.fn(async () => aiCandidates());
+    const container = renderWorkspace(requestAiParse);
+
+    changeInput(container.querySelector("textarea")!, partiallyParsable);
+    click(findButton(container, "一键识别并导入"));
+
+    const dialog = container.querySelector<HTMLElement>(".ai-consent")!;
+    expect(dialog).not.toBeNull();
+    expect(dialog.getAttribute("role")).toBe("dialog");
+    expect(container.querySelector("#ai-parse-consent-title")?.textContent).toBe("发送到智能识别前请确认");
+    expect(dialog.textContent).toContain("含学生姓名");
+    expect(dialog.textContent).toContain("第三方 AI 服务");
+    expect(dialog.textContent).toContain("仅用于解析成候选名单");
+    // 告知还挂在屏幕上时，一个字都不该已经出境。
+    expect(requestAiParse).not.toHaveBeenCalled();
+  });
+
+  it("keeps local candidates and lists unread lines when the upload is declined", async () => {
+    window.localStorage.removeItem(AI_PARSE_CONSENT_STORAGE_KEY);
+    const onAppendStudents = vi.fn();
+    const requestAiParse = vi.fn(async () => aiCandidates());
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, partiallyParsable);
+    click(findButton(container, "一键识别并导入"));
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="仅用本地识别"]')!);
+    await settle();
+
+    expect(requestAiParse).not.toHaveBeenCalled();
+    expect(container.querySelector(".ai-consent")).toBeNull();
+    expect(onAppendStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "温言" })]);
+    expect(container.textContent).toContain("原文未发送");
+    const outcome = container.querySelector<HTMLElement>(".import-outcome")!;
+    expect(outcome.textContent).toContain("第 2 行");
+    expect(outcome.textContent).toContain("还没定");
+    expect(outcome.textContent).toContain("无法识别学生名称、录取院校和城市");
+  });
+
+  it("upgrades to AI parsing once the upload is accepted", async () => {
+    window.localStorage.removeItem(AI_PARSE_CONSENT_STORAGE_KEY);
+    const onAppendStudents = vi.fn();
+    const requestAiParse = vi.fn(async () => aiCandidates());
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={onAppendStudents}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        requestAiParse={requestAiParse}
+      />,
+    );
+
+    changeInput(container.querySelector("textarea")!, partiallyParsable);
+    click(findButton(container, "一键识别并导入"));
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="同意并发送"]')!);
+    await settle();
+
+    expect(requestAiParse).toHaveBeenCalledWith({ text: partiallyParsable, source: "paste" });
+    expect(onAppendStudents).toHaveBeenCalledWith([
+      expect.objectContaining({ name: "温言" }),
+      expect.objectContaining({ name: "还没定同学" }),
+    ]);
+    // 没勾"记住"就不该落盘，下次仍要再问一遍。
+    expect(window.localStorage.getItem(AI_PARSE_CONSENT_STORAGE_KEY)).toBeNull();
+  });
+
+  it("stops asking on later imports once the choice is remembered", async () => {
+    window.localStorage.removeItem(AI_PARSE_CONSENT_STORAGE_KEY);
+    const requestAiParse = vi.fn(async () => aiCandidates());
+    const first = renderWorkspace(requestAiParse);
+
+    changeInput(first.querySelector("textarea")!, partiallyParsable);
+    click(findButton(first, "一键识别并导入"));
+    click(first.querySelector<HTMLInputElement>('input[aria-label="记住我的选择"]')!);
+    click(first.querySelector<HTMLButtonElement>('button[aria-label="同意并发送"]')!);
+    await settle();
+
+    expect(window.localStorage.getItem(AI_PARSE_CONSENT_STORAGE_KEY)).toBe("granted");
+
+    const later = renderWorkspace(requestAiParse);
+    changeInput(later.querySelector("textarea")!, partiallyParsable);
+    click(findButton(later, "一键识别并导入"));
+    await settle();
+
+    expect(later.querySelector(".ai-consent")).toBeNull();
+    expect(requestAiParse).toHaveBeenCalledTimes(2);
+  });
+
+  it("honours a remembered refusal and still offers a way back to asking", async () => {
+    window.localStorage.setItem(AI_PARSE_CONSENT_STORAGE_KEY, "denied");
+    const requestAiParse = vi.fn(async () => aiCandidates());
+    const container = renderWorkspace(requestAiParse);
+
+    changeInput(container.querySelector("textarea")!, partiallyParsable);
+    click(findButton(container, "一键识别并导入"));
+    await settle();
+
+    expect(container.querySelector(".ai-consent")).toBeNull();
+    expect(requestAiParse).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("已记住「不发送原文」");
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="重新询问是否发送原文"]')!);
+    expect(window.localStorage.getItem(AI_PARSE_CONSENT_STORAGE_KEY)).toBeNull();
+
+    changeInput(container.querySelector("textarea")!, partiallyParsable);
+    click(findButton(container, "一键识别并导入"));
+
+    expect(container.querySelector(".ai-consent")).not.toBeNull();
+  });
+
+  it("gates the explicit AI parse button and falls back to local rules when declined", async () => {
+    window.localStorage.removeItem(AI_PARSE_CONSENT_STORAGE_KEY);
+    const requestAiParse = vi.fn(async () => aiCandidates());
+    const container = renderWorkspace(requestAiParse);
+
+    changeInput(container.querySelector("textarea")!, partiallyParsable);
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    expect(container.querySelector(".ai-consent")).not.toBeNull();
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="仅用本地识别"]')!);
+    await settle();
+
+    expect(requestAiParse).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("从本地文本识别（原文未发送）识别到 1 条候选，另有 1 行未识别");
+    expect(container.querySelectorAll(".review-row")).toHaveLength(1);
+  });
+
+  it("gates the OCR upgrade with the same notice and keeps local OCR candidates when declined", async () => {
+    window.localStorage.removeItem(AI_PARSE_CONSENT_STORAGE_KEY);
+    const requestAiParse = vi.fn(async () => aiCandidates());
+    const container = renderWorkspace(requestAiParse);
+
+    changeInput(container.querySelector("textarea")!, "温言｜南京大学｜南京市\n还没定");
+    click(findButton(container, "识别 OCR 文本"));
+    expect(container.querySelector(".ai-consent")?.textContent).toContain("本地 OCR 规则");
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="仅用本地识别"]')!);
+    await settle();
+
+    expect(requestAiParse).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("从OCR 文本（原文未发送）识别到 1 条候选，另有 1 行未识别");
   });
 });
