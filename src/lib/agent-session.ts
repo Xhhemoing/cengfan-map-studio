@@ -571,6 +571,15 @@ export class AgentSession {
     });
   }
 
+  /**
+   * A round that fails in transport leaves its request as the conversation tail with no reply after it.
+   * The resume re-sends that text as `userMessage` anyway, so pushing it again would only ask twice.
+   */
+  private tailIsUnansweredRequest(message: string): boolean {
+    const last = this.conversation.at(-1);
+    return last?.role === "user" && last.content === message;
+  }
+
   private execute(call: AgentToolCall): AgentToolResult {
     const rejected = this.validateClientCall(call);
     if (rejected) return { id: call.id, ok: false, content: rejected };
@@ -661,7 +670,7 @@ export class AgentSession {
       this.taskId = undefined;
       this.budgetReceipt = undefined;
     }
-    this.conversation.push({ role: "user", content: message });
+    if (!options.continue || !this.tailIsUnansweredRequest(message)) this.conversation.push({ role: "user", content: message });
     const controller = new AbortController();
     this.activeController = controller;
     const onAbort = () => controller.abort();
