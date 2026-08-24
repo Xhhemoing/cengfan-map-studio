@@ -390,6 +390,12 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     ) {
       throw new CollaborationError("INVALID_TRANSACTION", "协作事务格式无效");
     }
+    // 首个事务必须是全量 snapshot:房间未就绪时 room.snapshot 还是 undefined,
+    // 放增量进来会把补丁打在空对象上、再把这份残缺内容标成 ready,
+    // 随后真正上传初始工程的房主只会撞上 VERSION_CONFLICT。
+    if (!room.ready && transaction.operations) {
+      throw new CollaborationError("ROOM_INITIALIZING", "共享房间正在上传初始工程，请先提交完整快照");
+    }
     const appliedTransactionIds = transactions.get(key);
     if (appliedTransactionIds?.has(transaction.txId)) return copyRoom(room) as CollaborationRoom<T>;
     const operations = transaction.operations;

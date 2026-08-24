@@ -314,6 +314,53 @@ describe("collaboration room store", () => {
     expect(() => store.getOperations("OPS03", "op-secret", 0)).toThrowError(expect.objectContaining({ code: "ROOM_INITIALIZING" }));
   });
 
+  it("rejects incremental operations until the initial snapshot has been uploaded", () => {
+    const store = createRoomStore({ generateId: () => "OPS04", generateSecret: () => "op-secret" });
+    const owner = store.create<{ title: string }>(undefined, { clientId: "owner", displayName: "创建者" });
+    const operations: CollaborationOperation[] = [{ type: "set", path: ["title"], value: "抢跑" }];
+
+    expect(() => store.apply("OPS04", owner.access.accessToken, {
+      txId: "op-1",
+      clientId: "owner",
+      baseVersion: 0,
+      operations,
+    })).toThrowError(expect.objectContaining({ code: "ROOM_INITIALIZING" }));
+
+    const initializing = store.get("OPS04")!;
+    expect(initializing.version).toBe(0);
+    expect(initializing.ready).toBe(false);
+    expect(initializing.snapshot).toBeUndefined();
+
+    store.apply("OPS04", owner.access.accessToken, {
+      txId: "snap-1",
+      clientId: "owner",
+      baseVersion: 0,
+      snapshot: { title: "初始" },
+    });
+    const applied = store.apply("OPS04", owner.access.accessToken, {
+      txId: "op-1",
+      clientId: "owner",
+      baseVersion: 1,
+      operations,
+    });
+
+    expect(applied.ready).toBe(true);
+    expect(applied.version).toBe(2);
+    expect(applied.snapshot).toEqual({ title: "抢跑" });
+  });
+
+  it("keeps reporting invalid transactions before the initializing guard", () => {
+    const store = createRoomStore({ generateId: () => "OPS05", generateSecret: () => "op-secret" });
+    const owner = store.create(undefined, { clientId: "owner", displayName: "创建者" });
+
+    expect(() => store.apply("OPS05", owner.access.accessToken, {
+      txId: "op-1",
+      clientId: "owner",
+      baseVersion: -1,
+      operations: [{ type: "set", path: ["title"], value: "抢跑" }],
+    })).toThrowError(expect.objectContaining({ code: "INVALID_TRANSACTION" }));
+  });
+
   it("broadcasts members, access, and closed lifecycle events to subscribers", () => {
     const secrets = ["owner-access", "editor-invite", "editor-access"];
     const store = createRoomStore({ generateId: () => "EVT01", generateSecret: () => secrets.shift()! });
