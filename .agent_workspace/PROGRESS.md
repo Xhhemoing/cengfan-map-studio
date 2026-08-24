@@ -33,6 +33,7 @@
 | Round 22 | complete | 2026-08-24 | 2026-08-24 | 品牌标 hidden；layoutGrid 剩余卡堆叠；全角竖线；X-Real-IP |
 | Round 23 | complete | 2026-08-24 | 2026-08-24 | StudioBrand 抽出；packSides marginSeat；全角冒号；clientIp 模块 |
 | Round 24 | complete | 2026-08-24 | 2026-08-24 | PNG type=button；layoutGrid orderResult；全角斜线；Forwarded |
+| Round 25 | complete | 2026-08-24 | 2026-08-24 | 素材库/学生表图标；repackAll orderResult；﹑ 分隔；XFF IPv4 :port |
 
 ## Round 1 结论摘要
 
@@ -152,15 +153,19 @@
 
 详见 [round24/BRIEF.md](round24/BRIEF.md)。集成：**tsc 绿、eslint --max-warnings 0、218×1933 tests 绿**。经典 PNG `type=button`；layoutGrid `orderResult`；全角 `／`；RFC 7239 `Forwarded`。
 
-## 全局成果（二十四轮合计）
+## Round 25 结论简报
 
-| 指标 | main 基线 | Round 24 结束 |
+详见 [round25/BRIEF.md](round25/BRIEF.md)。集成：**tsc 绿、eslint --max-warnings 0、220×1947 tests 绿**。素材库 Chevron / 学生表行内图标 hidden；`repackAll` 走 `orderResult`；小写顿号 `﹑`；XFF/X-Real-IP 剥 IPv4 `:port`。
+
+## 全局成果（二十五轮合计）
+
+| 指标 | main 基线 | Round 25 结束 |
 | --- | ---: | ---: |
 | App.tsx 行数 | 2466 | **333** |
-| card-layout 门面 | 1297 | 模块化 + leftover side + 列序重扫 + gap 占用 + orderResult 必填 space + grid/sweep/packSides margin 入座 |
+| card-layout 门面 | 1297 | 模块化 + leftover side + 列序重扫 + gap 占用 + orderResult 必填 space + grid/sweep/packSides/repackAll 入座 |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **389** |
-| 测试 | （基线已有大量单测） | **1933 passed / 218 files** |
+| 测试 | （基线已有大量单测） | **1947 passed / 220 files** |
 
 ## 回滚
 
