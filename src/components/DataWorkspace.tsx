@@ -575,14 +575,10 @@ export function DataWorkspace({
         </div>
       )}
 
-      {/* 两个 live region 都保持常驻：区域必须先于内容变化存在，读屏才会播报。 */}
-      <div role="status" aria-live="polite" aria-atomic="true" className="panel-note data-message">
-        {replaceConfirmation && <span className="data-message__line">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</span>}
-        {message && !isImportFailureMessage(message) && <span className="data-message__line">{message}</span>}
-      </div>
-      <div role="alert" aria-live="assertive" aria-atomic="true" className="panel-note data-message data-message--alert">
-        {message && isImportFailureMessage(message) && <span className="data-message__line">{message}</span>}
-      </div>
+      {/* 两个 live region 都保持常驻：区域必须先于内容变化存在，读屏才会播报。
+          子节点写成不带空白的单行：任何空白文本节点都会让 .data-message:empty 的收起规则失效，露出空的绿/红框。 */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="panel-note data-message">{replaceConfirmation ? <span className="data-message__line">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</span> : null}{message && !isImportFailureMessage(message) ? <span className="data-message__line">{message}</span> : null}</div>
+      <div role="alert" aria-live="assertive" aria-atomic="true" className="panel-note data-message data-message--alert">{message && isImportFailureMessage(message) ? <span className="data-message__line">{message}</span> : null}</div>
 
       <div className="student-actions">
         <input

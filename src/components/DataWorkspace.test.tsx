@@ -217,6 +217,41 @@ describe("DataWorkspace", () => {
     expect(container.querySelector('[role="alert"].data-message')).toBe(alertRegion);
   });
 
+  it("leaves both live regions CSS-:empty while idle so the collapse rule applies", async () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+    const statusRegion = container.querySelector('[role="status"].data-message')!;
+    const alertRegion = container.querySelector('[role="alert"].data-message')!;
+
+    // 空白文本节点会让 .data-message:empty 的收起规则失效，露出空的绿/红框
+    expect(statusRegion.matches(":empty")).toBe(true);
+    expect(alertRegion.matches(":empty")).toBe(true);
+    expect(statusRegion.childNodes.length).toBe(0);
+    expect(alertRegion.childNodes.length).toBe(0);
+
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("一键识别并导入"))!);
+    expect(alertRegion.matches(":empty")).toBe(false);
+    expect(statusRegion.matches(":empty")).toBe(true);
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="下载学生数据 XLSX 模板"]')!);
+    await vi.waitFor(() => {
+      flushSync(() => {});
+      expect(statusRegion.textContent).toContain("已下载学生数据导入模板");
+    });
+
+    expect(statusRegion.matches(":empty")).toBe(false);
+    expect(alertRegion.matches(":empty")).toBe(true);
+  });
+
   it("shows Excel header mappings and representative values before review", async () => {
     const container = render(
       <DataWorkspace

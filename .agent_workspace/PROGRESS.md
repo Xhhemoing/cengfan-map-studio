@@ -10,7 +10,7 @@
 |------|------|------|
 | C3-R1 | 收口项初始落地 | completed |
 | C3-R2 | 靶向修复与测试 | completed |
-| C3-R3 | SOTA 打磨与验收 | in_progress |
+| C3-R3 | SOTA 打磨与验收 | completed |
 
 ## Cycle 3 Round 1 子代理
 
@@ -22,6 +22,28 @@
 | C3R1-O2 | claude-opus-5-thinking-high-fast | A3 帮助 Changelog/版本 |
 | C3R1-G1 | gpt-5.6-sol-xhigh-fast | 删除 `.template-workspace*` 死 CSS |
 | C3R1-G2 | gpt-5.6-sol-xhigh-fast | P3 PNG 任意导出禁用 |
+
+## Cycle 3 Round 2 子代理
+
+| ID | 模型 | 主攻 | 产出文件 |
+|----|------|------|----------|
+| C3R2-F1 | claude-fable-5-thinking-xhigh | Round 1 落地交叉核验 | `cycle3/round2/fable-1-audit.md` |
+| C3R2-F2 | claude-fable-5-thinking-xhigh | USER_GUIDE / CHANGELOG 对齐 | `cycle3/round2/fable-2-docs.md` |
+| C3R2-O1 | claude-opus-5-thinking-high-fast | CSS2 `styles.css` 分组选择器残留清理 | `cycle3/round2/opus-1-css.md` |
+| C3R2-O2 | claude-opus-5-thinking-high-fast | F3b 工作台 / 默认工程包文件名对齐 | `cycle3/round2/opus-2-f3b.md` |
+| C3R2-G1 | gpt-5.6-sol-xhigh-fast | 交叉回归 + P3 源码守卫测试 | `cycle3/round2/gpt-1-tests.md` |
+| C3R2-G2 | gpt-5.6-sol-xhigh-fast | 合规复扫（支付 / PII / 边界） | `cycle3/round2/gpt-2-leaks.md` |
+
+## Cycle 3 Round 3 子代理
+
+| ID | 模型 | 主攻 | 产出文件 |
+|----|------|------|----------|
+| C3R3-F1 | claude-fable-5-thinking-xhigh | 文档终核（USER_GUIDE / CHANGELOG / PROGRESS） | `cycle3/round3/fable-1-docs.md` |
+| C3R3-F2 | claude-fable-5-thinking-xhigh | Browser 验收清单 | `cycle3/round3/fable-2-acceptance.md` |
+| C3R3-O1 | claude-opus-5-thinking-high-fast | Empty：空 live region 匹配 `:empty` | `cycle3/round3/opus-1-empty.md` |
+| C3R3-O2 | claude-opus-5-thinking-high-fast | CSS：`template-workspace` 全仓终扫（零 diff） | `cycle3/round3/opus-2-css.md` |
+| C3R3-G1 | gpt-5.6-sol-xhigh-fast | 含 `AppProjectMode.test.tsx` 的交叉回归 | `cycle3/round3/gpt-1-tests.md` |
+| C3R3-G2 | gpt-5.6-sol-xhigh-fast | Leaks 终扫 | `cycle3/round3/gpt-2-leaks.md` |
 
 ## Cycle 2 状态
 
