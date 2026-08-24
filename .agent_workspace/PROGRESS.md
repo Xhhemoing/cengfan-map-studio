@@ -19,7 +19,7 @@
 | Round 8 | complete | 2026-08-24 | 2026-08-24 | 印前体检；交付页出血尺寸；helpers 再拆；损坏快照跳过 |
 | Round 9 | complete | 2026-08-24 | 2026-08-24 | App 测试拆分；幽灵卡修复；导入行号/引号；JSON 415；交付 a11y |
 | Round 10 | complete | 2026-08-24 | 2026-08-24 | 健康检查真高度/同层重叠；交付出血预览；导入副列回落；CORS X-Request-Id |
-| Round 11 | integrating | 2026-08-24 | — | Agent 健康与手摆钉扎；省份连接锚点；嵌套表；join 限流 |
+| Round 11 | complete | 2026-08-24 | 2026-08-24 | Agent 健康与手摆钉扎；省份连接锚点；嵌套表；join 限流 |
 
 ## Round 1 结论摘要
 
@@ -83,15 +83,19 @@
 
 详见 [round10/BRIEF.md](round10/BRIEF.md)。集成：**tsc 绿、200×1699 tests 绿**。健康输入用真实卡高与连接线；同层 card 重叠可报；手摆卡成为求解障碍；交付预览画出出血；导入副列回落与筛选诚实；CORS `X-Request-Id`。
 
-## 全局成果（十轮合计）
+## Round 11 结论简报
 
-| 指标 | main 基线 | Round 10 结束 |
+详见 [round11/BRIEF.md](round11/BRIEF.md)。集成：**tsc 绿、201×1719 tests 绿**。Agent 健康与交付口径对齐并钉住手摆卡；连接线用分省锚点；嵌套 HTML 表栈式解析；公开 join 限流。
+
+## 全局成果（十一轮合计）
+
+| 指标 | main 基线 | Round 11 结束 |
 | --- | ---: | ---: |
 | App.tsx 行数 | 2466 | **333** |
 | card-layout 门面 | 1297 | 模块化 + 手摆障碍 |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **396** |
-| 测试 | （基线已有大量单测） | **1699 passed / 200 files** |
+| 测试 | （基线已有大量单测） | **1719 passed / 201 files** |
 
 ## 回滚
 
