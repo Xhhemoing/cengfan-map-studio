@@ -20,8 +20,6 @@ const MEMORY_ONLY_URGENCY = "仅存在于本次会话内存中";
 const MEMORY_MODE_DETAIL = "浏览器本机存储不可用，内容只保留在当前标签页内存中。";
 const SAMPLE_PROJECT_NAME = "示例：2026届毕业去向";
 const NEW_PROJECT_NAME = "未命名项目";
-/** 与 project-store.ts 的 RECOVER_INTERVAL_MS 对齐：靠周期认出后台重开探针。 */
-const RECOVER_INTERVAL_MS = 20_000;
 
 // 编辑器画布不在本用例范围内，只关心编辑器路由能不能从共享内存副本里读到工程。
 vi.mock("../App", () => ({
@@ -131,31 +129,6 @@ function phasedIndexedDb(phase: { current: StoragePhase }): IDBFactory {
   } as unknown as IDBFactory;
 }
 
-/**
- * 扣下 store 的后台重开探针。
- * 共享单例是模块级构造的，拿不到 `scheduleRecover` 注入点，而默认调度器是 20s 的 setInterval；
- * 换掉全局 setInterval 就能在测试里手动推进一拍，走的仍是真实的 recover→onRecoverError 路径。
- *
- * R7: `editorProjectStore` 没有留任何后台恢复的注入口，验证真实的 `onRecoverError`
- * 只能靠劫持全局 setInterval 并按 20s 这个周期猜出探针。建议给 editor-project-store.ts
- * 留一个仅测试可见的 `scheduleRecover` 覆盖点，别让集成测试依赖定时器周期这种实现细节。
- */
-function captureRecoverProbe(): () => void {
-  const realSetInterval = globalThis.setInterval;
-  let probe: (() => void) | null = null;
-  vi.stubGlobal("setInterval", (handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
-    if (timeout === RECOVER_INTERVAL_MS && typeof handler === "function") {
-      probe = handler as () => void;
-      return 0;
-    }
-    return realSetInterval(handler as () => void, timeout, ...args);
-  });
-  return () => {
-    expect(probe, "store 未注册后台重开探针").not.toBeNull();
-    probe?.();
-  };
-}
-
 /** 在 store 单例构造之前换掉 globalThis.indexedDB，整张模块图必须一起重载。 */
 async function loadDegradedStudio(phase: { current: StoragePhase }) {
   vi.stubGlobal("indexedDB", phasedIndexedDb(phase));
@@ -169,6 +142,9 @@ async function loadDegradedStudio(phase: { current: StoragePhase }) {
   return {
     editorProjectStore: storeModule.editorProjectStore,
     projectStoreHealthChannel: storeModule.projectStoreHealthChannel,
+    // R7-5：走 editor-project-store 导出的仅测试句柄推进后台重开探针，
+    // 不再劫持全局 setInterval，也不再复制 20s 这个实现常量。
+    recoveryProbe: storeModule.projectStoreRecoveryProbe,
     ProjectRoute: routes.ProjectRoute,
     WorkbenchRoute: routes.WorkbenchRoute,
     AppErrorBoundary: boundary.AppErrorBoundary,
@@ -241,10 +217,10 @@ describe("降级会话里的崩溃灾难演练", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     const phase = { current: "broken" as StoragePhase };
-    const runRecoverProbe = captureRecoverProbe();
     const {
       editorProjectStore,
       projectStoreHealthChannel,
+      recoveryProbe,
       ProjectRoute,
       WorkbenchRoute,
       AppErrorBoundary,
@@ -335,7 +311,8 @@ describe("降级会话里的崩溃灾难演练", () => {
     // —— 8. 后台重开成功但写回撞配额：真实的 onRecoverError 经共享 channel 换掉横幅文案。
     expect(storageNotice(workbench)?.textContent).toContain(MEMORY_MODE_DETAIL);
     phase.current = "quota";
-    runRecoverProbe();
+    expect(recoveryProbe.scheduled, "store 未注册后台重开探针").toBe(true);
+    recoveryProbe.run();
 
     await vi.waitFor(() => expect(storageNotice(workbench)?.textContent).toContain(QUOTA_MESSAGE));
     expect(projectStoreHealthChannel.getRecoverError()?.code).toBe("quota-exceeded");
