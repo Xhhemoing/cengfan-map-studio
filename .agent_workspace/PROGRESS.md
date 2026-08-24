@@ -23,7 +23,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
 | 6 | CLOSED | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn; fable 6 ACCEPT + 4 NITS; no blocker. |
-| 7 | IN_PROGRESS | — | — | Honesty of trim/skip + R6-3 items. See round-6-briefing.md. |
+| 7 | IN_PROGRESS | R7-6 | — | Honest occupancy bench. Awaiting R7-1/4/5/7/9. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -113,6 +113,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 ## Round 7 notes
 
 - Chain: R7-1 → R7-2 → R7-3. Independent: R7-4, R7-5, R7-6, R7-7, R7-9. Proof R7-8 after R7-2. R7-10 last.
+- R7-6 (`f7a1ae5` / `7736b2f`): skip-path 12 MiB cell labeled (retained=0); aggregate-at-budget ~48 ms / 12.4 MiB, retained=2. Rollback = revert the merge.
 
 ## Round Briefings
 
