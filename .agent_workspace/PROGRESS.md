@@ -62,7 +62,13 @@
   - opus-fast-B → `bc-1385e303-e7c3-53d1-930d-69fd30b0ff01`
   - gpt-sol-A → `bc-514033cc-1496-5354-a5d2-b165f21b071c`
   - gpt-sol-B → `bc-cdfd55cc-82ab-59d5-9531-9d88b287a8a2`
-- [ ] Cycle 2 Round 3 — 地图仿射缓存与样式收口（派发中）
+- [ ] Cycle 2 Round 3 — 地图仿射缓存与样式收口（进行中，6 子代理并发）
+  - fable-A → `bc-573c88a4-fca3-50dd-8f0f-d4de0f935314`
+  - fable-B → `bc-85a81ade-cede-5e8e-8edc-ac3ecd4fcecc`
+  - opus-fast-A → `bc-83fb2d76-fefb-57f1-83f8-ef5db74f81aa`
+  - opus-fast-B → `bc-752451d8-bb08-5f68-9cb2-5522a210a4ae`
+  - gpt-sol-A → `bc-49618dfe-d37f-52b4-afbb-c62e96a1066f`
+  - gpt-sol-B → `bc-c0dee1a4-ec7d-5615-88bc-249e1b45b565`
 - [ ] Cycle 3 Round 1
 - [ ] Cycle 3 Round 2
 - [ ] Cycle 3 Round 3
@@ -81,3 +87,4 @@
 - Cycle 1 Round 2：`.agent_workspace/cycle1-round2-conclusion.md`
 - Cycle 1 Round 3：`.agent_workspace/cycle1-round3-conclusion.md`
 - Cycle 2 Round 1：`.agent_workspace/cycle2-round1-conclusion.md`
+- Cycle 2 Round 2：`.agent_workspace/cycle2-round2-conclusion.md`
