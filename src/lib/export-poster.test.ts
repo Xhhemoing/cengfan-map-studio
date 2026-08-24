@@ -235,7 +235,7 @@ describe("poster export", () => {
 
     const currentBytes = metrics?.totalBytes ?? Number.POSITIVE_INFINITY;
     const reduction = (baselineBytes - currentBytes) / baselineBytes;
-    // eslint-disable-next-line no-console -- 指标要能在 CI 日志里被人读到，不然只剩一个 pass。
+    // 指标要能在 CI 日志里被人读到，不然只剩一个 pass。
     console.log(`[export bytes] baseline=${baselineBytes} current=${currentBytes} reduction=${(reduction * 100).toFixed(1)}%`);
     // 门槛 5%；实测约 42%（源侧省下 encodeURIComponent 的转义膨胀，结果侧省下 base64 的 1.33×）。
     // 这里的对比对新管线是偏保守的：基线按字符数计，而 blob 按 UTF-8 字节计，中文
