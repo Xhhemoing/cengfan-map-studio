@@ -46,15 +46,25 @@ export function areValidCollaborationOperations(value: unknown): value is Collab
     && value.every(isCollaborationOperation);
 }
 
+/**
+ * JSON 语义的结构化相等：键序无关；对象里值为 undefined 的键视同不存在，
+ * 数组元素里的 undefined 视同 null。协作文档经 applySharedPackage/restore
+ * 往返后常常只有键序变化，若按序列化文本比较会产生幽灵 array-upsert，
+ * 在 rebase 重放时把远端已删除的元素复活并回传给其他成员。
+ */
 function sameValue(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true;
-  if (typeof left !== typeof right) return false;
-  if (!left || !right || typeof left !== "object") return false;
-  try {
-    return JSON.stringify(left) === JSON.stringify(right);
-  } catch {
-    return false;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((element, index) => sameValue(element ?? null, right[index] ?? null));
   }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).filter((key) => leftRecord[key] !== undefined);
+  const rightKeys = Object.keys(rightRecord).filter((key) => rightRecord[key] !== undefined);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => rightRecord[key] !== undefined && sameValue(leftRecord[key], rightRecord[key]));
 }
 
 /** 数组元素：普通对象且带非空字符串 id。 */

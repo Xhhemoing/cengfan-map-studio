@@ -51,6 +51,10 @@ const HEADER_ALIASES: Record<StudentColumn, readonly string[]> = {
     "学校",
     "就读学校",
     "就读院校",
+    // 毕业班名单常用「毕业去向」表示录取院校；该列写的是学校名而非去向类型。
+    "毕业去向",
+    "去向院校",
+    "去向学校",
     "university",
     "school",
     "college",
@@ -99,32 +103,43 @@ function looksLikeUniversityName(value: string): boolean {
 
 /**
  * 「去向」/「类型」这类模糊表头默认映射到去向类型，但很多名单在该列填的是
- * 录取院校。当院校列缺失且该列内容以大学名为主时，按内容改判为录取院校，
- * 并尝试把去向类型让位给其余未映射的别名列（如「类型」）。
+ * 录取院校。当院校列缺失时按内容改判：先看已映射为去向类型的列，再看别名
+ * 表不认识的未映射列；内容以大学名为主的列改判为录取院校，去向类型让位给
+ * 其余未映射的别名列（如「类型」）。这样确认面板不会一边报「缺少录取院校」
+ * 一边又列出满是院校名的候选。
  */
 function refineIndexesByContent(
   rows: string[][],
   header: { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>> },
 ): Partial<Record<StudentColumn, number>> {
   const indexes = { ...header.indexes };
-  if (indexes.university !== undefined || indexes.locationScope === undefined) return indexes;
+  if (indexes.university !== undefined) return indexes;
 
-  const column = indexes.locationScope;
-  const samples = rows
-    .slice(header.rowIndex + 1)
-    .map((row) => row[column]?.trim() ?? "")
-    .filter(Boolean);
-  const universityLike = samples.filter(looksLikeUniversityName).length;
-  if (samples.length === 0 || universityLike * 2 < samples.length) return indexes;
+  const mostlyUniversityNames = (column: number): boolean => {
+    const samples = rows
+      .slice(header.rowIndex + 1)
+      .map((row) => row[column]?.trim() ?? "")
+      .filter(Boolean);
+    return samples.length > 0 && samples.filter(looksLikeUniversityName).length * 2 >= samples.length;
+  };
 
-  indexes.university = column;
-  delete indexes.locationScope;
+  if (indexes.locationScope !== undefined && mostlyUniversityNames(indexes.locationScope)) {
+    indexes.university = indexes.locationScope;
+    delete indexes.locationScope;
+    const taken = new Set(Object.values(indexes));
+    const scopeAliases = HEADER_ALIASES.locationScope.map(normalizeHeader);
+    const fallback = header.headers.findIndex(
+      (cell, index) => !taken.has(index) && scopeAliases.includes(normalizeHeader(cell)),
+    );
+    if (fallback >= 0) indexes.locationScope = fallback;
+    return indexes;
+  }
+
   const taken = new Set(Object.values(indexes));
-  const scopeAliases = HEADER_ALIASES.locationScope.map(normalizeHeader);
-  const fallback = header.headers.findIndex(
-    (cell, index) => !taken.has(index) && scopeAliases.includes(normalizeHeader(cell)),
+  const promoted = header.headers.findIndex(
+    (cell, index) => Boolean(cell) && !taken.has(index) && mostlyUniversityNames(index),
   );
-  if (fallback >= 0) indexes.locationScope = fallback;
+  if (promoted >= 0) indexes.university = promoted;
   return indexes;
 }
 

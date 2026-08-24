@@ -105,6 +105,45 @@ describe("binary import adapters", () => {
     expect(result.unparsed).toEqual([]);
   });
 
+  it("maps the 毕业去向 header onto the university field and reports precise missing-city rows", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "毕业去向", "所在城市"],
+      ["林舟", "北京大学", "北京市"],
+      ["苏禾", "浙江大学", ""],
+    ]);
+
+    expect(result.missingRequiredFields).toEqual([]);
+    expect(result.columnMappings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "name", sourceHeader: "学生姓名" }),
+      expect.objectContaining({ field: "university", sourceHeader: "毕业去向" }),
+      expect.objectContaining({ field: "city", sourceHeader: "所在城市" }),
+    ]));
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+    ]);
+    // 城市为空的行要报「缺少城市」，而不是整表笼统无法识别。
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "苏禾\t浙江大学", reason: "缺少必填字段：城市" },
+    ]);
+  });
+
+  it("promotes an unmapped column holding university names onto the university field", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "去向单位", "所在城市"],
+      ["林舟", "北京大学", "北京市"],
+      ["周晴", "复旦大学", "上海市"],
+    ]);
+
+    expect(result.missingRequiredFields).toEqual([]);
+    expect(result.columnMappings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "university", sourceHeader: "去向单位" }),
+    ]));
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "周晴", university: "复旦大学", city: "上海市" }),
+    ]);
+  });
+
   it("keeps 去向 as the destination scope when the column holds scope values", () => {
     const result = parseExcelWorkbookRows([
       ["姓名", "录取院校", "城市", "去向"],

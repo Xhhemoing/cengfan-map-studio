@@ -90,6 +90,48 @@ describe("collaboration operations", () => {
     ]);
   });
 
+  it("emits no ghost operations when values match but object key order differs", () => {
+    const baseline = {
+      students: [{ id: "s1", name: "甲", city: "北京" }],
+      meta: { title: "同", scale: 1 },
+    };
+    const restored = {
+      students: [{ city: "北京", id: "s1", name: "甲" }],
+      meta: { scale: 1, title: "同" },
+    };
+
+    expect(diffCollaborationDocument(baseline, restored)).toEqual([]);
+  });
+
+  it("ignores undefined-valued keys like JSON serialization when diffing", () => {
+    const withUndefined = { project: { title: "同", fontId: undefined } };
+    const withoutKey = { project: { title: "同" } };
+
+    expect(diffCollaborationDocument(withUndefined, withoutKey)).toEqual([]);
+    expect(diffCollaborationDocument(withoutKey, withUndefined)).toEqual([]);
+  });
+
+  it("does not resurrect a remotely removed item through key-order ghost upserts on rebase", () => {
+    // baseline 保留发送方的键序；本端经 restore 后仅键序不同。
+    const baseline = {
+      students: [{ id: "s1", name: "甲", city: "北京" }, { id: "s2", name: "乙", city: "上海" }],
+    };
+    const current = {
+      students: [{ city: "北京", id: "s1", name: "甲" }, { city: "上海", id: "s2", name: "乙" }],
+    };
+    const remote = [{ type: "array-remove" as const, path: ["students"], itemId: "s1" }];
+
+    const rebased = rebaseRemoteCollaborationOperations(baseline, current, remote);
+    expect(rebased.baseline.students.map((student) => student.id)).toEqual(["s2"]);
+    expect(rebased.current.students.map((student) => student.id)).toEqual(["s2"]);
+
+    // 成员随后编辑无关项，不得把被删学生回传复活。
+    const edited = { students: [{ city: "上海", id: "s2", name: "乙改" }] };
+    expect(diffCollaborationDocument(rebased.baseline, edited)).toEqual([
+      { type: "array-upsert", path: ["students"], item: { city: "上海", id: "s2", name: "乙改" } },
+    ]);
+  });
+
   it("preserves pending local fields while rebasing a remote incremental update", () => {
     const baseline = { project: { title: "初始", map: { scale: 1 } } };
     const local = { project: { title: "本地未上传", map: { scale: 1 } } };
