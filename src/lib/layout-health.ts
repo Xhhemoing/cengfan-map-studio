@@ -1,9 +1,12 @@
+import { mmToPx, normalizePrintBleedMm } from "./print-bleed";
+
 export type LayoutHealthIssueKind =
   | "overflow"
   | "out-of-bounds"
   | "occlusion"
   | "unreadable-text"
-  | "connector-conflict";
+  | "connector-conflict"
+  | "object-in-bleed";
 
 export type LayoutHealthSeverity = "warning" | "error";
 
@@ -38,7 +41,8 @@ export interface LayoutHealthConnector {
 }
 
 export interface LayoutHealthInput {
-  canvas: { width: number; height: number; safeMargin?: number };
+  /** `width`/`height` are the trim box; `printBleedMm` extends the print sheet outside it. */
+  canvas: { width: number; height: number; safeMargin?: number; printBleedMm?: number };
   objects: readonly LayoutHealthObject[];
   connectors?: readonly LayoutHealthConnector[];
   cardsPositions?: Record<string, LayoutHealthPoint>;
@@ -73,6 +77,26 @@ function outsideSafeArea(bounds: LayoutHealthBounds, canvas: LayoutHealthInput["
     || bounds.y < margin
     || bounds.x + bounds.width > canvas.width - margin
     || bounds.y + bounds.height > canvas.height - margin;
+}
+
+/** Layers that may legitimately run full-bleed (背景、地图底图) are exempt from the trim check. */
+const BLEED_SENSITIVE_KINDS: ReadonlySet<LayoutHealthObject["kind"]> = new Set(["card", "text", "asset", "guests"]);
+
+type BleedRisk = "in-bleed" | "near-trim";
+
+/**
+ * `print-bleed` treats the canvas as the trim box and grows the bleed outwards, so an object
+ * crossing a canvas edge already prints inside the bleed and risks being cut off.
+ */
+function bleedRisk(bounds: LayoutHealthBounds, canvas: LayoutHealthInput["canvas"], quietZone: number): BleedRisk | null {
+  const smallest = Math.min(
+    bounds.x,
+    bounds.y,
+    canvas.width - (bounds.x + bounds.width),
+    canvas.height - (bounds.y + bounds.height),
+  );
+  if (smallest < -EPSILON) return "in-bleed";
+  return smallest < quietZone - EPSILON ? "near-trim" : null;
 }
 
 function resolvedBounds(object: LayoutHealthObject, positions: Record<string, LayoutHealthPoint> | undefined): LayoutHealthBounds {
@@ -145,6 +169,8 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
   const visibleObjects = input.objects
     .filter((object) => object.visible !== false)
     .map((object) => ({ object, bounds: resolvedBounds(object, input.cardsPositions) }));
+  const bleedMm = normalizePrintBleedMm(input.canvas.printBleedMm);
+  const bleedPx = bleedMm > 0 ? mmToPx(bleedMm) : 0;
 
   for (const { object, bounds } of visibleObjects) {
     if (outsideCanvas(bounds, input.canvas)) {
@@ -161,6 +187,19 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         severity: "warning",
         detail: `${object.id} 超出画布安全边距`,
       });
+    }
+    if (bleedPx > 0 && BLEED_SENSITIVE_KINDS.has(object.kind)) {
+      const risk = bleedRisk(bounds, input.canvas, bleedPx);
+      if (risk) {
+        issues.push({
+          id: object.id,
+          kind: "object-in-bleed",
+          severity: "warning",
+          detail: risk === "in-bleed"
+            ? `${object.id} 落在出血区（裁切线之外），裁切后可能被切掉`
+            : `${object.id} 距裁切线不足 ${bleedMm}mm`,
+        });
+      }
     }
     if (hasLowContrast(object)) {
       issues.push({

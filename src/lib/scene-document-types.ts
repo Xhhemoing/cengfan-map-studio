@@ -25,6 +25,11 @@ export interface CanvasSettings {
   backgroundOpacity: number;
   /** Global line-height multiplier for every multi-line text role. Default 1. */
   lineHeight?: number;
+  /**
+   * 印刷出血尺寸（毫米），默认 0 = 不出血。按 96dpi 换算成画布像素，
+   * 导出时扩展 viewBox 并在成品框外绘制裁切标记，见 `lib/print-bleed`。
+   */
+  printBleedMm?: number;
 }
 
 export interface ProvinceTextureUniformSize {

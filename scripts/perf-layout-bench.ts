@@ -16,6 +16,7 @@ import {
   type CardLayoutResult,
 } from "../src/lib/card-layout";
 import { assertLayoutInvariants } from "../src/lib/layout-perf";
+import { resolvePrintBleedGeometry } from "../src/lib/print-bleed";
 
 export const DEFAULT_LAYOUT_BENCH_COUNTS = [16, 24, 36, 60, 100, 200, 400] as const;
 export const DEFAULT_LAYOUT_BENCH_MODES: readonly CardLayoutMode[] = [
@@ -81,6 +82,23 @@ export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
   adversarialFixture: AdversarialLayoutBenchmarkReport;
   clusteredAnchorFixture: ClusteredAnchorLayoutBenchmarkReport;
   workerMessageOverhead: WorkerMessageBenchmarkResult;
+  printBleedExport: PrintBleedExportBenchmarkReport;
+}
+
+export interface PrintBleedExportBenchmarkResult {
+  bleedMm: number;
+  p50Ms: number;
+  p95Ms: number;
+  expandedWidth: number;
+  expandedHeight: number;
+}
+
+export interface PrintBleedExportBenchmarkReport {
+  methodology: "print export geometry calculation; DOM cloning and XML serialization excluded";
+  warmupIterations: number;
+  iterations: number;
+  canvas: { width: number; height: number };
+  results: PrintBleedExportBenchmarkResult[];
 }
 
 export interface DensePolygonBenchmarkFixture {
@@ -456,6 +474,47 @@ export function runLayoutBenchmark(config: LayoutBenchmarkConfig = {}): LayoutBe
   };
 }
 
+export function runPrintBleedExportBenchmark(
+  warmupIterations = 500,
+  iterations = 5_000,
+): PrintBleedExportBenchmarkReport {
+  positiveInteger(warmupIterations, "print bleed warmupIterations");
+  positiveInteger(iterations, "print bleed iterations");
+  const canvas = { width: 1500, height: 1000 };
+  const results = [0, 3].map((bleedMm) => {
+    for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+      resolvePrintBleedGeometry({ x: 0, y: 0, ...canvas }, { printBleedMm: bleedMm });
+    }
+    const samples: number[] = [];
+    let geometry = resolvePrintBleedGeometry(
+      { x: 0, y: 0, ...canvas },
+      { printBleedMm: bleedMm },
+    );
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+      const startedAt = performance.now();
+      geometry = resolvePrintBleedGeometry(
+        { x: 0, y: 0, ...canvas },
+        { printBleedMm: bleedMm },
+      );
+      samples.push(performance.now() - startedAt);
+    }
+    return {
+      bleedMm,
+      p50Ms: rounded(percentile(samples, 0.5)),
+      p95Ms: rounded(percentile(samples, 0.95)),
+      expandedWidth: rounded(geometry.media.width),
+      expandedHeight: rounded(geometry.media.height),
+    };
+  });
+  return {
+    methodology: "print export geometry calculation; DOM cloning and XML serialization excluded",
+    warmupIterations,
+    iterations,
+    canvas,
+    results,
+  };
+}
+
 export function runDensePolygonBenchmark(
   config: AdversarialLayoutBenchmarkConfig = {},
 ): AdversarialLayoutBenchmarkReport {
@@ -532,6 +591,7 @@ if (isDirectRun) {
     adversarialFixture: runDensePolygonBenchmark(),
     clusteredAnchorFixture: runClusteredAnchorBenchmark(),
     workerMessageOverhead: await runWorkerMessageBenchmark(),
+    printBleedExport: runPrintBleedExportBenchmark(),
   };
   console.log(JSON.stringify(report, null, 2));
 }

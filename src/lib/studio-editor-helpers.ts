@@ -126,7 +126,12 @@ export function addAssetToLibrary(current: UserAsset[], asset: UserAsset): { ass
 
 export function listContentLayoutIssues(project: ProjectDocument) {
   return checkLayoutHealth({
-    canvas: { width: project.canvas.width, height: project.canvas.height, safeMargin: project.canvas.safeMargin },
+    canvas: {
+      width: project.canvas.width,
+      height: project.canvas.height,
+      safeMargin: project.canvas.safeMargin,
+      printBleedMm: project.canvas.printBleedMm,
+    },
     cardsPositions: project.cards.positions,
     objects: [
       { id: "map", kind: "map", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },

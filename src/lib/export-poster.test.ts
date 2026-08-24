@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { serializePosterSvg, svgToPngDataUrl } from "./export-poster";
+import { posterPngExportSize, serializePosterSvg, svgToPngDataUrl } from "./export-poster";
+import { resolvePrintBleedGeometry } from "./print-bleed";
 
 describe("poster export", () => {
   afterEach(() => {
@@ -15,6 +16,44 @@ describe("poster export", () => {
     const markup = serializePosterSvg(svg);
     expect(markup).toContain("<svg");
     expect(markup).toContain("毕业去向");
+  });
+
+  it("expands svg dimensions and viewBox by the requested print bleed", () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 100 50");
+    svg.setAttribute("width", "100");
+    svg.setAttribute("height", "50");
+
+    const markup = serializePosterSvg(svg, { printBleedMm: 3 });
+    const geometry = resolvePrintBleedGeometry(
+      { x: 0, y: 0, width: 100, height: 50 },
+      { printBleedMm: 3 },
+    );
+    const width = Number(markup.match(/\bwidth="([^"]+)"/)?.[1]);
+    const height = Number(markup.match(/\bheight="([^"]+)"/)?.[1]);
+    const viewBox = markup.match(/\bviewBox="([^"]+)"/)?.[1].split(" ").map(Number);
+
+    expect(width).toBeCloseTo(geometry.media.width);
+    expect(height).toBeCloseTo(geometry.media.height);
+    expect(viewBox).toEqual([
+      geometry.media.x,
+      geometry.media.y,
+      geometry.media.width,
+      geometry.media.height,
+    ]);
+    expect(markup).toContain('data-print-crop-marks="true"');
+    expect(svg.getAttribute("viewBox")).toBe("0 0 100 50");
+    expect(svg.getAttribute("width")).toBe("100");
+    expect(svg.getAttribute("height")).toBe("50");
+  });
+
+  it("normalizes invalid print bleed without enlarging export geometry", () => {
+    const geometry = resolvePrintBleedGeometry(
+      { x: 0, y: 0, width: 100, height: 50 },
+      { printBleedMm: -3 },
+    );
+    expect(geometry.bleedMm).toBe(0);
+    expect(geometry.media).toEqual(geometry.trim);
   });
 
   it("omits editor selection handles while keeping visible scene content", () => {
@@ -90,6 +129,61 @@ describe("poster export", () => {
 
     expect(markup).toContain("font-display:block");
     expect(markup).not.toContain("font-display:swap");
+  });
+
+  it("keeps the exported markup size unchanged when print bleed is 0", () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 1500 1000");
+    svg.setAttribute("width", "1500");
+    svg.setAttribute("height", "1000");
+
+    const baseline = serializePosterSvg(svg);
+    const withoutBleed = serializePosterSvg(svg, { printBleedMm: 0 });
+
+    expect(withoutBleed).toBe(baseline);
+    expect(withoutBleed).toContain('viewBox="0 0 1500 1000"');
+    expect(withoutBleed).toContain('width="1500"');
+    expect(withoutBleed).not.toContain("data-print-crop-marks");
+  });
+
+  it("expands the viewBox and draws crop marks for 3mm print bleed", () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 1500 1000");
+    svg.setAttribute("width", "1500");
+    svg.setAttribute("height", "1000");
+    const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    background.setAttribute("data-canvas-background", "true");
+    background.setAttribute("width", "1500");
+    background.setAttribute("height", "1000");
+    svg.appendChild(background);
+    const overlay = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    overlay.setAttribute("data-selection-overlay", "text");
+    svg.appendChild(overlay);
+
+    const markup = serializePosterSvg(svg, { printBleedMm: 3 });
+    const viewBox = /viewBox="(-?[\d.]+) (-?[\d.]+) ([\d.]+) ([\d.]+)"/.exec(markup);
+
+    expect(viewBox).not.toBeNull();
+    expect(Number(viewBox![1])).toBeLessThan(0);
+    expect(Number(viewBox![3])).toBeGreaterThan(1500);
+    expect(Number(viewBox![4])).toBeGreaterThan(1000);
+    expect(Number(/\swidth="([\d.]+)"/.exec(markup)![1])).toBeGreaterThan(1500);
+    expect(markup).toContain("data-print-crop-marks");
+    expect(markup).not.toContain("data-selection-overlay");
+    expect(svg.getAttribute("viewBox")).toBe("0 0 1500 1000");
+  });
+
+  it("sizes the png export from the canvas, the scale and the bleed together", () => {
+    const canvas = { width: 1500, height: 1000 };
+
+    expect(posterPngExportSize(canvas)).toEqual({ width: 1500, height: 1000 });
+    expect(posterPngExportSize(canvas, { scale: 2 })).toEqual({ width: 3000, height: 2000 });
+    expect(posterPngExportSize(canvas, { printBleedMm: 0, scale: 2 })).toEqual({ width: 3000, height: 2000 });
+
+    const bled = posterPngExportSize(canvas, { printBleedMm: 3, scale: 2 });
+    expect(bled.width).toBeGreaterThan(3000);
+    expect(bled.height).toBeGreaterThan(2000);
+    expect(bled.width - 3000).toBe(bled.height - 2000);
   });
 
   it("converts svg markup into a png data url", async () => {

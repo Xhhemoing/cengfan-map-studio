@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import type { CollaborationOperation } from "../src/lib/collaboration-operations";
+import { withCollaborationFileLock } from "./collaboration-file-lock";
 import type {
   CollaborationRoom,
   CollaborationRole,
@@ -147,7 +148,11 @@ export function createFileRoomSnapshotStore(directory: string): RoomSnapshotStor
       for (const entry of readdirSync(storeDirectory, { withFileTypes: true })) {
         if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
         try {
-          const parsed = JSON.parse(readFileSync(resolve(storeDirectory, entry.name), "utf8")) as unknown;
+          const target = resolve(storeDirectory, entry.name);
+          const parsed = withCollaborationFileLock(
+            target,
+            () => JSON.parse(readFileSync(target, "utf8")) as unknown,
+          );
           if (isPersistedRoomState(parsed)) states.push(parsed);
         } catch {
           // A corrupt or partially copied snapshot must not prevent other rooms from loading.
@@ -158,16 +163,20 @@ export function createFileRoomSnapshotStore(directory: string): RoomSnapshotStor
     save(state) {
       const target = resolve(storeDirectory, roomFileName(state.room.id));
       const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
-      try {
-        writeFileSync(temporary, `${JSON.stringify(state)}\n`, { encoding: "utf8", mode: 0o600 });
-        renameSync(temporary, target);
-      } finally {
-        if (existsSync(temporary)) unlinkSync(temporary);
-      }
+      withCollaborationFileLock(target, () => {
+        try {
+          writeFileSync(temporary, `${JSON.stringify(state)}\n`, { encoding: "utf8", mode: 0o600 });
+          renameSync(temporary, target);
+        } finally {
+          if (existsSync(temporary)) unlinkSync(temporary);
+        }
+      });
     },
     delete(roomId) {
       const target = resolve(storeDirectory, roomFileName(roomId));
-      if (existsSync(target)) unlinkSync(target);
+      withCollaborationFileLock(target, () => {
+        if (existsSync(target)) unlinkSync(target);
+      });
     },
   };
 }

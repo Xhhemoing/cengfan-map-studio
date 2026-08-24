@@ -4,6 +4,7 @@ import type { VisibleField } from "./template-document";
 import { normalizeCardExpressionTemplates } from "./card-expression";
 import { normalizeNameFormat } from "./name-format";
 import { normalizeDisplayFrame } from "./display-frame";
+import { normalizePrintBleedMm } from "./print-bleed";
 import { createDefaultGuestPanel, createDefaultScene } from "./scene-document-factories";
 import {
   CANVAS_LAYER_Z,
@@ -201,6 +202,7 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       safeMargin: clamp(scene.canvas.safeMargin, 0, Math.min(canvasWidth, canvasHeight) / 2, 36),
       backgroundOpacity: clamp(scene.canvas.backgroundOpacity, 0, 1, 1),
       lineHeight: clamp(scene.canvas.lineHeight, 0.8, 2.5, 1),
+      printBleedMm: normalizePrintBleedMm(scene.canvas.printBleedMm),
     },
     map: {
       ...scene.map,

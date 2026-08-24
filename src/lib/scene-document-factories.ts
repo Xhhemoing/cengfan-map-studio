@@ -51,6 +51,7 @@ export function createDefaultScene(templateId: MapTemplateId): SceneDocument {
       backgroundColor: template.background.color,
       backgroundFit: "cover",
       backgroundOpacity: 1,
+      printBleedMm: 0,
     },
     map: {
       x: 350,

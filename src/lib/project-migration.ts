@@ -1,6 +1,7 @@
 import type { ProjectSnapshot } from "./project-document";
 import { createDefaultScene, normalizeScene, type CardSettings, type SceneDocument } from "./scene-document";
 import { normalizeDisplayFrame } from "./display-frame";
+import { normalizePrintBleedMm } from "./print-bleed";
 import {
   asRecord,
   clamp,
@@ -8,6 +9,7 @@ import {
   isOneOf,
   stringFromSources,
   type MigrationContext,
+  type PrintBleedCanvas,
   type ProjectMigrationOptions,
   type ProvincePosition,
 } from "./project-migration-helpers";
@@ -37,7 +39,12 @@ function createMigrationContext(input: unknown, options: ProjectMigrationOptions
   };
 }
 
-function migrateCanvasSettings(context: MigrationContext): SceneDocument["canvas"] {
+/** Reads the print bleed off any stored canvas record, defaulting to no bleed. */
+export function readPrintBleedMm(canvas: unknown): number {
+  return normalizePrintBleedMm(asRecord(canvas)?.printBleedMm);
+}
+
+function migrateCanvasSettings(context: MigrationContext): PrintBleedCanvas {
   const { defaults, isV2, payload, style } = context;
   const canvasInput = asRecord(payload.canvas);
   const sources = isV2 && canvasInput ? [canvasInput, style, payload] : [style, payload];
@@ -52,6 +59,7 @@ function migrateCanvasSettings(context: MigrationContext): SceneDocument["canvas
       ? canvasInput.backgroundFit
       : defaults.canvas.backgroundFit,
     backgroundOpacity: isV2 ? clamp(canvasInput?.backgroundOpacity, 0, 1, defaults.canvas.backgroundOpacity) : 1,
+    printBleedMm: readPrintBleedMm(canvasInput),
   };
 }
 

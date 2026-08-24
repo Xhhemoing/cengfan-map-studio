@@ -42,6 +42,9 @@ export function clamp(value: unknown, minimum: number, maximum: number, fallback
   return Number.isFinite(numeric) ? Math.min(maximum, Math.max(minimum, numeric)) : fallback;
 }
 
+/** Canvas record where the print bleed is always resolved (0 = digital only). */
+export type PrintBleedCanvas = SceneDocument["canvas"] & { printBleedMm: number };
+
 export function isOneOf<T extends string>(value: unknown, values: readonly T[]): value is T {
   return typeof value === "string" && values.includes(value as T);
 }

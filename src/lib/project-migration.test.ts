@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrateProjectPayload } from "./project-migration";
+import { migrateProjectPayload, readPrintBleedMm } from "./project-migration";
 import { deriveFixedDisplayFrameFromCardSettings } from "./display-frame";
 
 const legacyDraft = {
@@ -373,6 +373,44 @@ describe("project migration", () => {
     expect(migrated.version).toBe(12);
     expect(migrated.students.map((student) => student.id)).toEqual(["future-1", "future-2"]);
     expect(migrated.students[1]).toMatchObject({ name: "陈宁", visibility: false });
+  });
+
+  it("defaults the canvas print bleed to zero and keeps a stored bleed through round trips", () => {
+    const legacy = migrateProjectPayload(legacyDraft);
+    expect(readPrintBleedMm(legacy.canvas)).toBe(0);
+
+    const printed = migrateProjectPayload({
+      schemaVersion: 2,
+      canvas: { width: 1500, height: 1000, printBleedMm: 3 },
+      students: legacyDraft.students,
+    });
+    expect(readPrintBleedMm(printed.canvas)).toBe(3);
+    expect(readPrintBleedMm(migrateProjectPayload(printed).canvas)).toBe(3);
+    expect(printed.students).toHaveLength(1);
+  });
+
+  it("falls back to no bleed for unusable print settings", () => {
+    const cases = [{ printBleedMm: -4 }, { printBleedMm: "3mm" }, { printBleedMm: null }, {}];
+
+    for (const canvas of cases) {
+      const migrated = migrateProjectPayload({ schemaVersion: 2, canvas: { width: 1500, height: 1000, ...canvas } });
+      expect(readPrintBleedMm(migrated.canvas)).toBe(0);
+    }
+    expect(readPrintBleedMm(undefined)).toBe(0);
+  });
+
+  it("keeps the roster when an unknown schema version carries print settings", () => {
+    const migrated = migrateProjectPayload({
+      schemaVersion: 41,
+      canvas: { width: 1500, height: 1000, printBleedMm: 5 },
+      students: [
+        { id: "future-print-1", name: "林舟", university: "浙江大学", city: "杭州" },
+        { id: "future-print-2", name: "陈宁", university: "清华大学", city: "北京市" },
+      ],
+    });
+
+    expect(migrated.students.map((student) => student.id)).toEqual(["future-print-1", "future-print-2"]);
+    expect(readPrintBleedMm(migrated.canvas)).toBe(5);
   });
 
   it("keeps partially filled student rows instead of dropping the person", () => {
