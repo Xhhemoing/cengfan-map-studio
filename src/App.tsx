@@ -36,7 +36,18 @@ import {
   buildProvinceSummary,
   type DataViewId,
   type MapTemplateId,
+  type Student,
 } from "./lib/project-data";
+import {
+  appendStudentsTransaction,
+  changeDataViewTransaction,
+  deleteStudentTransaction,
+  replaceStudentsTransaction,
+  setStudentsVisibilityTransaction,
+  toggleStudentVisibilityTransaction,
+  updateStudentTransaction,
+  type StudentPatch,
+} from "./lib/student-transactions";
 import { createId } from "./lib/ids";
 import { editorProjectStore } from "./lib/editor-project-store";
 import {
@@ -105,10 +116,10 @@ import {
 import { createSystemTemplate, mergeTemplateDocuments } from "./lib/template-document";
 import {
   applyCustomTemplateToProject,
-  createCustomTemplateFromProject,
   loadCustomTemplates,
   type CustomTemplateRecord,
 } from "./lib/template-store";
+import { captureCustomTemplate, withCapturedTemplate } from "./lib/template-capture";
 import {
   createDecorationElement,
   createLandmarkElement,
@@ -162,6 +173,7 @@ import {
   type PanelSide,
 } from "./lib/editor-layout";
 import { checkLayoutHealth } from "./lib/layout-health";
+import { buildProjectLayoutHealthInput } from "./lib/layout-health-input";
 import { listResourceHealthIssues } from "./lib/resource-health";
 
 import {
@@ -949,27 +961,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setActivePanel(location.stage === "frame" ? "layout" : location.stage === "map" ? "map" : "content");
   };
 
-  const contentLayoutIssues = useMemo(() => checkLayoutHealth({
-    canvas: { width: project.canvas.width, height: project.canvas.height, safeMargin: project.canvas.safeMargin },
-    cardsPositions: project.cards.positions,
-    objects: [
-      { id: "map", kind: "map", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
-      ...Object.keys(project.cards.positions ?? {}).map((id) => ({ id, kind: "card" as const, positionKey: id, zIndex: project.cards.zIndex, bounds: { x: 0, y: 0, width: project.cards.maxWidth, height: 180 } })),
-      ...(Object.keys(project.cards.positions ?? {}).length === 0 ? [{ id: "cards", kind: "card" as const, zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } }] : []),
-      ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
-      ...project.textElements.map((text) => ({
-        id: text.id,
-        kind: "text" as const,
-        zIndex: 40,
-        bounds: { x: text.textAlign === "right" ? text.x - text.maxWidth : text.textAlign === "center" ? text.x - text.maxWidth / 2 : text.x, y: text.y - text.fontSize, width: text.maxWidth, height: text.fontSize * 1.3 },
-        visible: text.visibility,
-        content: text.content,
-        textColor: text.color,
-        backgroundColor: project.canvas.backgroundColor,
-      })),
-      ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
-    ],
-  }), [project]);
+  const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildProjectLayoutHealthInput(project)), [project]);
 
   const handleLegacySceneSelect = (next: SceneSelection) => {
     handleSceneSelect(next);
@@ -1086,56 +1078,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
     const scope = window.confirm("点击“确定”保存视觉样式；点击“取消”保存布局倾向（含卡片分组）")
       ? "visual"
       : "layout";
-    const record = createCustomTemplateFromProject({
-      name: name.trim(),
-      baseTemplateId: project.templateId,
-      scope,
-      overrides: {
-        background: {
-          type: project.canvas.backgroundImageSrc ? "image" : "color",
-          color: project.canvas.backgroundColor || createSystemTemplate(project.templateId).background.color,
-          imageSrc: project.canvas.backgroundImageSrc,
-          opacity: project.canvas.backgroundOpacity,
-          blur: 0,
-          layer: "behind-map",
-        },
-        map: {
-          ...createSystemTemplate(project.templateId).map,
-          scale: project.map.scale,
-          offsetX: project.map.x,
-          offsetY: project.map.y,
-          landColor: project.map.landColor,
-          activeColor: project.map.activeColor,
-          edgeColor: project.map.edgeColor,
-          edgeStyle: project.map.edgeStyle ?? "solid",
-          edgeWidth: project.map.edgeWidth ?? 1,
-          showProvinceLabels: project.map.showProvinceLabels,
-          provinceStyles: project.map.provinceStyles ?? {},
-        },
-        cards: {
-          ...createSystemTemplate(project.templateId).cards,
-          preset: project.cards.preset,
-          grouping: project.cards.grouping,
-          maxWidth: project.cards.maxWidth,
-          padding: project.cards.padding,
-          background: project.cards.background,
-          textColor: project.cards.textColor,
-        },
-        visibleFields: project.cards.visibleFields,
-        regionalAssets: project.style.regionalAssets,
-      },
-      scene: {
-        canvas: project.canvas,
-        map: project.map,
-        cards: project.cards,
-        guests: project.guests,
-        textElements: project.textElements,
-        assetElements: project.assetElements,
-      },
-      students: project.students,
-    });
-    const next = [record, ...customTemplates].slice(0, 20);
-    setCustomTemplates(next);
+    const record = captureCustomTemplate({ name, scope, project });
+    setCustomTemplates(withCapturedTemplate(customTemplates, record));
     setStatusMessage(`已保存模板：${record.name}`);
   };
 
@@ -1188,70 +1132,13 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const dataWorkspaceProps = {
     students: project.students,
     dataView: project.dataView,
-    onChangeDataView: (view: DataViewId) => commitProjectTransaction({
-      id: createId(`tx-data-view-${view}`),
-      label: `切换数据呈现：${view}`,
-      source: "manual" as const,
-      apply: (current: ProjectDocument) => applyDataViewChange(current, view),
-    }),
-    onAppendStudents: (records: typeof project.students) => commitProjectTransaction({
-      id: createId("tx-append"),
-      label: `追加 ${records.length} 名学生`,
-      source: "import" as const,
-      apply: (current: ProjectDocument) => ({ ...current, students: [...current.students, ...records] }),
-    }),
-    onReplaceStudents: (records: typeof project.students) => commitProjectTransaction({
-      id: createId("tx-replace"),
-      label: `替换为 ${records.length} 名学生`,
-      source: "import" as const,
-      apply: (current: ProjectDocument) => ({ ...current, students: records }),
-    }),
-    onUpdateStudent: (id: string, patch: Partial<Pick<typeof project.students[number], "name" | "university" | "city" | "province" | "locationScope">>) => commitProjectTransaction({
-      id: createId(`tx-student-update-${id}`),
-      label: "编辑学生记录",
-      source: "manual" as const,
-      apply: (current: ProjectDocument) => ({
-        ...current,
-        students: current.students.map((student) => {
-          if (student.id !== id) return student;
-          const next = { ...student, ...patch };
-          if ("province" in patch && !patch.province) {
-            const { province: _cleared, ...withoutProvince } = next;
-            if ("locationScope" in patch && !patch.locationScope) {
-              const { locationScope: _locationScope, ...withoutLocationScope } = withoutProvince;
-              return withoutLocationScope;
-            }
-            return withoutProvince;
-          }
-          if ("locationScope" in patch && !patch.locationScope) {
-            const { locationScope: _cleared, ...rest } = next;
-            return rest;
-          }
-          return next;
-        }),
-      }),
-    }),
-    onToggleVisibility: (id: string) => commitProjectTransaction({
-      id: createId(`tx-student-visibility-${id}`),
-      label: "切换学生显示状态",
-      source: "manual" as const,
-      apply: (current: ProjectDocument) => ({
-        ...current,
-        students: current.students.map((student) => student.id === id ? { ...student, visibility: student.visibility === false } : student),
-      }),
-    }),
-    onDeleteStudent: (id: string) => commitProjectTransaction({
-      id: createId(`tx-student-delete-${id}`),
-      label: "删除学生记录",
-      source: "manual" as const,
-      apply: (current: ProjectDocument) => ({ ...current, students: current.students.filter((student) => student.id !== id) }),
-    }),
-    onSetStudentsVisibility: (visibility: boolean) => commitProjectTransaction({
-      id: createId(`tx-students-visibility-${visibility}`),
-      label: visibility ? "全部显示学生" : "全部隐藏学生",
-      source: "manual" as const,
-      apply: (current: ProjectDocument) => ({ ...current, students: current.students.map((student) => ({ ...student, visibility })) }),
-    }),
+    onChangeDataView: (view: DataViewId) => commitProjectTransaction(changeDataViewTransaction(view)),
+    onAppendStudents: (records: Student[]) => commitProjectTransaction(appendStudentsTransaction(records)),
+    onReplaceStudents: (records: Student[]) => commitProjectTransaction(replaceStudentsTransaction(records)),
+    onUpdateStudent: (id: string, patch: StudentPatch) => commitProjectTransaction(updateStudentTransaction(id, patch)),
+    onToggleVisibility: (id: string) => commitProjectTransaction(toggleStudentVisibilityTransaction(id)),
+    onDeleteStudent: (id: string) => commitProjectTransaction(deleteStudentTransaction(id)),
+    onSetStudentsVisibility: (visibility: boolean) => commitProjectTransaction(setStudentsVisibilityTransaction(visibility)),
     selectedStudentId,
     onSelectStudent: setSelectedStudentId,
   };
