@@ -49,7 +49,8 @@
 | 26 | 已完成 | 混编 ×5 | 包下载延迟 revoke、删字体确认、资源包体积、429 Retry-After、复查 |
 | 27 | 已完成 | 混编 ×5 | 协作版本 UI、对话持久化裁剪、嘉宾头像失败反馈、分区复查 |
 | 28 | 已完成 | opus ×5 | 上游失败假 finish、未就绪房间拒增量、校徽内联导出、CSV GBK、嘉宾键盘 |
-| 29 | 进行中 | 混编 ×5 | 无效凭证不续命、资源包字体 remap、分区复查 |
+| 29 | 已完成 | 混编 ×5 | 无效凭证不续命、资源包字体 remap、分区复查 |
+| 30 | 进行中 | opus ×5 | 只读熔断回声、SSE 版本跳变、导出剔除编辑态、文本拖拽预览、导入 warnings |
 
 ### 第 1 轮工作流（只读）
 
@@ -87,6 +88,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 29 轮 peek 不续命、资源包字体 remap 已合入；启动第 30 轮。
 - 2026-08-24：第 28 轮假 finish、未就绪拒增量、校徽内联、CSV GBK、嘉宾键盘已合入；启动第 29 轮。
 - 2026-08-24：第 27 轮 roomVersion、对话裁剪、嘉宾头像反馈已合入；启动第 28 轮。
 - 2026-08-24：第 26 轮包下载 revoke、删字体确认、资源包体积、429 Retry-After 已合入；启动第 27 轮。
@@ -437,6 +439,29 @@
 | 剩余复查 A | 只读。AI/协作。避开本轮落地文件。 |
 | 剩余复查 B | 只读。画布/导出。避开本轮落地文件。 |
 | 剩余复查 C | 只读。导入/工作台/存储。避开本轮落地文件。 |
+
+## 第 29 轮已合入
+
+- 无效凭证 GET/SSE 改 peek，不再 touch 续命。
+- 资源包导入按 fontIdRemap 回写工程字体引用。
+
+## 第 29 轮复查结论
+
+1. `readOnlyStreak` 被 parse 回声钉死，HTTP 路径只读熔断是死代码。
+2. SSE 追赶不校验版本连续，跳变静默丢中间事务。
+3. `serializePosterSvg` 未剔除缩放手柄、省份贴图选中框、命中层。
+4. 文本层拖拽无实时预览。
+5. 工程包 `warnings` 无 UI 消费。另：模板 scene 旁路素材预算、项目库解析失败静默隐身。
+
+## 第 30 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 只读熔断回声 | `server/ai/agent-loop.ts` 及测试。扫描跳过末尾 user 回声。 |
+| SSE 版本跳变 | `src/lib/useCollaborationRoom.ts` 及测试。ops 非连续则走 snapshot 或 backfill。 |
+| 导出剔除编辑态 | `src/lib/export-poster.ts` 及测试。补 data-resize-handles 等选择器。 |
+| 文本拖拽预览 | `src/components/canvas/TextLayer.tsx` 及测试。照搬 DecorationLayer schedulePreview。 |
+| 导入 warnings | `ProjectWorkbench.tsx`、`usePosterExport.ts` 及测试。展示 pack.warnings，入库前剥掉该字段。不改 App.tsx。 |
 
 ## 第 2 轮已合入
 
