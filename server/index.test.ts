@@ -8,9 +8,11 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import type { AddressInfo } from "node:net";
 import type http from "node:http";
+import { randomBytes } from "node:crypto";
 import { createAiLogger } from "./ai/ai-observability";
 import { createRateLimiter } from "./ai/rate-limit";
-import { createAiServer, DEFAULT_PORT, resolvePort } from "./index";
+import { attachServerLifecycle, createAiServer, createReadyAiServer, DEFAULT_PORT, resolvePort, type RoomStoreFactoryOptions } from "./index";
+import { createRoomStore, type CreatedRoom, type RoomCreator, type RoomStore } from "./collaboration";
 
 const fsHooks = vi.hoisted(() => ({ createReadStream: null as null | ((filePath: string) => unknown) }));
 
@@ -238,6 +240,56 @@ async function rawPost(origin: string, path: string, body: unknown, headers: Rec
     request.on("error", reject);
     request.end(payload);
   });
+}
+
+interface PersistedRoomRecord {
+  id: string;
+  accessToken: string;
+  snapshot: unknown;
+  clientId: string;
+  displayName: string;
+}
+
+/**
+ * R3-4 的持久化房间存储尚未落地，这里用一个可快照/可重放的替身占位：
+ * `restore` 里的房间按原 id 与原 access token 重新建出来，`flush()` 把当前
+ * 房间交给注入的 `persist`。它只覆盖 R3-5 负责的接线面（工厂入参、flush 调用、
+ * 启动恢复），房间快照本身的字段与密钥哈希由 R3-4 定义。
+ */
+function createReplayRoomStore(options: RoomStoreFactoryOptions): RoomStore & { flush: () => Promise<void> } {
+  const records = new Map<string, PersistedRoomRecord>();
+  let replaying: PersistedRoomRecord | undefined;
+  const inner = createRoomStore({
+    ...options,
+    generateId: () => replaying?.id ?? randomBytes(6).toString("hex").toUpperCase(),
+    generateSecret: () => replaying?.accessToken ?? randomBytes(24).toString("base64url"),
+  });
+  const create = ((snapshot: unknown, creator: RoomCreator | string) => {
+    const result = (inner.create as (value: unknown, owner: RoomCreator | string) => CreatedRoom)(snapshot, creator);
+    if (typeof creator !== "string" && result.access) {
+      records.set(result.room.id, {
+        id: result.room.id,
+        accessToken: result.access.accessToken,
+        snapshot,
+        clientId: creator.clientId,
+        displayName: creator.displayName,
+      });
+    }
+    return result;
+  }) as RoomStore["create"];
+  for (const record of Array.isArray(options.restore) ? options.restore as PersistedRoomRecord[] : []) {
+    replaying = record;
+    try {
+      create(record.snapshot, { clientId: record.clientId, displayName: record.displayName });
+    } finally {
+      replaying = undefined;
+    }
+  }
+  return {
+    ...inner,
+    create,
+    flush: async () => { await options.persist?.([...records.values()]); },
+  };
 }
 
 function workspaceRequestInit(token = "workspace-test-token"): RequestInit {
@@ -1735,6 +1787,134 @@ describe("unified application server", () => {
     expect(await response.text()).toBe("");
     expect(response.headers.get("content-length")).toBeNull();
     expect(response.headers.get("access-control-allow-origin")).toBe("https://studio.example");
+  });
+
+  it("ends live SSE streams, flushes the room store, and frees the port on SIGTERM", async () => {
+    const monitor = captureProcessFailures();
+    const persisted: unknown[] = [];
+    const flushes: string[] = [];
+    const server = createAiServer({
+      roomHeartbeatIntervalMs: 60_000,
+      persistRooms: (snapshot) => { persisted.push(snapshot); },
+      roomStoreFactory: (storeOptions) => {
+        const store = createReplayRoomStore(storeOptions);
+        return { ...store, flush: async () => { flushes.push("rooms"); await store.flush(); } };
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const stream = await openEventStream(origin, created.room.id, created.access.accessToken);
+    const applied = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ txId: "shutdown-1", clientId: "client-a", baseVersion: 0, snapshot: { title: "编辑中" } }),
+    });
+    expect(applied.status).toBe(200);
+    const frames: string[] = [];
+    frames.push((await stream.read()) ?? "");
+    expect(frames[0]).toContain("event: snapshot");
+    expect(server.roomStreamStats!().openStreams).toBe(1);
+
+    const lifecycle = attachServerLifecycle(server, { timeoutMs: 3_000 });
+    const startedAt = Date.now();
+    await lifecycle.shutdown("SIGTERM");
+    const elapsedMs = Date.now() - startedAt;
+
+    try {
+      for (let chunk = await stream.read(); chunk !== null; chunk = await stream.read()) frames.push(chunk);
+      // 房间会随快照活过重启，所以关停只结束连接，绝不能借用 closed 帧告诉客户端房间没了。
+      expect(frames.join("")).not.toContain("event: closed");
+      expect(flushes).toEqual(["rooms"]);
+      expect(persisted).toHaveLength(1);
+      expect(server.roomStreamStats!().openStreams).toBe(0);
+      // 远早于 3s 截止时间：关停靠主动排空收敛，而不是靠超时兜底。
+      expect(elapsedMs).toBeLessThan(1_000);
+      await expect(fetch(`${origin}/api/live`)).rejects.toThrow();
+      expect(monitor.failures).toEqual([]);
+    } finally {
+      monitor.restore();
+      await stream.close();
+    }
+  });
+
+  it("bounds an in-flight request by the shutdown deadline instead of hanging the exit", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const target = new URL(origin);
+    // 只发一半请求体：处理函数会一直等剩余字节，连接因此始终处于「在途」状态。
+    const hung = httpRequest({
+      hostname: target.hostname,
+      port: target.port,
+      path: "/api/rooms",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": 64 },
+    });
+    hung.on("error", () => undefined);
+    let requestClosed = false;
+    hung.on("close", () => { requestClosed = true; });
+    hung.write("{\"clientId\":");
+    await wait(50);
+
+    const lifecycle = attachServerLifecycle(server, { timeoutMs: 300 });
+    const startedAt = Date.now();
+    await lifecycle.shutdown("SIGTERM");
+    const elapsedMs = Date.now() - startedAt;
+
+    try {
+      expect(elapsedMs).toBeGreaterThanOrEqual(250);
+      expect(elapsedMs).toBeLessThan(3_000);
+      // 截止时间到就切断仍未收完的请求，否则一个半截请求能把进程钉在关停里。
+      await wait(50);
+      expect(requestClosed).toBe(true);
+      await expect(fetch(`${origin}/api/live`)).rejects.toThrow();
+    } finally {
+      hung.destroy();
+    }
+  });
+
+  it("restores a previously created room from the persisted snapshot on boot", async () => {
+    let snapshot: unknown;
+    const first = createAiServer({
+      persistRooms: (value) => { snapshot = value; },
+      roomStoreFactory: createReplayRoomStore,
+    });
+    servers.push(first);
+    const firstOrigin = await startServer(first);
+    const created = await createCollaborationRoom(firstOrigin, { title: "重启前" });
+    await attachServerLifecycle(first, { timeoutMs: 2_000 }).shutdown("SIGTERM");
+    expect(snapshot).toBeDefined();
+
+    const restored = createAiServer({ roomSnapshot: snapshot, roomStoreFactory: createReplayRoomStore });
+    servers.push(restored);
+    const restoredOrigin = await startServer(restored);
+    const response = await fetch(`${restoredOrigin}/api/rooms/${created.room.id}`, {
+      headers: roomHeaders(created.access.accessToken),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ id: created.room.id, snapshot: { title: "重启前" } });
+  });
+
+  it("writes the room snapshot into the data directory and reloads it on the next boot", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-"));
+    directories.push(dataDir);
+    const first = await createReadyAiServer({ dataDir, roomStoreFactory: createReplayRoomStore });
+    servers.push(first);
+    const firstOrigin = await startServer(first);
+    const created = await createCollaborationRoom(firstOrigin, { title: "落盘" });
+    await attachServerLifecycle(first, { timeoutMs: 2_000 }).shutdown("SIGTERM");
+
+    const restarted = await createReadyAiServer({ dataDir, roomStoreFactory: createReplayRoomStore });
+    servers.push(restarted);
+    const restartedOrigin = await startServer(restarted);
+    const response = await fetch(`${restartedOrigin}/api/rooms/${created.room.id}`, {
+      headers: roomHeaders(created.access.accessToken),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ id: created.room.id, snapshot: { title: "落盘" } });
   });
 
   it("keeps AI endpoints open without a token in development", async () => {

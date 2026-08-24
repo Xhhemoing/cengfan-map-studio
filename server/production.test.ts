@@ -58,6 +58,53 @@ describe("server lifecycle", () => {
     expect(order[0]).toBe("draining");
   });
 
+  it("drains long-lived connections after close and waits for both close and flush", async () => {
+    const order: string[] = [];
+    let releaseClose: (() => void) | undefined;
+    const server = {
+      close: vi.fn((callback: () => void) => {
+        order.push("close");
+        releaseClose = () => { order.push("closed"); callback(); };
+      }),
+    };
+    const flush = vi.fn(async () => { order.push("flush"); });
+    const drain = vi.fn(async () => { order.push("drain"); });
+    const lifecycle = createServerLifecycle({ server, flush, drain, timeoutMs: 2_000 });
+
+    let settled = false;
+    const pending = lifecycle.shutdown("SIGTERM").then(() => { settled = true; });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 20); });
+
+    // 排空必须发生在 close 之后（close 只停止接收新连接），刷盘再排在排空之后。
+    expect(order).toEqual(["close", "drain", "flush"]);
+    // flush 已完成，但连接还没走干净：此时结束关停会把在途请求直接丢掉。
+    expect(settled).toBe(false);
+
+    releaseClose!();
+    await pending;
+    expect(settled).toBe(true);
+    expect(order).toEqual(["close", "drain", "flush", "closed"]);
+  });
+
+  it("invokes the deadline hook when in-flight connections outlive the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const onTimeout = vi.fn();
+      const lifecycle = createServerLifecycle({
+        server: { close: vi.fn() },
+        flush: async () => undefined,
+        onTimeout,
+        timeoutMs: 50,
+      });
+      const pending = lifecycle.shutdown();
+      await vi.advanceTimersByTimeAsync(50);
+      await expect(pending).resolves.toBeUndefined();
+      expect(onTimeout).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("resolves after the timeout when close or flush does not finish", async () => {
     vi.useFakeTimers();
     try {

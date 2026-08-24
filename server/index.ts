@@ -23,7 +23,7 @@ import {
   parseDataRequestSchema,
   proposeEditsRequestSchema,
 } from "./ai/schemas";
-import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent } from "./collaboration";
+import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomStore, type RoomStoreOptions } from "./collaboration";
 
 export const DEFAULT_PORT = 8787;
 
@@ -38,8 +38,26 @@ export interface RoomStreamStats {
   oversizedEvents: number;
 }
 
+/**
+ * 房间存储的持久化接线面。快照内容对本模块完全不透明：它由房间存储（R3-4）
+ * 生成并解释，服务器只负责在启动时把它交回去、在关停时把它取出来落盘。
+ */
+export interface RoomStoreFactoryOptions extends RoomStoreOptions {
+  /** 上次关停落下的快照，原样交给房间存储重建房间。 */
+  restore?: unknown;
+  /** 房间存储用它把快照交出来；服务器负责写入持久化介质。 */
+  persist?: (snapshot: unknown) => void | Promise<void>;
+}
+
+/** 房间存储在 R3-4 落地 flush() 之前仍然可用：缺失时关停路径静默跳过。 */
+export type PersistableRoomStore = RoomStore & { flush?: () => void | Promise<void> };
+
 export type AiServer = http.Server & {
   flushAiState?: () => Promise<void>;
+  /** 把房间状态交给持久化介质；房间存储尚未支持 flush 时为空操作。 */
+  flushRooms?: () => Promise<void>;
+  /** 干净地结束所有 SSE 连接（不发 closed 帧，房间在重启后依然存在）。 */
+  drainRoomStreams?: () => void;
   lifecycle?: ReturnType<typeof createServerLifecycle>;
   roomStreamStats?: () => RoomStreamStats;
 };
@@ -98,6 +116,11 @@ export interface AiServerOptions {
   };
   onAiStateUnavailable?: () => void;
   productionConfig?: ReturnType<typeof validateProductionConfig>;
+  /** 启动时交还给房间存储的快照（由上一次关停落盘）。 */
+  roomSnapshot?: unknown;
+  /** 房间存储交出快照时的落盘回调。 */
+  persistRooms?: (snapshot: unknown) => void | Promise<void>;
+  roomStoreFactory?: (options: RoomStoreFactoryOptions) => PersistableRoomStore;
 }
 
 const DEFAULT_MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
@@ -433,12 +456,17 @@ export function createAiServer(options: AiServerOptions = {}) {
   const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
   const trustProxy = options.trustProxy ?? process.env.TRUST_PROXY === "1";
   const workspaceFile = join(dataDir, "workspace.json");
-  const roomStore = createRoomStore({
+  const roomStoreOptions: RoomStoreFactoryOptions = {
     maxRooms: options.maxRooms ?? Number(process.env.MAX_ROOMS ?? DEFAULT_MAX_ROOMS),
     maxSubscribers: options.maxRoomSubscribers ?? Number(process.env.MAX_ROOM_SUBSCRIBERS ?? DEFAULT_MAX_ROOM_SUBSCRIBERS),
     roomTtlMs: options.roomTtlMs ?? Number(process.env.ROOM_TTL_MS ?? DEFAULT_ROOM_TTL_MS),
     invitationTtlMs: options.roomInvitationTtlMs ?? DEFAULT_ROOM_INVITATION_TTL_MS,
-  });
+    ...(options.roomSnapshot === undefined ? {} : { restore: options.roomSnapshot }),
+    ...(options.persistRooms ? { persist: options.persistRooms } : {}),
+  };
+  // restore/persist 是 R3-4 给 createRoomStore 加的入参；它还没落地时这两个字段
+  // 会被现有实现忽略，房间照旧是进程内状态，其余行为完全不变。
+  const roomStore: PersistableRoomStore = (options.roomStoreFactory ?? createRoomStore)(roomStoreOptions);
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
   const maxRoomEventBytes = positiveBytes(
@@ -515,6 +543,27 @@ export function createAiServer(options: AiServerOptions = {}) {
       aiStateUnavailable = true;
       throw error;
     }
+  };
+  // 关停时需要主动结束的 SSE 连接。每条流注册自己的 endStream，拆流时自行注销。
+  const openRoomStreams = new Set<() => void>();
+  const drainRoomStreams = () => {
+    // 只结束连接，不发 closed 帧：房间随快照活过重启，客户端重连即可继续，
+    // 而 closed 是「房间真的没了」的终态信号，借用它会让客户端丢弃本地会话。
+    for (const endStream of [...openRoomStreams]) {
+      try {
+        endStream();
+      } catch {
+        // 单条连接收尾失败不应挡住其余连接。
+      }
+    }
+    openRoomStreams.clear();
+  };
+  const flushRooms = async () => {
+    const flush = roomStore.flush;
+    // 与 R3-4 的耦合点：房间存储支持 flush() 时由关停路径强制落一次快照，
+    // 尚未支持时静默跳过（此时房间仍是进程内状态，重启后消失）。
+    if (typeof flush !== "function") return;
+    await flush.call(roomStore);
   };
 
   const server = http.createServer(async (request, response) => {
@@ -900,10 +949,15 @@ export function createAiServer(options: AiServerOptions = {}) {
         // 已经交给 response.write、但内核/进程侧还没刷出的字节数。write 的完成回调
         // 是唯一可靠的释放信号：只看 write 的返回值无法知道积压什么时候消失。
         let streamBufferedBytes = 0;
+        let drainRegistration: (() => void) | undefined;
         const pendingWrites = new Set<() => void>();
         const teardownStream = () => {
           if (streamTornDown) return;
           streamTornDown = true;
+          if (drainRegistration) {
+            openRoomStreams.delete(drainRegistration);
+            drainRegistration = undefined;
+          }
           if (heartbeat) clearInterval(heartbeat);
           heartbeat = undefined;
           for (const settle of [...pendingWrites]) settle();
@@ -1037,6 +1091,8 @@ export function createAiServer(options: AiServerOptions = {}) {
           response.flushHeaders();
           roomStreamMetrics.openStreams += 1;
           streamCounted = true;
+          drainRegistration = endStream;
+          openRoomStreams.add(endStream);
           if (!Number.isInteger(knownVersion) || knownVersion < room.version) {
             // 首帧是这条连接唯一的引导快照，不受单事件上限约束（否则大房间会陷入重连循环）；
             // 它仍计入积压统计，客户端排不掉就会在下一个事件上被判为慢订阅者。
@@ -1273,8 +1329,78 @@ export function createAiServer(options: AiServerOptions = {}) {
     }
   });
   Object.defineProperty(server, "flushAiState", { value: flushAiState });
+  Object.defineProperty(server, "flushRooms", { value: flushRooms });
+  Object.defineProperty(server, "drainRoomStreams", { value: drainRoomStreams });
   Object.defineProperty(server, "roomStreamStats", { value: (): RoomStreamStats => ({ ...roomStreamMetrics }) });
   return server as AiServer;
+}
+
+export interface AttachServerLifecycleOptions {
+  timeoutMs?: number;
+  onDraining?: () => void;
+  setTimeoutFn?: typeof setTimeout;
+}
+
+/**
+ * 把关停编排接到 HTTP 服务器上：排空 SSE、放走空闲连接、并行落 AI 状态与房间快照，
+ * 在途请求最多再跑 shutdownTimeoutMs，超时就强制切断连接。
+ */
+export function attachServerLifecycle(server: AiServer, options: AttachServerLifecycleOptions = {}) {
+  const lifecycle = createServerLifecycle({
+    server,
+    timeoutMs: options.timeoutMs,
+    setTimeoutFn: options.setTimeoutFn,
+    onDraining: options.onDraining,
+    drain: async () => {
+      server.drainRoomStreams?.();
+      // SSE 结束后 socket 会退回 keep-alive 空闲态；不主动放走，close 会一直等它。
+      server.closeIdleConnections?.();
+      await new Promise<void>((resolve) => { setImmediate(resolve); });
+      server.closeIdleConnections?.();
+    },
+    onTimeout: () => {
+      server.closeAllConnections?.();
+    },
+    flush: async () => {
+      // 两份状态互不依赖：一份失败也要把另一份落完，最后再把失败抛给调用方。
+      const results = await Promise.allSettled([
+        server.flushAiState?.() ?? Promise.resolve(),
+        server.flushRooms?.() ?? Promise.resolve(),
+      ]);
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failed) throw failed.reason;
+    },
+  });
+  Object.defineProperty(server, "lifecycle", { value: lifecycle, configurable: true });
+  return lifecycle;
+}
+
+/** 缺失或损坏的房间快照一律当作「没有房间」：启动不能被一份坏文件挡住。 */
+async function loadRoomSnapshot(file: string): Promise<unknown> {
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch {
+    // 首次启动、或上一次进程还没落过盘，都没有快照文件。
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    console.warn(`房间快照无法解析，本次启动不恢复房间: ${file}`);
+    return undefined;
+  }
+}
+
+function createRoomSnapshotWriter(dataDir: string, file: string) {
+  return async (snapshot: unknown): Promise<void> => {
+    await mkdir(dataDir, { recursive: true });
+    const temporaryFile = `${file}.${process.pid}.tmp`;
+    // 快照里带着房间凭证（R3-4 保证是哈希后的）：仍然按私有文件写，并且先写临时文件再改名，
+    // 避免关停被打断时留下半截快照。
+    await writeFile(temporaryFile, `${JSON.stringify(snapshot)}\n`, { encoding: "utf8", mode: 0o600 });
+    await rename(temporaryFile, file);
+  };
 }
 
 export async function createReadyAiServer(options: AiServerOptions = {}): Promise<AiServer> {
@@ -1284,7 +1410,16 @@ export async function createReadyAiServer(options: AiServerOptions = {}): Promis
   const stateFile = process.env.AI_STATE_FILE ?? config.config?.aiStateFile ?? join(dataDir, "ai-runtime-state.json");
   const store = options.aiStateStore ?? createFileAiStateStore(stateFile);
   const state = await store.load();
-  return createAiServer({ ...options, aiStateStore: store, aiRuntimeState: state, productionConfig: config });
+  const roomSnapshotFile = join(dataDir, "collaboration-rooms.json");
+  const roomSnapshot = options.roomSnapshot ?? await loadRoomSnapshot(roomSnapshotFile);
+  return createAiServer({
+    ...options,
+    aiStateStore: store,
+    aiRuntimeState: state,
+    productionConfig: config,
+    ...(roomSnapshot === undefined ? {} : { roomSnapshot }),
+    persistRooms: options.persistRooms ?? createRoomSnapshotWriter(dataDir, roomSnapshotFile),
+  });
 }
 
 const isDirectRun =
@@ -1311,8 +1446,7 @@ if (isDirectRun) {
   }
   const serverPromise = createReadyAiServer({ staticDir, aiConfig: resolveAiConfig(), productionConfig });
   void serverPromise.then((server) => {
-    const lifecycle = createServerLifecycle({ server, flush: () => server.flushAiState?.() ?? Promise.resolve(), timeoutMs: productionConfig.config?.shutdownTimeoutMs, onDraining: () => undefined });
-    Object.defineProperty(server, "lifecycle", { value: lifecycle });
+    const lifecycle = attachServerLifecycle(server, { timeoutMs: productionConfig.config?.shutdownTimeoutMs });
     const shutdown = (signal: string) => void lifecycle.shutdown(signal).then(() => process.exit(0));
     process.once("SIGINT", () => shutdown("SIGINT"));
     process.once("SIGTERM", () => shutdown("SIGTERM"));
