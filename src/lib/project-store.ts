@@ -102,6 +102,22 @@ const DATABASE_NAME = "cengfan-map-studio";
 const DATABASE_VERSION = 2;
 const STORE_NAME = "projects";
 const LEGACY_WORKSPACE_STORE = "workspace";
+const LEGACY_WORKSPACE_KEY = "current";
+/** 迁移完成标记，与迁移写入同一个事务，保证多标签页/多实例只迁移一次。 */
+const LEGACY_MIGRATION_MARKER_KEY = "legacy-migrated";
+/** blocked 后留给其他连接响应 versionchange 并关闭的窗口。 */
+const BLOCKED_GRACE_MS = 3000;
+
+/** 连接已失效（被关闭 / store 被其他标签页删除），重开一次即可恢复。 */
+function isStaleConnectionError(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null | undefined)?.name;
+  return name === "InvalidStateError" || name === "NotFoundError";
+}
+
+/** 让路给其他标签页的升级请求：不关闭连接对方会永远 blocked。 */
+function releaseOnVersionChange(db: IDBDatabase): void {
+  db.onversionchange = () => db.close();
+}
 
 function openDatabase(factory: IDBFactory): Promise<{ db: IDBDatabase; legacyV1: boolean }> {
   return new Promise((resolve, reject) => {
@@ -131,6 +147,13 @@ function openDatabase(factory: IDBFactory): Promise<{ db: IDBDatabase; legacyV1:
 function openAtVersion(factory: IDBFactory, version: number): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = factory.open(DATABASE_NAME, version);
+    let blockedTimer: ReturnType<typeof setTimeout> | null = null;
+    let abandoned = false;
+    const clearBlockedTimer = () => {
+      if (blockedTimer === null) return;
+      clearTimeout(blockedTimer);
+      blockedTimer = null;
+    };
     request.onupgradeneeded = () => {
       const db = request.result;
       // upgradeneeded 内只允许同步 schema 变更；数据迁移必须在打开成功后进行，
@@ -141,52 +164,138 @@ function openAtVersion(factory: IDBFactory, version: number): Promise<IDBDatabas
       // 双方升级时都补齐全部 store，避免另一方随后再升级而触发 blocked。
       if (!db.objectStoreNames.contains(LEGACY_WORKSPACE_STORE)) db.createObjectStore(LEGACY_WORKSPACE_STORE);
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("IndexedDB 打开失败"));
-    request.onblocked = () => reject(new Error("IndexedDB 被其他标签页占用"));
+    request.onsuccess = () => {
+      clearBlockedTimer();
+      // 已按“被占用”失败返回过，迟到的连接必须关闭，否则会挡住后续升级。
+      if (abandoned) {
+        request.result.close();
+        return;
+      }
+      releaseOnVersionChange(request.result);
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      clearBlockedTimer();
+      reject(request.error ?? new Error("IndexedDB 打开失败"));
+    };
+    request.onblocked = () => {
+      // 其他连接收到 versionchange 后会主动关闭，blocked 只是过渡态；
+      // 给出宽限窗口，超时才判定为被旧标签页真正占用。
+      if (blockedTimer !== null) return;
+      blockedTimer = setTimeout(() => {
+        blockedTimer = null;
+        abandoned = true;
+        reject(new Error("IndexedDB 被其他标签页占用"));
+      }, BLOCKED_GRACE_MS);
+      (blockedTimer as unknown as { unref?: () => void }).unref?.();
+    };
   });
 }
 
 /**
  * 迁移旧版 workspace 库（键 "current"）为第一个项目。
  * 必须在数据库打开成功之后执行——事务需要正常激活，不能在 upgradeneeded 事件处理器内。
+ * 读取判定与写入放在同一个 readwrite 事务里，并落一个完成标记：
+ * 两个 store 实例（或两个标签页）并发打开时只会有一方真正迁移，不会产生重复项目。
  */
-async function migrateLegacyWorkspace(db: IDBDatabase): Promise<void> {
-  if (!db.objectStoreNames.contains(LEGACY_WORKSPACE_STORE) || !db.objectStoreNames.contains(STORE_NAME)) return;
-  const legacyPack = await new Promise<unknown>((resolve) => {
-    const request = db.transaction(LEGACY_WORKSPACE_STORE, "readonly").objectStore(LEGACY_WORKSPACE_STORE).get("current");
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(undefined);
+function migrateLegacyWorkspace(db: IDBDatabase): Promise<void> {
+  if (!db.objectStoreNames.contains(LEGACY_WORKSPACE_STORE) || !db.objectStoreNames.contains(STORE_NAME)) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE_NAME, LEGACY_WORKSPACE_STORE], "readwrite");
+    const workspace = tx.objectStore(LEGACY_WORKSPACE_STORE);
+    const projects = tx.objectStore(STORE_NAME);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 迁移失败"));
+    tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 迁移中止"));
+
+    const markerRequest = workspace.get(LEGACY_MIGRATION_MARKER_KEY);
+    markerRequest.onsuccess = () => {
+      if (markerRequest.result) return;
+      const legacyRequest = workspace.get(LEGACY_WORKSPACE_KEY);
+      legacyRequest.onsuccess = () => {
+        const legacyPack = legacyRequest.result;
+        if (!legacyPack) {
+          workspace.put(true, LEGACY_MIGRATION_MARKER_KEY);
+          return;
+        }
+        const keysRequest = projects.getAllKeys();
+        keysRequest.onsuccess = () => {
+          const occupied = (keysRequest.result ?? []).length > 0;
+          const migrated = occupied ? null : buildMigratedProject(legacyPack);
+          if (migrated) projects.put(migrated, migrated.id);
+          // 迁移完成（或旧数据损坏/已有项目而放弃）后清掉旧键并落标记，保证幂等。
+          workspace.delete(LEGACY_WORKSPACE_KEY);
+          workspace.put(true, LEGACY_MIGRATION_MARKER_KEY);
+        };
+      };
+    };
   });
-  if (!legacyPack) return;
-  const existing = await new Promise<IDBValidKey[]>((resolve) => {
-    const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).getAllKeys();
-    request.onsuccess = () => resolve(request.result ?? []);
-    request.onerror = () => resolve([]);
-  });
-  if (existing.length > 0) return;
-  let migrated: StoredProject;
+}
+
+function buildMigratedProject(legacyPack: unknown): StoredProject | null {
   try {
-    migrated = {
+    const now = new Date().toISOString();
+    return {
       id: createId("proj"),
       name: "迁移的项目",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       pack: restoreProjectPackage(legacyPack),
     };
   } catch {
     // 损坏的旧工作区直接丢弃
-    return;
+    return null;
   }
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction([STORE_NAME, LEGACY_WORKSPACE_STORE], "readwrite");
-    tx.objectStore(STORE_NAME).put(migrated, migrated.id);
-    // 迁移成功即移除旧键，保证幂等（projects 已有数据或旧键不存在时不会重复迁移）
-    tx.objectStore(LEGACY_WORKSPACE_STORE).delete("current");
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
+}
+
+type TransactionRunner = <T>(
+  stores: string | string[],
+  mode: IDBTransactionMode,
+  execute: (tx: IDBTransaction) => Promise<T>,
+) => Promise<T>;
+
+/**
+ * 缓存单个连接，但连接失效后不会毒化缓存：
+ * versionchange / close 会立刻作废缓存，创建事务时发现连接已关闭则重开一次再重试。
+ */
+function createConnectionPool(open: () => Promise<IDBDatabase>): { run: TransactionRunner } {
+  let ready: Promise<IDBDatabase> | null = null;
+  const invalidate = (pending: Promise<IDBDatabase>) => {
+    if (ready === pending) ready = null;
+  };
+  const ensure = (): Promise<IDBDatabase> => {
+    const cached = ready;
+    if (cached) return cached;
+    const pending: Promise<IDBDatabase> = open().then((db) => {
+      db.onversionchange = () => {
+        db.close();
+        invalidate(pending);
+      };
+      db.onclose = () => invalidate(pending);
+      return db;
+    });
+    pending.catch(() => invalidate(pending));
+    ready = pending;
+    return pending;
+  };
+  const run: TransactionRunner = async (stores, mode, execute) => {
+    for (let attempt = 0; ; attempt += 1) {
+      const pending = ensure();
+      const db = await pending;
+      let tx: IDBTransaction;
+      try {
+        tx = db.transaction(stores, mode);
+      } catch (error) {
+        invalidate(pending);
+        if (attempt === 0 && isStaleConnectionError(error)) continue;
+        throw error;
+      }
+      return execute(tx);
+    }
+  };
+  return { run };
 }
 
 export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.indexedDB): ProjectStore {
@@ -198,56 +307,48 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
       async remove() { throw new Error("当前浏览器不支持 IndexedDB"); },
     };
   }
-  let ready: Promise<IDBDatabase> | null = null;
-  const ensure = () => {
-    let pending = ready;
-    if (!pending) {
-      pending = openDatabase(factory).then(async ({ db, legacyV1 }) => {
-        if (legacyV1) await migrateLegacyWorkspace(db);
-        return db;
-      });
-      pending.catch(() => { ready = null; });
-      ready = pending;
-    }
-    return pending;
-  };
+  const { run } = createConnectionPool(async () => {
+    const { db, legacyV1 } = await openDatabase(factory);
+    // 迁移失败不应让整个 store 不可用：连接照常返回，用户仍能读写项目。
+    if (legacyV1) await migrateLegacyWorkspace(db).catch(() => {});
+    return db;
+  });
   return {
     async list() {
-      const db = await ensure();
-      return new Promise((resolve) => {
-        const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).getAll();
+      return run(STORE_NAME, "readonly", (tx) => new Promise<StoredProject[]>((resolve) => {
+        const request = tx.objectStore(STORE_NAME).getAll();
         request.onsuccess = () => {
+          // 单条记录损坏只丢弃该条，其余项目必须照常列出。
           const items = (request.result ?? []).map(parseStoredProject).filter((item): item is StoredProject => item !== null);
           resolve(items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
         };
         request.onerror = () => resolve([]);
-      });
+        tx.onabort = () => resolve([]);
+      }));
     },
     async get(id) {
-      const db = await ensure();
-      return new Promise((resolve) => {
-        const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(id);
+      return run(STORE_NAME, "readonly", (tx) => new Promise<StoredProject | null>((resolve) => {
+        const request = tx.objectStore(STORE_NAME).get(id);
         request.onsuccess = () => resolve(parseStoredProject(request.result));
         request.onerror = () => resolve(null);
-      });
+        tx.onabort = () => resolve(null);
+      }));
     },
     async put(project) {
-      const db = await ensure();
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
+      await run(STORE_NAME, "readwrite", (tx) => new Promise<void>((resolve, reject) => {
         tx.objectStore(STORE_NAME).put(structuredClone(project), project.id);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 写入失败"));
-      });
+        tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 写入中止"));
+      }));
     },
     async remove(id) {
-      const db = await ensure();
-      await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
+      await run(STORE_NAME, "readwrite", (tx) => new Promise<void>((resolve, reject) => {
         tx.objectStore(STORE_NAME).delete(id);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 删除失败"));
-      });
+        tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 删除中止"));
+      }));
     },
   };
 }
