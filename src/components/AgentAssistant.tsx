@@ -329,6 +329,12 @@ export function AgentAssistant({
 
   const active = conversations.find((conversation) => conversation.id === activeId) ?? null;
   const activeDraft = active ? drafts[active.id] ?? "" : "";
+  /**
+   * 全助手同一时间只允许一路会话在跑：activeRunRef/activeRunIdRef 是 Provider 级单例，
+   * 第二次 run 会顶掉归属，先跑的那一路既回写不了结果，也永远退不出 running。
+   */
+  const runningConversation = conversations.find((conversation) => conversation.status === "running") ?? null;
+  const blockedByOtherRun = (conversation: AssistantConversation) => runningConversation !== null && runningConversation.id !== conversation.id;
   // 助手挂载时也走同一条登记路径；卸载后由编辑器里的调用接力，两边幂等。
   const currentProjectDigest = useAssistantProjectSync(project);
   const projectIsCurrent = active === null || active.projectDigest === currentProjectDigest;
@@ -443,7 +449,6 @@ export function AgentAssistant({
   };
 
   const selectConversation = (conversation: AssistantConversation) => {
-    if (conversation.status === "running") return;
     setActiveId(conversation.id);
     if (conversation.projectDigest !== currentProjectDigest) {
       onPreview?.(null);
@@ -451,6 +456,8 @@ export function AgentAssistant({
     }
     // 已有草稿优先：用户在这个对话里敲了一半的输入不该被历史需求覆盖。
     if (drafts[conversation.id] === undefined) setDraft(conversation.id, conversation.request);
+    // 进行中的对话可以回来看进度或取消，但它还没有可预览的结果。
+    if (conversation.status === "running") return;
     if (conversation.selectedStepIds.length === 0) {
       onPreview?.(null);
       return;
@@ -460,7 +467,7 @@ export function AgentAssistant({
   };
 
   const run = async () => {
-    if (!mountedRef.current || !active || !projectIsCurrent || !activeDraft.trim() || active.status === "running") return;
+    if (!mountedRef.current || !active || !projectIsCurrent || !activeDraft.trim() || runningConversation !== null) return;
     const request = activeDraft.trim();
     const runProjectDigest = currentProjectDigest;
     const runProjectGeneration = projectGenerationRef.current;
@@ -499,6 +506,9 @@ export function AgentAssistant({
     // 但一次瞬时失败（超时/限流/上游不可用）不该丢掉对话历史与预算回执：会话仍 canContinue，
     // 复用它重试就沿用同一个 AI 任务；只有草稿、已取消与真正续不上的会话才新开。
     const isFresh = active.status === "draft" || active.status === "cancelled" || active.budgetExpired || !active.session.canContinue;
+    // 续聊后的 landingPreview() 是全量步骤，其中包含用户已经手动取消勾选的旧步骤。
+    // 记下开跑前就存在的步骤，完成时只并入本轮新增的，否则旧步骤会被静默勾回。
+    const priorStepIds = new Set(isFresh ? [] : active.steps.map((step) => step.id));
     const session = isFresh
       ? new AgentSession(project, { mode: active.mode, assets, onProgress: progress })
       : active.session;
@@ -546,7 +556,10 @@ export function AgentAssistant({
         onPreview?.(null);
         return;
       }
-      const selectedStepIds = [...new Set([...active.selectedStepIds, ...validWrites.map((step) => step.id)])];
+      const validWriteIds = new Set(validWrites.map((step) => step.id));
+      const keptSelection = isFresh ? [] : active.selectedStepIds.filter((id) => validWriteIds.has(id));
+      const addedStepIds = validWrites.filter((step) => !priorStepIds.has(step.id)).map((step) => step.id);
+      const selectedStepIds = [...new Set([...keptSelection, ...addedStepIds])];
       const completed = outcome.kind === "finish";
       const allLowRisk = validWrites.length > 0 && validWrites.every((step) => step.risk === "low");
       const smartApply = active.mode === "smart" && !active.restored && completed && allLowRisk;
@@ -604,8 +617,9 @@ export function AgentAssistant({
     <>
       <div className="agent-assistant-history" aria-label="对话历史">
         {conversations.map((item) => (
-          <button key={item.id} type="button" className={item.id === conversation.id ? "is-active" : undefined} disabled={item.status === "running"} title={item.request || "新对话"} onClick={() => selectConversation(item)}>
+          <button key={item.id} type="button" className={item.id === conversation.id ? "is-active" : undefined} title={item.request || "新对话"} onClick={() => selectConversation(item)}>
             <span>{item.title}</span>
+            {item.status === "running" && <small>进行中</small>}
             {item.selectedStepIds.length > 0 && item.status === "completed" && <small>待应用</small>}
           </button>
         ))}
@@ -623,8 +637,9 @@ export function AgentAssistant({
         {conversation.status === "running" ? (
           <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
         ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !draftFor(conversation).trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {runButtonLabel(conversation, projectIsCurrent)}</button>
+          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !draftFor(conversation).trim() || conversation.status === "applied" || blockedByOtherRun(conversation)}><Sparkles size={16} aria-hidden /> {runButtonLabel(conversation, projectIsCurrent)}</button>
         )}
+        {blockedByOtherRun(conversation) && <p className="panel-note" role="status">另一个对话正在运行，完成或取消后才能发送新需求。</p>}
         {projectIsCurrent && conversation.status === "failed" && !conversation.budgetExpired && conversation.session.canContinue && <p className="panel-note" role="status">上一次请求失败，会话仍然有效，重试会沿用原有上下文与预算。</p>}
         {projectIsCurrent && conversation.budgetExpired && <p className="panel-note" role="status">会话预算已过期或已被占用，发送新需求会新开一个 AI 任务。</p>}
         {projectIsCurrent && conversation.status === "completed" && !conversation.session.canContinue && <p className="panel-note" role="status">历史会话已只读恢复，发送新需求会新开一个 AI 任务。</p>}

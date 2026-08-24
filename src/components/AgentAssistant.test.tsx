@@ -551,6 +551,108 @@ describe("AgentAssistant", () => {
     root.unmount();
   });
 
+  it("refuses to start a second run while another conversation is still running", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    let release!: (value: ReturnType<typeof response>) => void;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<ReturnType<typeof response>>((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container, root } = await renderAssistant(project);
+    const historyButtons = () => Array.from(container.querySelectorAll<HTMLButtonElement>(".agent-assistant-history button"));
+    // 先备好第二段对话的草稿，再回到第一段开跑。
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="新建对话"]')?.click());
+    setMessage(container, "第二段");
+    flushSync(() => historyButtons()[0]!.click());
+    setMessage(container, "第一段");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    flushSync(() => historyButtons()[1]!.click());
+    const runButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("开始规划"));
+    // 第二路一旦发出去就会顶掉 activeRunRef，第一路的结果会被吞掉并永远卡在 running。
+    flushSync(() => runButton!.click());
+    await settle();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(runButton?.disabled).toBe(true);
+    expect(container.textContent).toContain("另一个对话正在运行");
+
+    // 进行中的那段仍可回去取消，结果也仍然回写得到本人。
+    flushSync(() => historyButtons()[0]!.click());
+    expect(container.querySelector('[aria-label="取消 AI 会话"]')).not.toBeNull();
+    release(response({ kind: "finish", summary: "第一段完成" }));
+    await vi.waitFor(() => expect(container.textContent).toContain("第一段完成"));
+    expect(container.querySelector('[aria-label="取消 AI 会话"]')).toBeNull();
+
+    // 跑完之后第二段重新可发送。
+    flushSync(() => historyButtons()[1]!.click());
+    expect(container.textContent).not.toContain("另一个对话正在运行");
+    const secondRunButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("开始规划"));
+    expect(secondRunButton?.disabled).toBe(false);
+    root.unmount();
+  });
+
+  it("does not let a conversation persisted mid-run lock the assistant after reload", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "第一轮完成" }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "重开后完成" })));
+    const first = await renderAssistant(project);
+    setMessage(first.container, "关页面前的会话");
+    clickText(first.container, "开始规划");
+    await vi.waitFor(() => expect(first.container.textContent).toContain("第一轮完成"));
+    await vi.waitFor(() => expect(JSON.parse(window.localStorage.getItem("cengfan-map-studio:ai-conversations:v1")!).conversations[0].status).toBe("completed"));
+    first.root.unmount();
+
+    // 页面在会话跑到一半时关掉，落盘的状态就停在 running。
+    const saved = JSON.parse(window.localStorage.getItem("cengfan-map-studio:ai-conversations:v1")!);
+    saved.conversations[0].status = "running";
+    window.localStorage.setItem("cengfan-map-studio:ai-conversations:v1", JSON.stringify(saved));
+
+    const restored = await renderAssistant(project, vi.fn(), false);
+    await vi.waitFor(() => expect(restored.container.querySelector('[aria-label="描述 AI 修改需求"]')).not.toBeNull());
+    expect(restored.container.querySelector('[aria-label="取消 AI 会话"]')).toBeNull();
+    expect(restored.container.textContent).toContain("页面刷新，任务已中止");
+    // 没有任何请求在飞，助手不该被这条幽灵会话锁死。
+    expect(restored.container.textContent).not.toContain("另一个对话正在运行");
+    setMessage(restored.container, "重开后继续用");
+    clickText(restored.container, "开始规划");
+    await vi.waitFor(() => expect(restored.container.textContent).toContain("重开后完成"));
+    restored.root.unmount();
+  });
+
+  it("keeps steps unchecked by the user unchecked after a continuation", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "first", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "第一轮完成" }))
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "second", name: "update_cards", arguments: { patch: { fontSize: project.cards.fontSize + 2 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "继续完成" })));
+    const { container, root, onCommit } = await renderAssistant(project);
+    setMessage(container, "第一轮");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("第一轮完成"));
+    const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('.agent-assistant--docked input[type="checkbox"]'));
+    expect(checkboxes()[0]!.checked).toBe(true);
+    flushSync(() => checkboxes()[0]!.click());
+    expect(checkboxes()[0]!.checked).toBe(false);
+
+    setMessage(container, "继续调整");
+    clickText(container, "继续对话");
+    await vi.waitFor(() => expect(container.textContent).toContain("继续完成"));
+    expect(checkboxes()).toHaveLength(2);
+    // 续聊只并入本轮新增的写步骤：上一轮被取消勾选的那条不该被静默勾回。
+    expect(checkboxes()[0]!.checked).toBe(false);
+    expect(checkboxes()[1]!.checked).toBe(true);
+    expect(container.textContent).toContain("1/2 项已选");
+
+    clickText(container, "确认应用");
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    const applied = onCommit.mock.calls[0]![0].apply(project) as ProjectDocument;
+    expect(applied.cards.fontSize).toBe(project.cards.fontSize + 2);
+    expect(applied.map.scale).toBe(project.map.scale);
+    root.unmount();
+  });
+
   it("keeps an applied conversation terminal and hides proposal controls", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     vi.stubGlobal("fetch", vi.fn()
