@@ -47,7 +47,8 @@
 | 24 | 已完成 | opus ×5 | SVG 延迟 revoke、工作台包体积、导出对话框、字体去重映射、同 z 重叠 |
 | 25 | 已完成 | 混编 ×5 | 任务段 lastIndex、设置焦点、删不安全镜像工厂、空白选画布、复查 |
 | 26 | 已完成 | 混编 ×5 | 包下载延迟 revoke、删字体确认、资源包体积、429 Retry-After、复查 |
-| 27 | 进行中 | 混编 ×5 | 协作版本 UI、对话持久化裁剪、嘉宾头像失败反馈、分区复查 |
+| 27 | 已完成 | 混编 ×5 | 协作版本 UI、对话持久化裁剪、嘉宾头像失败反馈、分区复查 |
+| 28 | 进行中 | opus ×5 | 上游失败假 finish、未就绪房间拒增量、校徽内联导出、CSV GBK、嘉宾键盘 |
 
 ### 第 1 轮工作流（只读）
 
@@ -85,6 +86,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 27 轮 roomVersion、对话裁剪、嘉宾头像反馈已合入；启动第 28 轮。
 - 2026-08-24：第 26 轮包下载 revoke、删字体确认、资源包体积、429 Retry-After 已合入；启动第 27 轮。
 - 2026-08-24：启动第 26 轮：包下载 revoke、删字体确认、资源包体积、429 Retry-After。
 - 2026-08-24：第 25 轮任务段边界、设置焦点、删不安全镜像、空白选画布已合入。
@@ -390,6 +392,31 @@
 | 嘉宾头像失败反馈 | `src/components/inspector/GuestsInspector.tsx` 及测试。照搬 CanvasInspector 的 onError + 清空 input。 |
 | 剩余复查 A | 只读。AI/协作/存储，避开本轮落地文件与 App.tsx。 |
 | 剩余复查 B | 只读。画布/导入/工作台，避开本轮落地文件与 App.tsx。 |
+
+## 第 27 轮已合入
+
+- 协作 `roomVersion` 在加入/增量/快照/补齐后同步到 React 状态。
+- 对话持久化超 256KB 淘汰最旧会话。
+- 嘉宾头像失败有提示并清空 input。
+
+## 第 27 轮复查结论
+
+1. 多步任务中途上游挂掉会被本地兜底伪装成成功 finish，绕开客户端重试路径。
+2. 未就绪房间接受 operations 会凭空变成 ready 碎片工程。
+3. 无效凭证 GET 房间仍 touch，可钉死 TTL（可下轮修；本轮让出 `server/index.ts` 给其它切片）。
+4. PNG/SVG 导出静默丢校徽（路径型 href）。
+5. GBK CSV 静默乱码导入。
+6. 嘉宾面板键盘不可达。
+
+## 第 28 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 上游失败假 finish | `server/ai/agent-routing.ts`、`server/ai/agent-loop.ts` 及测试。段内已有工具往返时不要本地 finish，抛回上游错误。 |
+| 未就绪拒增量 | `server/collaboration.ts` 及测试。`!ready && operations` 抛 `ROOM_INITIALIZING`。 |
+| 校徽内联导出 | 新建 `src/lib/svg-image-inline.ts`、`src/lib/usePosterExport.ts` 及测试。不改 PosterCanvas。 |
+| CSV GBK | 新建 `src/lib/csv-decode.ts`、`DataImportPanel.tsx` 及测试。xlsx 路径不变。 |
+| 嘉宾键盘 | `src/components/canvas/PosterCanvas.tsx` 及测试。Enter/Space 选中，方向键移动。 |
 
 ## 第 2 轮已合入
 
