@@ -18,18 +18,29 @@ const MAX_HEALTH_ISSUES = 20;
 const MAX_ASSET_RESULTS = 20;
 const MAX_LAYOUT_SAMPLES = 10;
 
+const utf8Encoder = new TextEncoder();
+const utf8Decoder = new TextDecoder();
+
 function utf8Bytes(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+  return utf8Encoder.encode(value).byteLength;
 }
 
-function truncateUtf8(value: string, maxBytes: number): string {
-  if (utf8Bytes(value) <= maxBytes) return value;
-  let result = "";
-  for (const character of value) {
-    if (utf8Bytes(result + character) > maxBytes) break;
-    result += character;
-  }
-  return result;
+function isUtf8Continuation(byte: number): boolean {
+  return (byte & 0b1100_0000) === 0b1000_0000;
+}
+
+/** Longest prefix of `bytes` within `maxBytes` that ends on a UTF-8 sequence boundary. */
+function sliceUtf8(bytes: Uint8Array, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  if (maxBytes >= bytes.byteLength) return utf8Decoder.decode(bytes);
+  let end = maxBytes;
+  while (end > 0 && isUtf8Continuation(bytes[end]!)) end -= 1;
+  return utf8Decoder.decode(bytes.subarray(0, end));
+}
+
+export function truncateUtf8(value: string, maxBytes: number): string {
+  const bytes = utf8Encoder.encode(value);
+  return bytes.byteLength <= maxBytes ? value : sliceUtf8(bytes, maxBytes);
 }
 
 export function compactAgentToolResult(callName: string, content: string): string {
@@ -50,14 +61,16 @@ export function compactAgentToolResult(callName: string, content: string): strin
     compact = { ok: false, code: "TOOL_RESULT_INVALID_JSON" };
   }
   const base = JSON.stringify(compact);
-  if (utf8Bytes(base) <= MAX_TOOL_RESULT_BYTES) return base;
+  const baseBytes = utf8Encoder.encode(base);
+  if (baseBytes.byteLength <= MAX_TOOL_RESULT_BYTES) return base;
   const makeTruncated = (preview: string) => JSON.stringify({ ok: false, code: "TOOL_RESULT_TRUNCATED", preview });
   let low = 0;
-  let high = base.length;
+  // JSON escaping never shrinks the preview, so a prefix longer than the whole budget can never fit.
+  let high = Math.min(baseBytes.byteLength, MAX_TOOL_RESULT_BYTES);
   let best = makeTruncated("");
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
-    const candidate = makeTruncated(truncateUtf8(base, middle));
+    const candidate = makeTruncated(sliceUtf8(baseBytes, middle));
     if (utf8Bytes(candidate) <= MAX_TOOL_RESULT_BYTES) {
       best = candidate;
       low = middle + 1;

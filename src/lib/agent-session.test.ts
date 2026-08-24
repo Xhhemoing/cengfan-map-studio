@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "./project-document";
-import { AgentSession, compactAgentToolResult, type AgentSessionSnapshot } from "./agent-session";
+import { AgentSession, compactAgentToolResult, truncateUtf8, type AgentSessionSnapshot } from "./agent-session";
 
 function response(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
@@ -371,5 +371,44 @@ describe("AgentSession", () => {
     release();
     await first;
     expect((await session.continue("继续")).kind).toBe("finish");
+  });
+
+  it("truncates on UTF-8 sequence boundaries without emitting replacement characters", () => {
+    const value = "界🎓测a試𝒜".repeat(400);
+    const encoder = new TextEncoder();
+    for (let maxBytes = 0; maxBytes <= 96; maxBytes += 1) {
+      const truncated = truncateUtf8(value, maxBytes);
+      expect(encoder.encode(truncated).byteLength).toBeLessThanOrEqual(maxBytes);
+      expect(value.startsWith(truncated)).toBe(true);
+      expect(truncated).not.toContain("\uFFFD");
+    }
+    expect(truncateUtf8("界", 8)).toBe("界");
+    expect(truncateUtf8(value, encoder.encode(value).byteLength)).toBe(value);
+  });
+
+  it("keeps fuzzed CJK and emoji tool results valid UTF-8 JSON within the 16KiB budget", () => {
+    let seed = 20_260_824;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed / 2_147_483_648;
+    };
+    const alphabet = ["界", "测", "试", "a", "🎓", "👩‍🎓", "𝒜", "é", "「", "\n", "\"", "\\", "\u0007"];
+    const encoder = new TextEncoder();
+    const strictDecoder = new TextDecoder("utf-8", { fatal: true });
+    for (let round = 0; round < 40; round += 1) {
+      const length = 3_000 + Math.floor(random() * 9_000);
+      let text = "";
+      for (let index = 0; index < length; index += 1) text += alphabet[Math.floor(random() * alphabet.length)];
+      const compacted = compactAgentToolResult("generic", JSON.stringify({ ok: true, text }));
+      const bytes = encoder.encode(compacted);
+
+      expect(bytes.byteLength).toBeLessThanOrEqual(16 * 1024);
+      expect(() => strictDecoder.decode(bytes)).not.toThrow();
+      const parsed = JSON.parse(compacted) as { code?: string; preview?: string };
+      if (parsed.code === "TOOL_RESULT_TRUNCATED") {
+        expect(parsed.preview).not.toContain("\uFFFD");
+        expect(bytes.byteLength).toBeGreaterThan(16 * 1024 - 32);
+      }
+    }
   });
 });
