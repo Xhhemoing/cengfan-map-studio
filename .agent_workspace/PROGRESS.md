@@ -22,7 +22,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
-| 6 | IN_PROGRESS | — | — | Band elimination, notice unification, CI. R6-1 first in persist-visibility chain. |
+| 6 | IN_PROGRESS | R6-8 | — | CI workflow landed. Awaiting R6-1 persist trim, R6-4 notice, R6-5 App split, R6-7 crash return. |
 
 ## Round 0 Baseline (pre-optimization)
 
