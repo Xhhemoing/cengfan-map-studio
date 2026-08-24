@@ -417,7 +417,7 @@ describe("AssetPanel", () => {
     root.unmount();
   });
 
-  it("commits uniform width from either control only on blur", () => {
+  it("commits uniform width from the number box on blur and from the slider on input", () => {
     const onPatchProvinceTextureUniformSize = vi.fn();
     const { container, root } = renderPanel({
       selectedProvince: "北京市",
@@ -451,9 +451,10 @@ describe("AssetPanel", () => {
       setter?.call(slider, "145");
       slider.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(onPatchProvinceTextureUniformSize).not.toHaveBeenCalled();
-    flushSync(() => slider.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(onPatchProvinceTextureUniformSize).toHaveBeenCalledWith({ enabled: true, width: 145, height: 80 });
+    onPatchProvinceTextureUniformSize.mockClear();
+    flushSync(() => slider.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(onPatchProvinceTextureUniformSize).not.toHaveBeenCalled();
     root.unmount();
   });
 

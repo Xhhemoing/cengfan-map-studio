@@ -11,7 +11,7 @@ function typeValue(input: HTMLInputElement, value: string) {
 }
 
 describe("province texture size controls", () => {
-  it("commits uniform number and slider edits on blur", () => {
+  it("commits uniform number edits on blur and slider edits on input", () => {
     const onPatch = vi.fn();
     const container = document.createElement("div");
     const root = createRoot(container);
@@ -35,9 +35,10 @@ describe("province texture size controls", () => {
     expect(onPatch).toHaveBeenCalledWith({ enabled: true, width: 135, height: 80 });
     onPatch.mockClear();
     flushSync(() => typeValue(slider, "145"));
-    expect(onPatch).not.toHaveBeenCalled();
-    flushSync(() => slider.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ enabled: true, width: 145, height: 80 });
+    onPatch.mockClear();
+    flushSync(() => slider.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(onPatch).not.toHaveBeenCalled();
     root.unmount();
   });
 

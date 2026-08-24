@@ -29,16 +29,20 @@ export function RangeNumberControl({
     if (!editingRef.current) setDraft(String(value));
   }, [value]);
 
-  const commitDraft = () => {
-    editingRef.current = false;
-    const numeric = Number(draft);
-    if (!Number.isFinite(numeric) || draft.trim() === "") {
+  const commitRaw = (raw: string) => {
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric) || raw.trim() === "") {
       setDraft(String(value));
       return;
     }
     const committed = Math.min(max, Math.max(min, numeric));
     setDraft(String(committed));
     if (committed !== value) onCommit(committed);
+  };
+
+  const commitDraft = () => {
+    editingRef.current = false;
+    commitRaw(draft);
   };
 
   return (
@@ -56,9 +60,9 @@ export function RangeNumberControl({
         onFocus={() => { editingRef.current = true; }}
         onInput={(event) => {
           editingRef.current = true;
-          setDraft(event.currentTarget.value);
+          commitRaw(event.currentTarget.value);
         }}
-        onBlur={() => commitDraft()}
+        onBlur={() => { editingRef.current = false; }}
       />
       <div className="range-number-control__number">
         <input
