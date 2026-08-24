@@ -27,7 +27,9 @@ import { DEFAULT_CARD_EXPRESSION_TEMPLATES, formatCardExpression } from "../../l
 import { DEFAULT_NAME_FORMAT, formatStudentName } from "../../lib/name-format";
 import { wrapCardText, type CardTextFragment } from "../../lib/card-text-layout";
 import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
+import { computeGuestPanelLayout, DEFAULT_GUEST_PANEL } from "../../lib/guest-panel-layout";
 import { DecorationLayer } from "./DecorationLayer";
+import { GuestsLayer } from "./GuestsLayer";
 import { ReferenceCardVisual, referenceCardColor, type ReferenceCardPresentation } from "./ReferenceCardVisual";
 import { MapLayer } from "./MapLayer";
 import { RegionalAssetLayer } from "./RegionalAssetLayer";
@@ -46,36 +48,6 @@ const MemoizedMapLayer = memo(MapLayer);
 const MemoizedRegionalAssetLayer = memo(RegionalAssetLayer);
 const MemoizedDecorationLayer = memo(DecorationLayer);
 const MemoizedTextLayer = memo(TextLayer);
-
-/** Truncate a single-line guest text (name / title / note) with an ellipsis. */
-function truncateGuestText(text: string, maxChars: number): string {
-  if (maxChars <= 0) return "";
-  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
-}
-
-const GUEST_CUSTOM_MAX_LINES = 14;
-
-/** Wrap the panel's free-form custom text into display lines (hard wrap by width, cap the line count). */
-function wrapGuestCustomText(text: string, maxChars: number): string[] {
-  const lines: string[] = [];
-  for (const rawLine of text.split("\n")) {
-    let rest = rawLine;
-    while (rest.length > maxChars) {
-      if (lines.length >= GUEST_CUSTOM_MAX_LINES) break;
-      lines.push(rest.slice(0, maxChars));
-      rest = rest.slice(maxChars);
-    }
-    if (lines.length >= GUEST_CUSTOM_MAX_LINES) {
-      if (rest.length > 0) {
-        const last = lines[GUEST_CUSTOM_MAX_LINES - 1];
-        if (last) lines[GUEST_CUSTOM_MAX_LINES - 1] = `${last.slice(0, maxChars - 1)}…`;
-      }
-      break;
-    }
-    lines.push(rest);
-  }
-  return lines;
-}
 
 function featureCoordinatePolygons(feature: MapFeature): Position[][][] {
   return feature.geometry.type === "Polygon"
@@ -258,7 +230,28 @@ function cardRowsForGroup(
   }));
 }
 
-export function PosterCanvas({
+/** Document slices painted for a given document object. A caller may edit a document in place
+ *  (same object, a replaced `cards` / `map` / … slice); prop identity cannot see that, because
+ *  both sides of the memo comparison are then the very same object. */
+const paintedSlices = new WeakMap<ProjectDocument, Record<string, unknown>>();
+
+function documentChangedInPlace(project: ProjectDocument): boolean {
+  const painted = paintedSlices.get(project);
+  if (!painted) return false;
+  const current = project as unknown as Record<string, unknown>;
+  const keys = Object.keys(current);
+  return keys.length !== Object.keys(painted).length
+    || keys.some((key) => !Object.is(painted[key], current[key]));
+}
+
+function arePosterCanvasPropsEqual(previous: PosterCanvasProps, next: PosterCanvasProps): boolean {
+  if (documentChangedInPlace(next.project)) return false;
+  const keys = Object.keys(next) as Array<keyof PosterCanvasProps>;
+  if (keys.length !== Object.keys(previous).length) return false;
+  return keys.every((key) => Object.is(previous[key], next[key]));
+}
+
+function PosterCanvasView({
   project,
   posterRef,
   exportMode = false,
@@ -284,6 +277,7 @@ export function PosterCanvas({
   gridSize = DEFAULT_GRID_SIZE,
   renderIntervalMs = 0,
 }: PosterCanvasProps) {
+  paintedSlices.set(project, { ...project });
   const resolvedGridSize = clampGridSize(gridSize);
   const cardDrag = useRef<{
     id: string;
@@ -304,17 +298,7 @@ export function PosterCanvas({
     borderless: boolean;
     connectorHidden: boolean;
   } | null>(null);
-  const guestDrag = useRef<{
-    offsetX: number;
-    offsetY: number;
-    x: number;
-    y: number;
-    originalX: number;
-    originalY: number;
-    element: SVGGElement;
-  } | null>(null);
   const cardPreviewScheduler = useRef(createCanvasPreviewScheduler<{ id: string; x: number; y: number }>());
-  const guestPreviewScheduler = useRef(createCanvasPreviewScheduler<{ x: number; y: number }>());
 
   const updateCardPreview = useCallback((next: { id: string; x: number; y: number }) => {
     const drag = cardDrag.current;
@@ -338,26 +322,12 @@ export function PosterCanvas({
   }, []);
 
   const clearCardPreview = useCallback(() => clearCanvasPreview(cardPreviewScheduler.current), []);
-  const clearGuestPreview = useCallback(() => clearCanvasPreview(guestPreviewScheduler.current), []);
 
   const scheduleCardPreview = useCallback((next: { id: string; x: number; y: number }) => {
     scheduleCanvasPreview(cardPreviewScheduler.current, next, renderIntervalMs, updateCardPreview);
   }, [renderIntervalMs, updateCardPreview]);
 
-  const updateGuestPreview = useCallback((next: { x: number; y: number }) => {
-    const drag = guestDrag.current;
-    if (!drag) return;
-    drag.element.setAttribute("transform", `translate(${next.x} ${next.y})`);
-  }, []);
-
-  const scheduleGuestPreview = useCallback((next: { x: number; y: number }) => {
-    scheduleCanvasPreview(guestPreviewScheduler.current, next, renderIntervalMs, updateGuestPreview);
-  }, [renderIntervalMs, updateGuestPreview]);
-
-  useEffect(() => () => {
-    clearCardPreview();
-    clearGuestPreview();
-  }, [clearCardPreview, clearGuestPreview]);
+  useEffect(() => () => clearCardPreview(), [clearCardPreview]);
   const visibleStudents = useMemo(() => getVisibleStudents(project.students), [project.students]);
   const summary = useMemo(() => buildProvinceSummary(visibleStudents), [visibleStudents]);
   const counts = useMemo(() => new Map(summary.map((item) => [item.province, item.count])), [summary]);
@@ -451,58 +421,12 @@ export function PosterCanvas({
     () => new Set(project.cards.noWrapFields ?? []),
     [project.cards.noWrapFields],
   );
-  const guests = project.guests ?? {
-    title: "特邀嘉宾 · 老师名单",
-    x: 48,
-    y: 780,
-    width: 280,
-    padding: 14,
-    background: "#ffffff",
-    opacity: 0.92,
-    textColor: "#1c3154",
-    fontSize: 13,
-    visibility: true,
-    people: [],
-  };
-  const visibleGuests = guests.people.filter((person) => person.visibility !== false);
-  const guestTitleTypography = guests.titleTypography ?? {};
-  const guestPeopleTypography = guests.peopleTypography ?? {};
-  const guestTitleFontSize = guestTitleTypography.fontSize ?? guests.fontSize + 1;
-  const guestPeopleFontSize = guestPeopleTypography.fontSize ?? guests.fontSize;
-  const guestNoteFontSize = Math.max(10, guestPeopleFontSize - 2);
-  const guestsDisplayMode = guests.displayMode === "cards" ? "cards" : "list";
-  const guestListAvatarSize = Math.max(22, guestPeopleFontSize + 8);
-  const guestListUsesAvatar = visibleGuests.some((person) => person.avatarSrc);
-  const guestListAvatarGap = guestListUsesAvatar ? guestListAvatarSize + 8 : 0;
-  const guestNoteLineHeight = Math.max(13, guestNoteFontSize + 3) * lineHeightMultiplier;
-  const guestListNoteLines = visibleGuests.some((person) => person.note) ? guestNoteLineHeight : 0;
-  const guestRowHeight = Math.max(guestListAvatarSize, Math.max(16, guestPeopleFontSize + 6) * lineHeightMultiplier) + guestListNoteLines;
-  const guestCardGap = 10;
-  const guestCardMinWidth = 92;
-  const guestCardColumns = Math.max(1, Math.floor((guests.width - guests.padding * 2 + guestCardGap) / (guestCardMinWidth + guestCardGap)));
-  const guestCardWidth = (guests.width - guests.padding * 2 - (guestCardColumns - 1) * guestCardGap) / guestCardColumns;
-  const guestCardAvatarSize = 40;
-  const guestCardTitleLine = Math.max(15, guestPeopleFontSize + 5) * lineHeightMultiplier;
-  const guestCardSubLine = Math.max(12, Math.max(10, guestPeopleFontSize - 2) + 3) * lineHeightMultiplier;
-  const guestCardHasTitle = visibleGuests.some((person) => person.title);
-  const guestCardHasNote = visibleGuests.some((person) => person.note);
-  const guestCardHeight = 6 + guestCardAvatarSize + 6 + guestCardTitleLine
-    + (guestCardHasTitle ? guestCardSubLine : 0)
-    + (guestCardHasNote ? guestCardSubLine : 0) + 6;
-  const guestCardRows = Math.max(1, Math.ceil(visibleGuests.length / Math.max(1, guestCardColumns)));
-  const guestCustomText = guests.customText ?? "";
-  const guestCustomMaxChars = Math.max(8, Math.floor((guests.width - guests.padding * 2 - guestListAvatarGap) / guestPeopleFontSize));
-  const guestCustomLines = guestCustomText ? wrapGuestCustomText(guestCustomText, guestCustomMaxChars) : [];
-  const guestCustomLineHeight = Math.max(16, guestPeopleFontSize + 4) * lineHeightMultiplier;
-  // Gap between the header divider and the first custom-text baseline, scaled with the font size.
-  const guestCustomTopGap = Math.round(guestPeopleFontSize * 0.9) + 11;
-  const guestCustomHeight = guestCustomLines.length > 0
-    ? guestCustomTopGap + (guestCustomLines.length - 1) * guestCustomLineHeight + Math.round(guestPeopleFontSize * 0.35) + 8
-    : 0;
-  const guestHeight = guests.padding * 2 + 28 + guestCustomHeight
-    + (guestsDisplayMode === "cards"
-      ? guestCardRows * guestCardHeight + (guestCardRows - 1) * guestCardGap
-      : Math.max(1, visibleGuests.length) * guestRowHeight);
+  const guests = project.guests ?? DEFAULT_GUEST_PANEL;
+  const guestLayout = useMemo(
+    () => computeGuestPanelLayout(guests, lineHeightMultiplier),
+    [guests, lineHeightMultiplier],
+  );
+  const guestHeight = guestLayout.height;
   const layoutOccupiedAreas = useMemo(() => {
     const textAreas = project.textElements.flatMap((text) => {
       const area = textLayoutObstacle(text);
@@ -778,8 +702,6 @@ export function PosterCanvas({
     filterPrefix: "connector-edge",
   }), [project.cards.connectorColor, project.cards.connectorDash, project.cards.connectorWidth]);
 
-  const guestX = guests.x;
-  const guestY = guests.y;
   const decorationAssets = useMemo(
     () => project.assetElements.filter((asset) => asset.kind === "decoration"),
     [project.assetElements],
@@ -794,6 +716,7 @@ export function PosterCanvas({
   const selectAsset = useCallback((id: string) => onSelect?.({ type: "asset", id }), [onSelect]);
   const mapPathForAsset = useCallback((feature: MapFeature) => mapPath(feature as never), [mapPath]);
   const selectText = useCallback((id: string) => onSelect?.({ type: "text", id }), [onSelect]);
+  const selectGuests = useCallback(() => onSelect?.({ type: "guests" }), [onSelect]);
 
   const canvasPoint = useCallback((event: PointerEvent<SVGGElement>) => {
     const svg = event.currentTarget.ownerSVGElement;
@@ -1079,6 +1002,7 @@ export function PosterCanvas({
                           fontSize={project.cards.fontSize}
                           edgeColor={project.map.edgeColor}
                           titleFont={resolveFontFamily(project.cards.fieldFonts?.title, userFonts)}
+                          lineHeightMultiplier={lineHeightMultiplier}
                         />
                       ) : (
                         <DestinationCard
@@ -1108,258 +1032,19 @@ export function PosterCanvas({
       node: (
         <>
           {guests.visibility !== false && (
-            <g
-              data-guests-layer
-              transform={`translate(${guestX} ${guestY})`}
-              onClick={!exportMode ? (event) => { event.stopPropagation(); onSelect?.({ type: "guests" }); } : undefined}
-              role={!exportMode && onSelect ? "button" : undefined}
-              tabIndex={!exportMode && onSelect ? 0 : undefined}
-              aria-label="特邀嘉宾"
-              onPointerDown={!exportMode && onMoveGuests ? (event) => {
-                const point = canvasPoint(event);
-                if (!point) return;
-                event.stopPropagation();
-                event.currentTarget.setPointerCapture(event.pointerId);
-                guestDrag.current = {
-                  offsetX: point.x - guestX,
-                  offsetY: point.y - guestY,
-                  x: guestX,
-                  y: guestY,
-                  originalX: guestX,
-                  originalY: guestY,
-                  element: event.currentTarget,
-                };
-              } : undefined}
-              onPointerMove={!exportMode && onMoveGuests ? (event) => {
-                if (!event.currentTarget.hasPointerCapture(event.pointerId) || !guestDrag.current) return;
-                const point = canvasPoint(event);
-                if (!point) return;
-                const nextX = Math.round(Math.min(project.canvas.width - guests.width, Math.max(0, point.x - guestDrag.current.offsetX)));
-                const nextY = Math.round(Math.min(project.canvas.height - guestHeight, Math.max(0, point.y - guestDrag.current.offsetY)));
-                guestDrag.current.x = nextX;
-                guestDrag.current.y = nextY;
-                scheduleGuestPreview({ x: nextX, y: nextY });
-              } : undefined}
-              onPointerUp={!exportMode && onMoveGuests ? (event) => {
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-                const drag = guestDrag.current;
-                if (drag) onMoveGuests(drag.x, drag.y);
-                guestDrag.current = null;
-                clearGuestPreview();
-              } : undefined}
-              onPointerCancel={!exportMode && onMoveGuests ? () => {
-                const drag = guestDrag.current;
-                if (drag) drag.element.setAttribute("transform", `translate(${drag.originalX} ${drag.originalY})`);
-                guestDrag.current = null;
-                clearGuestPreview();
-              } : undefined}
-            >
-              <rect
-                width={guests.width}
-                height={guestHeight}
-                rx={10}
-                fill={guests.background}
-                fillOpacity={guests.opacity}
-                stroke={project.map.edgeColor}
-              />
-              <text data-guest-title x={guests.padding} y={guests.padding + guestTitleFontSize} fill={guestTitleTypography.color ?? guests.textColor} fontSize={guestTitleFontSize} fontWeight={700} fontFamily={resolveFontFamily(guests.titleFontId, userFonts)}>
-                {guests.title}
-              </text>
-              <line
-                x1={guests.padding}
-                x2={guests.width - guests.padding}
-                y1={guests.padding + guestTitleFontSize + 8}
-                y2={guests.padding + guestTitleFontSize + 8}
-                stroke={project.map.edgeColor}
-              />
-              {guestCustomLines.map((line, index) => (
-                <text
-                  key={`guest-custom-${index}`}
-                  data-guest-custom-text
-                  x={guests.padding + guestListAvatarGap}
-                  y={guests.padding + guestTitleFontSize + 8 + guestCustomTopGap + index * guestCustomLineHeight}
-                  fill={guestPeopleTypography.color ?? guests.textColor}
-                  fontSize={guestPeopleFontSize}
-                  fontFamily={resolveFontFamily(guests.peopleFontId, userFonts)}
-                >
-                  {line || " "}
-                </text>
-              ))}
-              {visibleGuests.length === 0 && !guestCustomText ? (
-                <text x={guests.padding} y={guests.padding + 36 + guests.fontSize} fill={guests.textColor} fontSize={guests.fontSize} opacity={0.65}>
-                  在右侧添加老师 / 嘉宾
-                </text>
-              ) : guestsDisplayMode === "cards" ? visibleGuests.map((person, index) => {
-                const col = index % guestCardColumns;
-                const row = Math.floor(index / guestCardColumns);
-                const cardX = guests.padding + col * (guestCardWidth + guestCardGap);
-                const cardY = guests.padding + 30 + guestTitleFontSize + guestCustomHeight + row * (guestCardHeight + guestCardGap);
-                const avatarCenterX = guestCardWidth / 2;
-                const avatarCenterY = 6 + guestCardAvatarSize / 2;
-                const nameBaseline = 6 + guestCardAvatarSize + 6 + guestCardTitleLine;
-                const nameMaxChars = Math.max(4, Math.floor((guestCardWidth - 8) / guestPeopleFontSize));
-                const subMaxChars = Math.max(4, Math.floor((guestCardWidth - 8) / guestNoteFontSize));
-                const noteBaseline = nameBaseline + (guestCardHasTitle ? guestCardSubLine : 0) + guestCardSubLine;
-                return (
-                  <g key={person.id} data-guest-card={person.id} transform={`translate(${cardX} ${cardY})`}>
-                    <rect
-                      width={guestCardWidth}
-                      height={guestCardHeight}
-                      rx={8}
-                      fill={guestPeopleTypography.color ?? guests.textColor}
-                      fillOpacity={0.07}
-                      stroke={project.map.edgeColor}
-                      strokeOpacity={0.4}
-                      strokeWidth={1}
-                    />
-                    <g data-guest-avatar={person.id}>
-                      <clipPath id={`guest-avatar-clip-${person.id}`}>
-                        <circle cx={avatarCenterX} cy={avatarCenterY} r={guestCardAvatarSize / 2} />
-                      </clipPath>
-                      <circle
-                        cx={avatarCenterX}
-                        cy={avatarCenterY}
-                        r={guestCardAvatarSize / 2}
-                        fill={guestPeopleTypography.color ?? guests.textColor}
-                        fillOpacity={0.14}
-                        stroke={guestPeopleTypography.color ?? guests.textColor}
-                        strokeOpacity={0.4}
-                        strokeWidth={1}
-                      />
-                      {person.avatarSrc ? (
-                        <image
-                          href={person.avatarSrc}
-                          x={avatarCenterX - guestCardAvatarSize / 2}
-                          y={avatarCenterY - guestCardAvatarSize / 2}
-                          width={guestCardAvatarSize}
-                          height={guestCardAvatarSize}
-                          clipPath={`url(#guest-avatar-clip-${person.id})`}
-                          preserveAspectRatio="xMidYMid slice"
-                        />
-                      ) : (
-                        <text
-                          data-guest-avatar-initial={person.id}
-                          x={avatarCenterX}
-                          y={avatarCenterY + Math.max(6, guestCardAvatarSize * 0.3)}
-                          textAnchor="middle"
-                          fill={guestPeopleTypography.color ?? guests.textColor}
-                          fontSize={Math.max(14, guestCardAvatarSize * 0.38)}
-                          fontWeight={600}
-                        >
-                          {person.name.slice(0, 1)}
-                        </text>
-                      )}
-                    </g>
-                    <text
-                      data-guest-person={person.id}
-                      x={avatarCenterX}
-                      y={nameBaseline}
-                      textAnchor="middle"
-                      fill={guestPeopleTypography.color ?? guests.textColor}
-                      fontSize={guestPeopleFontSize}
-                      fontWeight={600}
-                      fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                    >
-                      {truncateGuestText(person.name, nameMaxChars)}
-                    </text>
-                    {person.title && (
-                      <text
-                        x={avatarCenterX}
-                        y={nameBaseline + guestCardSubLine}
-                        textAnchor="middle"
-                        fill={guestPeopleTypography.color ?? guests.textColor}
-                        fillOpacity={0.66}
-                        fontSize={guestNoteFontSize}
-                        fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                      >
-                        {truncateGuestText(person.title, subMaxChars)}
-                      </text>
-                    )}
-                    {person.note && (
-                      <text
-                        data-guest-note={person.id}
-                        x={avatarCenterX}
-                        y={noteBaseline}
-                        textAnchor="middle"
-                        fill={guestPeopleTypography.color ?? guests.textColor}
-                        fillOpacity={0.72}
-                        fontSize={guestNoteFontSize}
-                        fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                      >
-                        {truncateGuestText(person.note, subMaxChars)}
-                      </text>
-                    )}
-                  </g>
-                );
-              }) : visibleGuests.map((person, index) => {
-                const nameBaseline = guests.padding + 30 + guestTitleFontSize + guestCustomHeight + index * guestRowHeight;
-                const avatarCenterY = nameBaseline - guestPeopleFontSize * 0.35;
-                const avatarR = guestListAvatarSize / 2;
-                const textX = guests.padding + guestListAvatarGap;
-                const noteMaxChars = Math.max(8, Math.floor((guests.width - guests.padding * 2 - guestListAvatarGap) / guestNoteFontSize));
-                return (
-                  <g key={person.id} data-guest-row={person.id}>
-                    {guestListUsesAvatar && (
-                      <g data-guest-avatar={person.id}>
-                        {person.avatarSrc ? (
-                          <>
-                            <clipPath id={`guest-avatar-clip-${person.id}`}>
-                              <circle cx={guests.padding + avatarR} cy={avatarCenterY} r={avatarR} />
-                            </clipPath>
-                            <circle cx={guests.padding + avatarR} cy={avatarCenterY} r={avatarR} fill={guests.background} stroke={project.map.edgeColor} strokeWidth={1} />
-                            <image
-                              href={person.avatarSrc}
-                              x={guests.padding}
-                              y={avatarCenterY - avatarR}
-                              width={guestListAvatarSize}
-                              height={guestListAvatarSize}
-                              clipPath={`url(#guest-avatar-clip-${person.id})`}
-                              preserveAspectRatio="xMidYMid slice"
-                            />
-                          </>
-                        ) : (
-                          <circle
-                            cx={guests.padding + avatarR}
-                            cy={avatarCenterY}
-                            r={avatarR}
-                            fill={guestPeopleTypography.color ?? guests.textColor}
-                            fillOpacity={0.12}
-                            stroke={guestPeopleTypography.color ?? guests.textColor}
-                            strokeOpacity={0.35}
-                            strokeWidth={1}
-                          >
-                            <title>{person.name}</title>
-                          </circle>
-                        )}
-                      </g>
-                    )}
-                    <text
-                      data-guest-person={person.id}
-                      x={textX}
-                      y={nameBaseline}
-                      fill={guestPeopleTypography.color ?? guests.textColor}
-                      fontSize={guestPeopleFontSize}
-                      fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                    >
-                      {person.name}{person.title ? ` · ${person.title}` : ""}
-                    </text>
-                    {person.note && (
-                      <text
-                        data-guest-note={person.id}
-                        x={textX}
-                        y={nameBaseline + guestNoteFontSize + 3}
-                        fill={guestPeopleTypography.color ?? guests.textColor}
-                        fillOpacity={0.62}
-                        fontSize={guestNoteFontSize}
-                        fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                      >
-                        {truncateGuestText(person.note, noteMaxChars)}
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-            </g>
+            <GuestsLayer
+              guests={guests}
+              layout={guestLayout}
+              edgeColor={project.map.edgeColor}
+              userFonts={userFonts}
+              exportMode={exportMode}
+              canvasWidth={project.canvas.width}
+              canvasHeight={project.canvas.height}
+              renderIntervalMs={renderIntervalMs}
+              canvasPoint={canvasPoint}
+              onSelectGuests={onSelect ? selectGuests : undefined}
+              onMoveGuests={onMoveGuests}
+            />
           )}
         </>
       ),
@@ -1468,3 +1153,7 @@ export function PosterCanvas({
     </svg>
   );
 }
+
+/** Memoized so unrelated editor state (panel toggles, status text, the undo stack) cannot
+ *  re-run the canvas body. Callers already pass a memoized document and stable callbacks. */
+export const PosterCanvas = memo(PosterCanvasView, arePosterCanvasPropsEqual);

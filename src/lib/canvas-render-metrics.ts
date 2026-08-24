@@ -8,6 +8,7 @@ import type { Student } from "./project-data";
 import {
   createDefaultScene,
   type CardSettings,
+  type GuestPerson,
 } from "./scene-document";
 import type { CardTextFragment } from "./card-text-layout";
 
@@ -158,6 +159,18 @@ export function buildPosterCanvasBenchFixture(count: number): PosterCanvasBenchF
   const movedCardKey = students[0]?.province ?? null;
 
   return { students, movedCardKey };
+}
+
+/** Build a guest-heavy panel fixture for measuring isolated guest-layer work. */
+export function buildGuestBenchFixture(count: number): GuestPerson[] {
+  const size = normalizedCount(count);
+  return Array.from({ length: size }, (_, index) => ({
+    id: `render-guest-${index}`,
+    name: `嘉宾${index + 1}`,
+    title: index % 2 === 0 ? "班主任" : "特邀校友",
+    note: index % 3 === 0 ? `给毕业生的寄语 ${index + 1}` : undefined,
+    visibility: true,
+  }));
 }
 
 /** Build deterministic card anchors and occupied areas for solver benchmarks. */

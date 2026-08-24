@@ -13,6 +13,7 @@ import {
   displayFrameTextX,
   resolveDisplayFrameBlockPaint,
   resolveDisplayFrameFieldFontSize,
+  resolveDisplayFrameFieldPaint,
   resolveDisplayFrameItemPaint,
   resolveDisplayFrameSurface,
 } from "./display-frame-style";
@@ -154,5 +155,46 @@ describe("display frame flow blocks", () => {
     expect(resolveDisplayFrameBlockPaint(city, surface)).toMatchObject({ fontWeight: 400, fontSize: 11 });
     expect(displayFrameFontWeightValue(undefined, 700)).toBe(700);
     expect(displayFrameFontWeightValue("bold", 400)).toBe(700);
+  });
+});
+
+describe("card typography fallback", () => {
+  /** What a destination card supplies for a field the frame styles only partially. */
+  const cardName = { color: "#445566", fontSize: 15, fontWeight: "normal" as const };
+
+  it("sits between the frame item and the surface", () => {
+    const item = itemOf("name");
+
+    expect(resolveDisplayFrameItemPaint(item, surface, cardName)).toMatchObject({ fill: "#445566", fontSize: 15, fontWeight: 400 });
+    expect(resolveDisplayFrameItemPaint({ ...item, style: { color: "#aa0000", fontSize: 9, fontWeight: "bold" } }, surface, cardName))
+      .toMatchObject({ fill: "#aa0000", fontSize: 9, fontWeight: 700 });
+    expect(resolveDisplayFrameItemPaint(item, surface)).toMatchObject({ fill: surface.color, fontSize: surface.fontSize });
+  });
+
+  it("reaches flow blocks and bare fields through the same cascade", () => {
+    const block = frame.flow.blocks.find((candidate) => candidate.id === "name")!;
+
+    expect(resolveDisplayFrameBlockPaint(block, surface, cardName)).toMatchObject({ fill: "#445566", fontSize: 15 });
+    expect(resolveDisplayFrameBlockPaint({ ...block, style: { fontSize: 18 } }, surface, cardName)).toMatchObject({ fill: "#445566", fontSize: 18 });
+    expect(resolveDisplayFrameFieldPaint({ field: "name", fallback: cardName }, surface)).toMatchObject({ fill: "#445566", fontSize: 15, fontWeight: 400 });
+  });
+
+  it("keeps the frame alignment and opacity above the card fallback", () => {
+    const centered = resolveDisplayFrameSurface({ ...frame.style, align: "center" });
+
+    expect(resolveDisplayFrameFieldPaint({ field: "city", fallback: { fontWeight: "bold" } }, centered))
+      .toMatchObject({ textAnchor: "middle", fontWeight: 700, opacity: 1 });
+    expect(resolveDisplayFrameFieldPaint({ field: "city", style: { align: "right", opacity: 0.5 }, fallback: { align: "left" } }, centered))
+      .toMatchObject({ textAnchor: "end", opacity: 0.5 });
+    // A bare field keeps the city rhythm when neither layer names a size.
+    expect(resolveDisplayFrameFieldPaint({ field: "city" }, centered).fontSize).toBe(11);
+  });
+
+  it("prefers the card font over the frame font but never over the item font", () => {
+    const inherited = resolveDisplayFrameSurface({ ...frame.style, fontId: "frame-font" });
+
+    expect(resolveDisplayFrameFieldPaint({ field: "title", fallback: { fontId: "card-font" } }, inherited).fontId).toBe("card-font");
+    expect(resolveDisplayFrameFieldPaint({ field: "title", style: { fontId: "item-font" }, fallback: { fontId: "card-font" } }, inherited).fontId).toBe("item-font");
+    expect(resolveDisplayFrameFieldPaint({ field: "title" }, inherited).fontId).toBe("frame-font");
   });
 });

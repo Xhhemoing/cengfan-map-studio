@@ -1,18 +1,23 @@
 import { memo, type ReactNode } from "react";
 import type { CardTextLine } from "../../lib/card-text-layout";
 import type {
+  DisplayFrameField,
   DisplayFrameFixedItem,
   DisplayFrameFlowBlock,
+  DisplayFrameItemStyle,
   DisplayFrameMode,
   DisplayFrameStyle,
 } from "../../lib/display-frame";
 import {
-  displayFrameFontWeightValue,
   displayFrameTextBaseline,
   displayFrameTextX,
+  resolveDisplayFrameBlockPaint,
   resolveDisplayFrameFieldFontSize,
+  resolveDisplayFrameFieldPaint,
   resolveDisplayFrameItemPaint,
   resolveDisplayFrameSurface,
+  type DisplayFrameTextAnchor,
+  type ResolvedDisplayFramePaint,
   type ResolvedDisplayFrameSurface,
 } from "../../lib/display-frame-style";
 import { resolveFontFamily, type UserFont } from "../../lib/fonts";
@@ -63,6 +68,7 @@ export interface DestinationCardStyle {
   flowNameBlock?: DisplayFrameFlowBlock;
   flowCityBlock?: DisplayFrameFlowBlock;
   flowTitleFontSize: number;
+  /** Kept for the canvas contract; body rows resolve their size through `fieldTypography`. */
   flowNameFontSize: number;
   flowContentStart: number;
   userFonts: UserFont[];
@@ -81,6 +87,22 @@ export interface DestinationCardProps {
   width: number;
   height: number;
   provinceTexture: CardProvinceTexture | null;
+}
+
+/**
+ * Paint the card itself supplies for one field. The frame wins wherever it defines a token,
+ * so `fieldTypography`/`fieldFonts` reach the renderer through the shared resolver cascade
+ * instead of a private fallback chain.
+ */
+function cardFieldFallback(style: DestinationCardStyle, field: DisplayFrameField, bold: boolean): DisplayFrameItemStyle {
+  const typography = style.fieldTypography?.[field];
+  const fontId = style.fieldFonts?.[field];
+  return {
+    color: typography?.color ?? style.textColor,
+    fontSize: typography?.fontSize ?? resolveDisplayFrameFieldFontSize(field, style.fontSize),
+    fontWeight: bold ? "bold" : "normal",
+    ...(fontId ? { fontId } : {}),
+  };
 }
 
 function renderDisplayFrameItem(item: DisplayFrameFixedItem, surface: ResolvedDisplayFrameSurface, userFonts: UserFont[]): ReactNode {
@@ -134,7 +156,6 @@ export const DestinationCard = memo(function DestinationCard({
     customFrameItems,
     flowTitleBlock,
     flowTitleFontSize,
-    flowNameFontSize,
     flowContentStart,
     horizontalPadding,
     lineHeightMultiplier,
@@ -151,26 +172,41 @@ export const DestinationCard = memo(function DestinationCard({
     borderColor: frameStyle.borderColor ?? style.edgeColor,
   });
 
-  // In fixed mode the frame items own the alignment; flow mode stacks everything at the padding.
-  const titlePaint = frameMode === "fixed" && frameTitleItem ? resolveDisplayFrameItemPaint(frameTitleItem, surface) : undefined;
-  const bodyPaint = frameMode === "fixed" && frameBodyItem ? resolveDisplayFrameItemPaint(frameBodyItem, surface) : undefined;
+  // Fixed items own their box, so alignment anchors inside it; flow blocks have no box and
+  // anchor inside the card's padding box instead.
+  const flowAnchorX = (anchor: DisplayFrameTextAnchor): number => {
+    if (anchor === "middle") return width / 2;
+    if (anchor === "end") return width - horizontalPadding;
+    return horizontalPadding;
+  };
+  const anchorXFor = (item: DisplayFrameFixedItem | undefined, paint: ResolvedDisplayFramePaint): number =>
+    (frameMode === "fixed" && item ? displayFrameTextX(item, paint) : flowAnchorX(paint.textAnchor));
+
   // Titles are bold by default, but an explicit weight — including "normal" — always wins.
-  const titleFontWeight = titlePaint?.fontWeight
-    ?? displayFrameFontWeightValue(flowTitleBlock?.style?.fontWeight, 700);
-  const titleX = (titlePaint && frameTitleItem ? displayFrameTextX(frameTitleItem, titlePaint) : horizontalPadding)
-    + photoOffset
-    + (provinceTexture ? 36 : 0);
-  const bodyX = bodyPaint && frameBodyItem ? displayFrameTextX(frameBodyItem, bodyPaint) : horizontalPadding;
+  const titleFallback = cardFieldFallback(style, "title", true);
+  const titlePaint = frameMode === "fixed" && frameTitleItem
+    ? resolveDisplayFrameItemPaint(frameTitleItem, surface, titleFallback)
+    : resolveDisplayFrameFieldPaint({ field: "title", style: flowTitleBlock?.style, fallback: titleFallback }, surface);
+  const titleX = anchorXFor(frameTitleItem, titlePaint) + photoOffset + (provinceTexture ? 36 : 0);
+  // Fixed rows share the body item's box but not its typography: the city heading keeps its own
+  // colour and size, so only alignment and opacity of that item join the cascade.
+  const fixedRowStyle: DisplayFrameItemStyle | undefined = frameMode === "fixed" && frameBodyItem?.style
+    ? {
+      ...(frameBodyItem.style.align ? { align: frameBodyItem.style.align } : {}),
+      ...(frameBodyItem.style.opacity !== undefined ? { opacity: frameBodyItem.style.opacity } : {}),
+    }
+    : undefined;
 
   let lineIndex = 0;
   const bodyLines = rows.flatMap((row) => row.lines.map((line, index) => {
-    const rowField = row.cityHeading ? "city" : "name";
+    const rowField: DisplayFrameField = row.cityHeading ? "city" : "name";
     const block = frameMode === "flow" ? (rowField === "city" ? style.flowCityBlock : style.flowNameBlock) : undefined;
-    const rowFontSize = block?.style?.fontSize
-      ?? style.fieldTypography?.[rowField]?.fontSize
-      ?? (row.cityHeading ? resolveDisplayFrameFieldFontSize("city", style.fontSize) : flowNameFontSize);
+    const fallback = cardFieldFallback(style, rowField, Boolean(row.cityHeading));
+    const paint = block
+      ? resolveDisplayFrameBlockPaint(block, surface, fallback)
+      : resolveDisplayFrameFieldPaint({ field: rowField, style: fixedRowStyle, fallback }, surface);
     const rowLineHeight = frameMode === "flow"
-      ? Math.max(16, rowFontSize + 6) * (block?.lineHeight ?? 1.2)
+      ? Math.max(16, paint.fontSize + 6) * (block?.lineHeight ?? 1.2)
       : rowHeight;
     const y = (frameMode === "fixed" ? frameBodyItem?.y ?? 42 : flowContentStart + flowTitleFontSize + 8) + headerExtra + lineIndex * rowLineHeight;
     lineIndex += 1;
@@ -179,12 +215,13 @@ export const DestinationCard = memo(function DestinationCard({
         key={`${row.key}-${index}`}
         data-city-section={index === 0 ? row.cityHeading : undefined}
         data-card-row-line={row.key}
-        x={bodyX}
+        x={anchorXFor(frameBodyItem, paint)}
         y={y}
-        textAnchor={bodyPaint?.textAnchor}
-        fill={block?.style?.color ?? style.fieldTypography?.[rowField]?.color ?? style.textColor}
-        fontSize={rowFontSize}
-        fontWeight={displayFrameFontWeightValue(block?.style?.fontWeight, row.cityHeading ? 700 : 400)}
+        textAnchor={paint.textAnchor}
+        fill={paint.fill}
+        fontSize={paint.fontSize}
+        fontWeight={paint.fontWeight}
+        opacity={paint.opacity}
       >
         {line.map((fragment, fragmentIndex) => (
           <tspan
@@ -233,11 +270,14 @@ export const DestinationCard = memo(function DestinationCard({
           data-card-title-line
           x={titleX}
           y={(frameMode === "fixed" ? frameTitleItem?.y ?? 12 : 12 + (flowTitleBlock?.spacing ?? 0)) + (index + 1) * Math.max(16, flowTitleFontSize + 4) * (flowTitleBlock?.lineHeight ?? lineHeightMultiplier)}
-          textAnchor={titlePaint?.textAnchor}
-          fontWeight={titleFontWeight}
+          textAnchor={titlePaint.textAnchor}
+          fontWeight={titlePaint.fontWeight}
+          // The solved card height counts title lines at this size, so the layout size wins
+          // over a frame item that disagrees with it.
           fontSize={flowTitleFontSize}
-          fill={flowTitleBlock?.style?.color ?? style.fieldTypography?.title?.color ?? style.textColor}
-          fontFamily={resolveFontFamily(flowTitleBlock?.style?.fontId ?? style.fieldFonts?.title, userFonts)}
+          fill={titlePaint.fill}
+          fontFamily={resolveFontFamily(titlePaint.fontId, userFonts)}
+          opacity={titlePaint.opacity}
         >{line.map((fragment) => fragment.text).join("")}</text>
       ))}
       {style.showCount && <text x={width - horizontalPadding} y={22} fill={style.activeColor} textAnchor="end" fontWeight={700} fontSize={style.fontSize} fontFamily={resolveFontFamily(style.fieldFonts?.title, userFonts)}>{group.count} 人</text>}

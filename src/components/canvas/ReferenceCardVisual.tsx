@@ -59,6 +59,12 @@ export interface ReferenceCardVisualProps {
   fontSize: number;
   edgeColor: string;
   titleFont?: string;
+  /**
+   * Canvas line-height factor the card height was solved with (`canvas.lineHeight`). Reference
+   * bodies must step their rows by the same factor or the content misses the card bottom.
+   * Defaults to the unscaled step so an omitted value keeps the current look.
+   */
+  lineHeightMultiplier?: number;
 }
 
 /** Data-driven reference poster card bodies (colour pill, emblem list, city label, glass stat). */
@@ -75,9 +81,11 @@ export const ReferenceCardVisual = memo(function ReferenceCardVisual({
   fontSize,
   edgeColor,
   titleFont,
+  lineHeightMultiplier = 1,
 }: ReferenceCardVisualProps) {
   const bodyRows = rows.filter((row) => !row.cityHeading || presentation === "glass-stat");
-  const lineHeight = Math.max(17, fontSize + 5);
+  const baseLineHeight = Math.max(17, fontSize + 5);
+  const lineHeight = baseLineHeight * lineHeightMultiplier;
 
   if (presentation === "color-pill") {
     const foreground = readableTextColor(accent);
@@ -103,7 +111,7 @@ export const ReferenceCardVisual = memo(function ReferenceCardVisual({
   }
 
   if (presentation === "emblem-list") {
-    const step = Math.max(22, lineHeight + 3);
+    const step = Math.max(22, baseLineHeight + 3) * lineHeightMultiplier;
     return (
       <g data-card-visual="emblem-list">
         <path d={`M20 19 Q${Math.round(width * 0.35)} 10 ${Math.round(width * 0.68)} 18`} fill="none" stroke="#f1c84b" strokeWidth={13} strokeLinecap="round" opacity={0.85} />
@@ -145,7 +153,7 @@ export const ReferenceCardVisual = memo(function ReferenceCardVisual({
 
   return (
     <g data-card-visual="glass-stat">
-      <rect width={width} height={height} rx={4} fill={background} fillOpacity={Math.min(0.9, Math.max(0.55, opacity))} stroke={edgeColor} strokeOpacity={0.7} />
+      <rect width={width} height={height} rx={4} fill={background} fillOpacity={opacity} stroke={edgeColor} strokeOpacity={0.7} />
       <rect x={8} y={8} width={15} height={15} rx={3} fill={accent} />
       <text x={29} y={20} fill={textColor} fontSize={fontSize + 2} fontWeight={800} fontFamily={titleFont}>{group.title}</text>
       <text x={width - 9} y={20} textAnchor="end" fill={accent} fontSize={fontSize} fontWeight={800}>{group.count} 人</text>

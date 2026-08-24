@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { ReferenceCardVisual, referenceCardColor, readableTextColor, referenceRowLines, type ReferenceCardPresentation } from "./ReferenceCardVisual";
+import {
+  ReferenceCardVisual,
+  referenceCardColor,
+  readableTextColor,
+  referenceRowLines,
+  type ReferenceCardPresentation,
+  type ReferenceCardVisualProps,
+} from "./ReferenceCardVisual";
 import type { PreparedCardRow } from "./DestinationCard";
 import type { LayoutGroup } from "../../lib/layout";
 
@@ -32,7 +39,7 @@ const rows: PreparedCardRow[] = [
   },
 ];
 
-function renderVisual(presentation: ReferenceCardPresentation) {
+function renderVisual(presentation: ReferenceCardPresentation, overrides: Partial<ReferenceCardVisualProps> = {}) {
   const container = document.createElement("div");
   const root = createRoot(container);
   flushSync(() => root.render(
@@ -49,6 +56,7 @@ function renderVisual(presentation: ReferenceCardPresentation) {
         textColor="#1c3154"
         fontSize={12}
         edgeColor="#1c3154"
+        {...overrides}
       />
     </svg>,
   ));
@@ -105,6 +113,33 @@ describe("ReferenceCardVisual", () => {
 
     expect(entries.map((entry) => entry.start)).toEqual([0, 1]);
     expect(entries[1]?.texts).toHaveLength(3);
+  });
+
+  it.each(presentations)("steps %s rows by the canvas line height the card was sized with", (presentation) => {
+    const stepOf = (multiplier?: number) => {
+      const { container, dispose } = renderVisual(presentation, { lineHeightMultiplier: multiplier });
+      const baselines = Array.from(container.querySelectorAll('[data-card-row-line="student-1"]'))
+        .map((line) => Number(line.getAttribute("y")));
+      dispose();
+      return (baselines[1] ?? 0) - (baselines[0] ?? 0);
+    };
+
+    // An omitted multiplier keeps the historic step; a taller canvas line height scales it so
+    // the rows still end inside the height `destinationHeight` solved from the same factor.
+    const unscaled = stepOf();
+    expect(unscaled).toBe(stepOf(1));
+    expect(stepOf(1.5)).toBeCloseTo(unscaled * 1.5, 5);
+    expect(stepOf(0.8)).toBeLessThan(unscaled);
+  });
+
+  it("fills the stat card with the card opacity instead of clamping the slider", () => {
+    const faint = renderVisual("glass-stat", { opacity: 0.2 });
+    expect(faint.container.querySelector('[data-card-visual="glass-stat"] rect')?.getAttribute("fill-opacity")).toBe("0.2");
+    faint.dispose();
+
+    const solid = renderVisual("glass-stat", { opacity: 1 });
+    expect(solid.container.querySelector('[data-card-visual="glass-stat"] rect')?.getAttribute("fill-opacity")).toBe("1");
+    solid.dispose();
   });
 
   it("picks a stable accent and a readable foreground", () => {

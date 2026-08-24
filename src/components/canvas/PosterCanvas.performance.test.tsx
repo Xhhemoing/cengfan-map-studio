@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 
-const renderCounts = vi.hoisted(() => ({ map: 0, card: 0 }));
+const renderCounts = vi.hoisted(() => ({ map: 0, card: 0, guests: 0, canvasBody: 0 }));
 
 vi.mock("./MapLayer", () => ({
   MapLayer: () => {
@@ -10,6 +10,21 @@ vi.mock("./MapLayer", () => ({
     return <g data-map-layer />;
   },
 }));
+// The real GuestsLayer is memoized, so the stub keeps that shape. The plain outer function is
+// re-invoked exactly when the PosterCanvas body re-runs, which makes it the body's render probe.
+vi.mock("./GuestsLayer", async () => {
+  const { memo } = await import("react");
+  const MemoizedStub = memo(function CountingGuestsLayer() {
+    renderCounts.guests += 1;
+    return <g data-guests-layer />;
+  });
+  return {
+    GuestsLayer: (props: Record<string, unknown>) => {
+      renderCounts.canvasBody += 1;
+      return <MemoizedStub {...props} />;
+    },
+  };
+});
 vi.mock("./RegionalAssetLayer", () => ({ RegionalAssetLayer: () => null }));
 vi.mock("./DecorationLayer", () => ({ DecorationLayer: () => null }));
 vi.mock("./TextLayer", () => ({ TextLayer: () => null }));
@@ -32,6 +47,8 @@ afterEach(() => {
   vi.useRealTimers();
   renderCounts.map = 0;
   renderCounts.card = 0;
+  renderCounts.guests = 0;
+  renderCounts.canvasBody = 0;
 });
 
 describe("PosterCanvas interaction rendering", () => {
@@ -101,6 +118,62 @@ describe("PosterCanvas interaction rendering", () => {
 
     expect(container.querySelector(`[data-destination-card="${movedKey}"]`)?.getAttribute("transform")).toBe("translate(40 60)");
     expect(renderCounts.card).toBe(2);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("skips the canvas body entirely when no prop it draws from changed", () => {
+    const project = createProjectDocument({
+      students: [{ id: "student-1", name: "林舟", university: "北京大学", city: "北京市", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    const onMoveCard = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    // A fresh element every time, so only memo — never React's element-identity bailout —
+    // can keep the body from re-running.
+    const render = () => flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} />));
+    render();
+    // The layout hook commits its solved placements right after mount, so settle first.
+    render();
+    const settled = renderCounts.canvasBody;
+
+    render();
+    render();
+
+    expect(renderCounts.canvasBody).toBe(settled);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("keeps the map and guest layers out of a selection-only re-render", () => {
+    const project = createProjectDocument({
+      students: [{ id: "student-1", name: "林舟", university: "北京大学", city: "北京市", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    const onMoveCard = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} />));
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={onMoveCard} />));
+
+    expect(container.querySelector("[data-guests-layer]")).not.toBeNull();
+    const settledBody = renderCounts.canvasBody;
+    const settledMap = renderCounts.map;
+    const settledGuests = renderCounts.guests;
+
+    flushSync(() => root.render(
+      <PosterCanvas project={project} onMoveCard={onMoveCard} selectedTextId="text-title" />,
+    ));
+
+    // The body re-runs (a canvas prop changed) but neither layer received new props.
+    expect(renderCounts.canvasBody).toBe(settledBody + 1);
+    expect(renderCounts.map).toBe(settledMap);
+    expect(renderCounts.guests).toBe(settledGuests);
 
     flushSync(() => root.unmount());
     container.remove();

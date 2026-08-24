@@ -46,6 +46,19 @@ export interface ResolvedDisplayFramePaint {
   fontId?: string;
 }
 
+/**
+ * One field rendered without a frame item of its own — the destination card resolves its
+ * rows this way, so `fieldTypography` joins the same cascade instead of a private chain.
+ */
+export interface DisplayFrameFieldPaintInput {
+  kind?: DisplayFrameItemKind;
+  field?: DisplayFrameField;
+  /** Frame paint of the fixed item or flow block; wins over the card fallback. */
+  style?: DisplayFrameItemStyle;
+  /** Card paint (`fieldTypography`, `fieldFonts`) used where the frame leaves a slot empty. */
+  fallback?: DisplayFrameItemStyle;
+}
+
 export function displayFrameFontWeightValue(weight: DisplayFrameFontWeight | undefined, fallback: number): number {
   return weight ? FONT_WEIGHT_VALUES[weight] : fallback;
 }
@@ -77,41 +90,56 @@ export function resolveDisplayFrameFieldFontSize(field: DisplayFrameField | unde
   return field === "city" ? Math.max(DISPLAY_FRAME_CITY_MIN_FONT_SIZE, baseFontSize - 1) : baseFontSize;
 }
 
+/** Cascade for every paint token: frame item or block → card fallback → frame surface. */
 function resolvePaint(
   kind: DisplayFrameItemKind,
   field: DisplayFrameField | undefined,
   style: DisplayFrameItemStyle | undefined,
   surface: ResolvedDisplayFrameSurface,
+  fallback?: DisplayFrameItemStyle,
 ): ResolvedDisplayFramePaint {
-  const color = style?.color ?? surface.color;
-  const fontSize = style?.fontSize ?? resolveDisplayFrameFieldFontSize(kind === "field" ? field : undefined, surface.fontSize);
-  const align = style?.align ?? surface.align;
+  const color = style?.color ?? fallback?.color ?? surface.color;
+  const fontSize = style?.fontSize
+    ?? fallback?.fontSize
+    ?? resolveDisplayFrameFieldFontSize(kind === "field" ? field : undefined, surface.fontSize);
+  const align = style?.align ?? fallback?.align ?? surface.align;
+  const fontId = style?.fontId ?? fallback?.fontId ?? surface.fontId;
   return {
     kind,
     color,
-    fill: kind === "decoration" ? style?.fill ?? DISPLAY_FRAME_DEFAULT_DECORATION_FILL : color,
-    strokeWidth: style?.strokeWidth ?? DISPLAY_FRAME_DEFAULT_BORDER_WIDTH,
+    fill: kind === "decoration" ? style?.fill ?? fallback?.fill ?? DISPLAY_FRAME_DEFAULT_DECORATION_FILL : color,
+    strokeWidth: style?.strokeWidth ?? fallback?.strokeWidth ?? DISPLAY_FRAME_DEFAULT_BORDER_WIDTH,
     fontSize,
-    fontWeight: displayFrameFontWeightValue(style?.fontWeight, kind === "field" && field === "title" ? 700 : 400),
-    opacity: style?.opacity ?? 1,
+    fontWeight: displayFrameFontWeightValue(style?.fontWeight ?? fallback?.fontWeight, kind === "field" && field === "title" ? 700 : 400),
+    opacity: style?.opacity ?? fallback?.opacity ?? 1,
     align,
     textAnchor: displayFrameTextAnchor(align),
-    ...(style?.fontId ?? surface.fontId ? { fontId: style?.fontId ?? surface.fontId } : {}),
+    ...(fontId ? { fontId } : {}),
   };
 }
 
 export function resolveDisplayFrameItemPaint(
   item: DisplayFrameFixedItem,
   surface: ResolvedDisplayFrameSurface,
+  fallback?: DisplayFrameItemStyle,
 ): ResolvedDisplayFramePaint {
-  return resolvePaint(item.kind, item.field, item.style, surface);
+  return resolvePaint(item.kind, item.field, item.style, surface, fallback);
 }
 
 export function resolveDisplayFrameBlockPaint(
   block: DisplayFrameFlowBlock,
   surface: ResolvedDisplayFrameSurface,
+  fallback?: DisplayFrameItemStyle,
 ): ResolvedDisplayFramePaint {
-  return resolvePaint(block.kind, block.field, block.style, surface);
+  return resolvePaint(block.kind, block.field, block.style, surface, fallback);
+}
+
+/** Paint for a field the frame draws without an item of its own (fixed-mode card rows). */
+export function resolveDisplayFrameFieldPaint(
+  input: DisplayFrameFieldPaintInput,
+  surface: ResolvedDisplayFrameSurface,
+): ResolvedDisplayFramePaint {
+  return resolvePaint(input.kind ?? "field", input.field, input.style, surface, input.fallback);
 }
 
 /** Horizontal anchor point matching `textAnchor`, so alignment never shifts the item box. */

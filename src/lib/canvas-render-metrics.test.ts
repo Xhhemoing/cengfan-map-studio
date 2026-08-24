@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCardLayoutBenchFixture,
   buildDisplayFrameBenchFixtures,
+  buildGuestBenchFixture,
   buildLongNameFragments,
   buildPosterCanvasBenchFixture,
   medianDuration,
@@ -45,6 +46,21 @@ describe("canvas render benchmark metrics", () => {
     expect(new Set(first.students.map((student) => student.province))).toHaveLength(24);
     expect(first.movedCardKey).toBe("北京市");
     expect(buildPosterCanvasBenchFixture(0).movedCardKey).toBeNull();
+  });
+
+  it("builds deterministic guest-heavy render fixtures", () => {
+    const guests = buildGuestBenchFixture(24);
+
+    expect(guests).toHaveLength(24);
+    expect(guests[0]).toEqual({
+      id: "render-guest-0",
+      name: "嘉宾1",
+      title: "班主任",
+      note: "给毕业生的寄语 1",
+      visibility: true,
+    });
+    expect(guests[1]?.note).toBeUndefined();
+    expect(buildGuestBenchFixture(-1)).toEqual([]);
   });
 
   it("builds seeded layout inputs and scales their bounds", () => {

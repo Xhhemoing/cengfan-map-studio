@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { DestinationCard, type DestinationCardStyle, type PreparedCardRow } from "./DestinationCard";
+import type { DisplayFrameFlowBlock, DisplayFrameItemStyle } from "../../lib/display-frame";
 import type { LayoutGroup } from "../../lib/layout";
 
 const group: LayoutGroup = {
@@ -67,6 +68,38 @@ function createStyle(overrides: Partial<DestinationCardStyle> = {}): Destination
     flowContentStart: 0,
     userFonts: [],
     ...overrides,
+  };
+}
+
+function centeredFrameStyle(): DestinationCardStyle["frameStyle"] {
+  return {
+    fontSize: 12,
+    color: "#1c3154",
+    background: "#ffffff",
+    opacity: 0.9,
+    padding: 12,
+    margin: 0,
+    align: "center",
+    borderColor: "#1c3154",
+    borderWidth: 1,
+    borderRadius: 6,
+  };
+}
+
+function flowBlocks(styles: Partial<Record<"title" | "name" | "city", DisplayFrameItemStyle>> = {}) {
+  const block = (id: "title" | "name" | "city", order: number): DisplayFrameFlowBlock => ({
+    id,
+    kind: "field",
+    field: id,
+    order,
+    spacing: order === 0 ? 0 : 6,
+    lineHeight: 1.2,
+    ...(styles[id] ? { style: styles[id] } : {}),
+  });
+  return {
+    flowTitleBlock: block("title", 0),
+    flowNameBlock: block("name", 1),
+    flowCityBlock: block("city", 2),
   };
 }
 
@@ -200,27 +233,87 @@ describe("DestinationCard", () => {
 
   it("anchors the title and body rows on the frame alignment in fixed mode", () => {
     const { container, dispose } = renderCard(createStyle({
-      frameStyle: {
-        fontSize: 12,
-        color: "#1c3154",
-        background: "#ffffff",
-        opacity: 0.9,
-        padding: 12,
-        margin: 0,
-        align: "center",
-        borderColor: "#1c3154",
-        borderWidth: 1,
-        borderRadius: 6,
-      },
+      frameStyle: centeredFrameStyle(),
     }));
 
+    // Alignment anchors inside each item box and never moves it: the title item spans
+    // x 12..192 and the body item x 12..208, so their centers are 102 and 110.
     const title = container.querySelector("[data-card-title-line]")!;
     expect(title.getAttribute("text-anchor")).toBe("middle");
     expect(title.getAttribute("x")).toBe("102");
 
+    const rows = Array.from(container.querySelectorAll("[data-card-row-line]"));
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.getAttribute("text-anchor")).toBe("middle");
+      expect(row.getAttribute("x")).toBe("110");
+    }
+
+    dispose();
+  });
+
+  it("lets a fixed item override the centered frame alignment", () => {
+    const { container, dispose } = renderCard(createStyle({
+      frameStyle: centeredFrameStyle(),
+      frameTitleItem: { id: "title", kind: "field", field: "title", x: 12, y: 12, width: 180, height: 24, zIndex: 0, style: { align: "right" } },
+      frameBodyItem: { id: "name", kind: "field", field: "name", x: 12, y: 42, width: 196, height: 18, zIndex: 1, style: { align: "left", opacity: 0.6 } },
+    }));
+
+    const title = container.querySelector("[data-card-title-line]")!;
+    expect(title.getAttribute("text-anchor")).toBe("end");
+    expect(title.getAttribute("x")).toBe("192");
+
     const row = container.querySelector("[data-card-row-line]")!;
-    expect(row.getAttribute("text-anchor")).toBe("middle");
-    expect(row.getAttribute("x")).toBe("110");
+    expect(row.getAttribute("text-anchor")).toBe("start");
+    expect(row.getAttribute("x")).toBe("12");
+    expect(row.getAttribute("opacity")).toBe("0.6");
+
+    dispose();
+  });
+
+  it("keeps per-field typography on rows while the frame owns their alignment", () => {
+    const { container, dispose } = renderCard(createStyle({
+      frameStyle: centeredFrameStyle(),
+      fieldTypography: { city: { fontSize: 13, color: "#778899" }, name: { fontSize: 15, color: "#445566" } },
+    }));
+
+    const [cityRow, nameRow] = Array.from(container.querySelectorAll("[data-card-row-line]"));
+    expect(cityRow?.getAttribute("fill")).toBe("#778899");
+    expect(cityRow?.getAttribute("font-size")).toBe("13");
+    expect(cityRow?.getAttribute("font-weight")).toBe("700");
+    expect(nameRow?.getAttribute("fill")).toBe("#445566");
+    expect(nameRow?.getAttribute("font-size")).toBe("15");
+    expect(nameRow?.getAttribute("font-weight")).toBe("400");
+    expect(cityRow?.getAttribute("text-anchor")).toBe("middle");
+
+    dispose();
+  });
+
+  it("stacks flow rows at the padding until the frame or a block aligns them", () => {
+    const left = renderCard(createStyle({ frameMode: "flow", ...flowBlocks() }));
+    const leftTitle = left.container.querySelector("[data-card-title-line]")!;
+    expect(leftTitle.getAttribute("text-anchor")).toBe("start");
+    expect(leftTitle.getAttribute("x")).toBe("12");
+    expect(left.container.querySelector("[data-card-row-line]")?.getAttribute("x")).toBe("12");
+    left.dispose();
+
+    const { container, dispose } = renderCard(createStyle({
+      frameMode: "flow",
+      frameStyle: centeredFrameStyle(),
+      ...flowBlocks({ name: { opacity: 0.5 }, city: { align: "right" } }),
+    }));
+
+    // Flow blocks have no item box, so they anchor inside the card's padding box.
+    const title = container.querySelector("[data-card-title-line]")!;
+    expect(title.getAttribute("text-anchor")).toBe("middle");
+    expect(title.getAttribute("x")).toBe("110");
+
+    const [cityRow, nameRow] = Array.from(container.querySelectorAll("[data-card-row-line]"));
+    expect(cityRow?.getAttribute("text-anchor")).toBe("end");
+    expect(cityRow?.getAttribute("x")).toBe("208");
+    expect(nameRow?.getAttribute("text-anchor")).toBe("middle");
+    expect(nameRow?.getAttribute("x")).toBe("110");
+    expect(nameRow?.getAttribute("opacity")).toBe("0.5");
 
     dispose();
   });

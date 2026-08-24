@@ -11,6 +11,7 @@ import { wrapCardText } from "../src/lib/card-text-layout";
 import {
   buildCardLayoutBenchFixture,
   buildDisplayFrameBenchFixtures,
+  buildGuestBenchFixture,
   buildLongNameFragments,
   buildPosterCanvasBenchFixture,
   medianDuration,
@@ -148,6 +149,18 @@ try {
     const createProjectDocument = projectModule.createProjectDocument;
     const onMoveCard = () => undefined;
     const onSelect = () => undefined;
+    const renderPoster = (
+      root: ReturnType<typeof createRoot>,
+      renderedProject: ReturnType<typeof createProjectDocument>,
+      selectedTextId: string | null = null,
+    ) => {
+      flushSync(() => root.render(createElement(PosterCanvas, {
+        project: renderedProject,
+        selectedTextId,
+        onMoveCard,
+        onSelect,
+      })));
+    };
 
     for (const count of [8, 24]) {
       const fixture = buildPosterCanvasBenchFixture(count);
@@ -168,18 +181,6 @@ try {
             },
           }
         : project;
-      const renderPoster = (
-        root: ReturnType<typeof createRoot>,
-        renderedProject: typeof project,
-        selectedTextId: string | null = null,
-      ) => {
-        flushSync(() => root.render(createElement(PosterCanvas, {
-          project: renderedProject,
-          selectedTextId,
-          onMoveCard,
-          onSelect,
-        })));
-      };
       const mountSample = (): number => {
         const container = document.createElement("div");
         document.body.append(container);
@@ -203,6 +204,19 @@ try {
         count,
         Array.from({ length: 3 }, mountSample),
       );
+
+      const unchangedContainer = document.createElement("div");
+      document.body.append(unchangedContainer);
+      const unchangedRoot = createRoot(unchangedContainer);
+      renderPoster(unchangedRoot, project);
+      measure("posterCanvasUnchangedPropsRerender", count, () => {
+        renderPoster(unchangedRoot, project);
+      });
+      if (unchangedContainer.querySelectorAll("[data-destination-card]").length !== count) {
+        throw new Error("PosterCanvas unchanged-props re-render changed the destination-card count");
+      }
+      flushSync(() => unchangedRoot.unmount());
+      unchangedContainer.remove();
 
       const selectionContainer = document.createElement("div");
       document.body.append(selectionContainer);
@@ -237,6 +251,44 @@ try {
       }
       flushSync(() => positionRoot.unmount());
       positionContainer.remove();
+    }
+
+    const guestCount = 24;
+    const guestFixture = buildPosterCanvasBenchFixture(8);
+    const guestBaseProject = createProjectDocument({
+      students: guestFixture.students,
+      templateId: "original",
+      dataView: "province",
+    });
+    const guestPeople = buildGuestBenchFixture(guestCount);
+    for (const displayMode of ["list", "cards"] as const) {
+      const guestProject = {
+        ...guestBaseProject,
+        guests: {
+          ...guestBaseProject.guests,
+          width: 420,
+          displayMode,
+          people: guestPeople,
+        },
+      };
+      const guestContainer = document.createElement("div");
+      document.body.append(guestContainer);
+      const guestRoot = createRoot(guestContainer);
+      renderPoster(guestRoot, guestProject);
+      let selected = false;
+      const metricMode = displayMode === "list" ? "List" : "Cards";
+      measure(`posterCanvasGuest${metricMode}SelectionRerender`, guestCount, () => {
+        selected = !selected;
+        renderPoster(guestRoot, guestProject, selected ? "text-title" : null);
+      });
+      const renderedGuests = guestContainer.querySelectorAll(
+        displayMode === "list" ? "[data-guest-row]" : "[data-guest-card]",
+      ).length;
+      if (renderedGuests !== guestCount) {
+        throw new Error(`PosterCanvas ${displayMode} rendered ${renderedGuests} guests; expected ${guestCount}`);
+      }
+      flushSync(() => guestRoot.unmount());
+      guestContainer.remove();
     }
     // React can leave one scheduler callback queued after the final root unmount.
     // Keep jsdom globals alive until that callback drains; this is outside all samples.

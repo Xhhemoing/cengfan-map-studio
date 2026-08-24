@@ -14,16 +14,16 @@
 
 严禁静默降级。子代理输出首行必须声明实际使用的模型 slug。
 
-## 文件所有权（Cycle 1 Round 3）
+## 文件所有权（Cycle 2 Round 1）
 
 | 角色 | 可写路径 | 禁止 |
 | --- | --- | --- |
-| fable-A | `.agent_workspace/cycle1-round3-fable-a.md` | 生产代码 |
-| fable-B | `.agent_workspace/cycle1-round3-fable-b.md` | 生产代码 |
-| opus-fast-A | `PosterCanvas.tsx`（memo 包装、抽出 guests）、新建 `GuestsLayer.tsx*`、`src/lib/guest-panel-layout.ts*`、`MapLayer.tsx` 投影/path memo、`App.tsx` 仅若需配合 memo、相关测试 | `DestinationCard.tsx`、`ReferenceCardVisual.tsx`、`card-templates.ts` |
-| opus-fast-B | `DestinationCard.tsx*`、`ReferenceCardVisual.tsx*`、`display-frame-style.ts*`、对应测试 | `App.tsx`、`useCardLayoutWorker.ts`、`GuestsLayer.tsx`、`PosterCanvas.tsx` |
+| fable-A | `.agent_workspace/cycle2-round1-fable-a.md` | 生产代码 |
+| fable-B | `.agent_workspace/cycle2-round1-fable-b.md` | 生产代码 |
+| opus-fast-A | `PosterCanvas.tsx`（preparedCards 拆分、抽出 DestinationCardsLayer）、新建 `DestinationCardsLayer.tsx*`、相关测试 | `DestinationCard.tsx`、`display-frame-style.ts` |
+| opus-fast-B | `DestinationCard.tsx*`、`display-frame-style.ts*`、`display-frame.ts`（仅 JSDoc）、头部几何纯函数新建 `src/lib/destination-card-metrics.ts*` | `PosterCanvas.tsx`、`GuestsLayer.tsx` |
 | gpt-sol-A | `scripts/perf-canvas-bench.ts`、`canvas-render-metrics.ts*` | UI 大重构 |
-| gpt-sol-B | 新建 `*.round3.test.ts(x)`；可扩 `export-poster.test.ts` | 生产实现 |
+| gpt-sol-B | 新建 `*.cycle2.test.ts(x)` | 生产实现 |
 
 ## 循环状态
 
@@ -41,14 +41,14 @@
   - opus-fast-B → `bc-42165287-40ae-53a9-ab03-be92cc120dc0`
   - gpt-sol-A → `bc-f4e8c95d-f6e1-5205-9eca-12545f81f39d`
   - gpt-sol-B → `bc-7e13aad9-37bd-55ad-9958-4d2031d69a8c`
-- [ ] Cycle 1 Round 3 — SOTA 打磨与交叉核验（进行中，6 子代理并发）
+- [x] Cycle 1 Round 3 — SOTA 打磨与交叉核验（完成，见 `cycle1-round3-conclusion.md`）
   - fable-A → `bc-61e49b2a-cf96-5bd2-8fc2-8ad354cd8b6b`
   - fable-B → `bc-2567d2e8-caa9-5038-84bb-a101e9a57de4`
   - opus-fast-A → `bc-39a39282-18d4-5b09-b0e1-a38652ba6b58`
   - opus-fast-B → `bc-fadea826-74a2-5368-9667-5431fcf9b1c7`
   - gpt-sol-A → `bc-b425589d-0230-58c2-94b8-fd136cbe474b`
   - gpt-sol-B → `bc-d2683e3c-52ea-50e8-b527-85e5fd822ff8`
-- [ ] Cycle 2 Round 1
+- [ ] Cycle 2 Round 1 — 文本排版与卡片层拆分（派发中）
 - [ ] Cycle 2 Round 2
 - [ ] Cycle 2 Round 3
 - [ ] Cycle 3 Round 1
@@ -67,3 +67,4 @@
 
 - Cycle 1 Round 1：`.agent_workspace/cycle1-round1-conclusion.md`
 - Cycle 1 Round 2：`.agent_workspace/cycle1-round2-conclusion.md`
+- Cycle 1 Round 3：`.agent_workspace/cycle1-round3-conclusion.md`
