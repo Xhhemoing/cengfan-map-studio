@@ -21,6 +21,5 @@
     "jsx": "react-jsx",
     "types": ["node"]
   },
-  "include": ["src"],
-  "exclude": ["src/lib/collaboration-convergence.test.ts"]
+  "include": ["src"]
 }

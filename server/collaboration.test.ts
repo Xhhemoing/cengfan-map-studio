@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { createRoomStore, MAX_PERSISTED_ROOM_BYTES } from "./collaboration";
+import {
+  createRoomStore,
+  MAX_PERSISTED_ROOM_BYTES,
+  MAX_PERSISTED_SNAPSHOT_BYTES,
+} from "./collaboration";
 import type { RoomStoreSnapshot } from "./collaboration";
 import type { CollaborationOperation } from "../src/lib/collaboration-operations";
 
@@ -161,6 +165,110 @@ describe("collaboration room store", () => {
     }
   });
 
+  it("coalesces flushes while persistence is in flight and snapshots the latest dirty state", async () => {
+    const releases: Array<() => void> = [];
+    const snapshots: RoomStoreSnapshot[] = [];
+    const persist = vi.fn(async (snapshot: RoomStoreSnapshot) => {
+      snapshots.push(snapshot);
+      await new Promise<void>((resolve) => releases.push(resolve));
+    });
+    const store = createRoomStore({
+      generateId: () => "COALESCE1",
+      persist,
+      persistIntervalMs: Number.POSITIVE_INFINITY,
+    });
+    store.create({ revision: 0 }, "owner");
+
+    const first = store.flush();
+    await vi.waitFor(() => expect(persist).toHaveBeenCalledTimes(1));
+    store.apply("COALESCE1", {
+      txId: "latest",
+      clientId: "owner",
+      baseVersion: 0,
+      snapshot: { revision: 1 },
+    });
+    const second = store.flush();
+    const third = store.flush();
+
+    await Promise.resolve();
+    expect(persist).toHaveBeenCalledTimes(1);
+    releases.shift()!();
+    await first;
+    await vi.waitFor(() => expect(persist).toHaveBeenCalledTimes(2));
+    expect(snapshots[1]?.rooms[0]?.room.snapshot).toEqual({ revision: 1 });
+
+    releases.shift()!();
+    await Promise.all([second, third]);
+    expect(persist).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces an in-flight flush failure while allowing its coalesced successor to persist", async () => {
+    let rejectFirst!: (reason?: unknown) => void;
+    const snapshots: RoomStoreSnapshot[] = [];
+    const persist = vi.fn(async (snapshot: RoomStoreSnapshot) => {
+      snapshots.push(snapshot);
+      if (snapshots.length === 1) {
+        await new Promise<void>((_resolve, reject) => {
+          rejectFirst = reject;
+        });
+      }
+    });
+    const store = createRoomStore({
+      generateId: () => "COALESCE2",
+      persist,
+      persistIntervalMs: Number.POSITIVE_INFINITY,
+    });
+    store.create({ revision: 0 }, "owner");
+
+    const first = store.flush();
+    const firstFailure = expect(first).rejects.toThrow("disk unavailable");
+    await vi.waitFor(() => expect(persist).toHaveBeenCalledTimes(1));
+    store.apply("COALESCE2", {
+      txId: "retry-latest",
+      clientId: "owner",
+      baseVersion: 0,
+      snapshot: { revision: 1 },
+    });
+    const successor = store.flush();
+
+    rejectFirst(new Error("disk unavailable"));
+    await firstFailure;
+    await successor;
+
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(snapshots[1]?.rooms[0]?.room.snapshot).toEqual({ revision: 1 });
+  });
+
+  it("persists a six MiB room accepted by the collaboration API", async () => {
+    let persisted: RoomStoreSnapshot | undefined;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const store = createRoomStore({
+        generateId: () => "API6MIB",
+        generateSecret: () => "owner-access",
+        persistIntervalMs: Number.POSITIVE_INFINITY,
+        persist: (snapshot) => {
+          persisted = snapshot;
+        },
+      });
+      store.create(
+        { payload: "x".repeat(6 * 1024 * 1024) },
+        { clientId: "owner", displayName: "Owner" },
+      );
+
+      await store.flush();
+
+      expect(persisted).toMatchObject({
+        version: 1,
+        rooms: [expect.objectContaining({ room: expect.objectContaining({ id: "API6MIB" }) })],
+      });
+      expect(persisted?.skippedRoomCount).toBeUndefined();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("omits oversized rooms from persistence and records the restart fallback", async () => {
     let persisted: RoomStoreSnapshot | undefined;
     const roomIds = ["OVERSIZED", "PERSIST4"];
@@ -184,14 +292,48 @@ describe("collaboration room store", () => {
       expect(persisted).toMatchObject({
         version: 1,
         skippedRoomCount: 1,
+        skippedRoomIds: ["OVERSIZED"],
         rooms: [expect.objectContaining({ room: expect.objectContaining({ id: "PERSIST4" }) })],
       });
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("skipped 1 room(s)"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("OVERSIZED"));
 
       const restored = createRoomStore({ restore: persisted, now: () => 1_000 });
       expect(restored.get("OVERSIZED")).toBeUndefined();
       expect(restored.get("PERSIST4")?.snapshot).toEqual({ title: "persist me" });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("bounds the total snapshot by skipping the largest room record first", async () => {
+    let persisted: RoomStoreSnapshot | undefined;
+    const roomIds = ["MEDIUM", "LARGEST", "SMALL"];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const store = createRoomStore({
+        generateId: () => roomIds.shift()!,
+        generateSecret: () => "owner-access",
+        persistIntervalMs: Number.POSITIVE_INFINITY,
+        persist: (snapshot) => {
+          persisted = snapshot;
+        },
+      });
+      store.create({ payload: "m".repeat(4 * 1024 * 1024) }, { clientId: "medium-owner", displayName: "Medium owner" });
+      store.create({ payload: "l".repeat(6 * 1024 * 1024) }, { clientId: "large-owner", displayName: "Large owner" });
+      store.create({ payload: "s".repeat(3 * 1024 * 1024) }, { clientId: "small-owner", displayName: "Small owner" });
+
+      await store.flush();
+
+      expect(persisted).toMatchObject({
+        skippedRoomCount: 1,
+        skippedRoomIds: ["LARGEST"],
+      });
+      expect(persisted?.rooms.map(({ room }) => room.id)).toEqual(["MEDIUM", "SMALL"]);
+      expect(Buffer.byteLength(JSON.stringify(persisted), "utf8"))
+        .toBeLessThanOrEqual(MAX_PERSISTED_SNAPSHOT_BYTES);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("LARGEST"));
     } finally {
       warn.mockRestore();
     }
