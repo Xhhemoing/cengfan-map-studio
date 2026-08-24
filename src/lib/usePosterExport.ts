@@ -3,9 +3,14 @@
  * handlers, plus project package import. Extracted from App.tsx (2026-08-12)
  * without behaviour changes; workspace mutations flow back through the
  * `applyImportedPackage` and `reportStatus` callbacks.
+ *
+ * PNG 走 `svgToPngBlob` + `downloadBlob`（不再经过 base64 data URL），并用
+ * `exportGenerationRef` 保证只有最后一次导出能改状态。回滚方案见
+ * `export-poster.ts` 顶部注释；本文件只需把 `exportPng` 换回
+ * `svgToPngDataUrl` + `downloadDataUrl` 并删掉 generation 判断。
  */
 import { useRef, useState, type RefObject } from "react";
-import { downloadDataUrl, downloadText, serializePosterSvg, svgToPngDataUrl } from "./export-poster";
+import { downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
 import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
 import type { CustomTemplateRecord } from "./template-store";
@@ -53,6 +58,9 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const [exportState, setExportState] = useState<DeliveryExportState>("idle");
   const [exportError, setExportError] = useState<string>();
   const lastExportRef = useRef<"png" | "svg" | "project">("png");
+  // PNG 导出是异步的：连点两次、或失败后立刻重试时，先发起的那次落地后不能再
+  // 改状态，否则用户看到的是上一轮的结果（旧错误覆盖新成功，或反过来）。
+  const exportGenerationRef = useRef(0);
   const [pngScale, setPngScale] = useState(1);
   const [transparentExport, setTransparentExport] = useState(false);
   const [showProjectExportDialog, setShowProjectExportDialog] = useState(false);
@@ -60,6 +68,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
 
   const exportSvg = () => {
     lastExportRef.current = "svg";
+    exportGenerationRef.current += 1;
     setExportState("exporting");
     setExportError(undefined);
     try {
@@ -84,6 +93,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
 
   const exportProjectPackage = () => {
     lastExportRef.current = "project";
+    exportGenerationRef.current += 1;
     setExportState("exporting");
     setExportError(undefined);
     try {
@@ -130,6 +140,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
 
   const exportPng = async () => {
     lastExportRef.current = "png";
+    const generation = (exportGenerationRef.current += 1);
+    const isCurrent = () => exportGenerationRef.current === generation;
     setExportingPng(true);
     setExportState("exporting");
     setExportError(undefined);
@@ -138,21 +150,23 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       if (!svg) throw new Error("海报预览尚未准备好");
       await ensureUserFontsLoaded(userFonts);
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
-      const dataUrl = await svgToPngDataUrl(source, {
+      const blob = await svgToPngBlob(source, {
         width: project.canvas.width * pngScale,
         height: project.canvas.height * pngScale,
         transparentBackground: transparentExport,
       });
-      downloadDataUrl(dataUrl, "我的毕业去向图.png");
+      if (!isCurrent()) return;
+      downloadBlob(blob, "我的毕业去向图.png");
       setExportState("success");
       reportStatus("PNG 已导出");
     } catch (error) {
+      if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : "PNG 导出失败";
       setExportState("error");
       setExportError(message);
       reportStatus(message);
     } finally {
-      setExportingPng(false);
+      if (isCurrent()) setExportingPng(false);
     }
   };
 
