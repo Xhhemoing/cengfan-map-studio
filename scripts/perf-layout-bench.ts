@@ -14,9 +14,12 @@ import {
   type CardLayoutBounds,
   type CardLayoutInput,
   type CardLayoutMode,
+  type CardPlacement,
   type CardLayoutResult,
 } from "../src/lib/card-layout";
 import { createCardLayoutCacheKey } from "../src/lib/card-layout-cache";
+import { stackAtMargin } from "../src/lib/card-layout-pack";
+import { LayoutSpace, PlacementIndex } from "../src/lib/card-layout-space";
 import { posterPngExportSize } from "../src/lib/export-poster";
 import {
   assertLayoutInvariants,
@@ -42,6 +45,7 @@ export const LAYOUT_HEALTH_BENCH_SHAPES: readonly LayoutHealthBenchmarkShape[] =
   "direct-bounds",
   "pinned-card-positions",
 ];
+export const DEFAULT_MARGIN_STACK_BENCH_COLUMN_COUNTS = [16, 60, 120, 400] as const;
 
 export interface LayoutBenchmarkConfig {
   counts?: readonly number[];
@@ -107,6 +111,7 @@ export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
   workerMessageOverhead: WorkerMessageBenchmarkResult;
   cacheKeyGeneration: CardLayoutCacheKeyBenchmarkReport;
   layoutHealth: LayoutHealthBenchmarkReport;
+  stackAtMargin: StackAtMarginBenchmarkReport;
   printBleedExport: PrintBleedExportBenchmarkReport;
   printPreflight: PrintPreflightBenchmarkReport;
 }
@@ -158,6 +163,36 @@ export interface LayoutHealthBenchmarkReport {
   laneCounts: number[];
   shapes: LayoutHealthBenchmarkShape[];
   results: LayoutHealthBenchmarkResult[];
+}
+
+export interface StackAtMarginBenchmarkConfig {
+  columnCounts?: readonly number[];
+  warmupIterations?: number;
+  iterations?: number;
+  gapPx?: number;
+}
+
+export interface StackAtMarginBenchmarkResult {
+  columnCount: number;
+  placedY: number;
+  minimumClearancePx: number;
+  gapClearanceResidualPx: number;
+  p50Ms: number;
+  p95Ms: number;
+  minMs: number;
+  maxMs: number;
+}
+
+export interface StackAtMarginBenchmarkReport {
+  methodology: "reverse-ordered margin-column filter, sort, scan, and side resolution in stackAtMargin; fixture construction, index insertion, and clearance summary excluded";
+  fixture: "half-gap head clearance followed by a scalable margin column";
+  warmupIterations: number;
+  iterations: number;
+  columnCounts: number[];
+  cardWidth: number;
+  cardHeight: number;
+  requiredGapPx: number;
+  results: StackAtMarginBenchmarkResult[];
 }
 
 export interface PrintBleedExportBenchmarkResult {
@@ -600,6 +635,124 @@ export function runLayoutBenchmark(config: LayoutBenchmarkConfig = {}): LayoutBe
   };
 }
 
+function makeStackAtMarginBenchmarkFixture(columnCount: number, gapPx: number): {
+  space: LayoutSpace;
+  placed: PlacementIndex;
+  placement: CardPlacement;
+} {
+  const margin = 20;
+  const cardWidth = 120;
+  const cardHeight = 48;
+  const firstCardY = margin + cardHeight + gapPx / 2;
+  const cards: CardPlacement[] = Array.from({ length: columnCount }, (_, index) => ({
+    id: `margin-column-${index}`,
+    anchorX: margin,
+    anchorY: firstCardY + index * (cardHeight + gapPx),
+    width: cardWidth,
+    height: cardHeight,
+    x: margin,
+    y: firstCardY + index * (cardHeight + gapPx),
+    side: "left",
+  }));
+  const lastCard = cards.at(-1)!;
+  const height = lastCard.y + lastCard.height + gapPx + cardHeight + margin;
+  const space = new LayoutSpace({
+    width: 640,
+    height,
+    map: { x: 240, y: height / 2 - 80, width: 160, height: 160 },
+    occupiedAreas: [],
+    margin,
+    gap: gapPx,
+  });
+  const placed = PlacementIndex.forSpace(space);
+  // Reverse insertion makes the sort observable while preserving fixed geometry.
+  for (const card of [...cards].reverse()) placed.add(card);
+  return {
+    space,
+    placed,
+    placement: {
+      id: "margin-stack-probe",
+      anchorX: 520,
+      anchorY: margin,
+      width: cardWidth,
+      height: cardHeight,
+      x: margin,
+      y: margin,
+      side: "right",
+    },
+  };
+}
+
+function verticalClearance(left: CardPlacement, right: CardPlacement): number {
+  return Math.max(
+    right.y - (left.y + left.height),
+    left.y - (right.y + right.height),
+  );
+}
+
+/**
+ * Observes the filter/sort/scan cost introduced by the margin-stack fallback
+ * and the signed residual from its configured gap. A negative residual means
+ * the seat is clear of pixel overlap but closer than `requiredGapPx`; it is
+ * deliberately reported rather than asserted as a machine-dependent gate.
+ */
+export function runStackAtMarginBenchmark(
+  config: StackAtMarginBenchmarkConfig = {},
+): StackAtMarginBenchmarkReport {
+  const columnCounts = [...(config.columnCounts ?? DEFAULT_MARGIN_STACK_BENCH_COLUMN_COUNTS)]
+    .map((count) => positiveInteger(count, "margin stack column count"));
+  const warmupIterations = positiveInteger(
+    config.warmupIterations ?? 3,
+    "margin stack warmupIterations",
+  );
+  const iterations = positiveInteger(config.iterations ?? 20, "margin stack iterations");
+  const gapPx = config.gapPx ?? 12;
+  if (columnCounts.length === 0) throw new Error("margin stack columnCounts must not be empty");
+  if (!Number.isFinite(gapPx) || gapPx <= 0) {
+    throw new Error("margin stack gapPx must be a positive finite number");
+  }
+
+  const results = columnCounts.map((columnCount): StackAtMarginBenchmarkResult => {
+    const fixture = makeStackAtMarginBenchmarkFixture(columnCount, gapPx);
+    for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+      stackAtMargin(fixture.placement, fixture.space, fixture.placed);
+    }
+
+    const samples: number[] = [];
+    let placement = fixture.placement;
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+      const startedAt = performance.now();
+      placement = stackAtMargin(fixture.placement, fixture.space, fixture.placed);
+      samples.push(performance.now() - startedAt);
+    }
+    const minimumClearancePx = Math.min(
+      ...fixture.placed.items.map((other) => verticalClearance(placement, other)),
+    );
+    return {
+      columnCount,
+      placedY: rounded(placement.y),
+      minimumClearancePx: rounded(minimumClearancePx),
+      gapClearanceResidualPx: rounded(minimumClearancePx - gapPx),
+      p50Ms: rounded(percentile(samples, 0.5)),
+      p95Ms: rounded(percentile(samples, 0.95)),
+      minMs: rounded(Math.min(...samples)),
+      maxMs: rounded(Math.max(...samples)),
+    };
+  });
+
+  return {
+    methodology: "reverse-ordered margin-column filter, sort, scan, and side resolution in stackAtMargin; fixture construction, index insertion, and clearance summary excluded",
+    fixture: "half-gap head clearance followed by a scalable margin column",
+    warmupIterations,
+    iterations,
+    columnCounts,
+    cardWidth: 120,
+    cardHeight: 48,
+    requiredGapPx: gapPx,
+    results,
+  };
+}
+
 /**
  * Times the full layout-health pass against a scalable synthetic scene. The
  * production map and content-layout builders are intentionally absent: plain
@@ -944,6 +1097,7 @@ if (isDirectRun) {
     workerMessageOverhead: await runWorkerMessageBenchmark(),
     cacheKeyGeneration: runCardLayoutCacheKeyBenchmark(),
     layoutHealth: runLayoutHealthBenchmark({ shapes: LAYOUT_HEALTH_BENCH_SHAPES }),
+    stackAtMargin: runStackAtMarginBenchmark(),
     printBleedExport: runPrintBleedExportBenchmark(),
     printPreflight: runPrintPreflightBenchmark(),
   };

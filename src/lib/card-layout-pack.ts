@@ -117,6 +117,12 @@ export function containFree(
  * below — whereas in insertion order a later card could push the cursor onto
  * one already skipped and seat the two exactly on top of each other.
  *
+ * A card occupies its rectangle grown by the gap, on both axes, which is the
+ * clearance `isFree` asks of every other candidate in this file. Reading
+ * occupancy as bare pixels while advancing the cursor by `height + gap` let a
+ * card whose top fell inside that band pass as "below", and the seat came to
+ * rest closer to it than the gap allows.
+ *
  * Like {@link containFree}, this is reached with a placeholder `side`, so the
  * seat it picks decides the side rather than whatever the caller passed in.
  */
@@ -125,13 +131,18 @@ export function stackAtMargin(
   space: LayoutSpace,
   placed: PlacementIndex,
 ): CardPlacement {
+  const gap = space.gap;
+  const columnRight = space.margin + placement.width;
   const column = placed.items
-    .filter((other) => other.x < space.margin + placement.width)
+    .filter((other) => other.x < columnRight + gap && other.x + other.width + gap > space.margin)
     .sort((left, right) => left.y - right.y);
   let y = space.margin;
   for (const other of column) {
-    if (other.y < y + placement.height && other.y + other.height > y) {
-      y = other.y + other.height + space.gap;
+    // Sharing the gap between the test and the advance is what keeps the
+    // cursor monotone: a card only counts when its own bottom edge, gap
+    // included, is still below the cursor, so every push lands strictly lower.
+    if (other.y < y + placement.height + gap && other.y + other.height + gap > y) {
+      y = other.y + other.height + gap;
     }
   }
   const seat: CardArea = {

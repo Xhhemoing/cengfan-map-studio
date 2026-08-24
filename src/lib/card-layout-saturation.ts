@@ -270,7 +270,18 @@ function forcedOverlaps(slots: readonly Slot[]): number {
   return slots.reduce((pairs, slot) => pairs + (slot.members.length * (slot.members.length - 1)) / 2, 0);
 }
 
-function slotPlacements(slots: readonly Slot[], cards: readonly CardLayoutInput[], space: LayoutSpace): CardPlacement[] {
+/**
+ * Materialize slot assignments into concrete placements.
+ *
+ * A card no slot claims — defensive only, {@link layeredPack} slots every card
+ * — is parked at the margin corner, and its connector side is read off that
+ * seat's geometry with {@link LayoutSpace.sideOf}, the same rule slotted cards
+ * use. A hardcoded side would point the leader away from the map: the corner
+ * seat is typically left of the map center, or above it when the map is wide
+ * and shallow. Exported so tests can reproduce the slotless fallback, which is
+ * unreachable through {@link layeredPack}.
+ */
+export function slotPlacements(slots: readonly Slot[], cards: readonly CardLayoutInput[], space: LayoutSpace): CardPlacement[] {
   const placements = new Map<string, CardPlacement[]>();
   for (const slot of slots) {
     slot.members.forEach((card, layer) => {
@@ -286,8 +297,17 @@ function slotPlacements(slots: readonly Slot[], cards: readonly CardLayoutInput[
       else placements.set(card.id, [placement]);
     });
   }
-  return cards.map((card) => placements.get(card.id)?.shift()
-    ?? { ...card, x: space.clampX(space.margin, card.width), y: space.clampY(space.margin, card.height), side: "right" });
+  return cards.map((card) => {
+    const seated = placements.get(card.id)?.shift();
+    if (seated) return seated;
+    const seat = {
+      x: space.clampX(space.margin, card.width),
+      y: space.clampY(space.margin, card.height),
+      width: card.width,
+      height: card.height,
+    };
+    return { ...card, x: seat.x, y: seat.y, side: space.sideOf(seat) };
+  });
 }
 
 /**

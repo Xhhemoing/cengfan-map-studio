@@ -36,17 +36,16 @@ export type { RequiredStudentColumn, StudentColumn, StudentColumnAlternates, Stu
 const INTERNATIONAL_TOKENS = ["海外", "境外", "国外", "出国", "留学", "international", "overseas", "abroad"];
 
 /**
- * A 是否出国 column is answered in the negative as often as in the positive
- * ("未出国", "非海外", "not abroad"), and those answers spell the overseas
- * marker out in full. Counting them would move a student who never left the
- * country off the China map without a warning.
+ * A 是否出国 column is answered in the negative as often as in the positive ("未出国",
+ * "非海外", "not abroad"), and those answers spell the overseas marker out in full.
+ * Counting one silently moves a student who never left the country off the China map.
  */
 const NEGATED_OVERSEAS = new RegExp(`(不|非|未|没有?|无|否|not|non)\\s*(?:${INTERNATIONAL_TOKENS.join("|")})`, "g");
 
 /**
- * Drops the markers a negation introduces, keeping the negation itself so it
- * carries over to the next one: "未出国留学" loses 出国 and then 留学. Only an
- * adjacent negation counts, so "非全日制海外硕士" stays overseas.
+ * Drops the markers a negation introduces, keeping the negation itself so it carries
+ * over to the next one: "未出国留学" loses 出国 and then 留学. Only an adjacent
+ * negation counts, so "非全日制海外硕士" stays overseas.
  */
 function stripNegatedMarkers(value: string): string {
   let current = value;
@@ -92,10 +91,9 @@ const MAX_QUOTED_LINE_JOIN = 32;
  * RFC4180 lets a quoted cell hold a line break, and a spreadsheet exports a
  * two-line remark that way. Physical lines that leave a quote open are rejoined
  * into the one record they belong to before anything is split, otherwise the
- * tail of the record parses as a student of its own.
- *
- * The join is only kept when the quote actually closes within a few lines, so a
- * single stray quote cannot swallow the rest of the paste.
+ * tail of the record parses as a student of its own. The join is only kept when
+ * the quote closes within a few lines, so one stray quote cannot swallow the
+ * rest of the paste.
  */
 function joinQuotedLines(lines: string[]): SourceLine[] {
   // The line a quoted cell opens on may carry no delimiter of its own (the
@@ -108,13 +106,13 @@ function joinQuotedLines(lines: string[]): SourceLine[] {
     const delimiter = detectDelimiter(first) ?? shared;
     let record = first;
     let last = index;
-    while (delimiter && last - index < MAX_QUOTED_LINE_JOIN && endsInsideQuotedCell(record, delimiter)) {
+    while (delimiter && last - index < MAX_QUOTED_LINE_JOIN && scanDelimitedLine(record, delimiter).open) {
       last += 1;
       if (last >= lines.length) break;
       // The break belongs inside the cell; a space keeps the record on one line.
       record += ` ${lines[last]}`;
     }
-    const closed = delimiter !== null && last < lines.length && !endsInsideQuotedCell(record, delimiter);
+    const closed = delimiter !== null && last < lines.length && !scanDelimitedLine(record, delimiter).open;
     joined.push({ text: closed ? record : first, sourceLine: index + 1 });
     if (closed) index = last;
   }
@@ -122,19 +120,24 @@ function joinQuotedLines(lines: string[]): SourceLine[] {
 }
 
 /** Delimiters a paste may use, in the order they are believed. */
-const CELL_DELIMITERS = ["\t", ",", "，", ";"];
+const CELL_DELIMITERS = ["\t", ",", "，", ";", "；", "|", "、"];
 
+/** The "1." / "2、" / "3)" opening a numbered list: a marker, never a cell. */
+const LIST_MARKER = /^\d+[.、)]\s*(?=\D)/;
+
+/**
+ * `、` is believed only from its second occurrence on: it is also the Chinese
+ * enumeration mark *inside* one cell ("北京、上海") and the marker of a numbered
+ * list, and a row needs three cells to describe a student, so a lone 、 opens
+ * no column the positional reader could use.
+ */
 function detectDelimiter(line: string): string | null {
-  return CELL_DELIMITERS.find((delimiter) => line.includes(delimiter)) ?? null;
+  const content = line.replace(LIST_MARKER, "");
+  return CELL_DELIMITERS.find((delimiter) => content.split(delimiter).length >= (delimiter === "、" ? 3 : 2)) ?? null;
 }
 
-interface DelimitedScan {
-  cells: string[];
-  /** The line ended inside a quoted cell, so the record continues below. */
-  open: boolean;
-}
-
-function scanDelimitedLine(line: string, delimiter: string): DelimitedScan {
+/** Cells of `line`, plus `open` when it ended inside a quoted cell whose record continues below. */
+function scanDelimitedLine(line: string, delimiter: string): { cells: string[]; open: boolean } {
   const cells: string[] = [];
   let current = "";
   let quoted = false;
@@ -167,10 +170,6 @@ function scanDelimitedLine(line: string, delimiter: string): DelimitedScan {
   return { cells, open: quoted };
 }
 
-function endsInsideQuotedCell(line: string, delimiter: string): boolean {
-  return scanDelimitedLine(line, delimiter).open;
-}
-
 /**
  * RFC4180-style split: a delimiter inside double quotes belongs to the cell,
  * so `"李,四",北京大学,北京` keeps the comma in the student's name. Doubled
@@ -180,25 +179,19 @@ export function splitDelimitedLine(line: string, delimiter: string): string[] {
   return scanDelimitedLine(line, delimiter).cells.map(trimImportCell);
 }
 
-/** Delimiter-aware split that keeps empty cells so column indexes stay aligned. */
-function splitCells(line: string, delimiter: string | null): string[] {
-  if (!delimiter) return splitParts(line, null);
-  return splitDelimitedLine(line, delimiter);
-}
-
 type PaddingColumns = Map<string, ReadonlySet<number>>;
 
 /**
  * Columns no line of the paste fills, kept per delimiter. Such a column is
- * padding an export left behind — an empty 序号 column on the left, the
- * trailing separator of a CSV row — and dropping it lets the positional reader
- * find 姓名/院校/城市 where they really start.
+ * padding an export left behind — an empty 序号 column on the left, the trailing
+ * separator of a CSV row — and dropping it lets the positional reader find
+ * 姓名/院校/城市 where they really start.
  *
- * A cell blank on only some lines is the opposite: a gap in a column the rest
- * of the paste uses. Dropping that one pulls every later cell of the row a
- * column left, which imported "林舟,,北京市,海外" as a student studying at
- * 北京市 in 海外 — a complete-looking record nothing warned about. So the gap
- * stays, {@link toCandidate} sees the blank, and the row is reported instead.
+ * A cell blank on only some lines is the opposite: a gap in a column the rest of
+ * the paste uses. Dropping that one pulls every later cell of the row a column
+ * left, which imported "林舟,,北京市,海外" as a student studying at 北京市 in
+ * 海外 — a complete-looking record nothing warned about. So the gap stays,
+ * {@link toCandidate} sees the blank, and the row is reported instead.
  */
 function paddingColumnsByDelimiter(lines: readonly SourceLine[]): PaddingColumns {
   const filled = new Map<string, Set<number>>();
@@ -210,7 +203,7 @@ function paddingColumnsByDelimiter(lines: readonly SourceLine[]): PaddingColumns
       filled.set(delimiter, new Set());
       blank.set(delimiter, new Set());
     }
-    splitDelimitedLine(text, delimiter).forEach((cell, index) => {
+    splitCells(text, delimiter).forEach((cell, index) => {
       (cell ? filled : blank).get(delimiter)!.add(index);
     });
   }
@@ -220,13 +213,24 @@ function paddingColumnsByDelimiter(lines: readonly SourceLine[]): PaddingColumns
   return blank;
 }
 
-function splitParts(line: string, delimiter: string | null, padding?: PaddingColumns): string[] {
-  if (delimiter) {
-    // Only padding goes; every remaining cell keeps its column, blank ones included.
-    const dropped = padding?.get(delimiter);
-    return splitDelimitedLine(line, delimiter).filter((_, index) => !dropped?.has(index));
-  }
-  return line.replace(/^\d+[\.、\)]\s*/, "").split(/[\s,，、;；\-\|]+/).map(trimImportCell).filter(Boolean);
+/**
+ * Separators of an unlabeled line: whitespace, a 、 {@link detectDelimiter} refused,
+ * and a hyphen only where it stands between spaces. A glued hyphen belongs to the
+ * value — 玛丽-克莱尔 is one name, and cutting it made 克莱尔 her university silently.
+ */
+const FREEFORM_SEPARATOR = /\s+[-–—]+\s+|[\s、]+/;
+
+/**
+ * Cells of one source line. A delimited line keeps every column, blank ones
+ * included, so the positional reader stays aligned and only the `padding`
+ * columns go; an unlabeled line holds no columns, so its runs of spaces
+ * collapse instead.
+ */
+function splitCells(line: string, delimiter: string | null, padding?: PaddingColumns): string[] {
+  const content = line.replace(LIST_MARKER, "");
+  if (!delimiter) return content.split(FREEFORM_SEPARATOR).map(trimImportCell).filter(Boolean);
+  const dropped = padding?.get(delimiter);
+  return splitDelimitedLine(content, delimiter).filter((_, index) => !dropped?.has(index));
 }
 
 function toCandidate(parts: string[], sourceLine: number, rawLine: string): ImportCandidate | null {
@@ -294,11 +298,10 @@ const MIN_LATE_HEADER_EXACT_CELLS = 2;
 
 /**
  * The first non-empty line is the usual header spot and keeps the two-column
- * rule, so a partial header still names the columns it does provide.
- *
- * A later line is only accepted when it maps every required column and spells
- * at least two of them exactly: pasted blocks often open with a title or a
- * "更新时间" line, but a data row must never be mistaken for a header.
+ * rule, so a partial header still names the columns it does provide. A later
+ * line is only accepted when it maps every required column and spells at least
+ * two of them exactly: pasted blocks often open with a title or a "更新时间"
+ * line, but a data row must never be mistaken for a header.
  */
 function detectTextHeader(lines: SourceLine[]): TextHeader | null {
   for (const [lineIndex, line] of lines.slice(0, TEXT_HEADER_SEARCH_DEPTH).entries()) {
@@ -317,6 +320,9 @@ function detectTextHeader(lines: SourceLine[]): TextHeader | null {
   return null;
 }
 
+/** A line without one of these is punctuation only — a table rule, a row of separators. */
+const DATA_CHARACTER = /[\p{L}\p{N}]/u;
+
 export function parseDelimitedTable(text: string): ImportCandidate[] {
   return parseStudentText(text).candidates;
 }
@@ -331,19 +337,20 @@ export function parseStudentText(text: string): TextImportResult {
 
   lines.forEach(({ text, sourceLine }, index) => {
     if (header && index === header.lineIndex) return;
-    // Titles and notes sitting above the header describe the sheet, not a
-    // student: parsing them positionally would invent a record, so they are
-    // reported as skipped instead.
+    // A rule row ("| --- | --- |") or a line of bare separators holds no data at
+    // all: reading it by column imported a student called "---".
+    if (!DATA_CHARACTER.test(text)) return;
+    // Titles and notes sitting above the header describe the sheet, not a student:
+    // parsing them positionally would invent a record, so they are reported instead.
     if (header && index < header.lineIndex) {
       unparsed.push({ sourceLine, rawLine: text, reason: "表头之前的内容" });
       return;
     }
     let missingReason: string | null = null;
     /**
-     * The row filled some of the mapped columns, so it follows the header and
-     * its gap is real. Reading it by position would shift every value one
-     * column left — "学号,姓名,院校,城市" with an empty 城市 imports the student
-     * number as the name — so the positional reader is skipped below.
+     * The row filled some of the mapped columns, so its gap is real. Reading it by
+     * position would shift every value one column left — "学号,姓名,院校,城市" with an
+     * empty 城市 imports the student number as the name — so that reader is skipped.
      */
     let mappedPartially = false;
 
@@ -374,7 +381,7 @@ export function parseStudentText(text: string): TextImportResult {
     }
 
     if (!mappedPartially) {
-      const parts = splitParts(text, detectDelimiter(text), padding);
+      const parts = splitCells(text, detectDelimiter(text), padding);
       const candidate = toCandidate(parts, sourceLine, text);
       if (candidate) {
         candidates.push(candidate);

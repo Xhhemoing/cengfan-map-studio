@@ -30,6 +30,24 @@ function plainSpace(): LayoutSpace {
   return new LayoutSpace({ width: 900, height: 700, map, occupiedAreas: [map], margin: 0, gap: 0 });
 }
 
+/** The same round numbers with a gap, so clearance and pixels differ. */
+function gappedSpace(): LayoutSpace {
+  return new LayoutSpace({ width: 900, height: 700, map, occupiedAreas: [map], margin: 0, gap: 20 });
+}
+
+/**
+ * A seat is only legal if it misses the column *and* keeps the full gap from
+ * it: everywhere else in the pack a candidate is rejected by
+ * `placed.hits(card, space.gap)`, so a seat this fallback hands back has to
+ * survive the same test.
+ */
+function expectSeatClear(seat: CardArea, placed: PlacementIndex, gap: number): void {
+  for (const other of placed.items) {
+    expect(overlaps(seat, other)).toBe(false);
+    expect(overlaps(seat, other, gap)).toBe(false);
+  }
+}
+
 /** A card sitting in the margin column, so it contests the stacked seat. */
 function columnCard(id: string, y: number): CardPlacement {
   return { id, anchorX: 60, anchorY: y, width: 120, height: 100, x: 0, y, side: "left" };
@@ -200,31 +218,72 @@ describe("stackAtMargin", () => {
     const stacked = stackAtMargin(probeAtMargin(), space, placed);
 
     expect(stacked.y).toBe(300);
-    for (const other of placed.items) expect(overlaps(stacked, other)).toBe(false);
+    expectSeatClear(stacked, placed, space.gap);
     expect(stacked.side).toBe(space.sideOf(stacked));
   });
 
+  it("skips a card whose top sits in the gap band instead of tucking in behind it", () => {
+    // 110 clears the probe's 100px of height but not the 20px behind it. A hit
+    // test that only counts pixels writes that card off as "below", seats the
+    // probe at the top of the column and leaves the two 10px apart — half the
+    // clearance `placed.hits(card, space.gap)` demands everywhere else.
+    const space = gappedSpace();
+    const placed = PlacementIndex.forSpace(space);
+    const other = columnCard("in-gap-band", 110);
+    placed.add(other);
+
+    const stacked = stackAtMargin(probeAtMargin(), space, placed);
+
+    expect(stacked.y).toBe(other.y + other.height + space.gap);
+    expectSeatClear(stacked, placed, space.gap);
+    expect(stacked.side).toBe(space.sideOf(stacked));
+  });
+
+  it("counts a card in the column's side gap as occupancy rather than parked clear", () => {
+    // The same band on the other axis: 10px right of the seat's right edge is
+    // no pixel overlap, but it is closer than the gap, so the column has to
+    // include it and the seat has to drop below it.
+    const space = gappedSpace();
+    const placed = PlacementIndex.forSpace(space);
+    const other = { ...columnCard("beside", 0), x: 130 };
+    placed.add(other);
+
+    const stacked = stackAtMargin(probeAtMargin(), space, placed);
+
+    expect(stacked.y).toBe(other.y + other.height + space.gap);
+    expectSeatClear(stacked, placed, space.gap);
+  });
+
   it("finds a free seat whatever order the column was inserted in", () => {
-    const space = plainSpace();
-    const rows = [0, 100, 200, 300, 400];
     // Every permutation of the same column has to seat the card in the same
     // place: the stack is a property of the geometry, not of the insert order.
-    for (const order of permutations(rows)) {
-      const placed = PlacementIndex.forSpace(space);
-      for (const y of order) placed.add(columnCard(`at${y}`, y));
+    // The gapped column is spaced at its own clearance, so its seat lands a
+    // full gap below the last card instead of merely missing it.
+    const columns = [
+      { space: plainSpace(), rows: [0, 100, 200, 300, 400], seat: 500 },
+      { space: gappedSpace(), rows: [0, 120, 240], seat: 360 },
+    ];
+    for (const { space, rows, seat } of columns) {
+      for (const order of permutations(rows)) {
+        const placed = PlacementIndex.forSpace(space);
+        for (const y of order) placed.add(columnCard(`at${y}`, y));
 
-      const stacked = stackAtMargin(probeAtMargin(), space, placed);
+        const stacked = stackAtMargin(probeAtMargin(), space, placed);
 
-      expect(stacked.y).toBe(500);
-      for (const other of placed.items) expect(overlaps(stacked, other)).toBe(false);
+        expect(stacked.y).toBe(seat);
+        expectSeatClear(stacked, placed, space.gap);
+      }
     }
   });
 
   it("never seats a card on an occupied row while the column still has room", () => {
     // The column is built at random and shuffled, so the scan meets its cards
-    // in an order it cannot predict. As long as the seat stays inside the
-    // canvas, it has to be clear — an overlap is only allowed once the column
-    // has run off the bottom and the seat gets clamped back up.
+    // in an order it cannot predict. Spacing runs past the probe's own height,
+    // so some rows sit clear of the cursor, some overlap it and some land in
+    // the narrow band between the two that only the gap covers. While the seat
+    // stays inside the canvas it has to clear the whole column by the gap;
+    // crowding is only allowed once the column has run off the bottom and the
+    // seat gets clamped back up.
     const space = new LayoutSpace({ width: 900, height: 4000, map, occupiedAreas: [map], margin: 12, gap: 10 });
     const random = seededRandom(20260824);
     for (let round = 0; round < 300; round += 1) {
@@ -232,7 +291,7 @@ describe("stackAtMargin", () => {
       const rows: CardPlacement[] = [];
       let cursor = space.margin;
       for (let index = 0; index < 12; index += 1) {
-        cursor += Math.floor(random() * 60);
+        cursor += Math.floor(random() * 130);
         rows.push({ ...columnCard(`r${index}`, cursor), x: space.margin, height: 40 + Math.floor(random() * 120) });
         cursor += rows[index]!.height;
       }
@@ -246,7 +305,7 @@ describe("stackAtMargin", () => {
       const stacked = stackAtMargin(probeAtMargin(), space, placed);
 
       expect(space.inside(stacked)).toBe(true);
-      for (const other of placed.items) expect(overlaps(stacked, other)).toBe(false);
+      expectSeatClear(stacked, placed, space.gap);
     }
   });
 

@@ -45,14 +45,30 @@ function cacheControlFor(filePath: string): string {
 function acceptsGzip(request: http.IncomingMessage): boolean {
   const header = request.headers["accept-encoding"];
   const value = Array.isArray(header) ? header.join(",") : header ?? "";
-  return value.split(",").some((entry) => {
+  let hasExplicitGzip = false;
+  let gzipAccepted = false;
+  let gzipRejected = false;
+  let wildcardAccepted = false;
+
+  for (const entry of value.split(",")) {
     const [encoding, ...parameters] = entry.split(";").map((part) => part.trim());
-    if (encoding?.toLowerCase() !== "gzip") return false;
+    const normalizedEncoding = encoding?.toLowerCase();
+    if (normalizedEncoding !== "gzip" && normalizedEncoding !== "*") continue;
     const quality = parameters.find((parameter) => parameter.toLowerCase().startsWith("q="));
-    if (!quality) return true;
-    const parsed = Number(quality.slice(2).trim());
-    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1;
-  });
+    const parsed = quality ? Number(quality.slice(2).trim()) : 1;
+    const accepted = Number.isFinite(parsed) && parsed > 0 && parsed <= 1;
+
+    if (normalizedEncoding === "gzip") {
+      hasExplicitGzip = true;
+      if (accepted) gzipAccepted = true;
+      else gzipRejected = true;
+    } else if (accepted) {
+      wildcardAccepted = true;
+    }
+  }
+
+  if (gzipRejected) return false;
+  return hasExplicitGzip ? gzipAccepted : wildcardAccepted;
 }
 
 function isWithinRoot(root: string, candidate: string): boolean {

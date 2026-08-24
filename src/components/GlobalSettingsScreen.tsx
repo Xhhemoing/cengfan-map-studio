@@ -17,6 +17,7 @@ import { CardPresentationSettings } from "./CardPresentationSettings";
 import { ThemeToggle } from "./ThemeToggle";
 import type { ResolvedTheme, ThemeMode } from "../lib/theme";
 import { ActionGroup, CompactButton, IconButton, SegmentedControl } from "./StudioUi";
+import { useHistoryAnnouncement } from "./HistoryControls";
 
 export type GlobalSettingsSection = "canvas" | "map" | "cards" | "guests" | "typography" | "advanced";
 
@@ -159,6 +160,9 @@ export function GlobalSettingsScreen({
 }) {
   const [activeSection, setActiveSection] = useState<GlobalSettingsSection>(initialSection);
   const [dataView, setDataView] = useState<"people" | "cards">("people");
+  // 与顶栏「历史与缩放」组相同的读屏反馈：点击时用点击前的标签播报
+  // 「已撤销：xx / 已重做：xx」（详见 useHistoryAnnouncement 的说明）。
+  const { announce: announceHistory, announcement: historyAnnouncement } = useHistoryAnnouncement();
 
   const handleSectionClick = (section: GlobalSettingsSection) => {
     setActiveSection(section);
@@ -183,13 +187,29 @@ export function GlobalSettingsScreen({
     <main className="global-settings-screen" aria-label="全局设置">
       <header className="global-settings-header">
         <ActionGroup label="全局设置历史" className="global-settings-history">
-          <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
-          <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
+          <IconButton
+            label={undoLabel}
+            icon={<Undo2 size={17} aria-hidden />}
+            disabled={!canUndo}
+            onClick={() => { announceHistory(undoLabel); onUndo(); }}
+          />
+          <IconButton
+            label={redoLabel}
+            icon={<Redo2 size={17} aria-hidden />}
+            disabled={!canRedo}
+            onClick={() => { announceHistory(redoLabel); onRedo(); }}
+          />
           {themeMode && resolvedTheme && onThemeChange && (
             <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={onThemeChange} />
           )}
           <CompactButton className="global-settings-done" onClick={onClose}>完成</CompactButton>
         </ActionGroup>
+        {/* 持久存在的播报区：必须先于变更就在 DOM 里，读屏才能可靠播报；
+            放在组外，窄屏 CSS 只作用于组内按钮，播报不受影响。data 属性与
+            顶栏的 data-topbar-history-announcement 区分，两屏同挂时选择器不冲突。 */}
+        <span className="sr-only" role="status" aria-live="polite" data-settings-history-announcement>
+          {historyAnnouncement}
+        </span>
       </header>
 
       <div className="global-settings-guide" role="status">

@@ -342,6 +342,27 @@ describe("server request security", () => {
     expect(response.body).toContain("SPA content");
   });
 
+  it.each([
+    ["*", "gzip"],
+    ["br, *;q=0.5", "gzip"],
+    ["identity", undefined],
+    ["gzip;q=0, *", undefined],
+  ])("negotiates static gzip for Accept-Encoding: %s", async (acceptEncoding, expectedEncoding) => {
+    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-encoding-"));
+    directories.push(staticDir);
+    await writeFile(join(staticDir, "index.html"), "<main>SPA content</main>\n".repeat(20));
+    const server = createAiServer({ staticDir });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawRequest(origin, "/", "GET", undefined, {
+      "Accept-Encoding": acceptEncoding,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-encoding"]).toBe(expectedEncoding);
+  });
+
   it("keeps the AI body cap when the configured byte limit is invalid", async () => {
     const server = createAiServer({ maxJsonBodyBytes: Number.NaN });
     servers.push(server);

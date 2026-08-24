@@ -8,6 +8,7 @@ import {
   runCardLayoutCacheKeyBenchmark,
   runLayoutHealthBenchmark,
   runLayoutBenchmark,
+  runStackAtMarginBenchmark,
   runWorkerMessageBenchmark,
 } from "./perf-layout-bench";
 
@@ -147,6 +148,52 @@ describe("layout performance benchmark", () => {
         },
       ],
     });
+  });
+
+  it("reports margin-stack gap residual and sort cost without turning either into a budget", () => {
+    const report = runStackAtMarginBenchmark({
+      columnCounts: [2, 4],
+      warmupIterations: 1,
+      iterations: 2,
+      gapPx: 12,
+    });
+
+    expect(report).toMatchObject({
+      methodology: "reverse-ordered margin-column filter, sort, scan, and side resolution in stackAtMargin; fixture construction, index insertion, and clearance summary excluded",
+      fixture: "half-gap head clearance followed by a scalable margin column",
+      warmupIterations: 1,
+      iterations: 2,
+      columnCounts: [2, 4],
+      cardWidth: 120,
+      cardHeight: 48,
+      requiredGapPx: 12,
+      results: [
+        {
+          columnCount: 2,
+          placedY: expect.any(Number),
+          minimumClearancePx: expect.any(Number),
+          gapClearanceResidualPx: expect.any(Number),
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number),
+          minMs: expect.any(Number),
+          maxMs: expect.any(Number),
+        },
+        {
+          columnCount: 4,
+          placedY: expect.any(Number),
+          minimumClearancePx: expect.any(Number),
+          gapClearanceResidualPx: expect.any(Number),
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number),
+          minMs: expect.any(Number),
+          maxMs: expect.any(Number),
+        },
+      ],
+    });
+    for (const result of report.results) {
+      expect(result.gapClearanceResidualPx)
+        .toBeCloseTo(result.minimumClearancePx - report.requiredGapPx, 8);
+    }
   });
 
   it("reports worker transport beside the same-fixture main-thread solve without timing budgets", async () => {

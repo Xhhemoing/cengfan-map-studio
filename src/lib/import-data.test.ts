@@ -31,14 +31,14 @@ describe("import data", () => {
     const result = parseStudentText([
       "1. 林舟 北京大学 北京",
       "苏禾，浙江大学，杭州",
-      "顾言-复旦大学-上海市",
+      "顾言 - 复旦大学 - 上海市",
       "无效行",
     ].join("\n"));
 
     expect(result.candidates).toEqual([
       { name: "林舟", university: "北京大学", city: "北京", sourceLine: 1, rawLine: "1. 林舟 北京大学 北京" },
       { name: "苏禾", university: "浙江大学", city: "杭州", sourceLine: 2, rawLine: "苏禾，浙江大学，杭州" },
-      { name: "顾言", university: "复旦大学", city: "上海市", sourceLine: 3, rawLine: "顾言-复旦大学-上海市" },
+      { name: "顾言", university: "复旦大学", city: "上海市", sourceLine: 3, rawLine: "顾言 - 复旦大学 - 上海市" },
     ]);
     expect(result.unparsed).toEqual([
       { sourceLine: 4, rawLine: "无效行", reason: "无法识别学生名称、录取院校和城市" },
@@ -394,5 +394,103 @@ describe("empty cells in a header-less paste", () => {
     expect(result.unparsed).toEqual([
       { sourceLine: 2, rawLine: ",苏禾,,杭州市", reason: "无法识别学生名称、录取院校和城市" },
     ]);
+  });
+});
+
+describe("hyphens in an unlabeled line", () => {
+  it("keeps a hyphenated name whole instead of reading it as two fields", () => {
+    // Splitting on the hyphen made 克莱尔 her university and 巴黎高等师范 her
+    // city: a plausible-looking record no warning ever pointed at.
+    const result = parseStudentText("玛丽-克莱尔 巴黎高等师范 巴黎");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "玛丽-克莱尔", university: "巴黎高等师范", city: "巴黎" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("separates on a hyphen only where it stands between spaces", () => {
+    const spaced = parseStudentText("顾言 - 复旦大学 - 上海市");
+    const glued = parseStudentText("顾言-复旦大学-上海市");
+
+    expect(spaced.candidates).toEqual([
+      expect.objectContaining({ name: "顾言", university: "复旦大学", city: "上海市" }),
+    ]);
+    // A glued hyphen may belong to any of the three values, so the row is
+    // reported rather than cut at a guess.
+    expect(glued.candidates).toEqual([]);
+    expect(glued.unparsed).toEqual([
+      { sourceLine: 1, rawLine: "顾言-复旦大学-上海市", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+});
+
+describe("、 | ； separated pastes", () => {
+  it("keeps an empty cell of a bar-separated row from shifting the later columns left", () => {
+    // Filtering the blank out imported 林舟 as a student of 北京市 living in 海外.
+    const result = parseStudentText("苏禾|浙江大学|杭州市|海外\n林舟||北京市|海外");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: "林舟||北京市|海外", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+
+  it("names the missing 院校 of a 、-separated row instead of moving the city into it", () => {
+    const result = parseStudentText([
+      "姓名、院校、城市",
+      "苏禾、浙江大学、杭州市",
+      "林舟、、北京市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "林舟、、北京市", reason: "缺少院校" },
+    ]);
+  });
+
+  it("reads a semicolon-separated roster and reports its gap", () => {
+    const result = parseStudentText("苏禾；浙江大学；杭州市\n林舟；；北京市");
+
+    expect(result.candidates).toEqual([expect.objectContaining({ name: "苏禾", city: "杭州市" })]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: "林舟；；北京市", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+
+  it("reads a pasted markdown table without importing its rule row", () => {
+    // The bars are columns now, so the rule row lines up with 姓名/院校/城市 and
+    // would import a student called "---".
+    const result = parseStudentText([
+      "| 姓名 | 院校 | 城市 |",
+      "| --- | --- | --- |",
+      "| 林舟 | 北京大学 | 北京市 |",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("still reads a 、 that numbers a list or enumerates inside one cell", () => {
+    // 、 is the Chinese enumeration mark as well as a separator, so a single one
+    // must not turn "北京、天津" into a column of its own.
+    const result = parseStudentText([
+      "1、林舟 北京大学 北京",
+      "2、苏禾、浙江大学、杭州市",
+      "3、周晴 哈佛大学 波士顿、剑桥",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "周晴", university: "哈佛大学", city: "波士顿" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
   });
 });
