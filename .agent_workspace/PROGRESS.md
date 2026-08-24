@@ -21,7 +21,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
-| 5 | CLOSED | R5-1–R5-9 | — | Full suite 172 files / 1568 pass / 2 skip; lint 0 err (6 warn); typecheck 0. Fable next. |
+| 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
+| 6 | IN_PROGRESS | — | — | Band elimination, notice unification, CI. R6-1 first in persist-visibility chain. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -84,7 +85,11 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - Lint: 0 errors, 6 warnings (`main.tsx` react-refresh gone after R5-3). Typecheck: `npm run typecheck` exit 0.
 - Persist band: 8 MiB per-room and aggregate (8 MiB occupancy ~57ms on R5-1 machine). Rollback = revert R5-1 commits.
 - Shared store: one `createIndexedDbProjectStore()` in `editor-project-store.ts`. Rollback = revert R5-3.
-- Fable: pending `.agent_workspace/round-5-review.md`.
+- Fable: `.agent_workspace/round-5-review.md`. Briefing: `.agent_workspace/round-5-briefing.md`. 7 ACCEPT + 2 NITS, no blocker. PR #14 ready-for-review.
+
+## Round 6 notes
+
+- Visibility chain: R6-1 → R6-2 → R6-6. Independent: R6-4, R6-5 (copy+extract), R6-7, R6-8. Proofs R6-3/R6-9 after code merges.
 
 ## Round Briefings
 
