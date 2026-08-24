@@ -83,7 +83,13 @@
   - opus-fast-B → `bc-5acd7e1d-a4c5-5c29-b4af-5c7c0ddcb809`
   - gpt-sol-A → `bc-54f88c0d-52e3-52e5-8fe0-fa32260cfa87`
   - gpt-sol-B → `bc-37734dd9-fe43-5135-8ab2-b5837f4070a1`
-- [ ] Cycle 3 Round 3 — 固化与交叉核验（冻结：无新优化）
+- [ ] Cycle 3 Round 3 — 固化与交叉核验（冻结：无新优化，6 子代理并发）
+  - fable-A → `bc-19a0d90d-6eb5-5129-8d97-ec47a8785c4c`
+  - fable-B → `bc-7d9f8066-dc5c-56da-978d-70dcfb40a2d3`
+  - opus-fast-A → `bc-555ddf52-3dc8-548d-9aba-ef05f58eae1a`
+  - opus-fast-B → `bc-4f3c62ca-2de9-5146-8f12-469ef8ad2e8d`
+  - gpt-sol-A → `bc-a1068140-3f21-5e87-bd50-64bec7878c58`
+  - gpt-sol-B → `bc-fccb3488-b7c2-5b1c-aef6-14bee96ba2b3`
 - [ ] 归档、结构化 PR
 
 ## 已知基线（主调度器预研）
