@@ -1,9 +1,29 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { MapFeature } from "../../lib/map-data";
 import type { MapSettings } from "../../lib/scene-document";
 import { MapDataLayer } from "./MapDataLayer";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted with
+  // its texture-drag pointer handlers armed for the rest of the run.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 const features: MapFeature[] = ["a", "b", "c"].map((id, index) => ({
   type: "Feature",
@@ -35,8 +55,7 @@ describe("province texture overlap rendering", () => {
         },
       }])),
     } as unknown as MapSettings;
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapDataLayer
@@ -75,7 +94,6 @@ describe("province texture overlap rendering", () => {
       }
     }
     expect(images.some((image) => image.getAttribute("data-texture-adjusted") === "true")).toBe(true);
-    root.unmount();
   });
 
   it("starts a manual drag from the automatically adjusted visible position", async () => {
@@ -92,8 +110,7 @@ describe("province texture overlap rendering", () => {
       }])),
     } as unknown as MapSettings;
     const onMoveProvinceTexture = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <MapDataLayer
@@ -123,6 +140,5 @@ describe("province texture overlap rendering", () => {
 
     expect(Number(adjusted.getAttribute("x"))).toBeCloseTo(visibleX + 10, 2);
     expect(Number(adjusted.getAttribute("y"))).toBeCloseTo(visibleY + 5, 2);
-    root.unmount();
   });
 });
