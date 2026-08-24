@@ -21,7 +21,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
-| 5 | IN_PROGRESS | R5-2, R5-4, R5-5, R5-7–R5-9 | — | Boot logs/quarantine, crash copy, workbench recovery UI, continue-dedupe, drain phases, single resume. Awaiting R5-1/3/6. |
+| 5 | IN_PROGRESS | R5-1, R5-2, R5-4, R5-5, R5-7–R5-9 | — | Persist cap 8 MiB (= HTTP accept). Awaiting R5-3 shared store, R5-6 terminal submit. |
 
 ## Round 0 Baseline (pre-optimization)
 
