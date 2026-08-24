@@ -579,7 +579,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         if (error.code === "VERSION_CONFLICT") aiLogger.log("room.conflict", { roomId: loggedRoomId, errorCode: error.code });
         send(status, body);
       };
-      const roomProjection = (room: ReturnType<typeof roomStore.get>, accessToken: string) => {
+      const roomProjection = (room: ReturnType<typeof roomStore.peek>, accessToken: string) => {
         if (!room) return null;
         const participant = roomStore.authorize(room.id, accessToken, "read");
         return { ...room, role: participant.role, participants: roomStore.listParticipants(room.id, accessToken) };
@@ -619,7 +619,9 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         try {
-          const room = roomProjection(roomStore.get(roomMatch[1]!), accessToken);
+          // 存在性探查走 peek:get 会先 touch 再校验凭证,拿着无效凭证反复 GET 就能把房间
+          // 的 TTL 钉死,外人白占 maxRooms。真正的续命交给 roomProjection 里的 authorize。
+          const room = roomProjection(roomStore.peek(roomMatch[1]!), accessToken);
           if (!room) {
             send(404, { error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } });
             return;
@@ -871,7 +873,8 @@ export function createAiServer(options: AiServerOptions = {}) {
           response.end();
         };
         try {
-          const room = roomStore.get(eventsMatch[1]!);
+          // 同上:先 peek 探存在性,续命由紧随其后的 authorize 完成。
+          const room = roomStore.peek(eventsMatch[1]!);
           if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
           const participant = roomStore.authorize(eventsMatch[1]!, ticketRecord.accessToken, "read");
           // 每次写出前复核读权限:凭证一旦被撤(踢人),这条连接立刻断掉,不再收到房间广播。

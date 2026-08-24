@@ -1739,6 +1739,46 @@ describe("unified application server", () => {
     }
   });
 
+  // GET 房间原来先 roomStore.get(会 touch)再 authorize:拿着无效凭证按 TTL 节奏轮询,
+  // 就能给别人的房间无限续命,把 TTL 与 maxRooms 钉死。现在探查走 peek,续命只发生在 authorize 通过之后。
+  it("does not refresh the room TTL when a GET carries an invalid room token", async () => {
+    const server = createAiServer({ roomTtlMs: 200 });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "ttl-pin" });
+
+    const probe = () => fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders("not-the-room-token") });
+    expect((await probe()).status).toBe(403);
+
+    // 以远快于 TTL 的节奏持续探查:每一跳都被拒,房间照样到点过期。
+    const statuses: number[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      statuses.push((await probe()).status);
+    }
+    expect(statuses).toContain(404);
+
+    const owner = await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(created.access.accessToken) });
+    expect(owner.status).toBe(404);
+    await expect(owner.json()).resolves.toMatchObject({ error: { code: "ROOM_NOT_FOUND" } });
+  });
+
+  // 另一半:改 peek 之后合法读取仍要续命,否则正在看房间的成员会被 TTL 踢掉。
+  it("keeps refreshing the room TTL for GETs with a valid room token", async () => {
+    const server = createAiServer({ roomTtlMs: 400 });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "ttl-renew" });
+
+    let latest = 0;
+    for (let i = 0; i < 6; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      latest = (await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(created.access.accessToken) })).status;
+      expect(latest).toBe(200);
+    }
+    expect(latest).toBe(200);
+  });
+
   it("rate-limits invitation minting on the room creation window", async () => {
     const server = createAiServer({
       rateLimiters: { rooms: createRateLimiter({ limit: 2, windowMs: 60_000 }) },
