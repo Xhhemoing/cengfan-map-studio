@@ -68,6 +68,10 @@ export interface ServerLifecycleOptions {
   flush: () => Promise<void>;
   timeoutMs?: number;
   onDraining?: () => void;
+  /** 结束长连接（SSE）并放走空闲 keep-alive 连接，否则 close 的回调永远等不到。 */
+  drain?: () => void | Promise<void>;
+  /** 截止时间到时的兜底：强行切断仍在途的连接，避免单个请求拖住退出。 */
+  onTimeout?: () => void;
   setTimeoutFn?: typeof setTimeout;
 }
 
@@ -85,19 +89,39 @@ export function createServerLifecycle(options: ServerLifecycleOptions) {
     shutdownPromise = new Promise<void>((resolve) => {
       let settled = false;
       let timeout: ReturnType<typeof setTimeout> | undefined;
+      // 关停只有在监听关闭「且」状态落盘之后才算完成；先到的一方不能代表另一方。
+      let pending = 2;
       const finish = () => {
         if (settled) return;
         settled = true;
         if (timeout !== undefined) clearTimeout(timeout);
         resolve();
       };
-      timeout = setTimeoutFn(finish, timeoutMs);
-      try {
-        options.server.close(() => finish());
-      } catch {
+      const step = () => {
+        pending -= 1;
+        if (pending <= 0) finish();
+      };
+      timeout = setTimeoutFn(() => {
+        try {
+          options.onTimeout?.();
+        } catch {
+          // 兜底动作失败也不能挡住退出。
+        }
         finish();
+      }, timeoutMs);
+      try {
+        options.server.close(() => step());
+      } catch {
+        step();
       }
-      void options.flush().catch(() => undefined).finally(finish);
+      // 排空排在 close 之后：close 只停止接收新连接，挂着的长连接得自己结束；
+      // 刷盘再排在排空之后，避免把「排空过程中产生的写入」漏在快照外面。
+      void Promise.resolve()
+        .then(() => options.drain?.())
+        .catch(() => undefined)
+        .then(() => options.flush())
+        .catch(() => undefined)
+        .finally(step);
     });
     return shutdownPromise;
   };
