@@ -187,10 +187,24 @@ import {
 } from "./lib/incremental-workspace-sync";
 import {
   CollaborationClientError,
+  fetchRoomOperations,
+  isOwnRoomAcknowledgement,
   submitRoomOperations,
+  type CollaborationRoom,
 } from "./lib/collaboration-client";
-import { applyCollaborationOperations, diffCollaborationDocument } from "./lib/collaboration-operations";
+import {
+  applyCollaborationOperations,
+  diffCollaborationDocument,
+  rebaseRemoteCollaborationOperations,
+  type CollaborationOperation,
+} from "./lib/collaboration-operations";
 import { useCollaborationRoom } from "./lib/useCollaborationRoom";
+
+/**
+ * 版本冲突后的重投预算。补齐一次、重投一次就停:再冲突说明房间正在被高频改写,
+ * 继续自动重投只会和别人的事务互相顶,把一次冲突放大成一串上传。
+ */
+const COLLABORATION_CONFLICT_RETRIES = 1;
 
 function StudioApp({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
@@ -559,6 +573,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
     backfillInFlightRef,
   });
 
+  /**
+   * 卸载之后 ref 还活着,但组件已经不在树上:在途上传的回执既不能改基线,也不能再
+   * 对着卸载的树 setState。StrictMode 会先卸载再重挂,所以每次挂载都要重新置位。
+   */
+  const collaborationMountedRef = useRef(true);
+  useEffect(() => {
+    collaborationMountedRef.current = true;
+    return () => {
+      collaborationMountedRef.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     const { roomId, roomAccessToken, roomRole, roomReadonly, roomClosed } = collaboration;
     if (!roomId || !roomAccessToken || roomRole === "viewer" || roomReadonly || roomClosed || !collaborationBaselineRef.current) return;
@@ -566,20 +592,75 @@ function StudioApp({ projectId }: { projectId?: string }) {
       suppressCollaborationSendRef.current = false;
       return;
     }
-    const timer = window.setTimeout(async () => {
-      const baseline = collaborationBaselineRef.current;
-      if (!baseline || collaborationRoomRef.current !== roomId) return;
-      const currentEnvelope = createProjectPackageEnvelope(latestWorkspaceRef.current);
-      const current: ProjectPackage = {
-        ...currentEnvelope,
-        exportedAt: baseline.exportedAt,
-        project: { ...currentEnvelope.project, history: { past: [], future: [] } },
-      };
-      const operations = diffCollaborationDocument(baseline, current);
-      if (operations.length === 0) return;
+    /**
+     * 上传在途期间可以切房、退房或卸载。回执回来时房间已经不是发起时那间,写基线会污染
+     * 新房间的状态,写协作状态会把面板改回「已连接」。注意这里刻意不按 effect 实例取消:
+     * 工作区状态一变 effect 就会重跑,那不该让已经发出去的事务失去收尾。
+     */
+    const outdated = (): boolean => !collaborationMountedRef.current || collaborationRoomRef.current !== roomId;
+    const pendingOperations = (baseline: ProjectPackage): CollaborationOperation[] => (
+      diffCollaborationDocument(baseline, currentCollaborationPackage(baseline.exportedAt))
+    );
+
+    const commitAcknowledgement = (txId: string, operations: CollaborationOperation[], acknowledged: CollaborationRoom<ProjectPackage>) => {
+      const activeBaseline = collaborationBaselineRef.current;
+      if (!activeBaseline || outdated()) return;
+      // 自回声抑制:版本已经走到回执版本之后,说明本次事务的 ops 事件已经从流上回放过
+      // (lastTxId 用来确认那正是本次事务),基线里已经有这批 ops。再叠一次会把回声之后
+      // 落地的远端修改按旧值盖回去,下一次 diff 就会把远端的修改当成本地改动重新上传。
+      const echoAlreadyApplied = collaborationVersionRef.current >= acknowledged.version
+        && (acknowledged.lastTxId === undefined || isOwnRoomAcknowledgement(acknowledged, collaborationClientId, txId));
+      if (echoAlreadyApplied) return;
+      // 回声还没到:远端事件可能已经把基线推进过,所以要叠在「当前」基线上,而不是
+      // await 之前那一份,否则远端修改会从基线里被抹掉。
+      collaborationBaselineRef.current = applyCollaborationOperations(activeBaseline, operations);
+      // 版本只能单调前进:回退会让后续事件看起来像版本跳变,触发一次多余的区间补齐
+      // 并重复应用已经落地的修改。
+      if (acknowledged.version > collaborationVersionRef.current) {
+        collaborationVersionRef.current = acknowledged.version;
+        collaboration.setRoomVersion(acknowledged.version);
+      }
+    };
+
+    /**
+     * 冲突自愈:把缺失的区间补齐到基线与工作区,再基于新基线重新 diff。返回 null 表示
+     * 补齐没成功(或已有补齐在跑),调用方不再重投。
+     */
+    const rebaseOnLatestVersion = async (): Promise<CollaborationOperation[] | null> => {
+      if (backfillInFlightRef.current || outdated()) return null;
+      backfillInFlightRef.current = true;
+      const afterVersion = collaborationVersionRef.current;
+      try {
+        collaboration.setCollaborationMessage("同一版本上有并发修改，正在补齐后重试");
+        const interval = await fetchRoomOperations(roomId, collaborationAccessTokenRef.current ?? roomAccessToken, afterVersion);
+        const activeBaseline = collaborationBaselineRef.current;
+        if (!activeBaseline || outdated()) return null;
+        // 补齐期间流上可能已经自己把版本推过这段区间:那份区间是相对 afterVersion 的,
+        // 再套一次会重复应用,直接按当前基线重新 diff 即可。
+        if (collaborationVersionRef.current !== afterVersion) return pendingOperations(activeBaseline);
+        if (interval.version <= afterVersion) return null;
+        const rebased = rebaseRemoteCollaborationOperations(
+          activeBaseline,
+          currentCollaborationPackage(activeBaseline.exportedAt),
+          interval.operations,
+        );
+        collaborationBaselineRef.current = rebased.baseline;
+        suppressCollaborationSendRef.current = true;
+        applySharedPackage(rebased.current, interval.version);
+        collaborationBaselineRef.current = rebased.baseline;
+        collaborationVersionRef.current = interval.version;
+        collaboration.setRoomVersion(interval.version);
+        // 工作区状态是异步落地的,重新 diff 只能用 rebase 的结果,不能读 latestWorkspaceRef。
+        return diffCollaborationDocument(rebased.baseline, rebased.current);
+      } catch {
+        return null;
+      } finally {
+        backfillInFlightRef.current = false;
+      }
+    };
+
+    const submitOperations = async (operations: CollaborationOperation[], attempt: number): Promise<void> => {
       const txId = createId("collab-op");
-      collaboration.setCollaborationStatus("syncing");
-      collaboration.setCollaborationMessage(`正在同步 ${operations.length} 项增量修改`);
       try {
         const acknowledged = await submitRoomOperations<ProjectPackage>(roomId, roomAccessToken, {
           txId,
@@ -587,31 +668,50 @@ function StudioApp({ projectId }: { projectId?: string }) {
           baseVersion: collaborationVersionRef.current,
           operations,
         });
-        // 上传在途期间远端事件可能已经把基线推进过。此时基于 await 之前那份旧基线覆写
-        // ref 会把远端修改从基线里抹掉,下一次 diff 会把它们当成本地改动重新上传,两端
-        // 静默分叉;所以必须把本次事务叠加到「当前」基线上。服务端在无冲突时做的正是
-        // 同一次叠加(有冲突会走下面的 VERSION_CONFLICT 分支),两边结果一致。
-        const activeBaseline = collaborationBaselineRef.current;
-        if (activeBaseline && collaborationRoomRef.current === roomId) {
-          collaborationBaselineRef.current = applyCollaborationOperations(activeBaseline, operations);
-          // 版本只能单调前进:远端事件已经把本地推到更高版本时回退会让后续事件看起来像
-          // 版本跳变,触发一次多余的区间补齐并重复应用已经落地的修改。
-          if (acknowledged.version > collaborationVersionRef.current) {
-            collaborationVersionRef.current = acknowledged.version;
-            collaboration.setRoomVersion(acknowledged.version);
-          }
-        }
+        if (outdated()) return;
+        commitAcknowledgement(txId, operations, acknowledged);
+        if (outdated()) return;
         collaboration.setCollaborationStatus("connected");
-        collaboration.setCollaborationMessage(acknowledged.rebasedFromVersion === undefined ? "增量同步已完成" : "已自动合并互不冲突的并发修改");
+        collaboration.setCollaborationMessage(
+          attempt > 0
+            ? "已在最新版本上重试并完成增量同步"
+            : acknowledged.rebasedFromVersion === undefined ? "增量同步已完成" : "已自动合并互不冲突的并发修改",
+        );
       } catch (error) {
-        if (error instanceof CollaborationClientError && error.code === "VERSION_CONFLICT") {
-          collaboration.setCollaborationStatus("conflict");
-          collaboration.setCollaborationMessage("同一内容被其他成员修改；已暂停上传，请重新加入房间确认最新版本");
-        } else {
+        if (outdated()) return;
+        if (!(error instanceof CollaborationClientError) || error.code !== "VERSION_CONFLICT") {
           collaboration.setCollaborationStatus("error");
           collaboration.setCollaborationMessage(error instanceof Error ? error.message : "增量同步失败");
+          return;
         }
+        // 重试预算固定为一次,且只在这里消耗:客户端自己的请求级重试(超时/网络)不叠加
+        // 在这一层,两者相乘会把一次冲突放大成一串重投。
+        const rebasedOperations = attempt < COLLABORATION_CONFLICT_RETRIES ? await rebaseOnLatestVersion() : null;
+        if (outdated()) return;
+        if (rebasedOperations === null) {
+          collaboration.setCollaborationStatus("conflict");
+          collaboration.setCollaborationMessage(attempt > 0
+            ? "同一内容被其他成员修改；已同步到最新版本，下一次修改会重新上传"
+            : "同一内容被其他成员修改；补齐最新版本失败，下一次修改会重新上传");
+          return;
+        }
+        if (rebasedOperations.length === 0) {
+          collaboration.setCollaborationStatus("connected");
+          collaboration.setCollaborationMessage("远端修改已合并，本地没有需要上传的增量");
+          return;
+        }
+        await submitOperations(rebasedOperations, attempt + 1);
       }
+    };
+
+    const timer = window.setTimeout(() => {
+      const baseline = collaborationBaselineRef.current;
+      if (!baseline || outdated()) return;
+      const operations = pendingOperations(baseline);
+      if (operations.length === 0) return;
+      collaboration.setCollaborationStatus("syncing");
+      collaboration.setCollaborationMessage(`正在同步 ${operations.length} 项增量修改`);
+      void submitOperations(operations, 0);
     }, COLLABORATION_SEND_DELAY_MS);
     return () => window.clearTimeout(timer);
     // Depend on the individual room fields rather than the whole controller
