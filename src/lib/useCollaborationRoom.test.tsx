@@ -1050,6 +1050,8 @@ describe("useCollaborationRoom", () => {
       healthy.unmount();
 
       // 只认布尔位的旧服务端根本不会提这件事:不能替它宣布磁盘坏了。
+      // 上一次加入把凭证存进了本机,不清掉的话这一次会走恢复凭证的路径,握手响应根本不会被读到。
+      window.localStorage.clear();
       FakeEventSource.instances = [];
       installFetch({
         snapshotVersion: 1,
@@ -1088,8 +1090,10 @@ describe("useCollaborationRoom", () => {
       kept.unmount();
 
       // 服务端给了处置却没给失败时刻,就是明说连击结束了(下一次成功落盘会清掉这一项)。
+      // 同样要先清掉上一次加入存下的凭证,否则这一次不会走握手,连击根本没有被设起来过。
+      window.localStorage.clear();
       FakeEventSource.instances = [];
-      installFetch({
+      const request = installFetch({
         snapshotVersion: 1,
         snapshot: samplePackage(),
         operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
@@ -1105,6 +1109,8 @@ describe("useCollaborationRoom", () => {
       const recovered = mountHook(samplePackage());
       await joinRoomWithInvite(recovered);
       await vi.waitFor(() => expect(recovered.refs.versionRef.current).toBe(1));
+      // 握手确实跑过一次(报了连击),随后的快照才有东西可以清掉。
+      expect(request.mock.calls.some(([input]) => String(input).endsWith("/join"))).toBe(true);
       expect(recovered.controller().roomPersistFailureAt).toBeNull();
       recovered.unmount();
     });

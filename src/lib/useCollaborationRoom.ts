@@ -135,6 +135,13 @@ export interface UseCollaborationRoomResult {
    */
   roomPersistenceKind: RoomPersistenceOutcome | null;
   /**
+   * 服务端当前落盘失败连击的最近一次失败时刻(R8-2 的 `persistence.lastFailureAt`),没有连击
+   * 时为 `null`。`roomPersistenceKind` 说的是上一次**成功**落盘怎么处置了这间房,磁盘正在坏掉
+   * 的那一段时间里它只会重复上一次成功——房间因此看上去一切正常,而这恰恰是后果最重的一种
+   * 处境(服务端此刻挂掉,房间连同这段时间的改动一起没了)。同样是纯展示态。
+   */
+  roomPersistFailureAt: number | null;
+  /**
    * 每完成一次"离线 → 在线"的恢复就 +1。调用方可以拿它当 effect 依赖,在连接痊愈的那一刻
    * 重发分区期间没能上传的修改(每次恢复只触发一次)。
    */
@@ -216,6 +223,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   const [collaborationOffline, setCollaborationOfflineState] = useState(false);
   const [roomPersistenceDegraded, setRoomPersistenceDegraded] = useState(false);
   const [roomPersistenceKind, setRoomPersistenceKind] = useState<RoomPersistenceOutcome | null>(null);
+  const [roomPersistFailureAt, setRoomPersistFailureAt] = useState<number | null>(null);
   const [connectionHealCount, setConnectionHealCount] = useState(0);
   /** 网络恢复时自增,作为订阅 effect 的依赖:重挂一条流即为"立刻重连",退避序列不受影响。 */
   const [reconnectNonce, setReconnectNonce] = useState(0);
@@ -322,11 +330,15 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
    *
    * 三态处置与布尔位各自遵守这条规则:只带布尔位的响应不会把上一次读到的处置抹掉(那个服务端
    * 只是在这条响应里没提),而带了处置的响应两者一起更新——降级与否可以从处置直接读出来。
+   *
+   * 失败连击跟着处置一起更新:带了处置却没带 `lastFailureAt`,是服务端明说"此刻没有连击"
+   * (下一次成功落盘就会清掉它),不是没说;只带布尔位的响应才是没说,那时沿用上一个说法。
    */
   const notePersistence = (source: { persistedAtLastFlush?: boolean; persistence?: RoomPersistence }) => {
     if (source.persistence) {
       setRoomPersistenceKind(source.persistence.outcome);
       setRoomPersistenceDegraded(source.persistence.outcome !== "persisted");
+      setRoomPersistFailureAt(source.persistence.lastFailureAt ?? null);
       return;
     }
     if (source.persistedAtLastFlush === undefined) return;
@@ -539,6 +551,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     // 上一间房的持久化处境和下一间房无关:握手还没回话之前不能挂着旧房间的警告。
     setRoomPersistenceDegraded(false);
     setRoomPersistenceKind(null);
+    setRoomPersistFailureAt(null);
   };
 
   const startCollaborationRoom = async () => {
@@ -694,6 +707,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setRoomExpired(false);
     setRoomPersistenceDegraded(false);
     setRoomPersistenceKind(null);
+    setRoomPersistFailureAt(null);
     roomClosedRef.current = false;
     roomExpiredRef.current = false;
     setInvitationToken(null);
@@ -786,6 +800,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     collaborationOffline,
     roomPersistenceDegraded,
     roomPersistenceKind,
+    roomPersistFailureAt,
     connectionHealCount,
     collaborationMessage,
     collaborationOpen,
