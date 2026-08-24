@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef, type PointerEvent } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, type PointerEvent } from "react";
 import { clampDestinationCardPosition, type CardLayoutBounds, type CardPlacement } from "../../lib/card-layout";
 import { buildConnectorGeometry, type ConnectorStyle } from "../../lib/connector-geometry";
-import type { EdgeStyle, ResolvedEdgeStyle } from "../../lib/edge-styles";
+import { scopeEdgeStyleFilters, type EdgeStyle, type ResolvedEdgeStyle } from "../../lib/edge-styles";
 import type { PreparedCard } from "../../lib/prepared-card-content";
 import type { CardPresentation, ProvinceStyle } from "../../lib/scene-document";
 import type { CardPreset } from "../../lib/template-document";
@@ -72,7 +72,7 @@ function DestinationCardsLayerView({
   cards,
   style,
   appearance,
-  connectorEdge,
+  connectorEdge: incomingConnectorEdge,
   dragBounds,
   exportMode,
   renderIntervalMs,
@@ -100,6 +100,16 @@ function DestinationCardsLayerView({
     connectorHidden: boolean;
   } | null>(null);
   const cardPreviewScheduler = useRef(createCanvasPreviewScheduler<{ id: string; x: number; y: number }>());
+
+  // The resolved edge style carries document-wide filter ids, so two canvases on one page
+  // (editor + template preview) would emit the same `<defs>` id and the first one would win
+  // for both. Scoping the ids to this mount keeps each canvas — and its export clone — on
+  // its own filters.
+  const instanceId = useId();
+  const connectorEdge = useMemo(
+    () => scopeEdgeStyleFilters(incomingConnectorEdge, instanceId),
+    [incomingConnectorEdge, instanceId],
+  );
 
   const updateCardPreview = useCallback((next: { id: string; x: number; y: number }) => {
     const drag = cardDrag.current;

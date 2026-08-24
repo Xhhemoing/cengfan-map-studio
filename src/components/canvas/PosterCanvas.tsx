@@ -53,6 +53,7 @@ const foldedMapSplit = splitMapFeaturesForSouthChinaSea(features, true);
 const HEAT_COLORS = ["#d9f0e5", "#8ccfb6", "#4da184", "#17675e"] as const;
 const LANDMARK_ASSET_KINDS: AssetElement["kind"][] = ["landmark"];
 const EMPTY_USER_FONTS: UserFont[] = [];
+const EMPTY_CARD_POLYGONS: CardPolygon[] = [];
 
 const MemoizedMapLayer = memo(MapLayer);
 const MemoizedRegionalAssetLayer = memo(RegionalAssetLayer);
@@ -263,13 +264,28 @@ function PosterCanvasView({
     project.map.x,
     project.map.y,
   ]);
+  const mapRenderSource = project.map.renderSource;
+  const mapImageReplacesProvinces = mapRenderSource?.kind === "image" && mapRenderSource.composition !== "overlay";
+  // Visibility is the only thing the collision geometry reads out of `provinceStyles`, and
+  // a recolor replaces that record wholesale. Reducing it to a sorted name list first means
+  // a color edit leaves the set — and therefore the projected rings — identical.
+  const hiddenProvincesKey = useMemo(() => {
+    const styles = project.map.provinceStyles;
+    if (!styles) return "";
+    return Object.keys(styles).filter((name) => styles[name]?.visible === false).sort().join("\n");
+  }, [project.map.provinceStyles]);
+  const hiddenProvinces = useMemo(
+    () => new Set(hiddenProvincesKey === "" ? [] : hiddenProvincesKey.split("\n")),
+    [hiddenProvincesKey],
+  );
+  const mapOriginX = project.map.x + project.map.width / 2;
+  const mapOriginY = project.map.y + project.map.height / 2;
   // Collision geometry expressed as offsets from the map center, which is where scaling
   // happens. Panning only slides that center across the canvas, so it must not reproject —
   // and because a translation preserves every distance, simplification decided here is the
   // same one the canvas-space rings would have made.
   const centeredProvincePolygons = useMemo<CardPolygon[]>(() => {
-    const source = project.map.renderSource;
-    if (source?.kind === "image" && source.composition !== "overlay") return [];
+    if (mapImageReplacesProvinces) return [];
     const centerX = project.map.width / 2;
     const centerY = project.map.height / 2;
     const projectPoint = (coordinate: Position): CardPoint | null => {
@@ -281,7 +297,7 @@ function PosterCanvasView({
       };
     };
     return mainlandFeatures.flatMap((feature): CardPolygon[] => {
-      if (project.map.provinceStyles?.[feature.name]?.visible === false) return [];
+      if (hiddenProvinces.has(feature.name)) return [];
       return featureCoordinatePolygons(feature).flatMap((polygon) => {
         const rings = polygon.map((ring) => simplifyProjectedRing(
           ring.flatMap((coordinate) => {
@@ -294,27 +310,27 @@ function PosterCanvasView({
       });
     });
     // Depend on the map fields the projection actually reads instead of the whole
-    // project.map object: recoloring the map replaces that object and would otherwise
-    // reproject every province ring and invalidate the layout cache key.
+    // project.map object — and on the derived visibility set rather than provinceStyles,
+    // which a recolor replaces wholesale. Either would otherwise reproject every province
+    // ring and invalidate the layout cache key for an edit that moves no geometry.
   }, [
+    hiddenProvinces,
     mainlandFeatures,
+    mapImageReplacesProvinces,
     project.map.height,
-    project.map.provinceStyles,
-    project.map.renderSource,
     project.map.scale,
     project.map.width,
     projection,
   ]);
-  const provincePolygons = useMemo<CardPolygon[]>(() => {
-    const originX = project.map.x + project.map.width / 2;
-    const originY = project.map.y + project.map.height / 2;
-    return centeredProvincePolygons.map(({ rings, bounds }) => ({
-      rings: rings.map((ring) => ring.map((point) => ({ x: originX + point.x, y: originY + point.y }))),
+  const provincePolygons = useMemo<CardPolygon[]>(
+    () => centeredProvincePolygons.map(({ rings, bounds }) => ({
+      rings: rings.map((ring) => ring.map((point) => ({ x: mapOriginX + point.x, y: mapOriginY + point.y }))),
       ...(bounds
-        ? { bounds: { x: originX + bounds.x, y: originY + bounds.y, width: bounds.width, height: bounds.height } }
+        ? { bounds: { x: mapOriginX + bounds.x, y: mapOriginY + bounds.y, width: bounds.width, height: bounds.height } }
         : {}),
-    }));
-  }, [centeredProvincePolygons, project.map.height, project.map.width, project.map.x, project.map.y]);
+    })),
+    [centeredProvincePolygons, mapOriginX, mapOriginY],
+  );
   const mapContentBounds = useMemo(
     () => computeMapContentBounds({ map: project.map, provinceAreas }),
     [project.map, provinceAreas],
@@ -351,8 +367,15 @@ function PosterCanvasView({
     return [...protectedMapAreas, ...textAreas, ...guestAreas];
   }, [guestHeight, guests.visibility, guests.width, guests.x, guests.y, nonProvinceMapAreas, project.cards.allowMapOverlap, project.textElements]);
   const layoutOccupiedPolygons = useMemo(
-    () => project.cards.allowMapOverlap === true ? [] : provincePolygons,
+    () => project.cards.allowMapOverlap === true ? EMPTY_CARD_POLYGONS : provincePolygons,
     [project.cards.allowMapOverlap, provincePolygons],
+  );
+  // The same obstacles the solver receives, still relative to the map center. A pan leaves
+  // this array instance alone, which is what keeps the layout cache key from re-serializing
+  // every province ring; `layoutOccupiedPolygons` is exactly this translated by the origin.
+  const layoutOccupiedCenteredPolygons = useMemo(
+    () => project.cards.allowMapOverlap === true ? EMPTY_CARD_POLYGONS : centeredProvincePolygons,
+    [centeredProvincePolygons, project.cards.allowMapOverlap],
   );
   const displayFrame = useMemo(
     () => project.cards.displayFrame === undefined
@@ -597,7 +620,16 @@ function PosterCanvasView({
       connectorWidth: project.cards.connectorWidth,
     };
     return {
-      key: createCardLayoutCacheKey({ cards, bounds: cardLayoutBounds, options }),
+      key: createCardLayoutCacheKey({
+        cards,
+        bounds: cardLayoutBounds,
+        options,
+        polygonOrigin: {
+          polygons: layoutOccupiedCenteredPolygons,
+          originX: mapOriginX,
+          originY: mapOriginY,
+        },
+      }),
       cards,
       bounds: cardLayoutBounds,
       options,
@@ -605,6 +637,9 @@ function PosterCanvasView({
   }, [
     cardLayoutBounds,
     frozenPlacements,
+    layoutOccupiedCenteredPolygons,
+    mapOriginX,
+    mapOriginY,
     preparedCards,
     project.cards.autoBalance,
     project.cards.connectorStyle,

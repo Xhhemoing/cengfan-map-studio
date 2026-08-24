@@ -153,12 +153,14 @@ try {
       root: ReturnType<typeof createRoot>,
       renderedProject: ReturnType<typeof createProjectDocument>,
       selectedTextId: string | null = null,
+      onCardPositionsResolved?: (positions: Record<string, { x: number; y: number }>) => void,
     ) => {
       flushSync(() => root.render(createElement(PosterCanvas, {
         project: renderedProject,
         selectedTextId,
         onMoveCard,
         onSelect,
+        ...(onCardPositionsResolved ? { onCardPositionsResolved } : {}),
       })));
     };
 
@@ -315,6 +317,110 @@ try {
       }
       flushSync(() => panRoot.unmount());
       panContainer.remove();
+
+      // Mirror the editor's steady state after it has persisted every automatic card
+      // position before a map edit. Capture the actual solver output outside the samples
+      // so this probe differs from the unfrozen pan only by the stored positions.
+      let frozenPositions: Record<string, { x: number; y: number }> = {};
+      const freezeContainer = document.createElement("div");
+      document.body.append(freezeContainer);
+      const freezeRoot = createRoot(freezeContainer);
+      renderPoster(freezeRoot, project, null, (positions) => {
+        frozenPositions = positions;
+      });
+      flushSync(() => freezeRoot.unmount());
+      freezeContainer.remove();
+      if (Object.keys(frozenPositions).length !== count) {
+        throw new Error(
+          `PosterCanvas freeze captured ${Object.keys(frozenPositions).length} positions; expected ${count}`,
+        );
+      }
+      const frozenProject = {
+        ...project,
+        cards: {
+          ...project.cards,
+          positions: frozenPositions,
+        },
+      };
+      const frozenPannedProject = {
+        ...pannedProject,
+        cards: frozenProject.cards,
+      };
+      const frozenPanContainer = document.createElement("div");
+      document.body.append(frozenPanContainer);
+      const frozenPanRoot = createRoot(frozenPanContainer);
+      renderPoster(frozenPanRoot, frozenProject);
+      const frozenCardTransforms = Array.from(
+        frozenPanContainer.querySelectorAll("[data-destination-card]"),
+        (card) => card.getAttribute("transform"),
+      );
+      let frozenPanned = false;
+      measure("posterCanvasFrozenMapPanRerender", count, () => {
+        frozenPanned = !frozenPanned;
+        renderPoster(frozenPanRoot, frozenPanned ? frozenPannedProject : frozenProject);
+      });
+      renderPoster(frozenPanRoot, frozenPannedProject);
+      const frozenMapTransform = frozenPanContainer
+        .querySelector("[data-map-layer]")
+        ?.getAttribute("transform");
+      if (!frozenMapTransform?.startsWith(
+        `translate(${frozenPannedProject.map.x} ${frozenPannedProject.map.y})`,
+      )) {
+        throw new Error("PosterCanvas frozen map-pan re-render did not apply the expected map.x");
+      }
+      const pannedFrozenCardTransforms = Array.from(
+        frozenPanContainer.querySelectorAll("[data-destination-card]"),
+        (card) => card.getAttribute("transform"),
+      );
+      if (JSON.stringify(pannedFrozenCardTransforms) !== JSON.stringify(frozenCardTransforms)) {
+        throw new Error("PosterCanvas frozen map-pan re-render moved a stored card position");
+      }
+      flushSync(() => frozenPanRoot.unmount());
+      frozenPanContainer.remove();
+
+      const recoloredProvince = fixture.movedCardKey;
+      const recolor = "#d05a45";
+      if (!recoloredProvince) {
+        throw new Error("PosterCanvas recolor fixture has no province");
+      }
+      const recoloredFeature = features.find((feature) => feature.name === recoloredProvince);
+      if (!recoloredFeature) {
+        throw new Error(`PosterCanvas recolor fixture cannot find ${recoloredProvince}`);
+      }
+      const recoloredProject = {
+        ...project,
+        map: {
+          ...project.map,
+          provinceStyles: {
+            ...project.map.provinceStyles,
+            [recoloredProvince]: {
+              ...project.map.provinceStyles?.[recoloredProvince],
+              appearance: { kind: "manual-color" as const, color: recolor },
+            },
+          },
+        },
+      };
+      const recolorContainer = document.createElement("div");
+      document.body.append(recolorContainer);
+      const recolorRoot = createRoot(recolorContainer);
+      renderPoster(recolorRoot, project);
+      let recolored = false;
+      measure("posterCanvasProvinceRecolorRerender", count, () => {
+        recolored = !recolored;
+        renderPoster(recolorRoot, recolored ? recoloredProject : project);
+      });
+      renderPoster(recolorRoot, recoloredProject);
+      const recoloredPath = recolorContainer.querySelector(
+        `[data-province-id="${recoloredFeature.id}"]`,
+      );
+      if (recoloredPath?.getAttribute("fill") !== recolor) {
+        throw new Error("PosterCanvas province recolor re-render did not apply the expected fill");
+      }
+      if (recolorContainer.querySelectorAll("[data-destination-card]").length !== count) {
+        throw new Error("PosterCanvas province recolor re-render changed the destination-card count");
+      }
+      flushSync(() => recolorRoot.unmount());
+      recolorContainer.remove();
 
       const positionContainer = document.createElement("div");
       document.body.append(positionContainer);

@@ -160,7 +160,40 @@ describe("DestinationCardsLayer", () => {
     const { container } = render({
       connectorEdge: resolveEdgeStyle({ style: "soft-glow", color: "#39434e", width: 2, filterPrefix: "connector-edge" }),
     });
-    expect(container.querySelector("[data-connector-edge-filters] filter")).not.toBeNull();
+    const filter = container.querySelector("[data-connector-edge-filters] filter")!;
+    expect(filter).not.toBeNull();
+    // Scoped, but still derived from the document-wide prefix so the style stays recognizable.
+    expect(filter.getAttribute("id")).toMatch(/^connector-edge-soft-glow-[A-Za-z0-9_-]+$/);
+    expect(container.querySelector('[data-destination-connector-underlay="北京市"]')?.getAttribute("filter"))
+      .toBe(`url(#${filter.getAttribute("id")})`);
+  });
+
+  it("gives two canvases on one page their own connector filter ids", () => {
+    const glow = resolveEdgeStyle({ style: "soft-glow", color: "#39434e", width: 2, filterPrefix: "connector-edge" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    mounted.push({ root, container });
+    // Both canvases live in the same React tree, the way the editor and a template preview do.
+    flushSync(() => root.render(
+      <>
+        <svg data-canvas="editor"><DestinationCardsLayer {...layerProps({ connectorEdge: glow })} /></svg>
+        <svg data-canvas="preview"><DestinationCardsLayer {...layerProps({ connectorEdge: glow })} /></svg>
+      </>,
+    ));
+
+    const [editorFilter, previewFilter] = Array.from(
+      container.querySelectorAll("[data-connector-edge-filters] filter"),
+    ).map((node) => node.getAttribute("id")!);
+    expect(editorFilter).toBeTruthy();
+    expect(editorFilter).not.toBe(previewFilter);
+
+    for (const [canvas, filterId] of [["editor", editorFilter], ["preview", previewFilter]] as const) {
+      const scope = container.querySelector(`[data-canvas="${canvas}"]`)!;
+      expect(scope.querySelector('[data-destination-connector-underlay="北京市"]')?.getAttribute("filter"))
+        .toBe(`url(#${filterId})`);
+      // The reference must resolve inside its own canvas, including after an export clone.
+      expect(scope.querySelector(`#${filterId}`)).not.toBeNull();
+    }
   });
 
   it("moves the card and its connector imperatively during a drag, then commits on release", () => {
