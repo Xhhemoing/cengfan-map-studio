@@ -2694,6 +2694,56 @@ describe("Collaboration send effect recovery (R2-3)", () => {
       }
     });
   });
+
+  /**
+   * R6-6 让 ProjectMenu 有能力说出"这间房活不过服务端重启",但那句话只有在 App 把钩子的判断
+   * 接到 prop 上时才会出现。缺了这根线,prop 的缺省值会让房里的人一直看不见警告。
+   */
+  describe("room persistence degradation wiring (R6-5b)", () => {
+    const PERSIST_COPY = "该房间体量超过服务器持久化上限，服务器重启后将无法恢复，请及时导出备份";
+
+    function persistNote(container: HTMLElement): HTMLElement | null {
+      return container.querySelector<HTMLElement>('[data-collaboration-persist="degraded"]');
+    }
+
+    it("warns the room when the server reports it was skipped at the last flush", async () => {
+      const container = renderApp();
+      const roomId = "PRSST1";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        // 服务端上一次落盘跳过了这间房:create 响应把说法放在 room/access 的兄弟位置。
+        if (url.endsWith("/api/rooms")) {
+          const created = await ownedRoom(roomId).json();
+          return json({ ...created, persistedAtLastFlush: false });
+        }
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        }
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+
+        const note = await vi.waitFor(() => {
+          const node = persistNote(container);
+          expect(node).not.toBeNull();
+          return node!;
+        }, { timeout: 5_000 });
+        expect(note.textContent).toContain(PERSIST_COPY);
+        // 纯展示态:房间照常同步,既没有终局也没有离线。
+        expect(collaborationStatus(container)?.getAttribute("data-collaboration-terminal")).toBeNull();
+        expect(container.querySelector('[data-collaboration-offline="true"]')).toBeNull();
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
+  });
 });
 
 describe("Missing project honesty under a degraded store (R6-5)", () => {
