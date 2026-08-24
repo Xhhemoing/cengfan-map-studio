@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildSystemMessage, digestFingerprint, runAgentTurn, runLocalAgentTurn, MAX_READ_ONLY_STREAK, MAX_TOOL_REJECTIONS, MAX_TURNS } from "./agent-loop";
+import { buildSystemMessage, digestFingerprint, hasToolResultInCurrentTask, runAgentTurn, runLocalAgentTurn, MAX_READ_ONLY_STREAK, MAX_TOOL_REJECTIONS, MAX_TURNS } from "./agent-loop";
 import type { AiConfig } from "./llm-client";
 import type { AgentBudgetState, ChatMessage } from "./agent-types";
 
@@ -557,5 +557,50 @@ describe("runLocalAgentTurn", () => {
       messages: [calls(["set_data_view", { view: "city" }]), { role: "tool", tool_call_id: "call-0", content: "{}" }],
     });
     expect(outcome.kind).toBe("finish");
+  });
+
+  it("段内工具往返才算数：上一段的工具结果不该让新一句直接收尾", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "把地图缩小" },
+      calls(["update_map", { patch: { scale: 0.85 } }]),
+      { role: "tool", tool_call_id: "call-0", content: "{}" },
+      { role: "assistant", content: "已把地图缩小。" },
+      { role: "user", content: "按城市分组" },
+    ];
+    const outcome = runLocalAgentTurn({ userMessage: "按城市分组", digest: {}, messages });
+    expect(outcome.kind).toBe("tool-call");
+    if (outcome.kind === "tool-call") expect(outcome.calls[0]).toMatchObject({ name: "set_data_view", arguments: { view: "city" } });
+  });
+
+  it("续跑回声不影响段边界：同一句话的工具往返仍然只收尾", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "按城市分组" },
+      calls(["set_data_view", { view: "city" }]),
+      { role: "tool", tool_call_id: "call-0", content: "{}" },
+      { role: "user", content: "按城市分组" },
+    ];
+    expect(runLocalAgentTurn({ userMessage: "按城市分组", digest: {}, messages }).kind).toBe("finish");
+  });
+});
+
+describe("hasToolResultInCurrentTask", () => {
+  it("只统计当前任务段内的工具结果", () => {
+    const history: ChatMessage[] = [
+      { role: "user", content: "把地图缩小" },
+      calls(["update_map", { patch: { scale: 0.85 } }]),
+      { role: "tool", tool_call_id: "call-0", content: "{}" },
+      { role: "assistant", content: "已把地图缩小。" },
+      { role: "user", content: "按城市分组" },
+    ];
+    expect(hasToolResultInCurrentTask(history, "按城市分组")).toBe(false);
+    expect(hasToolResultInCurrentTask(history, "把地图缩小")).toBe(true);
+  });
+
+  it("段边界找不到时退回全量口径", () => {
+    const history: ChatMessage[] = [
+      calls(["update_map", { patch: { scale: 0.85 } }]),
+      { role: "tool", tool_call_id: "call-0", content: "{}" },
+    ];
+    expect(hasToolResultInCurrentTask(history, "无法匹配的用户消息")).toBe(true);
   });
 });

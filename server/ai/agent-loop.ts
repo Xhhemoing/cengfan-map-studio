@@ -125,6 +125,15 @@ export function currentTaskStart(messages: ChatMessage[], userMessage: string): 
 }
 
 /**
+ * 当前任务段内是否已经发生过工具往返。判定必须按段而不是按整段历史：多轮会话里上一段的
+ * 工具结果会一直留在 messages 里，用全量口径会让「新提一句」的第一轮被当成半途续跑。
+ * 边界找不到时退回 0（全局口径），与 rejectedCount 一致。
+ */
+export function hasToolResultInCurrentTask(messages: ChatMessage[], userMessage: string): boolean {
+  return messages.slice(Math.max(0, currentTaskStart(messages, userMessage))).some((message) => message.role === "tool");
+}
+
+/**
  * 拒绝次数只算当前任务段内的：上一段任务里被拒过两次的补丁不该让「继续对话」的第一轮
  * 不调模型就直接 finish。段内计数仍然是硬闸，模型在同一段里连错两次照样停。
  * 边界找不到时由调用方退回 0（全局口径），宁可早停也不放任无限重试。
@@ -266,8 +275,9 @@ function mapScale(digest: Record<string, unknown>): number {
 
 /** 无 API key 或模型暂时不可用时的确定性兜底，保持 agent 协议可继续工作。 */
 export function runLocalAgentTurn(request: AgentLoopRequest): AgentLoopOutcome {
-  const hasToolResult = request.messages.some((message) => message.role === "tool");
-  if (hasToolResult) return { kind: "finish", summary: "已按本地规则完成可识别的修改；更复杂的需求需要配置 AI 模型。" };
+  if (hasToolResultInCurrentTask(request.messages, request.userMessage)) {
+    return { kind: "finish", summary: "已按本地规则完成可识别的修改；更复杂的需求需要配置 AI 模型。" };
+  }
   const message = normalizeLocalMessage(request.userMessage);
   const calls: AgentToolCall[] = [];
   const digest = request.digest;

@@ -1,6 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentLoopBackend } from "./agent-routing";
 import { normalizeAgentRuntimeConfig, resolveAgentConfig, resolveAgentRuntimeConfig } from "./agent-routing";
+import type { ChatMessage } from "./agent-types";
+
+const MID_TASK_MESSAGE = "把地图缩小并检查一下健康度";
+
+/** 本段任务已经跑过一次工具往返：客户端续跑时会带着这段历史再请求一轮。 */
+function midTaskMessages(): ChatMessage[] {
+  return [
+    { role: "user", content: MID_TASK_MESSAGE },
+    { role: "assistant", content: null, tool_calls: [{ id: "call-mid", type: "function", function: { name: "check_health", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "call-mid", content: JSON.stringify({ ok: true }) },
+  ];
+}
+
+/** 上一段任务已经收尾，这一轮是全新提问，历史里的工具结果不属于本段。 */
+function newTaskAfterToolHistory(userMessage: string): ChatMessage[] {
+  return [
+    ...midTaskMessages(),
+    { role: "assistant", content: "上一段已完成。" },
+    { role: "user", content: userMessage },
+  ];
+}
 
 describe("resolveAgentConfig", () => {
   it("defaults to deepseek-v4-flash at the official endpoint", () => {
@@ -187,6 +208,71 @@ describe("resolveAgentConfig", () => {
       budget: { usedTokens: 1_200, maxTokens: 60_000, rounds: 2, maxRounds: 20 },
     });
     expect(outcome).toMatchObject({ kind: "finish", budget: { usedTokens: 1_200, rounds: 2 } });
+  });
+
+  /**
+   * 多步任务中途上游挂掉时，本地兜底只会回一句成功 finish，客户端重试路径永远等不到 502，
+   * 用户看到的是「任务已完成」而不是「稍后重试」。段内有工具往返就必须把原始错误抛回去。
+   */
+  it("throws the upstream 429 instead of finishing locally once the task已有工具往返", async () => {
+    const fetchMock = vi.fn(async () => new Response("rate limited", { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({ AI_API_KEY: "key" }));
+    await expect(backend.runTurn({ userMessage: MID_TASK_MESSAGE, digest: { map: { scale: 1 } }, messages: midTaskMessages() }))
+      .rejects.toMatchObject({ name: "AiCallError", code: "AI_RATE_LIMITED", status: 429 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws the upstream 503 rather than reporting a mid-task success", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({ AI_API_KEY: "key" }));
+    await expect(backend.runTurn({ userMessage: MID_TASK_MESSAGE, digest: {}, messages: midTaskMessages() }))
+      .rejects.toMatchObject({ code: "AI_UPSTREAM_UNAVAILABLE" });
+  });
+
+  it("keeps the original primary error when the fallback model also fails mid-task", async () => {
+    const fetchMock = vi.fn(async (url: string) => new Response("upstream", { status: String(url).startsWith("https://primary.example/") ? 429 : 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({
+      AI_PRIMARY_API_KEY: "primary",
+      AI_PRIMARY_BASE_URL: "https://primary.example/v1",
+      AI_FALLBACK_API_KEY: "fallback",
+      AI_FALLBACK_BASE_URL: "https://fallback.example/v1",
+    }));
+    await expect(backend.runTurn({ userMessage: MID_TASK_MESSAGE, digest: {}, messages: midTaskMessages() }))
+      .rejects.toMatchObject({ code: "AI_RATE_LIMITED" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("still answers from the fallback model mid-task when it succeeds", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => (String(url).startsWith("https://primary.example/")
+      ? new Response("unavailable", { status: 503 })
+      : new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "已完成" } }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }), { status: 200 }))));
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({
+      AI_PRIMARY_API_KEY: "primary",
+      AI_PRIMARY_BASE_URL: "https://primary.example/v1",
+      AI_FALLBACK_API_KEY: "fallback",
+      AI_FALLBACK_BASE_URL: "https://fallback.example/v1",
+    }));
+    await expect(backend.runTurn({ userMessage: MID_TASK_MESSAGE, digest: {}, messages: midTaskMessages() }))
+      .resolves.toMatchObject({ kind: "finish", meta: { route: "fallback" } });
+  });
+
+  it("still falls back locally when a brand-new request fails upstream", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({ AI_API_KEY: "key" }));
+    const outcome = await backend.runTurn({ userMessage: "按城市分组", digest: {}, messages: [{ role: "user", content: "按城市分组" }] });
+    expect(outcome).toMatchObject({ kind: "tool-call", meta: { route: "local", provider: "local-fallback" } });
+  });
+
+  it("still falls back locally for a new request that only carries an older task's tool history", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const backend = createAgentLoopBackend(resolveAgentRuntimeConfig({}));
+    const outcome = await backend.runTurn({ userMessage: "按城市分组", digest: {}, messages: newTaskAfterToolHistory("按城市分组") });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ kind: "tool-call", meta: { route: "local" } });
+    if (outcome.kind === "tool-call") expect(outcome.calls[0]).toMatchObject({ name: "set_data_view", arguments: { view: "city" } });
   });
 
   it("does not start a remote turn when the runtime budget cannot cover one agent call", async () => {

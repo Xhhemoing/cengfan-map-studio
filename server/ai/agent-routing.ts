@@ -3,13 +3,14 @@ import {
   type AiConfig,
 } from "./llm-client";
 import {
+  hasToolResultInCurrentTask,
   runAgentTurn,
   runLocalAgentTurn,
   type AgentLoopOutcome,
   type AgentLoopRequest,
 } from "./agent-loop";
-import type { AgentBudgetState, AiRoute } from "./agent-types";
-import { AiCallError } from "./ai-errors";
+import type { AgentBudgetState, AiErrorCode, AiRoute } from "./agent-types";
+import { AiCallError, sanitizeAiDetail } from "./ai-errors";
 import { tryLocalPreroute } from "./local-preroute";
 
 export const DEFAULT_AGENT_MODEL = "deepseek-v4-flash";
@@ -157,6 +158,31 @@ function isRuntimeConfig(value: AgentRuntimeConfig | AiConfig): value is AgentRu
   return "primary" in value && "maxRounds" in value;
 }
 
+const UPSTREAM_ERROR_CODES: ReadonlySet<string> = new Set<AiErrorCode>([
+  "AI_ABORTED",
+  "AI_TIMEOUT",
+  "AI_RATE_LIMITED",
+  "AI_UPSTREAM_UNAVAILABLE",
+  "AI_UPSTREAM_REJECTED",
+  "AI_INVALID_RESPONSE",
+]);
+
+/** 抛回上层的失败必须带可分类的 code，index.ts 才能把它翻成 502 而不是当成未知异常。 */
+function toAiCallError(error: unknown, fallbackMessage: string): AiCallError {
+  if (error instanceof AiCallError) return error;
+  const detail = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
+  return new AiCallError("AI_UPSTREAM_UNAVAILABLE", fallbackMessage, {
+    detail: detail ? sanitizeAiDetail(detail) : undefined,
+    cause: error,
+  });
+}
+
+/** runAgentTurn 不抛异常、只回 failed 的路径（例如上游返回体无法解析）也要还原成同一种错误。 */
+function failedOutcomeToAiCallError(outcome: { error: string; code?: string }, fallbackMessage: string): AiCallError {
+  const code = outcome.code && UPSTREAM_ERROR_CODES.has(outcome.code) ? outcome.code as AiErrorCode : "AI_UPSTREAM_UNAVAILABLE";
+  return new AiCallError(code, outcome.error || fallbackMessage);
+}
+
 export function createAgentLoopBackend(config: AgentRuntimeConfig | AiConfig): AgentLoopBackend {
   const runtime: AgentRuntimeConfig = normalizeAgentRuntimeConfig(isRuntimeConfig(config)
     ? config
@@ -193,13 +219,17 @@ export function createAgentLoopBackend(config: AgentRuntimeConfig | AiConfig): A
         );
       }
       let primary: AgentLoopOutcome;
+      let primaryError: AiCallError | undefined;
       try {
         primary = await runAgentTurn(runtime.primary, boundedRequest);
       } catch (error) {
         if (error instanceof AiCallError && error.code === "AI_ABORTED") throw error;
-        primary = { kind: "failed", error: "主模型调用失败" };
+        primaryError = toAiCallError(error, "主模型调用失败");
+        // fallbackReason 保持稳定的中文标签：上游原文只走 primaryError，不进日志与 meta。
+        primary = { kind: "failed", error: "主模型调用失败", code: primaryError.code };
       }
       if (primary.kind !== "failed") return withRoute(primary, "primary", undefined, request.requestId, runtime.primary);
+      const upstreamError = primaryError ?? failedOutcomeToAiCallError(primary, "主模型调用失败");
       if (runtime.fallback) {
         let fallback: AgentLoopOutcome;
         try {
@@ -210,6 +240,11 @@ export function createAgentLoopBackend(config: AgentRuntimeConfig | AiConfig): A
         }
         if (fallback.kind !== "failed") return withRoute(fallback, "fallback", primary.error, request.requestId, runtime.fallback);
       }
+      // 段内已经有过工具往返：本地兜底只会回一句「已按本地规则完成」的成功 finish，
+      // 把上游 429/5xx/超时伪装成半途成功，客户端重试路径再也收不到 502。
+      // 原始错误原样抛回，交给 index.ts 既有的 502/499 分支。
+      // 回滚：删掉这一句 throw 即可退回「多步任务中途失败也走本地兜底」的老行为。
+      if (hasToolResultInCurrentTask(boundedRequest.messages, boundedRequest.userMessage)) throw upstreamError;
       return withRoute(runLocalAgentTurn(boundedRequest), "local", primary.error, request.requestId);
     },
   };
