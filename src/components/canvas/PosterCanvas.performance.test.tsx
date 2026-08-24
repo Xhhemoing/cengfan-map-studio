@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 
 const renderCounts = vi.hoisted(() => ({ map: 0 }));
@@ -17,7 +17,17 @@ vi.mock("./TextLayer", () => ({ TextLayer: () => null }));
 import { PosterCanvas } from "./PosterCanvas";
 import { createProjectDocument } from "../../lib/project-document";
 
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
 afterEach(() => {
+  // An assertion throwing before the inline unmount would leave the canvas mounted
+  // with its drag render timer armed, racing jsdom teardown for the rest of the run.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
   vi.useRealTimers();
   renderCounts.map = 0;
 });
@@ -32,6 +42,7 @@ describe("PosterCanvas interaction rendering", () => {
     });
     const container = document.createElement("div");
     const root = createRoot(container);
+    mounted.push({ root, container });
     flushSync(() => root.render(<PosterCanvas project={project} renderIntervalMs={100} onMoveCard={vi.fn()} />));
 
     expect(renderCounts.map).toBe(1);
@@ -53,8 +64,5 @@ describe("PosterCanvas interaction rendering", () => {
     flushSync(() => vi.advanceTimersByTime(100));
 
     expect(renderCounts.map).toBe(1);
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 });

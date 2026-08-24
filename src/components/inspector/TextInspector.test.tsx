@@ -1,15 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createProjectDocument } from "../../lib/project-document";
 import { TextInspector } from "./TextInspector";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted for
+  // the rest of the run, racing React's scheduler against jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 function renderInspector() {
   const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
   const onPatch = vi.fn();
   const onDelete = vi.fn();
-  const container = document.createElement("div");
-  const root = createRoot(container);
+  const { container, root } = trackedRoot();
   flushSync(() => root.render(
     <TextInspector
       text={project.textElements.find((item) => item.id === "text-note")!}
@@ -23,7 +42,7 @@ function renderInspector() {
 
 describe("TextInspector", () => {
   it("defers editable text and numbers while keeping font selection immediate", () => {
-    const { container, root, onPatch } = renderInspector();
+    const { container, onPatch } = renderInspector();
     for (const id of ["text-content", "text-x", "text-y", "text-font-size", "text-color", "text-font", "text-weight", "text-align", "text-max-width", "text-visible"]) {
       expect(container.querySelector(`#${id}`)).not.toBeNull();
     }
@@ -51,7 +70,6 @@ describe("TextInspector", () => {
       font.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(onPatch).toHaveBeenCalledWith({ fontId: "font-user-1" });
-    flushSync(() => root.unmount());
   });
 
   it("allows custom/note deletion but preserves built-ins", () => {
@@ -61,11 +79,9 @@ describe("TextInspector", () => {
     flushSync(() => note.root.unmount());
 
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<TextInspector text={project.textElements.find((item) => item.id === "text-title")!} onPatch={vi.fn()} onDelete={vi.fn()} />));
     expect(container.textContent).toContain("隐藏文本");
     expect(container.textContent).not.toContain("删除文本");
-    flushSync(() => root.unmount());
   });
 });
