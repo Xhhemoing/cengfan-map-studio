@@ -37,7 +37,8 @@
 | 14 | 已完成 | opus ×5 | 按第 13 轮结论落地最高价值切片 |
 | 15 | 已完成 | opus ×5 | 健康检查对齐、SSE 断流、parse-data 字段、AI 草稿、设置反馈 |
 | 16 | 已完成 | 混编 ×5 | 限流键、parse-data 告知、SSE 重订阅、rail listbox、剩余复查 |
-| 17 | 进行中 | 混编 ×5 | 图片降采样、PNG 面积防护、工作台对话框、房间过期广播、复查 |
+| 17 | 已完成 | 混编 ×5 | 图片降采样、PNG 面积防护、工作台对话框、房间过期广播、复查 |
+| 18 | 进行中 | 混编 ×5 | 项目库 CAS、字体上限、删 editor-commands、复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -91,6 +92,7 @@
 - 2026-08-24：第 14 轮落地完成并合入专属分支。启动第 15 轮。
 - 2026-08-24：第 15 轮落地完成并合入专属分支。启动第 16 轮。
 - 2026-08-24：第 16 轮落地完成并合入专属分支。启动第 17 轮。
+- 2026-08-24：第 17 轮落地完成并合入专属分支。启动第 18 轮。
 
 ## 第 13 轮结论（5 份只读复查）
 
@@ -168,6 +170,27 @@
 | 工作台对话框 | `src/components/ProjectWorkbench.tsx`、`src/components/workbench/*`、对应测试 |
 | 房间过期广播 closed | `server/collaboration.ts`、`server/index.ts`（仅过期清理路径）、对应测试 |
 | 剩余复查 | 只读，不改文件 |
+
+## 第 17 轮已合入
+
+- 工作台：重命名/删除自绘对话框，不再用 prompt/confirm。
+- 协作：房间 TTL 过期广播 closed。
+- 导出：PNG 按 64MP 禁用超限倍率。
+- 资源：五个图片入口降采样后再写入工程。
+
+## 第 17 轮复查结论
+
+剩余高价值：本地项目库 last-write-wins（多标签页静默覆盖）；字体上传无上限会卡死 8MB 协作事务；`editor-commands.ts` 死代码层。
+
+## 第 18 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 项目库 CAS | `src/lib/project-store.ts`、`src/App.tsx`（仅 saveLocal）、对应测试 |
+| 字体上限与去重 | `src/lib/fonts.ts`、`TypographyPanel.tsx`、`resource-health.ts`、`resource-pack.ts` 及测试 |
+| 删除 editor-commands | 仅删除 `src/lib/editor-commands.ts`、`editor-commands.test.ts`、`style-commands.test.ts` |
+| 剩余复查 A | 只读 |
+| 剩余复查 B | 只读 |
 
 ## 第 2 轮已合入
 
