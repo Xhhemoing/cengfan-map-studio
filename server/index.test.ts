@@ -153,6 +153,17 @@ function createBackpressuredEventStream(path: string, options: { drain?: boolean
   return { request, response, state, disconnect: () => { request.emit("close"); } };
 }
 
+/** 创建/加入/快照三个响应上的落盘三态兄弟字段；`at` 为 null 表示还没有成功落过盘。 */
+interface RoomPersistenceField {
+  outcome: "persisted" | "trimmed" | "skipped";
+  at: number | null;
+}
+
+interface PersistenceEnvelope {
+  persistedAtLastFlush?: boolean;
+  persistence?: RoomPersistenceField;
+}
+
 async function createCollaborationRoom(origin: string, snapshot: unknown, clientId = "client-a") {
   const response = await fetch(`${origin}/api/rooms`, {
     method: "POST",
@@ -164,6 +175,7 @@ async function createCollaborationRoom(origin: string, snapshot: unknown, client
     room: { id: string; version: number; ready: boolean };
     access: { accessToken: string };
     persistedAtLastFlush?: boolean;
+    persistence?: RoomPersistenceField;
   }>;
 }
 
@@ -2156,6 +2168,136 @@ describe("unified application server", () => {
       rooms: { lastFlush: RoomPersistOutcome | null };
     };
     expect(health.rooms.lastFlush).toEqual({ skippedIds: [], trimmedIds: ["SKIPPEDA"], at: 1_700_000_000_001 });
+  });
+
+  it("tells a trimmed room apart from a skipped one on create, join and snapshot", async () => {
+    const flushedAt = 1_700_000_000_500;
+    const roomIds = ["KEEPROOM", "TRIMROOM", "SKIPROOM"];
+    let nextRoomId = 0;
+    // 房间 id 统一大写，落盘结论里的写法未必：匹配必须忽略大小写。
+    const outcome: RoomPersistOutcome = { skippedIds: ["skiproom"], trimmedIds: ["trimroom"], at: flushedAt };
+    const server = createAiServer({
+      roomStoreFactory: (storeOptions) => {
+        const store = createRoomStore({ ...storeOptions, generateId: () => roomIds[nextRoomId++] ?? "EXTRA" });
+        return { ...store, lastPersistOutcome: () => outcome };
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const expected: Record<string, { persistence: RoomPersistenceField; persistedAtLastFlush: boolean }> = {
+      KEEPROOM: { persistence: { outcome: "persisted", at: flushedAt }, persistedAtLastFlush: true },
+      // 裁剪与跳过的后果不同：裁剪的房间重启后还在，跳过的房间已经没了。
+      TRIMROOM: { persistence: { outcome: "trimmed", at: flushedAt }, persistedAtLastFlush: false },
+      SKIPROOM: { persistence: { outcome: "skipped", at: flushedAt }, persistedAtLastFlush: false },
+    };
+
+    for (const [index, roomId] of roomIds.entries()) {
+      const created = await createCollaborationRoom(origin, { title: roomId }, `client-${index}`);
+      const accessToken = created.access.accessToken;
+      expect(created.room.id).toBe(roomId);
+      expect(created.persistence).toEqual(expected[roomId]!.persistence);
+      expect(created.persistedAtLastFlush).toBe(expected[roomId]!.persistedAtLastFlush);
+
+      const snapshot = await fetch(`${origin}/api/rooms/${roomId}`, {
+        headers: roomHeaders(accessToken),
+      }).then((response) => response.json()) as PersistenceEnvelope;
+      expect(snapshot.persistence).toEqual(expected[roomId]!.persistence);
+      expect(snapshot.persistedAtLastFlush).toBe(expected[roomId]!.persistedAtLastFlush);
+
+      const invitation = await fetch(`${origin}/api/rooms/${roomId}/invitations`, {
+        method: "POST",
+        headers: roomHeaders(accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ role: "editor" }),
+      }).then((response) => response.json()) as { token: string };
+      const joined = await fetch(`${origin}/api/rooms/${roomId}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inviteToken: invitation.token, clientId: `guest-${index}`, displayName: `guest-${index}` }),
+      });
+      expect(joined.status).toBe(200);
+      await expect(joined.json()).resolves.toMatchObject({
+        persistence: expected[roomId]!.persistence,
+        persistedAtLastFlush: expected[roomId]!.persistedAtLastFlush,
+      });
+    }
+  });
+
+  it("reports no flush timestamp before the first successful persist", async () => {
+    // at: 0 是「从未成功落过盘」，把它当时间戳发出去就是 1970 年的假事实。
+    const outcome: RoomPersistOutcome = {
+      skippedIds: [],
+      trimmedIds: ["NEVERSAVED"],
+      at: 0,
+      lastFailure: { at: 1_700_000_000_900, message: "EROFS: read-only file system" },
+    };
+    const server = createAiServer({
+      roomStoreFactory: (storeOptions) => {
+        const store = createRoomStore({ ...storeOptions, generateId: () => "NEVERSAVED" });
+        return { ...store, lastPersistOutcome: () => outcome };
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const created = await createCollaborationRoom(origin, { title: "从未落盘" });
+    expect(created.persistence).toEqual({ outcome: "trimmed", at: null });
+    expect(created.persistedAtLastFlush).toBe(false);
+  });
+
+  it("reports a persisted outcome with no timestamp when the store has no persist accessor", async () => {
+    const server = createAiServer({
+      roomStoreFactory: (storeOptions) => {
+        const { lastPersistOutcome: _omitted, ...withoutOutcome } = createRoomStore(storeOptions);
+        return withoutOutcome as PersistableRoomStore;
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    // 没有落盘结论可读时不该造出降级结论：兼容旧存储替身，报「已落盘 + 无时刻」。
+    const created = await createCollaborationRoom(origin, { title: "无落盘结论" });
+    expect(created.persistence).toEqual({ outcome: "persisted", at: null });
+    expect(created.persistedAtLastFlush).toBe(true);
+
+    const snapshot = await fetch(`${origin}/api/rooms/${created.room.id}`, {
+      headers: roomHeaders(created.access.accessToken),
+    }).then((response) => response.json()) as PersistenceEnvelope;
+    expect(snapshot.persistence).toEqual({ outcome: "persisted", at: null });
+  });
+
+  it("keeps the persist failure streak visible on /api/health.rooms.lastFlush", async () => {
+    let failing = false;
+    const server = createAiServer({
+      persistRooms: () => {
+        if (failing) throw new Error("EROFS: read-only file system");
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    await createCollaborationRoom(origin, { title: "先成功一次" });
+    await server.flushRooms!();
+    const healthy = await fetch(`${origin}/api/health`).then((response) => response.json()) as {
+      rooms: { lastFlush: RoomPersistOutcome | null };
+    };
+    expect(healthy.rooms.lastFlush).toEqual({ skippedIds: [], trimmedIds: [], at: expect.any(Number) });
+    const succeededAt = healthy.rooms.lastFlush!.at;
+
+    failing = true;
+    await createCollaborationRoom(origin, { title: "之后全失败" }, "client-b");
+    await expect(server.flushRooms!()).rejects.toThrow(/read-only file system/);
+
+    // 磁盘坏掉的整段时间里，健康检查只报上一次成功就是把事故说成正常。
+    const degraded = await fetch(`${origin}/api/health`).then((response) => response.json()) as {
+      rooms: { lastFlush: RoomPersistOutcome | null };
+    };
+    expect(degraded.rooms.lastFlush).toEqual({
+      skippedIds: [],
+      trimmedIds: [],
+      at: succeededAt,
+      lastFailure: { at: expect.any(Number), message: "EROFS: read-only file system" },
+    });
   });
 
   it("quarantines a snapshot that parses but carries an unusable envelope", async () => {
