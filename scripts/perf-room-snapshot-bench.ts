@@ -15,14 +15,20 @@
  * occupancy during snapshot construction and JSON serialization, not peak
  * memory or storage latency.
  *
- * Known miss: the retained 8 MiB calibration cell measured 56.6 ms occupancy
- * against the approximate 50 ms target. API-limit parity takes precedence;
- * off-thread serialization is intentionally out of scope for this fix.
+ * Known miss: the retained 8 MiB calibration cell previously measured 56.6 ms
+ * occupancy against the approximate 50 ms target; this reference run measured
+ * 32.41 ms, while the worst-case aggregate-at-budget cell measured 48.34 ms /
+ * 12,366,463 bytes. API-limit parity takes precedence; off-thread serialization
+ * is intentionally out of scope for this fix.
  *
  * Reference run (2026-08-24):
  * | path | rooms | target record MiB/room | target MiB | snapshot median ms | stringify median ms | occupancy ms | output bytes | retained rooms | trimmed rooms | skipped rooms |
  * | :--- | ---: | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
- * | pending | - | - | - | - | - | - | - | - | - | - |
+ * | standard | 1 | 6 | 6 | 9.73 | 15.02 | 24.75 | 6288101 | 1 | 0 | 0 |
+ * | standard | 1 | 8 | 8 | 12.87 | 19.54 | 32.41 | 8385253 | 1 | 0 | 0 |
+ * | skip path (> 8 MiB room) | 1 | 12 | 12 | 0.06 | 0.00 | 0.06 | 73 | 0 | 0 | 1 |
+ * | aggregate at budget | 2 | 5.9 | 11.8 | 18.94 | 29.40 | 48.34 | 12366463 | 2 | 0 | 0 |
+ * | history trim | 1 | 5 (+ 4 MiB history) | 9 | 16.58 | 12.41 | 28.99 | 5277193 | 1 | 1 | 0 |
  */
 import { performance } from "node:perf_hooks";
 import {
