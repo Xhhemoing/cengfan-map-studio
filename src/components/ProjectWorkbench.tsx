@@ -17,7 +17,7 @@ import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
 import { ContinueEditingCard } from "./workbench/ContinueEditingCard";
-import { StorageNotice, StorageNoticeExportAction } from "./StorageNotice";
+import { StorageNotice, StorageNoticeActionError, StorageNoticeExportAction } from "./StorageNotice";
 
 interface ProjectWorkbenchProps {
   store: ProjectStore;
@@ -50,6 +50,8 @@ export function ProjectWorkbench({ store, health, recoverError, navigate }: Proj
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // 横幅里的导出失败单独记:它要回到用户刚点的那个按钮旁边,不能混进页面下方的通用区块。
+  const [noticeExportError, setNoticeExportError] = useState("");
   // 降级可能发生在挂载之前(直接读快照)或某次读写过程中(读写后再读一次快照)。
   const [observedHealth, setObservedHealth] = useState<ProjectStoreHealth>(() => store.health);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
@@ -204,14 +206,29 @@ export function ProjectWorkbench({ store, health, recoverError, navigate }: Proj
     }
   };
 
+  const downloadProject = async (project: Pick<ProjectListItem, "id" | "name" | "updatedAt">) => {
+    const stored = await store.get(project.id);
+    if (!stored) throw new Error("项目不存在");
+    downloadProjectPackage(stored.pack, projectPackageFileName(project));
+  };
+
   const exportProject = async (project: Pick<ProjectListItem, "id" | "name" | "updatedAt">) => {
     try {
-      const stored = await store.get(project.id);
-      if (!stored) throw new Error("项目不存在");
-      downloadProjectPackage(stored.pack, projectPackageFileName(project));
+      await downloadProject(project);
       setOpenMenuId(null);
     } catch (reason) {
       reportFailure(reason, "导出项目失败");
+    }
+  };
+
+  /** 降级期的备份出口就在横幅里,失败留在横幅内,否则按钮点了没反应、用户以为已经备份好了。 */
+  const exportFromNotice = async (project: Pick<ProjectListItem, "id" | "name" | "updatedAt">) => {
+    try {
+      await downloadProject(project);
+      setNoticeExportError("");
+    } catch (reason) {
+      setNoticeExportError(storeFailureMessage(reason, "导出项目失败"));
+      syncHealth();
     }
   };
 
@@ -250,16 +267,21 @@ export function ProjectWorkbench({ store, health, recoverError, navigate }: Proj
       {storeHealth === "memory" && (
         <StorageNotice
           recoverError={recoverError}
-          exportActions={sorted.length === 0 ? null : sorted.map((project) => (
-            <StorageNoticeExportAction
-              key={project.id}
-              projectId={project.id}
-              ariaLabel={`导出「${project.name}」`}
-              onExport={() => void exportProject(project)}
-            >
-              {project.name}（{project.studentCount} 人）
-            </StorageNoticeExportAction>
-          ))}
+          exportActions={sorted.length === 0 && !noticeExportError ? null : (
+            <>
+              {sorted.map((project) => (
+                <StorageNoticeExportAction
+                  key={project.id}
+                  projectId={project.id}
+                  ariaLabel={`导出「${project.name}」`}
+                  onExport={() => void exportFromNotice(project)}
+                >
+                  {project.name}（{project.studentCount} 人）
+                </StorageNoticeExportAction>
+              ))}
+              {noticeExportError && <StorageNoticeActionError message={noticeExportError} />}
+            </>
+          )}
         />
       )}
 
