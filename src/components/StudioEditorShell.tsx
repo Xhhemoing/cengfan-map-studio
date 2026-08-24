@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -8,14 +7,7 @@ import {
 import { PanelRight } from "lucide-react";
 import Drawer from "@mui/material/Drawer";
 import type { WorkflowStageId } from "../lib/workflow-stages";
-import {
-  getPanelWidthBounds,
-  normalizeEditorPanelLayout,
-  readEditorPanelLayout,
-  writeEditorPanelLayout,
-  type EditorPanelLayout,
-  type PanelSide,
-} from "../lib/editor-layout";
+import { useEditorPanelLayout } from "../lib/use-studio-preferences";
 import { ResizablePanelDivider } from "./ResizablePanelDivider";
 import { StageGuideLine } from "./StageGuideLine";
 
@@ -29,8 +21,9 @@ export type StudioEditorShellProps = {
 
 /**
  * Desktop grid shell for the formal editing stages: optional left rail |
- * center | optional resizable right rail. Owns both `ResizablePanelDivider`
- * resizers and persists their widths through `editor-layout`. The workflow
+ * center | optional resizable right rail. Renders both `ResizablePanelDivider`
+ * resizers against the shared `useEditorPanelLayout` state, which is the single
+ * owner of width persistence and viewport normalization. The workflow
  * guidance lives in the topbar (old-style), so most stages render without a
  * left rail; when one is omitted the shell collapses to canvas + right rail.
  * At <=760px the right rail is presented as a labelled MUI `Drawer` (Escape +
@@ -43,31 +36,19 @@ export function StudioEditorShell({
   rightRailLabel = "右侧栏",
   children,
 }: StudioEditorShellProps) {
-  const [panelLayout, setPanelLayout] = useState<EditorPanelLayout>(() => readEditorPanelLayout());
-  const [resizingPanel, setResizingPanel] = useState<PanelSide | null>(null);
+  const {
+    panelLayout,
+    resizingPanel,
+    setResizingPanel,
+    sidebarBounds,
+    inspectorBounds,
+    updatePanelWidth,
+  } = useEditorPanelLayout();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerToggleRef = useRef<HTMLButtonElement>(null);
 
-  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
-  const sidebarBounds = getPanelWidthBounds("sidebar", viewportWidth, panelLayout.inspectorWidth);
-  const inspectorBounds = getPanelWidthBounds("inspector", viewportWidth, panelLayout.sidebarWidth);
   const hasRightRail = Boolean(rightRail);
   const hasLeftRail = Boolean(leftRail);
-
-  useEffect(() => {
-    try {
-      writeEditorPanelLayout(window.localStorage, panelLayout, window.innerWidth);
-    } catch {
-      // Panel sizing remains usable when browser storage is unavailable.
-    }
-  }, [panelLayout]);
-
-  const updatePanelWidth = (side: PanelSide, value: number) => {
-    setPanelLayout((current) => normalizeEditorPanelLayout({
-      ...current,
-      [side === "sidebar" ? "sidebarWidth" : "inspectorWidth"]: value,
-    }, viewportWidth));
-  };
 
   const shellStyle = {
     "--studio-left-width": `${panelLayout.sidebarWidth}px`,

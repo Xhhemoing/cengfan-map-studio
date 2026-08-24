@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { StudioEditorShell } from "./StudioEditorShell";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "../lib/editor-layout";
+import { useStudioPreferences, type StudioPreferences } from "../lib/use-studio-preferences";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -34,9 +35,34 @@ function renderShell({
   return { container, root };
 }
 
+/** App 侧的偏好消费者:与外壳共享同一份面板宽度状态。 */
+function mountStudioPreferences(): () => StudioPreferences {
+  let latest: StudioPreferences | null = null;
+  function Probe() {
+    latest = useStudioPreferences();
+    return null;
+  }
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push({ root, container });
+  flushSync(() => root.render(<Probe />));
+  return () => latest!;
+}
+
 function click(element: Element | null): void {
   if (!element) throw new Error("element missing");
   flushSync(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+function pointer(type: string, clientX: number): MouseEvent {
+  const event = new MouseEvent(type, { bubbles: true, button: 0, clientX });
+  Object.defineProperty(event, "pointerId", { value: 1 });
+  return event;
+}
+
+function storedLayout(): { sidebarWidth?: number; inspectorWidth?: number } {
+  return JSON.parse(window.localStorage.getItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY) ?? "{}");
 }
 
 afterEach(() => {
@@ -102,8 +128,29 @@ describe("StudioEditorShell", () => {
     await act(async () => {
       separators[0]!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }));
     });
-    const stored = JSON.parse(window.localStorage.getItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY) ?? "{}");
-    expect(stored.sidebarWidth).toBe(284);
+    expect(storedLayout().sidebarWidth).toBe(284);
+  });
+
+  it("keeps a dragged width after a viewport resize while the studio preferences hook is mounted", async () => {
+    window.localStorage.setItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({ sidebarWidth: 280, inspectorWidth: 260 }));
+    const preferences = mountStudioPreferences();
+    const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
+    const sidebarResizer = container.querySelector<HTMLElement>('[role="separator"][aria-label="调整左侧栏宽度"]')!;
+
+    await act(async () => {
+      sidebarResizer.dispatchEvent(pointer("pointerdown", 200));
+      sidebarResizer.dispatchEvent(pointer("pointermove", 190));
+      sidebarResizer.dispatchEvent(pointer("pointerup", 190));
+    });
+    expect(storedLayout().sidebarWidth).toBe(270);
+    expect(preferences().panelLayout.sidebarWidth).toBe(270);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    expect(storedLayout()).toEqual({ sidebarWidth: 270, inspectorWidth: 260 });
+    expect(sidebarResizer.getAttribute("aria-valuenow")).toBe("270");
   });
 
   it("exposes the right rail through a labelled drawer toggle on narrow screens", async () => {

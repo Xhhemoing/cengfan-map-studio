@@ -71,6 +71,21 @@ describe("useStudioPreferences", () => {
     expect(JSON.parse(window.localStorage.getItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY)!)).toEqual(preferences().panelLayout);
   });
 
+  it("shares one panel layout across consumers so a resize cannot revert another consumer's change", () => {
+    window.localStorage.clear();
+    const editorShell = mountHook();
+    const appShell = mountHook();
+
+    flushSync(() => editorShell().updatePanelWidth("sidebar", 270));
+    expect(appShell().panelLayout.sidebarWidth).toBe(270);
+
+    flushSync(() => window.dispatchEvent(new Event("resize")));
+
+    expect(editorShell().panelLayout.sidebarWidth).toBe(270);
+    expect(appShell().panelLayout.sidebarWidth).toBe(270);
+    expect(JSON.parse(window.localStorage.getItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY)!)).toEqual(appShell().panelLayout);
+  });
+
   it("tracks the panel being resized", () => {
     const preferences = mountHook();
 
