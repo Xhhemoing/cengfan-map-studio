@@ -35,7 +35,8 @@ describe("workflow workspace responsive contract", () => {
   });
 
   it("defines desktop delivery columns and workspace overflow contracts", () => {
-    expect(extractRule(workspaceStyles, ".delivery-workspace__actions")).toContain("grid-template-columns: 1fr 1fr 1fr");
+    // 第 4 轮 (2051f05) 起导出按钮列改为响应式 auto-fit，避免窄栏溢出。
+    expect(extractRule(workspaceStyles, ".delivery-workspace__actions")).toContain("grid-template-columns: repeat(auto-fit, minmax(96px, 1fr))");
     expect(extractRule(workspaceStyles, ".template-workspace__catalog")).toContain("min-width: 0");
     expect(extractRule(workspaceStyles, ".template-workspace__catalog")).toContain("overflow: auto");
     expect(extractRule(workspaceStyles, ".template-workspace__detail")).toContain("min-width: 0");
