@@ -2,7 +2,6 @@ import { DRAFT_KEY } from "./app-constants";
 import { createProjectDocument, restoreProjectDocument } from "./project-document";
 import { sampleStudents } from "./project-data";
 import type { ProjectDocument } from "./project-document";
-import { ArrowLeft } from "lucide-react";
 
 export function createInitialProject(): ProjectDocument {
   return createProjectDocument({
@@ -60,11 +59,8 @@ export function loadBrowserValue<T>(load: () => T, fallback: T): T {
   }
 }
 
-export function WorkbenchBackButton({ onClick }: { onClick?: () => void }) {
-  const handleClick = onClick ?? (() => { window.location.hash = "#/"; });
-  return (
-    <button type="button" className="secondary-button" aria-label="返回项目列表" onClick={handleClick}>
-      <ArrowLeft size={16} /> 返回列表
-    </button>
-  );
+/** 服务端渲染下没有浏览器状态可读,读取本身失败时退回同一份兜底值。 */
+export function loadBrowserState<T>(load: () => T, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  return loadBrowserValue(load, fallback);
 }

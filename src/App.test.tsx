@@ -2895,3 +2895,42 @@ describe("Editor orchestration seams extracted into src/lib (R7-9)", () => {
       .map((card) => card.querySelector("strong")?.textContent)).not.toEqual([name]);
   });
 });
+
+describe("Editor action seams extracted into src/lib (R8-7)", () => {
+  function renderLegacyStage(stage: string): HTMLDivElement {
+    window.localStorage.clear();
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, JSON.stringify({
+      stage,
+      savedAt: "2026-08-24T00:00:00.000Z",
+    }));
+    return renderLegacyApp({ clearStorage: false });
+  }
+
+  it("adds a note from the content panel under its own history label", () => {
+    const container = renderLegacyStage("content");
+
+    click([...container.querySelectorAll<HTMLButtonElement>(".content-add-actions button")]
+      .find((button) => button.textContent?.includes("添加特别备注"))!);
+
+    expect(container.querySelector('button[aria-label="撤销：添加特别备注"]')).not.toBeNull();
+  });
+
+  it("keeps the layer list driving the canvas selection", () => {
+    const container = renderLegacyStage("content");
+    const layers = [...container.querySelectorAll<HTMLButtonElement>('.element-list button[role="listitem"]')];
+    const mapLayer = layers.find((button) => button.textContent?.includes("地图"))!;
+
+    expect(mapLayer.getAttribute("aria-pressed")).toBe("false");
+    click(mapLayer);
+
+    expect(mapLayer.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps the topbar stage stepper opening the data workspace", () => {
+    const container = renderLegacyStage("content");
+
+    click(workflowStage(container, "数据与素材"));
+
+    expect(container.querySelector(".data-upload-workspace")).not.toBeNull();
+  });
+});

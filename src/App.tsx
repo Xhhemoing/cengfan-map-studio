@@ -19,11 +19,10 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { createNoteElement, createTextElement } from "./lib/canvas-data";
 import {
   loadInitialProject,
+  loadBrowserState,
   loadBrowserValue,
-  WorkbenchBackButton,
 } from "./lib/app-initialization";
 import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
 import {
@@ -34,7 +33,6 @@ import {
 import {
   buildProvinceSummary,
   type DataViewId,
-  type MapTemplateId,
   type Student,
 } from "./lib/project-data";
 import {
@@ -49,38 +47,12 @@ import {
 } from "./lib/student-transactions";
 import { createId } from "./lib/ids";
 import {
-  addAssetElementTransaction,
-  addNoteElementTransaction,
-  addTextElementTransaction,
-  applyBackgroundAssetTransaction,
-  applyCustomTemplateTransaction,
-  applyFontTransaction,
-  applySystemTemplateTransaction,
-  deleteAssetElementTransaction,
-  deleteTextElementTransaction,
-  duplicateAssetElementTransaction,
-  moveCardTransaction,
-  refreshDisplayFramePositionsTransaction,
-  replaceAssetElementSourceTransaction,
-  sceneResetPatch,
-} from "./lib/canvas-edit-transactions";
-import {
-  addAssetToLibrary,
-  buildAssetUsageLabels,
-  describeAssetRemoval,
-  describeFontRemoval,
-  EMPTY_ASSET_MESSAGE,
-  mergeImportedResourcePack,
-  prepareResourcePackExport,
-  replaceAssetInLibrary,
-} from "./lib/resource-library";
-import {
-  resolveDeliveryIssueNavigation,
-  resolveLayoutIssueSelection,
-  resolveWorkflowPanelNavigation,
-  resolveWorkflowStageNavigation,
-  styleLayerSelection,
-} from "./lib/editor-navigation";
+  createEditorCanvasActions,
+  type CardPositions,
+} from "./lib/editor-canvas-actions";
+import { createEditorLibraryActions } from "./lib/editor-library-actions";
+import { buildAssetUsageLabels } from "./lib/resource-library";
+import { createEditorNavigationActions } from "./lib/editor-navigation-actions";
 import {
   loadStoredRenderSettings,
   mountUserFontFaces,
@@ -95,6 +67,7 @@ import {
 
 import { AssistantConversationProvider } from "./components/AgentAssistant";
 import { ProjectMenu } from "./components/ProjectMenu";
+import { WorkbenchBackButton } from "./components/WorkbenchBackButton";
 import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayoutTemplate";
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
@@ -107,18 +80,18 @@ import { DataUploadRail, DataUploadWorkspace } from "./components/workspaces/Dat
 import { MapStyleRail, MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
 import { ReferenceCardStyleWorkspace } from "./components/workspaces/ReferenceCardStyleWorkspace";
 import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
-import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
+import { DeliveryRail, DeliveryWorkspace } from "./components/workspaces/DeliveryWorkspace";
 
 import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
 import { CardsInspector } from "./components/inspector/CardsInspector";
 import { ZoomControls } from "./components/ZoomControls";
-import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
+import { WorkflowStepper } from "./components/WorkflowStepper";
 import {
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
   deriveWorkflowStageProgress,
   type WorkflowStageId,
 } from "./lib/workflow-stages";
-import { deriveStageOverviewModel, type StageOverviewAction } from "./lib/stage-overview";
+import { deriveStageOverviewModel } from "./lib/stage-overview";
 import { STAGE_METADATA } from "./lib/stage-metadata";
 import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -139,11 +112,7 @@ import {
   type ProjectDocument,
   type ProjectTransaction,
 } from "./lib/project-document";
-import {
-  removeUserAsset,
-  removeUserFont,
-  STYLE_LAYER_TARGETS,
-} from "./lib/catalog-usage";
+import { STYLE_LAYER_TARGETS } from "./lib/catalog-usage";
 
 import { createSystemTemplate } from "./lib/template-document";
 import {
@@ -151,15 +120,9 @@ import {
   type CustomTemplateRecord,
 } from "./lib/template-store";
 import { captureCustomTemplate, withCapturedTemplate } from "./lib/template-capture";
-import {
-  createDecorationElement,
-  createLandmarkElement,
-  duplicateAssetElement,
-} from "./lib/asset-elements";
 import { PosterCanvas } from "./components/canvas/PosterCanvas";
 import { type ProvinceAppearance, type SceneSelection } from "./lib/scene-document";
 
-import { createProvinceThemeTransaction, createSceneTransaction } from "./lib/inspector-operations";
 import { InspectorPanel } from "./components/inspector/InspectorPanel";
 import { MapInspector } from "./components/inspector/MapInspector";
 import {
@@ -169,18 +132,14 @@ import {
 } from "./lib/fonts";
 import {
   loadUserAssets,
-  type StudioAsset,
   type UserAsset,
 } from "./lib/assets";
-import { downloadResourcePack } from "./lib/resource-pack";
 import {
   createProjectPackageEnvelope,
   restoreProjectPackage,
   type ProjectPackage,
 } from "./lib/project-package";
 import { usePosterExport } from "./lib/usePosterExport";
-import { type TypographyTarget } from "./lib/typography";
-import type { ImageThemeResult } from "./lib/image-color";
 import {
   loadStudioSkin,
   loadThemeMode,
@@ -221,6 +180,12 @@ import {
   subscribePageLeave,
 } from "./lib/editor-workspace-persistence";
 import {
+  applyWorkspacePackage,
+  collaborationPackage,
+  mergeSharedProject,
+  restoredSceneSelection,
+} from "./lib/editor-workspace-state";
+import {
   armCollaborationSend,
   createCollaborationHealTracker,
 } from "./lib/collaboration-send";
@@ -232,23 +197,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
   const [previewCommands, setPreviewCommands] = useState<EditorCommand[]>([]);
   const [agentPreview, setAgentPreview] = useState<ProjectDocument | null>(null);
-  const [workspaceSession] = useState(() => typeof window === "undefined"
-    ? loadWorkspaceSession(null)
-    : loadBrowserValue(() => loadWorkspaceSession(window.localStorage), loadWorkspaceSession(null)));
-  const [selection, setSelection] = useState<SceneSelection>(() => {
-    if (workspaceSession.selectedProvince) return { type: "province", province: workspaceSession.selectedProvince };
-    if (workspaceSession.selectedObject === "cards") return { type: "cards" };
-    if (workspaceSession.selectedObject === "guests") return { type: "guests" };
-    if (workspaceSession.selectedObject) return { type: "asset", id: workspaceSession.selectedObject };
-    return { type: "text", id: "text-note" };
-  });
+  const [workspaceSession] = useState(() => loadBrowserState(
+    () => loadWorkspaceSession(window.localStorage),
+    loadWorkspaceSession(null),
+  ));
+  const [selection, setSelection] = useState<SceneSelection>(() => restoredSceneSelection(workspaceSession));
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [syncState, setSyncState] = useState<LocalWorkspaceOverwriteState>({
     status: initialWorkspace ? "saved" : "idle",
     savedAt: initialWorkspace?.exportedAt ?? null,
   });
-  const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(() =>
-    initialWorkspace?.customTemplates ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadCustomTemplates(), [])),
+  const [customTemplates, setCustomTemplates] = useState<CustomTemplateRecord[]>(
+    () => initialWorkspace?.customTemplates ?? loadBrowserState(loadCustomTemplates, []),
   );
   const [statusMessage, setStatusMessage] = useState(initialWorkspace ? "已从本地完整镜像恢复工作区" : "仅在点击强制保存时写入本地");
   const [projectMissing, setProjectMissing] = useState<MissingProjectObservation | null>(null);
@@ -262,11 +222,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setProjectLoading(Boolean(projectId));
     setProjectMissing(null);
   }
-  const [userFonts, setUserFonts] = useState<UserFont[]>(() =>
-    initialWorkspace?.fonts ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserFonts(), [])),
+  const [userFonts, setUserFonts] = useState<UserFont[]>(
+    () => initialWorkspace?.fonts ?? loadBrowserState(loadUserFonts, []),
   );
-  const [userAssets, setUserAssets] = useState<UserAsset[]>(() =>
-    initialWorkspace?.assets ?? (typeof window === "undefined" ? [] : loadBrowserValue(() => loadUserAssets(), [])),
+  const [userAssets, setUserAssets] = useState<UserAsset[]>(
+    () => initialWorkspace?.assets ?? loadBrowserState(loadUserAssets, []),
   );
   const [showGrid] = useState(false);
   const [gridSize] = useState(DEFAULT_GRID_SIZE);
@@ -319,8 +279,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const posterRef = useRef<SVGSVGElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const [activePanel, setActivePanel] = useState<ActivePanel>(() => WORKFLOW_STAGE_TO_LEGACY_PANEL[workspaceSession.stage] ?? "roster");
-  const [legacyEditorEnabled] = useState(() => typeof window !== "undefined"
-    && loadBrowserValue(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false));
+  const [legacyEditorEnabled] = useState(
+    () => loadBrowserState(() => window.localStorage.getItem(LEGACY_EDITOR_STORAGE_KEY) === "1", false),
+  );
   const [activeStage, setActiveStage] = useState<WorkflowStageId>(() => legacyEditorEnabled ? "content" : workspaceSession.stage);
   const lastNonTemplateStageRef = useRef<WorkflowStageId>(activeStage === "data" ? "content" : activeStage);
   const [assistantDrawerOpen, setAssistantDrawerOpen] = useState(false);
@@ -447,12 +408,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const applyRestoredWorkspace = (restored: ProjectPackage) => {
     workspaceHydratedRef.current = true;
     skipNextWorkspacePendingRef.current = true;
-    setProject(restored.project);
-    setUserAssets(restored.assets);
-    setUserFonts(restored.fonts);
-    setCustomTemplates(restored.customTemplates);
-    setRenderSettings(restored.renderSettings);
-    setPreviewCommands([]);
+    applyWorkspacePackage({
+      setProject,
+      setUserAssets,
+      setUserFonts,
+      setCustomTemplates,
+      setRenderSettings,
+      clearPreviewCommands: () => setPreviewCommands([]),
+    }, restored);
   };
 
   useEffect(() => {
@@ -494,19 +457,19 @@ function StudioApp({ projectId }: { projectId?: string }) {
     return () => { cancelled = true; };
   }, [projectId]);
 
-  const currentCollaborationPackage = (exportedAt = new Date().toISOString()): ProjectPackage => {
-    const pack = createProjectPackageEnvelope(latestWorkspaceRef.current);
-    return { ...pack, exportedAt, project: { ...pack.project, history: { past: [], future: [] } } };
-  };
+  const currentCollaborationPackage = (exportedAt = new Date().toISOString()): ProjectPackage =>
+    collaborationPackage(latestWorkspaceRef.current, exportedAt);
 
   const applySharedPackage = (pack: ProjectPackage, _version: number): ProjectPackage => {
     const restored = restoreProjectPackage(pack);
-    setProject((current) => ({ ...restored.project, history: current.history, version: current.version + 1 }));
-    setUserAssets(restored.assets);
-    setUserFonts(restored.fonts);
-    setCustomTemplates(restored.customTemplates);
-    setRenderSettings(restored.renderSettings);
-    setPreviewCommands([]);
+    applyWorkspacePackage({
+      setProject: () => setProject((current) => mergeSharedProject(current, restored.project)),
+      setUserAssets,
+      setUserFonts,
+      setCustomTemplates,
+      setRenderSettings,
+      clearPreviewCommands: () => setPreviewCommands([]),
+    }, restored);
     workspaceSync.markPending();
     return restored;
   };
@@ -644,44 +607,50 @@ function StudioApp({ projectId }: { projectId?: string }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const resolvedCardPositionsRef = useRef<Record<string, { x: number; y: number }> | null>(null);
-  const captureCardPositions = (positions: Record<string, { x: number; y: number }>) => {
+  const resolvedCardPositionsRef = useRef<CardPositions | null>(null);
+  const captureCardPositions = (positions: CardPositions) => {
     resolvedCardPositionsRef.current = positions;
   };
-  const freezeCardPositionsForMapChange = (current: ProjectDocument) => {
-    const positions = resolvedCardPositionsRef.current;
-    if (!positions || Object.keys(positions).length === 0) return current.cards;
-    return { ...current.cards, positions: { ...positions, ...current.cards.positions } };
-  };
-  const refreshDisplayFramePositions = () => {
-    if (typeof window !== "undefined" && Object.keys(project.cards.positions ?? {}).length > 0
-      && !window.confirm("刷新展示框位置会重新按当前地图计算数据框位置，是否继续？")) return;
-    resolvedCardPositionsRef.current = null;
-    commitProjectTransaction(refreshDisplayFramePositionsTransaction());
-    setStatusMessage("已刷新展示框位置");
-  };
-  const patchScene = (target: SceneSelection, patch: Record<string, unknown>) => {
-    if (target.type !== "map" && target.type !== "province") {
-      commitProjectTransaction(createSceneTransaction(target, patch));
-      return;
-    }
-    const transaction = createSceneTransaction(target, patch);
-    commitProjectTransaction({
-      ...transaction,
-      apply: (current) => {
-        const next = transaction.apply(current);
-        return { ...next, cards: freezeCardPositionsForMapChange(current) };
-      },
-    });
-  };
 
-  const applyFont = (target: TypographyTarget, fontId: string, applyToAll: boolean) => {
-    commitProjectTransaction(applyFontTransaction(target, fontId, applyToAll));
-  };
-
-  const resetSceneTarget = (target: Extract<SceneSelection, { type: "canvas" | "map" | "cards" }>) => {
-    patchScene(target, sceneResetPatch(project.templateId, target.type));
-  };
+  // 卡片位置只在事件处理器与事务 apply 里读写,渲染期不取值;react-hooks/refs 看不穿
+  // 工厂函数这层间接,与下方 createWorkspaceSync 同理按行豁免。
+  // eslint-disable-next-line react-hooks/refs
+  const canvasActions = createEditorCanvasActions({
+    project,
+    selection,
+    readCardPositions: () => resolvedCardPositionsRef.current,
+    clearCardPositions: () => { resolvedCardPositionsRef.current = null; },
+    commitProject,
+    commitTransaction: commitProjectTransaction,
+    setSelection,
+    setStatusMessage,
+    snap: maybeSnap,
+  });
+  const {
+    addNote,
+    addText,
+    applyBackgroundAsset,
+    applyCustomTemplateRecord,
+    applyFont,
+    applyProvinceThemes,
+    applySystemTemplate,
+    changeAssetLayer,
+    createDecoration,
+    createLandmark,
+    duplicateAsset,
+    moveAsset,
+    moveCard,
+    moveGuests,
+    moveProvinceTexture,
+    moveText,
+    patchScene,
+    refreshDisplayFramePositions,
+    removeAsset,
+    removeText,
+    resetSceneTarget,
+    resizeAsset,
+    resizeMapImage,
+  } = canvasActions;
 
   const saveWorkspaceNow = async (): Promise<void> => {
     const pack = createProjectPackageEnvelope(latestWorkspaceRef.current);
@@ -729,136 +698,64 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setStatusMessage(describeForceSaveOutcome(workspaceSync.getState().status, projectRecordSaveErrorRef.current));
   };
 
-  const addUserAsset = (asset: UserAsset) => {
-    if (!asset?.src) {
-      setStatusMessage(EMPTY_ASSET_MESSAGE);
-      return;
-    }
-    setUserAssets((current) => {
-      const outcome = addAssetToLibrary(current, asset);
-      setStatusMessage(outcome.message);
-      return outcome.assets;
-    });
-  };
-
-  const replaceUserAsset = (assetId: string, replacement: UserAsset) => {
-    setUserAssets((current) => replaceAssetInLibrary(current, assetId, replacement));
-    commitProject(applyTransaction(project, replaceAssetElementSourceTransaction(assetId, replacement)));
-    setStatusMessage(`已更新素材：${replacement.label}`);
-  };
-
-  const deleteUserAsset = (assetId: string) => {
-    const message = describeAssetRemoval(userAssets, assetId);
-    setUserAssets((current) => removeUserAsset(current, assetId));
-    setStatusMessage(message);
-  };
-
-  const deleteUserFont = (fontId: string) => {
-    const message = describeFontRemoval(userFonts, fontId);
-    setUserFonts((current) => removeUserFont(current, fontId));
-    setStatusMessage(message);
-  };
+  const {
+    addUserAsset,
+    deleteUserAsset,
+    deleteUserFont,
+    exportResourcePack,
+    importResourcePack,
+    replaceUserAsset,
+    uploadUserFont,
+  } = createEditorLibraryActions({
+    project,
+    userAssets,
+    userFonts,
+    setUserAssets,
+    setUserFonts,
+    setStatusMessage,
+    commitProject,
+  });
 
   const assetUsageById = useMemo(() => buildAssetUsageLabels(project, userAssets), [project, userAssets]);
 
-  const selectStyleLayer = (target: (typeof STYLE_LAYER_TARGETS)[number]) => {
-    setSelection(styleLayerSelection(target));
-  };
-
-  const exportResourcePack = () => {
-    const outcome = prepareResourcePackExport({ assets: userAssets, fonts: userFonts });
-    if (outcome.pack) downloadResourcePack(outcome.pack);
-    setStatusMessage(outcome.message);
-  };
-
-  const importResourcePack = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const outcome = mergeImportedResourcePack({
-        text: String(reader.result || ""),
-        existingAssets: userAssets,
-        existingFonts: userFonts,
-      });
-      if (outcome.merged) {
-        setUserAssets(outcome.merged.assets);
-        setUserFonts(outcome.merged.fonts);
-      }
-      setStatusMessage(outcome.message);
-    };
-    reader.readAsText(file);
-  };
-
-
-  const handleSceneSelect = (next: SceneSelection) => {
-    setSelection(next);
-  };
-
-  const locateLayoutIssue = (issue: { id: string }) => {
-    const next = resolveLayoutIssueSelection(project, issue);
-    if (next) setSelection(next);
-  };
-
-  const locateDeliveryIssue = (item: DeliveryIssue) => {
-    const navigation = resolveDeliveryIssueNavigation(project, item);
-    if (!navigation) return;
-    if (navigation.studentId !== undefined) setSelectedStudentId(navigation.studentId);
-    if (navigation.selection) setSelection(navigation.selection);
-    setActiveStage(navigation.stage);
-    setActivePanel(navigation.panel);
-  };
+  // rememberStage 只在阶段切换的事件处理器里写 ref,渲染期不碰;react-hooks/refs 看不穿
+  // 工厂函数这层间接,与上面的画布动作同理按行豁免。
+  // eslint-disable-next-line react-hooks/refs
+  const navigationActions = createEditorNavigationActions({
+    project,
+    activeStage,
+    rememberStage: (stage: WorkflowStageId) => { lastNonTemplateStageRef.current = stage; },
+    setSelection,
+    setSelectedStudentId,
+    setActiveStage,
+    setActivePanel,
+    setActiveWorkflowStep,
+    setSettingsSection: setGlobalSettingsSection,
+    toggleProjectMenu: () => {
+      const menu = document.querySelector<HTMLDetailsElement>(".topbar .project-menu");
+      if (menu) menu.open = !menu.open;
+    },
+    setCollaborationOpen: collaboration.setCollaborationOpen,
+    exportPng: () => void posterExport.exportPng(),
+  });
+  const {
+    changeWorkflowPanel,
+    changeWorkflowStage,
+    locateDeliveryIssue,
+    locateLayoutIssue,
+    openCollaborationSettings,
+    openDataDiagnostics,
+    openGlobalData,
+    openRenderSettings,
+    openStudioSettings,
+    openTopbarProjectMenu,
+    runStageOverviewAction,
+    selectLegacyScene,
+    selectScene,
+    selectStyleLayer,
+  } = navigationActions;
 
   const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildProjectLayoutHealthInput(project)), [project]);
-
-  const handleLegacySceneSelect = (next: SceneSelection) => {
-    handleSceneSelect(next);
-    // Keep the legacy content editor's material context available without letting
-    // the dedicated map stage leave its own workflow context.
-    if (activeStage === "content" && next.type === "province") setActivePanel("assets");
-  };
-
-  const addText = () => {
-    const element = createTextElement("给未来的一封信", 720, 870);
-    commitProject(applyTransaction(project, addTextElementTransaction(element)));
-    setSelection({ type: "text", id: element.id });
-  };
-
-  const addNote = () => {
-    const element = createNoteElement("山高水长，来日再聚", 745, 905);
-    commitProject(applyTransaction(project, addNoteElementTransaction(element)));
-    setSelection({ type: "text", id: element.id });
-  };
-
-  const removeText = (id: string) => {
-    commitProject(applyTransaction(project, deleteTextElementTransaction(id)));
-    setSelection({ type: "canvas" });
-  };
-
-  const removeAsset = (id: string) => {
-    commitProject(applyTransaction(project, deleteAssetElementTransaction(id)));
-    setSelection({ type: "canvas" });
-  };
-
-  const duplicateAsset = (id: string) => {
-    const source = project.assetElements.find((asset) => asset.id === id);
-    if (!source) return;
-    const copy = duplicateAssetElement(source);
-    commitProject(applyTransaction(project, duplicateAssetElementTransaction(id, copy)));
-    setSelection({ type: "asset", id: copy.id });
-  };
-
-  const changeAssetLayer = (id: string, delta: -1 | 1) => {
-    const asset = project.assetElements.find((item) => item.id === id);
-    if (!asset) return;
-    patchScene({ type: "asset", id }, { zIndex: asset.zIndex + delta });
-  };
-
-  const applySystemTemplate = (templateId: MapTemplateId) => {
-    commitProject(applyTransaction(project, applySystemTemplateTransaction(templateId)));
-  };
-
-  const applyCustomTemplateRecord = (record: CustomTemplateRecord) => {
-    commitProject(applyTransaction(project, applyCustomTemplateTransaction(record)));
-  };
 
   const saveCurrentTemplate = () => {
     const name = window.prompt("自定义模板名称", "我的地图版式");
@@ -895,28 +792,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setStatusMessage("已恢复本机最近项目");
   };
 
-  const openGlobalData = () => {
-    if (activeStage !== "data") lastNonTemplateStageRef.current = activeStage;
-    setGlobalSettingsSection(null);
-    setActivePanel("roster");
-    setActiveWorkflowStep("roster");
-    setActiveStage("data");
-  };
-
-  const handleWorkflowStageChange = (stage: WorkflowStageId) => {
-    setGlobalSettingsSection(null);
-    if (stage !== "data") lastNonTemplateStageRef.current = stage;
-    setActiveStage(stage);
-    if (stage === "data") {
-      openGlobalData();
-      return;
-    }
-    const navigation = resolveWorkflowStageNavigation(stage);
-    if (!navigation) return;
-    setActivePanel(navigation.panel);
-    setActiveWorkflowStep(navigation.step);
-  };
-
   const dataWorkspaceProps = {
     students: project.students,
     dataView: project.dataView,
@@ -929,78 +804,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     onSetStudentsVisibility: (visibility: boolean) => commitProjectTransaction(setStudentsVisibilityTransaction(visibility)),
     selectedStudentId,
     onSelectStudent: setSelectedStudentId,
-  };
-
-  const handleCreateDecoration = (asset: StudioAsset) => {
-    const element = createDecorationElement(asset, {
-      x: project.canvas.width - 180,
-      y: project.canvas.height - 180,
-    });
-    commitProject(applyTransaction(project, addAssetElementTransaction("tx-decoration", `添加装饰：${asset.label}`, element)));
-    setSelection({ type: "asset", id: element.id });
-  };
-
-  const handleCreateLandmark = (asset: StudioAsset) => {
-    const selectedProvince = selection.type === "province" ? selection.province : "";
-    const element = createLandmarkElement(asset, selectedProvince || "全国", {
-      x: project.map.x + project.map.width / 2 - 60,
-      y: project.map.y + project.map.height / 2 - 60,
-    });
-    commitProject(applyTransaction(project, addAssetElementTransaction("tx-landmark", `添加地标：${asset.label}`, element)));
-    setSelection({ type: "asset", id: element.id });
-  };
-
-  const applyBackgroundAsset = (asset: StudioAsset) => {
-    commitProject(applyTransaction(project, applyBackgroundAssetTransaction(asset)));
-  };
-
-  const applyProvinceThemes = (themes: Record<string, ImageThemeResult>) => {
-    const entries = Object.entries(themes);
-    if (entries.length === 0) return;
-    const transaction = createProvinceThemeTransaction(themes);
-    commitProjectTransaction({
-      ...transaction,
-      apply: (current) => ({ ...transaction.apply(current), cards: freezeCardPositionsForMapChange(current) }),
-    });
-    setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
-  };
-
-  const moveCard = (id: string, x: number, y: number) => {
-    commitProject(applyTransaction(project, moveCardTransaction(id, maybeSnap(x, y))));
-  };
-
-  const moveText = (id: string, x: number, y: number) => {
-    commitProject(applyTransaction(project, createSceneTransaction({ type: "text", id }, maybeSnap(x, y))));
-  };
-
-  const moveGuests = (x: number, y: number) => {
-    commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, maybeSnap(x, y))));
-  };
-
-  const moveAsset = (id: string, x: number, y: number) => {
-    const point = maybeSnap(x, y);
-    const current = project.assetElements.find((asset) => asset.id === id);
-    if (!current || (current.x === point.x && current.y === point.y)) return;
-    commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, point)));
-  };
-
-  const resizeAsset = (id: string, x: number, y: number, width: number, height: number) => {
-    const point = maybeSnap(x, y);
-    const current = project.assetElements.find((asset) => asset.id === id);
-    if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
-    commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height })));
-  };
-
-  const moveProvinceTexture = (province: string, offsetX: number, offsetY: number) => {
-    const appearance = project.map.provinceStyles?.[province]?.appearance;
-    if (!appearance || appearance.kind === "manual-color") return;
-    patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
-  };
-
-  const resizeMapImage = (alignment: { x: number; y: number; width: number; height: number; rotation: number }) => {
-    const source = project.map.renderSource;
-    if (source?.kind !== "image" || !source.alignment) return;
-    patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
   };
 
   const mapStyleAssetPanelProps: ContentAssetPanelProps = {
@@ -1036,35 +839,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     onImportResourcePack: importResourcePack,
   };
 
-  const handleWorkflowStepChange = (id: WorkflowPanelId) => {
-    const navigation = resolveWorkflowPanelNavigation(id);
-    setActiveStage(navigation.stage);
-    if (id === "roster") {
-      openGlobalData();
-      return;
-    }
-    setActivePanel(id);
-    setActiveWorkflowStep(navigation.step);
-  };
-
-  const openStudioSettings = () => {
-    setActiveWorkflowStep("layout");
-    setGlobalSettingsSection("canvas");
-  };
-  const openTopbarProjectMenu = () => {
-    const menu = document.querySelector<HTMLDetailsElement>(".topbar .project-menu");
-    if (menu) menu.open = !menu.open;
-  };
-  const openCollaborationSettings = () => {
-    openTopbarProjectMenu();
-    collaboration.setCollaborationOpen(true);
-  };
-  const openDataDiagnostics = () => {
-    setGlobalSettingsSection("cards");
-  };
-  const openRenderSettings = () => {
-    setGlobalSettingsSection("advanced");
-  };
   const projectExportActions = (
     <ToolbarGroup label="导出与工程">
       <ProjectMenu
@@ -1123,29 +897,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     [activeStage, project, workflowProgress, dataHealth, dataIssues, contentLayoutIssues, resourceHealthIssues, dataView, posterExport.exportState],
   );
 
-  const handleStageOverviewAction = (action: StageOverviewAction) => {
-    if (action.kind === "data-diagnostics") {
-      openDataDiagnostics();
-      return;
-    }
-    if (action.kind === "locate-layout") {
-      locateLayoutIssue(action.issue);
-      return;
-    }
-    if (action.kind === "locate-delivery") {
-      locateDeliveryIssue(action.issue);
-      return;
-    }
-    if (action.kind === "stage") {
-      setActiveStage(action.stage);
-      return;
-    }
-    if (action.kind === "export-png") {
-      void posterExport.exportPng();
-      return;
-    }
-  };
-
   const studioAssistantRail = (
     <StudioAssistantRail
       project={project}
@@ -1161,12 +912,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onOpenRenderSettings={openRenderSettings}
       selection={selection}
       layoutIssues={contentLayoutIssues}
-      onSelectElement={handleSceneSelect}
+      onSelectElement={selectScene}
       onLocateLayoutIssue={locateLayoutIssue}
       onPreview={setAgentPreview}
       onCommit={commitProjectTransaction}
       stageOverview={stageOverview}
-      onStageOverviewAction={handleStageOverviewAction}
+      onStageOverviewAction={runStageOverviewAction}
     />
   );
 
@@ -1205,7 +956,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       activeId={activeStage}
       project={project}
       progress={workflowProgress}
-      onChange={handleWorkflowStageChange}
+      onChange={changeWorkflowStage}
     />
   );
 
@@ -1258,7 +1009,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             <em>Beta</em>
           </div>
           <div className="topbar-workflow">
-            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={changeWorkflowStage} />
           </div>
           <div className="topbar-actions">
             {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
@@ -1288,10 +1039,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onSetStudentsVisibility={dataWorkspaceProps.onSetStudentsVisibility}
         provinces={provinceNames}
         onApplyFont={applyFont}
-        onUploadFont={(font) => {
-          setUserFonts((current) => [...current, font]);
-          setStatusMessage(`已上传字体：${font.label}`);
-        }}
+        onUploadFont={uploadUserFont}
         onDeleteUserFont={deleteUserFont}
         workflowProgress={workflowProgress}
         workflowActiveStep={activeWorkflowStep}
@@ -1327,7 +1075,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               issues={dataIssues}
               dataWorkspaceProps={dataWorkspaceProps}
               assetPanelProps={mapStyleAssetPanelProps}
-              onCreateDecoration={handleCreateDecoration}
+              onCreateDecoration={createDecoration}
               onSelectStudent={setSelectedStudentId}
             />
           ),
@@ -1338,7 +1086,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               issues={dataIssues}
               dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
               assetPanelProps={mapStyleAssetPanelProps}
-              onCreateDecoration={handleCreateDecoration}
+              onCreateDecoration={createDecoration}
               onSelectStudent={setSelectedStudentId}
             />
           ),
@@ -1377,7 +1125,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             onResetMap={() => resetSceneTarget({ type: "map" })}
             onPatchProvince={(province, patch) => patchScene({ type: "province", province }, patch as Record<string, unknown>)}
             onCardPositionsResolved={captureCardPositions}
-            onSelect={handleSceneSelect}
+            onSelect={selectScene}
             onMoveProvinceTexture={moveProvinceTexture}
             onResizeMapImage={resizeMapImage}
             onAddUserAsset={addUserAsset}
@@ -1481,10 +1229,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               onPatch={patchScene}
               onReset={resetSceneTarget}
               onApplyFont={applyFont}
-              onUploadFont={(font) => {
-                setUserFonts((current) => [...current, font]);
-                setStatusMessage(`已上传字体：${font.label}`);
-              }}
+              onUploadFont={uploadUserFont}
               onDeleteUserFont={deleteUserFont}
             />
           ),
@@ -1499,7 +1244,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             undoLabel={undoLabel}
             redoLabel={redoLabel}
             assetPanelProps={mapStyleAssetPanelProps}
-            onSelect={handleSceneSelect}
+            onSelect={selectScene}
             onPatch={patchScene}
             onReset={resetSceneTarget}
             onRefreshPositions={refreshDisplayFramePositions}
@@ -1512,10 +1257,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             selectedStudentId={selectedStudentId}
             onSelectStudent={setSelectedStudentId}
             onApplyFont={applyFont}
-            onUploadFont={(font) => {
-              setUserFonts((current) => [...current, font]);
-              setStatusMessage(`已上传字体：${font.label}`);
-            }}
+            onUploadFont={uploadUserFont}
             onDeleteUserFont={deleteUserFont}
             onMoveText={moveText}
             onMoveAsset={moveAsset}
@@ -1565,9 +1307,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
           <em>Beta</em>
         </div>
         <div className="topbar-workflow">
-          <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={changeWorkflowStage} />
           <div className="topbar-workflow__legacy" aria-hidden="true">
-            <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
+            <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={changeWorkflowPanel} />
           </div>
         </div>
         <div className="topbar-actions">
@@ -1771,8 +1513,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
                 }}
                 onSelectInstance={(id) => setSelection({ type: "asset", id })}
                 onApplyBackground={applyBackgroundAsset}
-                onCreateLandmark={handleCreateLandmark}
-                onCreateDecoration={handleCreateDecoration}
+                onCreateLandmark={createLandmark}
+                onCreateDecoration={createDecoration}
                 onApplyProvinceAppearance={(province, appearance: ProvinceAppearance, fill?: string) => {
                   try {
                     setSelection({ type: "province", province });
@@ -1902,7 +1644,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
                   showGrid={showGrid}
                   gridSize={gridSize}
                   renderIntervalMs={resolvedRenderInterval}
-                  onSelect={handleLegacySceneSelect}
+                  onSelect={selectLegacyScene}
                   onMoveText={moveText}
                   onMoveAsset={moveAsset}
                   onResizeAsset={resizeAsset}
@@ -1935,10 +1677,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             provinces={provinceNames}
             onOpenGlobalSettings={setGlobalSettingsSection}
             onApplyFont={applyFont}
-            onUploadFont={(font) => {
-              setUserFonts((current) => [...current, font]);
-              setStatusMessage(`已上传字体：${font.label}`);
-            }}
+            onUploadFont={uploadUserFont}
             onDeleteUserFont={deleteUserFont}
           />
           <details className="project-summary">
