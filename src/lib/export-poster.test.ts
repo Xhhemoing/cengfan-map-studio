@@ -6,6 +6,7 @@ import {
   computeImageLoadTimeout,
   describePngScaleLimit,
   downloadBlob,
+  downloadText,
   exportPixelCount,
   serializePosterSvg,
   svgToPngBlob,
@@ -329,6 +330,54 @@ describe("poster export", () => {
     );
 
     expect(() => downloadBlob(new Blob(["png"]), "我的毕业去向图.png")).toThrow("下载被拦截");
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+  });
+
+  it("delays revoking the object url for text downloads as well", async () => {
+    vi.useFakeTimers();
+    try {
+      const blobs: Blob[] = [];
+      const createObjectURL = vi.fn((blob: Blob) => {
+        blobs.push(blob);
+        return "blob:mock-url";
+      });
+      const revokeObjectURL = vi.fn();
+      vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+      const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
+      const click = vi.spyOn(link, "click").mockImplementation(() => {});
+      vi.spyOn(document, "createElement").mockImplementation((tag: string) =>
+        tag === "a" ? link : (document.createElementNS("http://www.w3.org/1999/xhtml", tag) as HTMLElement),
+      );
+
+      downloadText("<svg/>", "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
+
+      expect(link.getAttribute("href")).toBe("blob:mock-url");
+      expect(link.download).toBe("我的毕业去向图.svg");
+      expect(click).toHaveBeenCalled();
+      expect(blobs[0]?.type).toBe("image/svg+xml;charset=utf-8");
+      await expect(blobs[0]?.text()).resolves.toBe("<svg/>");
+      // SVG 导出同样不能在点击的当前任务内 revoke，否则尚未开始的下载会被取消。
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1000);
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("revokes the object url when a text download click throws", () => {
+    const createObjectURL = vi.fn(() => "blob:mock-url");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
+    vi.spyOn(link, "click").mockImplementation(() => {
+      throw new Error("下载被拦截");
+    });
+    vi.spyOn(document, "createElement").mockImplementation((tag: string) =>
+      tag === "a" ? link : (document.createElementNS("http://www.w3.org/1999/xhtml", tag) as HTMLElement),
+    );
+
+    expect(() => downloadText("<svg/>", "我的毕业去向图.svg", "image/svg+xml;charset=utf-8")).toThrow("下载被拦截");
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
   });
 });
