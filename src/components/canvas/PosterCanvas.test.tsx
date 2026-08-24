@@ -1193,6 +1193,9 @@ describe("PosterCanvas", () => {
     expect(container.querySelector("[data-guests-layer]")).not.toBeNull();
     expect(container.querySelector("[data-guest-title]")?.textContent).toContain("特邀嘉宾");
     expect(container.textContent).toContain("在右侧添加老师");
+    // 编辑器画布可能被共享导出 ref 直接序列化（如内容与排版阶段导出）：
+    // 空框整组要带 data-editor-placeholder，让 serializePosterSvg 剔除。
+    expect(container.querySelector("[data-guests-layer]")?.hasAttribute("data-editor-placeholder")).toBe(true);
 
     flushSync(() => root.unmount());
     container.remove();
@@ -1207,6 +1210,8 @@ describe("PosterCanvas", () => {
 
     expect(container.querySelector("[data-guests-layer]")).not.toBeNull();
     expect(container.querySelector("[data-guest-custom-text]")?.textContent).toBe("感谢师恩");
+    // 有内容的嘉宾框绝不能被序列化剔除。
+    expect(container.querySelector("[data-guests-layer]")?.hasAttribute("data-editor-placeholder")).toBe(false);
 
     flushSync(() => root.unmount());
     container.remove();

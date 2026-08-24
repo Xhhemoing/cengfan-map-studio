@@ -63,6 +63,28 @@ describe("poster export", () => {
     expect(markup).not.toContain("data-editor-grid");
   });
 
+  it("strips editor-only placeholder groups such as the empty guest panel", () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const emptyGuests = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    emptyGuests.setAttribute("data-guests-layer", "");
+    emptyGuests.setAttribute("data-editor-placeholder", "true");
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    title.textContent = "特邀嘉宾 · 老师名单";
+    emptyGuests.appendChild(title);
+    emptyGuests.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "line"));
+    svg.appendChild(emptyGuests);
+    const content = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    content.textContent = "名单内容";
+    svg.appendChild(content);
+
+    const markup = serializePosterSvg(svg);
+    // 空嘉宾框整组（框体/标题/分隔线）不进导出，正文保留。
+    expect(markup).not.toContain("data-guests-layer");
+    expect(markup).not.toContain("特邀嘉宾");
+    expect(markup).not.toContain("<line");
+    expect(markup).toContain("名单内容");
+  });
+
   it("removes only the canvas background when transparent export is enabled", () => {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");

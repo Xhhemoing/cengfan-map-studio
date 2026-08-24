@@ -514,7 +514,10 @@ export function PosterCanvas({
   // 零可见嘉宾且无自定义文本时，导出成品不应包含空嘉宾框（框体/标题/分隔线整组）；
   // 编辑器仍渲染空框引导添加。布局占位（layoutOccupiedAreas）保持不变，
   // 避免导出时卡片自动布局挤进该区域、与编辑器预览错位。
-  const guestPanelOmittedInExport = exportMode && visibleGuests.length === 0 && !guestCustomText;
+  // 编辑器画布也可能被共享导出 ref 序列化（如「内容与排版」阶段直接导出），
+  // 因此空框在编辑态整组标记 data-editor-placeholder，由 serializePosterSvg 剔除。
+  const guestPanelEmpty = visibleGuests.length === 0 && !guestCustomText;
+  const guestPanelOmittedInExport = exportMode && guestPanelEmpty;
   const layoutOccupiedAreas = useMemo(() => {
     const textAreas = project.textElements.flatMap((text) => {
       const area = textLayoutObstacle(text);
@@ -1057,6 +1060,7 @@ export function PosterCanvas({
           {guests.visibility !== false && !guestPanelOmittedInExport && (
             <g
               data-guests-layer
+              data-editor-placeholder={guestPanelEmpty || undefined}
               transform={`translate(${guestX} ${guestY})`}
               onClick={!exportMode ? (event) => { event.stopPropagation(); onSelect?.({ type: "guests" }); } : undefined}
               role={!exportMode && onSelect ? "button" : undefined}
