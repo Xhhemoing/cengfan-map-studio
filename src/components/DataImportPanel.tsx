@@ -6,6 +6,7 @@ import { createImportTemplateSheets, parseExcelWorkbook, parseOcrLikeText } from
 import { buildRosterExportSheets, createRosterExportFilename } from "../lib/roster-export";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
 import { SPREADSHEET_IMPORT_LIMIT, checkImportFileSize } from "../lib/import-file-limits";
+import { decodeCsvBytes, isCsvFile } from "../lib/csv-decode";
 import type { Student } from "../lib/project-data";
 import type { StudentIssue } from "../lib/student-data";
 import { ConfirmDialog } from "./workbench/ConfirmDialog";
@@ -237,10 +238,14 @@ export function DataImportPanel({
       return;
     }
     setExcelRecognition(null);
+    const isCsv = isCsvFile(file);
     try {
       const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
+      // CSV 是纯文本，编码得自己定：直接把字节丢给 xlsx，GBK 表头会读成乱码，
+      // 而乱码列看上去仍是「合法但认不出的表头」，名单会带着乱码进候选。
+      const decoded = isCsv ? decodeCsvBytes(buffer) : null;
+      const workbook = decoded ? XLSX.read(decoded.text, { type: "string" }) : XLSX.read(buffer, { type: "array" });
       // 整本工作簿都读进来交给选表逻辑：教务导出常把封面/汇总排在第一张，只读第一张会丢掉真名单。
       const sheets = workbook.SheetNames.flatMap((name) => {
         const sheet = workbook.Sheets[name];
@@ -256,18 +261,20 @@ export function DataImportPanel({
       });
       const parsed = parseExcelWorkbook(sheets);
       if (!parsed) {
-        onMessage("Excel 中没有工作表");
+        onMessage(isCsv ? "CSV 中没有数据" : "Excel 中没有工作表");
         return;
       }
+      // 点名 GB18030：真遇到编码猜错时，用户能从提示里看出该换个编码另存。
+      const encodingNote = decoded?.encoding === "gb18030" ? " · 按 GB18030 解码" : "";
       setCandidates(
         parsed.candidates,
         parsed.unparsed,
-        `Excel（${file.name} · 工作表「${parsed.sheetName}」）`,
+        isCsv ? `CSV（${file.name}${encodingNote}）` : `Excel（${file.name} · 工作表「${parsed.sheetName}」）`,
         parsed,
         describeSkippedSheets(parsed.skippedSheetNames),
       );
     } catch (error) {
-      onMessage(error instanceof Error ? error.message : "Excel 解析失败");
+      onMessage(error instanceof Error ? error.message : `${isCsv ? "CSV" : "Excel"} 解析失败`);
     }
   };
 

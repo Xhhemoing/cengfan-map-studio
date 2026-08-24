@@ -38,6 +38,16 @@ function renderPanel(onMessage: (message: string) => void): HTMLDivElement {
   );
 }
 
+async function dropFile(container: HTMLDivElement, file: File, bytes: ArrayBufferLike | ArrayBufferView): Promise<void> {
+  Object.defineProperty(file, "arrayBuffer", { value: async () => bytes });
+  const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+  const event = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: { files: [file] } });
+  flushSync(() => dropzone.dispatchEvent(event));
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  flushSync(() => {});
+}
+
 async function dropWorkbook(container: HTMLDivElement, sheets: Array<{ name: string; rows: string[][] }>): Promise<void> {
   const xlsx = await import("xlsx");
   const workbook = xlsx.utils.book_new();
@@ -48,13 +58,11 @@ async function dropWorkbook(container: HTMLDivElement, sheets: Array<{ name: str
   const file = new File([], "去向名单.xlsx", {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
-  Object.defineProperty(file, "arrayBuffer", { value: async () => bytes });
-  const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
-  const event = new Event("drop", { bubbles: true, cancelable: true });
-  Object.defineProperty(event, "dataTransfer", { value: { files: [file] } });
-  flushSync(() => dropzone.dispatchEvent(event));
-  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-  flushSync(() => {});
+  await dropFile(container, file, bytes);
+}
+
+async function dropCsv(container: HTMLDivElement, bytes: Uint8Array, name = "去向名单.csv"): Promise<void> {
+  await dropFile(container, new File([], name, { type: "text/csv" }), bytes);
 }
 
 function lastMessage(onMessage: ReturnType<typeof vi.fn>): string {
@@ -137,5 +145,45 @@ describe("DataImportPanel 工作表选择", () => {
     expect(message).toContain("没有从Excel");
     expect(message).toContain("工作表「空名单」");
     expect(message).toContain("另有 1 张工作表未读取（封面）");
+  });
+});
+
+/** 「学生姓名,录取院校,城市\n苏禾,浙江大学,杭州市\n周晴,哈佛大学,波士顿\n」的 GBK 字节。 */
+const GBK_ROSTER_CSV = new Uint8Array([
+  0xd1, 0xa7, 0xc9, 0xfa, 0xd0, 0xd5, 0xc3, 0xfb, 0x2c, 0xc2, 0xbc, 0xc8, 0xa1, 0xd4, 0xba, 0xd0,
+  0xa3, 0x2c, 0xb3, 0xc7, 0xca, 0xd0, 0x0a, 0xcb, 0xd5, 0xba, 0xcc, 0x2c, 0xd5, 0xe3, 0xbd, 0xad,
+  0xb4, 0xf3, 0xd1, 0xa7, 0x2c, 0xba, 0xbc, 0xd6, 0xdd, 0xca, 0xd0, 0x0a, 0xd6, 0xdc, 0xc7, 0xe7,
+  0x2c, 0xb9, 0xfe, 0xb7, 0xf0, 0xb4, 0xf3, 0xd1, 0xa7, 0x2c, 0xb2, 0xa8, 0xca, 0xbf, 0xb6, 0xd9,
+  0x0a,
+]);
+
+describe("DataImportPanel CSV 编码", () => {
+  it("reads a GBK CSV without turning the headers into mojibake", async () => {
+    const onMessage = vi.fn();
+    const container = renderPanel(onMessage);
+
+    await dropCsv(container, GBK_ROSTER_CSV);
+
+    const message = lastMessage(onMessage);
+    expect(message).toContain("识别到 2 条候选");
+    expect(message).toContain("按 GB18030 解码");
+    const review = container.querySelector(".import-review")?.textContent ?? "";
+    expect(review).toContain("苏禾");
+    expect(review).toContain("浙江大学");
+    expect(container.querySelector(".import-recognition")?.textContent).toContain("录取院校");
+  });
+
+  it("keeps a UTF-8 CSV on the UTF-8 path", async () => {
+    const onMessage = vi.fn();
+    const container = renderPanel(onMessage);
+    const utf8 = new TextEncoder().encode("学生姓名,录取院校,城市\n林舟,北京大学,北京市\n");
+
+    await dropCsv(container, utf8);
+
+    const message = lastMessage(onMessage);
+    expect(message).toContain("识别到 1 条候选");
+    expect(message).not.toContain("GB18030");
+    expect(message).not.toContain("工作表");
+    expect(container.querySelector(".import-review")?.textContent).toContain("林舟");
   });
 });
