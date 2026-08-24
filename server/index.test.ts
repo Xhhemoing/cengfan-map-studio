@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -2480,6 +2480,20 @@ describe("unified application server", () => {
     await expect(server.flushRooms!()).rejects.toThrow(/EISDIR/);
     // 落盘按固定间隔重试，每失败一次就多一份 <file>.<pid>.tmp 的话，数据目录会被慢慢填满。
     expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("writes the room snapshot as a private file", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-mode-"));
+    directories.push(dataDir);
+    const server = await createReadyAiServer({ dataDir });
+    servers.push(server);
+    const origin = await startServer(server);
+    await createCollaborationRoom(origin, { title: "私有" });
+    await server.flushRooms!();
+
+    // 快照里带着房间凭证：改名之后躺在正常路径上的那份仍必须只有属主可读。
+    const info = await stat(join(dataDir, "collaboration-rooms.json"));
+    expect(info.mode & 0o777).toBe(0o600);
   });
 
   it("keeps AI endpoints open without a token in development", async () => {

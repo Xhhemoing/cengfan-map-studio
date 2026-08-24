@@ -221,6 +221,22 @@ function readSkippedRoomIds(snapshot: unknown): string[] {
   return [...new Set(ids.filter((id): id is string => typeof id === "string" && id.length > 0))].sort();
 }
 
+/**
+ * 原子落盘：先写 `<file>.<pid>.tmp` 再改名，避免写到一半被打断时留下半截文件。
+ * 改名失败时临时文件仍躺在数据目录里，而落盘故障（目标被目录占住、磁盘满）会反复发生，
+ * 不收掉就是每个进程堆一份孤儿；清理只是尽力而为，失败也绝不能顶替真正的 rename 错误。
+ */
+async function writeFileAtomically(file: string, contents: string, mode?: number): Promise<void> {
+  const temporaryFile = `${file}.${process.pid}.tmp`;
+  await writeFile(temporaryFile, contents, mode === undefined ? "utf8" : { encoding: "utf8", mode });
+  try {
+    await rename(temporaryFile, file);
+  } catch (error) {
+    await rm(temporaryFile, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 function isWorkspaceSnapshot(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value)) return false;
   const record = value as Record<string, unknown>;
@@ -770,9 +786,7 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         await mkdir(dataDir, { recursive: true });
-        const temporaryFile = `${workspaceFile}.${process.pid}.tmp`;
-        await writeFile(temporaryFile, `${JSON.stringify(snapshot)}\n`, "utf8");
-        await rename(temporaryFile, workspaceFile);
+        await writeFileAtomically(workspaceFile, `${JSON.stringify(snapshot)}\n`);
         response.writeHead(204, { ...securityHeaders(), ...corsHeaders(request, corsOrigins) });
         response.end();
         return;
@@ -1568,11 +1582,8 @@ async function loadRoomSnapshot(file: string): Promise<unknown> {
 function createRoomSnapshotWriter(dataDir: string, file: string) {
   return async (snapshot: unknown): Promise<void> => {
     await mkdir(dataDir, { recursive: true });
-    const temporaryFile = `${file}.${process.pid}.tmp`;
-    // 快照里带着房间凭证（R3-4 保证是哈希后的）：仍然按私有文件写，并且先写临时文件再改名，
-    // 避免关停被打断时留下半截快照。
-    await writeFile(temporaryFile, `${JSON.stringify(snapshot)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(temporaryFile, file);
+    // 快照里带着房间凭证（R3-4 保证是哈希后的）：仍然按私有文件写。
+    await writeFileAtomically(file, `${JSON.stringify(snapshot)}\n`, 0o600);
   };
 }
 
