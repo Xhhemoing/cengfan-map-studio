@@ -2,7 +2,7 @@ import { act, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ROOM_ACCESS_STORAGE_PREFIX } from "./app-constants";
-import type { RoomMember } from "./collaboration-client";
+import type { RoomKickedInfo, RoomMember } from "./collaboration-client";
 import type { ProjectPackage } from "./project-package";
 import { useCollaborationRoom, type UseCollaborationRoomResult } from "./useCollaborationRoom";
 
@@ -29,6 +29,8 @@ function member(clientId: string, role: RoomMember["role"] = "editor"): RoomMemb
 
 let latest: UseCollaborationRoomResult | null = null;
 let emitMembers: ((members: RoomMember[]) => void) | null = null;
+/** subscribeRoom 的 onKicked:被房主移出的一端只会收到 kicked,不会再收到成员列表。 */
+let emitKicked: ((info: RoomKickedInfo) => void) | null = null;
 /** subscribeRoom 的 onError:客户端判定断流(onerror 或心跳看门狗超时)时会调用它。 */
 let notifyStreamError: (() => void) | null = null;
 let subscribeOptions: { version?: number | (() => number) } | null = null;
@@ -78,6 +80,7 @@ async function mountRoom(): Promise<void> {
 beforeEach(() => {
   latest = null;
   emitMembers = null;
+  emitKicked = null;
   notifyStreamError = null;
   subscribeOptions = null;
   subscriptions = [];
@@ -93,9 +96,14 @@ beforeEach(() => {
     _accessToken: string,
     _onSnapshot: unknown,
     onError: () => void,
-    options: { onMembers?: (members: RoomMember[]) => void; version?: number | (() => number) } = {},
+    options: {
+      onMembers?: (members: RoomMember[]) => void;
+      onKicked?: (info: RoomKickedInfo) => void;
+      version?: number | (() => number);
+    } = {},
   ) => {
     emitMembers = options.onMembers ?? null;
+    emitKicked = options.onKicked ?? null;
     notifyStreamError = onError;
     subscribeOptions = options;
     const entry = { live: true };
@@ -145,6 +153,27 @@ describe("useCollaborationRoom membership", () => {
     expect(mocks.leaveRoom).not.toHaveBeenCalled();
   });
 
+  it("ends the local room state when the stream reports this client was kicked", async () => {
+    await mountRoom();
+    expect(window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}ROOM01`)).toBe("self-token");
+
+    // 被移出的一端拿不到 members 事件,服务端只发 kicked 就断流。
+    act(() => emitKicked!({ id: "ROOM01", version: 1, clientId: "self" }));
+
+    expect(latest!.roomId).toBeNull();
+    expect(latest!.roomAccessToken).toBeNull();
+    expect(latest!.roomRole).toBeNull();
+    expect(latest!.roomMembers).toEqual([]);
+    expect(latest!.roomVersion).toBe(0);
+    expect(latest!.collaborationStatus).toBe("idle");
+    expect(latest!.collaborationMessage).toContain("已被移出房间");
+    // 与 members 缺席路径同一句文案,两条路径的提示不能分叉。
+    expect(latest!.collaborationMessage).toBe("已被移出房间；本地工程保留，不会再同步");
+    // 凭证已被服务端撤销,留着只会在下次重连时撞 403。
+    expect(window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}ROOM01`)).toBeNull();
+    expect(mocks.leaveRoom).not.toHaveBeenCalled();
+  });
+
   it("still notifies the server when the member leaves on purpose", async () => {
     await mountRoom();
 
@@ -178,6 +207,14 @@ describe("useCollaborationRoom subscription", () => {
     await mountRoom();
 
     act(() => emitMembers!([member("mate")]));
+
+    expect(liveSubscriptions()).toBe(0);
+  });
+
+  it("drops the stream when the client is kicked", async () => {
+    await mountRoom();
+
+    act(() => emitKicked!({ id: "ROOM01", version: 1, clientId: "self" }));
 
     expect(liveSubscriptions()).toBe(0);
   });

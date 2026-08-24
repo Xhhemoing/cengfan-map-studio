@@ -52,6 +52,9 @@ export type CollaborationBackfillReason = "disconnect" | "conflict";
  */
 const RECONNECTING_MESSAGE = "连接中断，正在自动重连；若长时间未恢复，可离开房间后重新加入";
 
+/** 被房主移出后的收尾文案:members 事件与 kicked 事件走同一句,避免两条路径提示不一致。 */
+const KICKED_MESSAGE = "已被移出房间；本地工程保留，不会再同步";
+
 export interface CollaborationBackfillOutcome {
   /** 本地版本是否已推进到远端最新版本。 */
   ok: boolean;
@@ -150,6 +153,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   const activeSubscriptionRef = useRef<(() => void) | null>(null);
   const receiveRoomUpdateRef = useRef<(room: CollaborationRoom<ProjectPackage>) => void>(() => undefined);
   const receiveRoomMembersRef = useRef<(members: RoomMember[]) => boolean>(() => true);
+  const resetRoomStateRef = useRef<(message: string) => void>(() => undefined);
   useEffect(() => {
     optionsRef.current = options;
   });
@@ -206,7 +210,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       setRoomMembers(members);
       return true;
     }
-    resetCollaborationRoomState("已被移出房间；本地工程保留，不会再同步");
+    resetCollaborationRoomState(KICKED_MESSAGE);
     return false;
   };
 
@@ -243,6 +247,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   useEffect(() => {
     receiveRoomUpdateRef.current = receiveRoomUpdate;
     receiveRoomMembersRef.current = receiveRoomMembers;
+    resetRoomStateRef.current = resetCollaborationRoomState;
   });
 
   const failedBackfill = (): CollaborationBackfillOutcome => ({
@@ -340,6 +345,11 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
         setRoomReadonly(true);
         setCollaborationStatus("closed");
         setCollaborationMessage("房间已关闭，无法继续同步或编辑");
+      },
+      // 被移出的一端收到的是 kicked 而非 members,少了这条回调就会停在 connected、
+      // canEdit 仍为 true,之后每次上传都被服务端 403 静默拒绝。
+      onKicked: () => {
+        resetRoomStateRef.current(KICKED_MESSAGE);
       },
     });
     activeSubscriptionRef.current = unsubscribe;
