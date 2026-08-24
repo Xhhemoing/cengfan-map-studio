@@ -1,4 +1,4 @@
-import { StrictMode, type ReactElement } from "react";
+import { StrictMode, useSyncExternalStore, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { App } from "./App";
@@ -6,10 +6,30 @@ import { WorkflowPrototype } from "./components/WorkflowPrototype";
 import { ProjectWorkbench } from "./components/ProjectWorkbench";
 import { StudioMuiProvider } from "./components/StudioMuiProvider";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
-import { createIndexedDbProjectStore } from "./lib/project-store";
+import { createIndexedDbProjectStore, type ProjectStoreHealth } from "./lib/project-store";
 import "./styles.css";
 
-export const workbenchStore = createIndexedDbProjectStore();
+/** 订阅槽:store 在构造时就要拿到回调,而路由组件要到首次渲染才存在。 */
+const healthSubscribers = new Set<() => void>();
+
+export const workbenchStore = createIndexedDbProjectStore(globalThis.indexedDB, {
+  onHealthChange: () => { for (const notify of [...healthSubscribers]) notify(); },
+});
+
+function subscribeHealth(notify: () => void): () => void {
+  healthSubscribers.add(notify);
+  return () => { healthSubscribers.delete(notify); };
+}
+
+/** 每次渲染都重新读取快照,而不是把降级前的值定格下来:恢复持久化后提示必须自行消失。 */
+function readHealth(): ProjectStoreHealth {
+  return workbenchStore.health;
+}
+
+function WorkbenchRoute() {
+  const health = useSyncExternalStore(subscribeHealth, readHealth, readHealth);
+  return <ProjectWorkbench store={workbenchStore} health={health} />;
+}
 
 function projectIdFromHash(hash: string): string | null {
   const match = hash.match(/^#\/project\/([A-Za-z0-9-]+)$/);
@@ -46,7 +66,7 @@ export function renderApp(container: HTMLElement): void {
       renderView(container, <App projectId={projectId} />);
       return;
     }
-    renderView(container, <ProjectWorkbench store={workbenchStore} />);
+    renderView(container, <WorkbenchRoute />);
   };
   if (hashListener) window.removeEventListener("hashchange", hashListener); // 重复调用 renderApp 只保留一个监听器
   hashListener = render;

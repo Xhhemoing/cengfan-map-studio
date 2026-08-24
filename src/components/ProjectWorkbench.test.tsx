@@ -2,16 +2,53 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { ProjectWorkbench } from "./ProjectWorkbench";
-import { createMemoryProjectStore, createSampleProject } from "../lib/project-store";
+import {
+  createIndexedDbProjectStore,
+  createMemoryProjectStore,
+  createSampleProject,
+  ProjectStoreError,
+  type ProjectStore,
+  type ProjectStoreHealth,
+} from "../lib/project-store";
 import { serializeProjectPackage } from "../lib/project-package";
 
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
-function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, navigate = vi.fn()) {
+function renderWorkbench(store: ProjectStore, navigate = vi.fn(), health?: ProjectStoreHealth) {
   const container = document.createElement("div");
   const root = createRoot(container);
   roots.push({ root, container });
-  flushSync(() => root.render(<ProjectWorkbench store={store} navigate={navigate} />));
-  return { container, navigate };
+  const render = (nextHealth = health) => {
+    flushSync(() => root.render(<ProjectWorkbench store={store} navigate={navigate} health={nextHealth} />));
+  };
+  render();
+  return { container, navigate, rerender: render };
+}
+
+/** 每次 open 都异步失败的 factory：模拟隐私模式 / 数据库损坏,store 因此降级到内存。 */
+function failingFactory(): IDBFactory {
+  return {
+    cmp: () => 0,
+    databases: async () => [],
+    deleteDatabase: () => { throw new Error("不支持删除"); },
+    open: () => {
+      const request = {
+        result: undefined,
+        error: new DOMException("模拟打开失败", "UnknownError"),
+        onsuccess: null as ((event: Event) => void) | null,
+        onerror: null as ((event: Event) => void) | null,
+        onupgradeneeded: null,
+        onblocked: null,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      };
+      queueMicrotask(() => request.onerror?.(new Event("error")));
+      return request as unknown as IDBOpenDBRequest;
+    },
+  } as unknown as IDBFactory;
+}
+
+function storageNotice(container: HTMLElement): HTMLElement | null {
+  return container.querySelector<HTMLElement>('[data-store-health="memory"]');
 }
 
 afterEach(() => {
@@ -253,5 +290,133 @@ describe("ProjectWorkbench", () => {
     const second = renderWorkbench(store);
     await vi.waitFor(() => expect(second.container.textContent).toContain("示例：2026届毕业去向"));
     expect(await store.list()).toHaveLength(1);
+  });
+});
+
+const QUOTA_MESSAGE = "本机存储空间不足，请清理浏览器数据或删除不再需要的项目后重试。";
+
+let restoreDownloads: (() => void) | null = null;
+
+/** jsdom 没有 object URL，补一层记录用的实现;下载用的 <a> 也要拦掉,真正点击会触发未实现的导航。 */
+function stubDownloads() {
+  const target = URL as unknown as Record<string, unknown>;
+  const original = { create: target.createObjectURL, revoke: target.revokeObjectURL };
+  const files: string[] = [];
+  target.createObjectURL = () => "blob:mock";
+  target.revokeObjectURL = () => undefined;
+  const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
+  link.click = () => { files.push(link.download); };
+  const createElement = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation(
+    (tag: string) => (tag === "a" ? link : createElement(tag)) as HTMLElement,
+  );
+  restoreDownloads = () => {
+    target.createObjectURL = original.create;
+    target.revokeObjectURL = original.revoke;
+  };
+  return files;
+}
+
+afterEach(() => {
+  restoreDownloads?.();
+  restoreDownloads = null;
+});
+
+describe("ProjectWorkbench degraded storage", () => {
+  it("keeps listing and creating projects while warning that nothing is persisted", async () => {
+    const store = createIndexedDbProjectStore(failingFactory(), { openRetries: 0, retryDelayMs: 0 });
+    const navigate = vi.fn();
+    const { container } = renderWorkbench(store, navigate);
+
+    await vi.waitFor(() => expect(container.textContent).toContain("示例：2026届毕业去向"));
+    await vi.waitFor(() => expect(storageNotice(container)).not.toBeNull());
+    expect(storageNotice(container)?.textContent).toContain("本次编辑不会保存到本机，请及时导出工程备份");
+    expect(store.health).toBe("memory");
+
+    container.querySelector<HTMLButtonElement>('[aria-label="新建项目"]')?.click();
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalled());
+    expect(await store.list()).toHaveLength(2);
+  });
+
+  it("warns from the mount-time store health even without a health prop", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const { container } = renderWorkbench(store);
+
+    await vi.waitFor(() => expect(storageNotice(container)).not.toBeNull());
+    // 提示不可关闭:内存模式期间没有任何关闭控件。
+    expect(storageNotice(container)?.querySelector('[aria-label^="关闭"]')).toBeNull();
+  });
+
+  it("hides the notice when health flips back to persistent without remounting the store", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const { container, rerender } = renderWorkbench(store, vi.fn(), "memory");
+    await vi.waitFor(() => expect(storageNotice(container)).not.toBeNull());
+
+    rerender("persistent");
+
+    expect(storageNotice(container)).toBeNull();
+    expect(container.textContent).not.toContain("本次编辑不会保存到本机");
+  });
+
+  it("exports a backup of the listed projects from the notice", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put({ ...sample, name: "备份项目", updatedAt: "2026-08-24T02:00:00.000Z" });
+    const { container } = renderWorkbench(store);
+    // 列表加载完成前没有可导出的内容,备份按钮此时是禁用态。
+    await vi.waitFor(() => expect(container.textContent).toContain("备份项目"));
+    const files = stubDownloads();
+
+    const exportButton = storageNotice(container)?.querySelector<HTMLButtonElement>('button[aria-label="导出工程备份"]');
+    expect(exportButton?.disabled).toBe(false);
+    exportButton?.click();
+
+    await vi.waitFor(() => expect(files).toEqual(["备份项目-2026-08-24.json"]));
+  });
+
+  it("shows the typed quota message instead of a generic creation wrapper", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="新建项目"]')).not.toBeNull());
+    vi.spyOn(store, "put").mockRejectedValue(new ProjectStoreError("quota-exceeded", QUOTA_MESSAGE));
+
+    container.querySelector<HTMLButtonElement>('[aria-label="新建项目"]')?.click();
+
+    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe(QUOTA_MESSAGE));
+    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain("创建项目失败");
+  });
+
+  it("shows the typed quota message when duplicating a project fails", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
+    await vi.waitFor(() => expect(container.textContent).toContain("复制"));
+    vi.spyOn(store, "put").mockRejectedValue(new ProjectStoreError("quota-exceeded", QUOTA_MESSAGE));
+
+    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("复制"))?.click();
+
+    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe(QUOTA_MESSAGE));
+  });
+
+  it("shows the typed store message when importing a package fails", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const file = new File([serializeProjectPackage(sample.pack)], "导入.cengfan", { type: "application/json" });
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('input[type="file"]')).not.toBeNull());
+    vi.spyOn(store, "put").mockRejectedValue(new ProjectStoreError("quota-exceeded", QUOTA_MESSAGE));
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    Object.defineProperty(input!, "files", { value: [file] as unknown as FileList, configurable: true });
+
+    input!.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe(QUOTA_MESSAGE));
   });
 });
