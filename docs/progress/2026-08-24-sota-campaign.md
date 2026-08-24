@@ -21,8 +21,8 @@
 
 | 轮次 | 状态 | 模型 | 主题 |
 |---|---|---|---|
-| 1 | 进行中 | fable ×5 | 分区只读审计 + 可落地切片 |
-| 2 | 待开始 | opus ×5 | 按第 1 轮结论落地最高价值切片 |
+| 1 | 已完成 | fable ×5 | 分区只读审计 + 可落地切片 |
+| 2 | 进行中 | opus ×5 | 按第 1 轮结论落地最高价值切片 |
 | 3 | 待开始 | 视结论混编 | 深化打磨与回归 |
 | 4 | 待开始 | 视结论混编 | 继续打磨 |
 | 5+ | 待开始 | 视结论混编 | 达标后继续 |
@@ -41,6 +41,27 @@
 - 落地切片可另开 `cursor/sota-<slice>-6231`，成熟后并回专属分支。
 - 多个 PR 在切片互不冲突、测试全绿后合并，避免长期分叉。
 
+## 第 1 轮结论（5 份只读审计）
+
+1. **地图几何**：影子端合成锚点/估高、缩放按左上角锚定、`grouping` 的 positions key 与渲染层失配、`check_health` 不传 connectors。P0：`src/lib/render-facts.ts` 同源纯函数。
+2. **AI 性价比**：预算按毛 token 累加，60k 实际约 7–9 轮；只读 streak 误杀翻页；观测无 taskId。P0：增量计量、日志串联、streak 改重复签名。视觉核对维持 P2。
+3. **画布排版**：用户面板 / Agent / 渲染三套几何；连线冲突检测是生产死代码；纹理拖拽每帧 React 重渲染。与几何同源；独立切片是 MapLayer 性能。
+4. **导入导出**：Excel 缺格静默丢行、缺列回退会串列、无名单导出、主流程藏了模板入口。P0：解析层零静默 + 统一别名词表。
+5. **工作台**：默认六阶段看不到 `statusMessage`；AI 栏桌面/抽屉双挂载；`requestAiProposal` 前端死代码。P0：状态条、摘死代码、rail a11y。
+
+## 第 2 轮落地（文件所有权互斥，避免撞车）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| render-facts | `src/lib/render-facts.ts`（新）、`src/lib/agent-session.ts`、`src/components/canvas/PosterCanvas.tsx`（仅改 import） |
+| AI 预算/观测/闸门 | `server/ai/*`、`server/index.ts` |
+| 地图纹理性能 | `src/components/canvas/MapDataLayer.tsx`、`MapLayer.tsx` |
+| 导入零静默 | `src/lib/binary-import.ts`、`src/lib/import-data.ts` 及对应测试 |
+| 工作台反馈与死代码 | `src/App.tsx`、`StudioLayoutTemplate.tsx`、`StudioAssistantRail.tsx`、`AgentAssistant.tsx`、`src/lib/ai-client.ts`、新 `StatusBar.tsx` |
+
+本轮不改 digest 协议、不接视觉模型、不删 `/api/ai/propose-edits` 服务端端点、不删 legacy 编辑器。
+
 ## 进度日志
 
 - 2026-08-24：创建专属分支；启动第 1 轮 5 个只读调研子代理。
+- 2026-08-24：第 1 轮 5 份审计齐；启动第 2 轮 5 个落地子代理。
