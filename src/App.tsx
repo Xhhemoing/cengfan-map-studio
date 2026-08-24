@@ -27,8 +27,6 @@ import {
 } from "./lib/app-initialization";
 import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
 import {
-  DRAFT_KEY,
-  DRAFT_SAVED_AT_KEY,
   RENDER_SETTINGS_KEY,
   provinceNames,
   dataViews,
@@ -89,7 +87,6 @@ import {
   applyTransaction,
   createProjectDocument,
   redoTransaction,
-  serializeProjectDocument,
   undoTransaction,
   type ProjectDocument,
   type ProjectTransaction,
@@ -181,13 +178,16 @@ import {
 import {
   createBrowserWorkspaceStores,
   loadBrowserWorkspaceMirror,
-  loadLatestBrowserWorkspace,
-  saveBrowserWorkspaceSnapshot,
 } from "./lib/browser-workspace-store";
+import type { LocalWorkspaceOverwriteState } from "./lib/incremental-workspace-sync";
 import {
-  LocalWorkspaceOverwrite,
-  type LocalWorkspaceOverwriteState,
-} from "./lib/incremental-workspace-sync";
+  createWorkspaceSync,
+  describeForceSaveOutcome,
+  loadAdoptableWorkspace,
+  loadStoredProject,
+  shouldSaveOnPageLeave,
+  subscribePageLeave,
+} from "./lib/editor-workspace-persistence";
 import {
   armCollaborationSend,
   createCollaborationHealTracker,
@@ -259,34 +259,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
   // saveLocal 只在事件处理器(强制保存按钮)经 LocalWorkspaceOverwrite.drain() 触发,属于渲染期之后;
   // 此处 ref 读取发生在保存时刻而非渲染期,react-hooks/refs 无法穿透类间接层,故按行豁免。
   // eslint-disable-next-line react-hooks/refs
-  const [workspaceSync] = useState(() => new LocalWorkspaceOverwrite({
-    saveLocal: async (pack) => {
-      try {
-        localStorage.setItem(DRAFT_KEY, serializeProjectDocument(pack.project));
-        localStorage.setItem(DRAFT_SAVED_AT_KEY, pack.exportedAt);
-      } catch {
-        // The complete mirror or IndexedDB copy can still preserve the workspace.
-      }
-      const result = await saveBrowserWorkspaceSnapshot(pack, browserStores);
-      if (result.durable === "failed" && result.mirror === "failed") {
-        projectRecordSaveErrorRef.current = null; // put 分支不会执行,清空旧错误,避免 overwriteBrowserStorage 误报"本地已保存"
-        throw new Error("浏览器本地存储不可写");
-      }
-      if (projectIdRef.current) {
-        try {
-          await editorProjectStore.put({
-            id: projectIdRef.current,
-            name: projectNameRef.current ?? "未命名项目",
-            createdAt: projectCreatedAtRef.current,
-            updatedAt: new Date().toISOString(),
-            pack,
-          });
-          projectRecordSaveErrorRef.current = null;
-        } catch (error) {
-          projectRecordSaveErrorRef.current = error instanceof Error ? error.message : String(error);
-          throw new Error("项目记录写入失败", { cause: error });
-        }
-      }
+  const [workspaceSync] = useState(() => createWorkspaceSync({
+    stores: browserStores,
+    projectStore: editorProjectStore,
+    record: {
+      idRef: projectIdRef,
+      nameRef: projectNameRef,
+      createdAtRef: projectCreatedAtRef,
+      saveErrorRef: projectRecordSaveErrorRef,
     },
     onStateChange: setSyncState,
   }));
@@ -483,23 +463,27 @@ function StudioApp({ projectId }: { projectId?: string }) {
     workspaceSync.markPending();
   }, [customTemplates, project, renderSettings, userAssets, userFonts, workspaceSync]);
 
+  const applyRestoredWorkspace = (restored: ProjectPackage) => {
+    workspaceHydratedRef.current = true;
+    skipNextWorkspacePendingRef.current = true;
+    setProject(restored.project);
+    setUserAssets(restored.assets);
+    setUserFonts(restored.fonts);
+    setCustomTemplates(restored.customTemplates);
+    setRenderSettings(restored.renderSettings);
+    setPreviewCommands([]);
+  };
+
   useEffect(() => {
     if (projectId) return; // 项目模式以 IndexedDB 中的项目为准,不覆盖浏览器本地镜像
     let cancelled = false;
-    void loadLatestBrowserWorkspace(browserStores).then((pack) => {
-      if (cancelled || !pack || hasLocalWorkspaceEditsRef.current) return;
-      const initialTime = Date.parse(initialWorkspace?.exportedAt ?? "");
-      const restoredTime = Date.parse(pack.exportedAt);
-      if (initialWorkspace && (!Number.isFinite(restoredTime) || restoredTime <= initialTime)) return;
-      const restored = restoreProjectPackage(pack);
-      workspaceHydratedRef.current = true;
-      skipNextWorkspacePendingRef.current = true;
-      setProject(restored.project);
-      setUserAssets(restored.assets);
-      setUserFonts(restored.fonts);
-      setCustomTemplates(restored.customTemplates);
-      setRenderSettings(restored.renderSettings);
-      setPreviewCommands([]);
+    void loadAdoptableWorkspace({
+      stores: browserStores,
+      initialExportedAt: initialWorkspace?.exportedAt,
+      hasLocalEdits: () => hasLocalWorkspaceEditsRef.current,
+    }).then((pack) => {
+      if (cancelled || !pack) return;
+      applyRestoredWorkspace(restoreProjectPackage(pack));
       setSyncState({ status: "saved", savedAt: pack.exportedAt });
       setStatusMessage("已从浏览器本地完整工作区恢复");
     }).catch(() => undefined).finally(() => {
@@ -512,34 +496,19 @@ function StudioApp({ projectId }: { projectId?: string }) {
     if (!projectId) return;
     let cancelled = false;
     projectIdRef.current = projectId;
-    // 降级可能正好发生在这次读取途中:两端都记下来,缺失文案才能区分"磁盘上真的没有"
-    // 与"数据库掉线后读到的是空内存副本"。
-    const healthAtRequest = editorProjectStore.health;
-    void editorProjectStore.get(projectId).then((record) => {
+    void loadStoredProject(editorProjectStore, projectId).then((outcome) => {
       if (cancelled) return;
       // 渲染期已重置缺失状态;此处仅收尾加载状态(渲染期 setState 也会在加载完成前触发重渲染)。
       setProjectMissing(null);
       setProjectLoading(false);
-      if (!record) {
-        setProjectMissing({ reason: "not-found", healthAtRequest, health: editorProjectStore.health });
+      if (outcome.status === "missing") {
+        setProjectMissing(outcome.observation);
         return;
       }
-      const restored = restoreProjectPackage(record.pack);
-      projectNameRef.current = record.name;
-      projectCreatedAtRef.current = record.createdAt;
-      workspaceHydratedRef.current = true;
-      skipNextWorkspacePendingRef.current = true;
-      setProject(restored.project);
-      setUserAssets(restored.assets);
-      setUserFonts(restored.fonts);
-      setCustomTemplates(restored.customTemplates);
-      setRenderSettings(restored.renderSettings);
-      setPreviewCommands([]);
-      setStatusMessage(`已打开项目「${record.name}」`);
-    }).catch(() => {
-      if (cancelled) return;
-      setProjectMissing({ reason: "read-failed", healthAtRequest, health: editorProjectStore.health });
-      setProjectLoading(false);
+      projectNameRef.current = outcome.record.name;
+      projectCreatedAtRef.current = outcome.record.createdAt;
+      applyRestoredWorkspace(outcome.restored);
+      setStatusMessage(`已打开项目「${outcome.record.name}」`);
     });
     return () => { cancelled = true; };
   }, [projectId]);
@@ -796,31 +765,22 @@ function StudioApp({ projectId }: { projectId?: string }) {
   // 本地草稿镜像(localStorage,同步落盘)+ IndexedDB 项目记录。
   useEffect(() => {
     if (!projectId) return;
-    const handlePageLeave = () => {
-      if (!projectIdRef.current || projectLifecycleRef.current.loading || projectLifecycleRef.current.missing || backNavigatingRef.current) return;
-      const state = workspaceSync.getState();
-      if (state.status === "pending" || hasLocalWorkspaceEditsRef.current) {
-        void saveWorkspaceNowRef.current();
-      }
-    };
-    window.addEventListener("visibilitychange", handlePageLeave);
-    window.addEventListener("pagehide", handlePageLeave);
-    return () => {
-      window.removeEventListener("visibilitychange", handlePageLeave);
-      window.removeEventListener("pagehide", handlePageLeave);
-    };
+    return subscribePageLeave(() => {
+      const pending = shouldSaveOnPageLeave({
+        projectId: projectIdRef.current,
+        loading: projectLifecycleRef.current.loading,
+        missing: Boolean(projectLifecycleRef.current.missing),
+        navigatingBack: backNavigatingRef.current,
+        syncStatus: workspaceSync.getState().status,
+        hasLocalEdits: hasLocalWorkspaceEditsRef.current,
+      });
+      if (pending) void saveWorkspaceNowRef.current();
+    });
   }, [projectId, workspaceSync]);
 
   const overwriteBrowserStorage = async () => {
     await saveWorkspaceNow();
-    const result = workspaceSync.getState();
-    if (result.status === "saved") {
-      setStatusMessage("强制保存完成：全部数据已覆盖到浏览器本地");
-    } else if (projectRecordSaveErrorRef.current) {
-      setStatusMessage(`浏览器本地已保存，但项目记录写入失败（${projectRecordSaveErrorRef.current}）。请导出工程包备份，否则项目列表不会更新。`);
-    } else {
-      setStatusMessage("强制保存失败：浏览器本地存储不可写，请立即导出工程包");
-    }
+    setStatusMessage(describeForceSaveOutcome(workspaceSync.getState().status, projectRecordSaveErrorRef.current));
   };
 
   const addUserAsset = (asset: UserAsset) => {
