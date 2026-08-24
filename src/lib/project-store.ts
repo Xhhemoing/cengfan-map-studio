@@ -515,12 +515,89 @@ function requestErrorOf(event: Event): unknown {
 }
 
 const RETRY_DELAY_MS = 120;
+/** 降级后后台重开探针的默认间隔：足够慢，不会在持久层长期不可用时反复砸数据库。 */
+const RECOVER_INTERVAL_MS = 20_000;
+/** 写回撞配额后的退避倍数：磁盘已满时更频繁地重写只会白白消耗 IO。 */
+const QUOTA_BACKOFF_FACTOR = 4;
+/** 写回期间又发生内存写入时的补写轮数上限，超出则留给下一次探针。 */
+const MAX_WRITE_BACK_PASSES = 3;
+
+/** 注册后台重开探针，返回取消函数；默认用 setInterval，测试可注入手动 tick。 */
+export type RecoverScheduler = (probe: () => Promise<void>, intervalMs: number) => () => void;
+
+const defaultScheduleRecover: RecoverScheduler = (probe, intervalMs) => {
+  const timer = setInterval(() => { void probe(); }, intervalMs);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  return () => clearInterval(timer);
+};
+
+/**
+ * 把降级期间落在内存里的项目写回磁盘。
+ * projects 与 project-metadata 写在同一个事务里，语义与 put 一致：不会留下只有包没有元数据的半状态。
+ * 同 id 冲突按 updatedAt 取新，相同则内存优先——降级期间的编辑发生在本次会话内，
+ * 比降级前就躺在磁盘上的旧行新，不能被旧行覆盖。磁盘上独有的 id 一律不动，恢复后照常出现在 list() 里。
+ */
+function writeBackToDisk(run: TransactionRunner, records: StoredProject[]): Promise<void> {
+  return run([STORE_NAME, METADATA_STORE_NAME], "readwrite", (tx) => new Promise<void>((resolve, reject) => {
+    let requestError: unknown = null;
+    tx.oncomplete = () => resolve();
+    tx.onerror = (event) => { requestError ??= requestErrorOf(event); };
+    tx.onabort = () => reject(abortFailure(tx, requestError, "write-aborted", "IndexedDB 写入中止"));
+    const projects = tx.objectStore(STORE_NAME);
+    const metadataStore = tx.objectStore(METADATA_STORE_NAME);
+    // 冲突判定读的是同一个事务里的元数据边车，避免读到写回过程中被别人改动的行。
+    const diskMetadata = metadataStore.getAll();
+    diskMetadata.onsuccess = () => {
+      const diskUpdatedAt = new Map<string, string>();
+      for (const value of diskMetadata.result ?? []) {
+        const metadata = parseProjectMetadata(value);
+        if (metadata) diskUpdatedAt.set(metadata.id, metadata.updatedAt);
+      }
+      for (const record of records) {
+        const disk = diskUpdatedAt.get(record.id);
+        if (disk !== undefined && disk.localeCompare(record.updatedAt) > 0) continue;
+        projects.put(structuredClone(record), record.id);
+        metadataStore.put(projectMetadata(record), record.id);
+      }
+    };
+  }));
+}
+
+async function snapshotStore(store: ProjectStore): Promise<StoredProject[]> {
+  const records: StoredProject[] = [];
+  for (const item of await store.list()) {
+    const record = await store.get(item.id);
+    if (record) records.push(record);
+  }
+  return records;
+}
+
+/** 统计降级期的内存写入次数：写回途中又有写入时必须补一轮，否则这些编辑会随内存副本一起被丢掉。 */
+function trackWrites(store: ProjectStore, onWrite: () => void): ProjectStore {
+  return {
+    health: store.health,
+    list: () => store.list(),
+    get: (id) => store.get(id),
+    put: async (project) => { await store.put(project); onWrite(); },
+    remove: async (id) => { await store.remove(id); onWrite(); },
+  };
+}
 
 export interface IndexedDbProjectStoreOptions {
   /** 打开失败后的额外重试次数；重试用尽才进入内存降级模式。 */
   openRetries?: number;
   retryDelayMs?: number;
   onHealthChange?: (health: ProjectStoreHealth) => void;
+  /** 内存降级后的后台重开间隔，默认 20s；<= 0 表示关闭后台恢复。 */
+  recoverIntervalMs?: number;
+  /** 注入时钟，只用于配额退避窗口的计时。 */
+  now?: () => number;
+  scheduleRecover?: RecoverScheduler;
+  /**
+   * 后台恢复失败的通知。打不开数据库是降级期的常态，不会反复上报；
+   * 只有连接恢复后写回失败（典型是配额耗尽）才会送出已分类的错误。
+   */
+  onRecoverError?: (error: ProjectStoreError) => void;
 }
 
 export function createIndexedDbProjectStore(
@@ -536,7 +613,15 @@ export function createIndexedDbProjectStore(
       async remove() { throw new ProjectStoreError("unsupported", UNSUPPORTED_MESSAGE); },
     };
   }
-  const { openRetries = 1, retryDelayMs = RETRY_DELAY_MS, onHealthChange } = options;
+  const {
+    openRetries = 1,
+    retryDelayMs = RETRY_DELAY_MS,
+    onHealthChange,
+    recoverIntervalMs = RECOVER_INTERVAL_MS,
+    now = Date.now,
+    scheduleRecover = defaultScheduleRecover,
+    onRecoverError,
+  } = options;
   const { run } = createConnectionPool(async () => {
     let lastError: unknown = null;
     for (let attempt = 0; attempt <= openRetries; attempt += 1) {
@@ -555,11 +640,45 @@ export function createIndexedDbProjectStore(
   });
 
   // 持久层彻底打不开（隐私模式、数据库损坏）时降级到内存：编辑仍可继续，health 变为 "memory"。
+  // 降级在一个探针周期内是粘住的——list/put 不会各自重开数据库，只有后台探针会尝试恢复。
   let fallback: ProjectStore | null = null;
+  let writeCount = 0;
+  let cancelRecover: (() => void) | null = null;
+  let recovering = false;
+  let recoverBlockedUntil = 0;
+
+  const recoverOnce = async (): Promise<void> => {
+    const degraded = fallback;
+    // 已恢复、正在恢复，或还在配额退避窗口内：这一拍什么都不做。
+    if (!degraded || recovering || now() < recoverBlockedUntil) return;
+    recovering = true;
+    try {
+      for (let pass = 0; ; pass += 1) {
+        const seen = writeCount;
+        await writeBackToDisk(run, await snapshotStore(degraded));
+        if (writeCount === seen) break;
+        if (pass + 1 >= MAX_WRITE_BACK_PASSES) return;
+      }
+      fallback = null;
+      cancelRecover?.();
+      cancelRecover = null;
+      onHealthChange?.("persistent");
+    } catch (error) {
+      if (error instanceof ProjectStoreError && error.code !== "open-failed") {
+        // 配额耗尽时数据仍安全地留在内存里；拉长下一次写回的间隔，别把满盘反复砸一遍。
+        if (error.code === "quota-exceeded") recoverBlockedUntil = now() + recoverIntervalMs * QUOTA_BACKOFF_FACTOR;
+        onRecoverError?.(error);
+      }
+    } finally {
+      recovering = false;
+    }
+  };
+
   const degrade = (): ProjectStore => {
     if (!fallback) {
-      fallback = createMemoryProjectStore();
+      fallback = trackWrites(createMemoryProjectStore(), () => { writeCount += 1; });
       onHealthChange?.("memory");
+      if (recoverIntervalMs > 0) cancelRecover = scheduleRecover(recoverOnce, recoverIntervalMs);
     }
     return fallback;
   };
