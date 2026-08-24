@@ -27,7 +27,13 @@
 
 ## 循环状态
 
-- [ ] Cycle 1 Round 1 — 初始构建与基线探索
+- [ ] Cycle 1 Round 1 — 初始构建与基线探索（进行中，6 子代理并发）
+  - fable-A `claude-fable-5-thinking-xhigh` canvas 管线审计 → `bc-b86f76c3-f700-5e6a-b980-b16dfeb529e0`
+  - fable-B `claude-fable-5-thinking-xhigh` 展示框样式审计 → `bc-59f43fbd-e6a3-57f4-bdc8-16443fa3e422`
+  - opus-fast-A `claude-opus-5-thinking-high-fast` DestinationCard 拆分 → `bc-780913a7-4452-5a24-8207-5eca309d970d`
+  - opus-fast-B `claude-opus-5-thinking-high-fast` 展示框 token/子画布 → `bc-835ca65f-3f64-5aa1-a14b-2ecad94e54be`
+  - gpt-sol-A `gpt-5.6-sol-xhigh-fast` 画布基准脚本 → `bc-99c96d63-7966-5b5d-b937-90e98d6b50bd`
+  - gpt-sol-B `gpt-5.6-sol-xhigh-fast` 边界测试 → `bc-d390ddb4-b179-59da-81e4-21ac391945cf`
 - [ ] Cycle 1 Round 2 — 靶向重构与深度优化
 - [ ] Cycle 1 Round 3 — SOTA 打磨与交叉核验
 - [ ] Cycle 2 Round 1
