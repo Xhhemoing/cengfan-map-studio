@@ -20,6 +20,8 @@ const DEFAULT_ASSISTANT_RAIL_VIEW: AssistantRailViewState = { tab: "ai", advance
 
 export interface StudioAssistantRailProps {
   project: ProjectDocument;
+  /** 项目身份键（项目 id），AI 会话按项目绑定（I-14-01）。缺省为旧版单工作区。 */
+  projectKey?: string;
   assets: UserAsset[];
   syncStatus: LocalOverwriteStatus;
   collaboration: { roomId: string | null; status: CollaborationStatus; participantCount: number };
@@ -80,6 +82,7 @@ function sameSelection(left: SceneSelection, right: SceneSelection): boolean {
 
 export function StudioAssistantRail({
   project,
+  projectKey,
   assets,
   syncStatus,
   collaboration,
@@ -167,7 +170,7 @@ export function StudioAssistantRail({
           aria-labelledby="studio-ai-tab"
           aria-label="AI 助手"
         >
-          <AgentAssistant presentation="docked" project={project} assets={assets} onPreview={onPreview} onCommit={onCommit} />
+          <AgentAssistant presentation="docked" project={project} projectKey={projectKey} assets={assets} onPreview={onPreview} onCommit={onCommit} />
         </section>
       ) : activeTab === "stage" ? (
         <section

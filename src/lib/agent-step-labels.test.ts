@@ -20,8 +20,17 @@ describe("agentStepLabel", () => {
     expect(agentStepLabel({ name: "auto_layout", arguments: { mode: "grid" } })).toBe("自动排版：边缘网格");
   });
 
-  it("falls back to raw names for unknown tools and fields", () => {
-    expect(agentStepLabel({ name: "update_cards", arguments: { patch: { unknownField: 1 } } })).toBe("调整数据卡片：unknownField");
-    expect(agentStepLabel({ name: "mystery_tool", arguments: {} })).toBe("mystery_tool");
+  it("covers common SCENE_DOMAIN_PROPS fields with Chinese labels (I-14-05)", () => {
+    expect(agentStepLabel({ name: "update_province", arguments: { province: "浙江省", patch: { fill: "#d05a45" } } })).toBe("调整省份样式：填色");
+    expect(agentStepLabel({ name: "update_province", arguments: { province: "浙江省", patch: { visible: false, labelFontId: "font-kai" } } })).toBe("调整省份样式：显示状态、标注字体");
+    expect(agentStepLabel({ name: "update_guests", arguments: { patch: { displayMode: "cards", customText: "寄语" } } })).toBe("调整嘉宾栏：显示方式、自定义文本");
+    expect(agentStepLabel({ name: "update_cards", arguments: { patch: { nameFormat: "{surname}xx", noWrapFields: ["name"] } } })).toBe("调整数据卡片：姓名格式、不分行字段");
+    expect(agentStepLabel({ name: "update_asset", arguments: { id: "asset-1", patch: { rotation: 30, kind: "landmark" } } })).toBe("调整素材：旋转角度、素材类型");
+    expect(agentStepLabel({ name: "update_map", arguments: { patch: { renderSource: { kind: "vector" } } } })).toBe("调整地图：地图渲染来源");
+  });
+
+  it("wraps unknown tools and fields in Chinese labels instead of bare English (I-14-05)", () => {
+    expect(agentStepLabel({ name: "update_cards", arguments: { patch: { unknownField: 1 } } })).toBe("调整数据卡片：属性（unknownField）");
+    expect(agentStepLabel({ name: "mystery_tool", arguments: {} })).toBe("执行修改（mystery_tool）");
   });
 });

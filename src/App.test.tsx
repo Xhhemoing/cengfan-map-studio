@@ -573,12 +573,19 @@ describe("App student editing", () => {
     });
     globalThis.fetch = request as typeof fetch;
     try {
+      // 刷新前留下的旧凭证与最近房间标记：房间已关闭时必须被清理（I-14-03）。
+      window.localStorage.setItem(`cengfan-map-studio:room-access:${roomId}`, "stale-token");
+      window.localStorage.setItem("cengfan-map-studio:room-last-active", roomId);
       click(container.querySelector('[aria-label="增量在线协作"]')!);
       changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作房间码"]')!, roomId);
       changeInput(container.querySelector<HTMLInputElement>('[aria-label="协作邀请凭证"]')!, "editor-invite");
       click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "加入")!);
       // 加入已关闭房间时协作浮层直接给出关闭状态。
       await vi.waitFor(() => expect(container.textContent).toContain("房间已关闭，无法继续同步或编辑"));
+
+      // 死房间的凭证不保存、旧凭证被清掉：刷新后不再回填该房间（I-14-03）。
+      expect(window.localStorage.getItem(`cengfan-map-studio:room-access:${roomId}`)).toBeNull();
+      expect(window.localStorage.getItem("cengfan-map-studio:room-last-active")).not.toBe(roomId);
 
       openPeopleData(container);
       click(container.querySelector<HTMLButtonElement>('button[aria-label="隐藏 林舟"]')!);
@@ -691,6 +698,57 @@ describe("App student editing", () => {
       expect(accessCall?.[1]).toMatchObject({ method: "POST" });
       expect(JSON.parse((accessCall?.[1] as RequestInit).body as string)).toMatchObject({ action: "set-readonly" });
       expect(typeof JSON.parse((accessCall?.[1] as RequestInit).body as string).clientId).toBe("string");
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    }
+  });
+
+  it("clears the stored room credential and recent-room marker when the owner closes the room (I-14-03)", async () => {
+    const container = renderApp();
+    const roomId = "CLOSE9";
+    const originalEventSource = globalThis.EventSource;
+    class QuietEventSource {
+      addEventListener() {}
+      onerror = null;
+      close() {}
+      constructor(public readonly url: string) {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    const originalFetch = globalThis.fetch;
+    const request = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/rooms")) {
+        return new Response(JSON.stringify({
+          room: { id: roomId, version: 0, ready: true, members: [{ clientId: "c-owner", role: "owner", joinedAt: "t0", lastSeenAt: "t0" }] },
+          access: { accessToken: "owner-token", role: "owner", participantId: "p1", id: "p1", displayName: "创建者" },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+        return new Response(JSON.stringify({ id: roomId, version: 1 }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith(`/api/rooms/${roomId}/access`)) {
+        return new Response(JSON.stringify({ id: roomId, version: 2, readonly: true, closed: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/events-ticket")) return new Response(JSON.stringify({ ticket: "ticket" }), { status: 201, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    globalThis.fetch = request as typeof fetch;
+    try {
+      click(container.querySelector('[aria-label="增量在线协作"]')!);
+      click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "创建房间")!);
+      await vi.waitFor(() => expect(container.textContent).toContain("房间已创建"));
+      // 建房成功时凭证已保存（未关房时刷新回填依赖它）。
+      expect(window.localStorage.getItem(`cengfan-map-studio:room-access:${roomId}`)).toBe("owner-token");
+      expect(window.localStorage.getItem("cengfan-map-studio:room-last-active")).toBe(roomId);
+
+      click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "关闭房间")!);
+      await vi.waitFor(() => expect(container.textContent).toContain("房间已关闭，无法继续同步或编辑"));
+
+      // 关房后清凭证与最近房间标记：刷新不再回填死房间、不再提示一键回连（I-14-03）。
+      expect(window.localStorage.getItem(`cengfan-map-studio:room-access:${roomId}`)).toBeNull();
+      expect(window.localStorage.getItem("cengfan-map-studio:room-last-active")).toBeNull();
     } finally {
       globalThis.fetch = originalFetch;
       vi.unstubAllGlobals();
@@ -947,6 +1005,16 @@ describe("App student editing", () => {
     expect(dialog?.textContent).toContain("地图背景、地图贴图、素材和字体");
     expect(dialog?.querySelector<HTMLInputElement>('input[aria-label="导出时包含资源包"]')?.checked).toBe(true);
     expect(dialog?.querySelector<HTMLButtonElement>('button[aria-label="确认导出工程"]')).not.toBeNull();
+  });
+
+  it("closes the project export dialog with Escape like other overlays (I-14-04)", () => {
+    const container = renderApp();
+
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("导出工程"))!);
+    expect(container.querySelector('[role="dialog"][aria-label="导出工程确认"]')).not.toBeNull();
+
+    flushSync(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(container.querySelector('[role="dialog"][aria-label="导出工程确认"]')).toBeNull();
   });
 
   it("immediately applies imported backgrounds, province textures and resource catalog", () => {

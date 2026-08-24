@@ -4,7 +4,13 @@ import type { ProjectDocument } from "./project-document";
 import { CARD_LAYOUT_MODES } from "./scene-document";
 
 export const ASSISTANT_CONVERSATION_STORAGE_KEY = "cengfan-map-studio:ai-conversations:v1";
-const SCHEMA_VERSION = 1;
+/**
+ * 无项目 id 的旧版单工作区使用的固定项目键（I-14-01）。项目模式下调用方
+ * 必须传入真实项目 id，会话按项目身份绑定，内容相同的两个项目不会共享会话。
+ */
+export const LOCAL_PROJECT_KEY = "local";
+// v2：持久层增加 projectKey（项目身份），内容指纹只用于「同一项目内容是否变化」。
+const SCHEMA_VERSION = 2;
 const MAX_CONVERSATIONS = 20;
 const MAX_SERIALIZED_BYTES = 256 * 1024;
 const MAX_STRING_LENGTH = 64 * 1024;
@@ -60,7 +66,9 @@ export interface AssistantConversationState {
 }
 
 interface PersistedState extends AssistantConversationState {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  /** 项目身份（项目 id 或旧版单工作区的固定键）。内容 digest 相同的两个项目不共享会话（I-14-01）。 */
+  projectKey: string;
   projectDigest: string;
 }
 
@@ -241,21 +249,24 @@ function parseRecord(value: unknown): AssistantConversationRecord | null {
 }
 
 function parseState(value: unknown): PersistedState | null {
-  if (!isRecord(value) || value.schemaVersion !== SCHEMA_VERSION || !isString(value.projectDigest, 64 * 1024) ||
+  if (!isRecord(value) || value.schemaVersion !== SCHEMA_VERSION || !isString(value.projectKey, 256) || !isString(value.projectDigest, 64 * 1024) ||
     !isMode(value.mode) || (value.activeId !== null && !isString(value.activeId, 256)) || !Array.isArray(value.conversations) ||
     value.conversations.length > MAX_CONVERSATIONS || !value.conversations.every((item) => parseRecord(item) !== null)) return null;
   const parsedConversations = value.conversations.map(parseRecord);
   if (parsedConversations.some((item) => item === null)) return null;
   const conversations = parsedConversations.map((item) => item!).filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
-  return { schemaVersion: SCHEMA_VERSION, projectDigest: value.projectDigest, mode: value.mode, activeId: conversations.some((item) => item.id === value.activeId) ? value.activeId : conversations[0]?.id ?? null, conversations };
+  return { schemaVersion: SCHEMA_VERSION, projectKey: value.projectKey, projectDigest: value.projectDigest, mode: value.mode, activeId: conversations.some((item) => item.id === value.activeId) ? value.activeId : conversations[0]?.id ?? null, conversations };
 }
 
-export function loadAssistantConversationState(storage: StorageLike, project: ProjectDocument): AssistantConversationState | null {
+export function loadAssistantConversationState(storage: StorageLike, project: ProjectDocument, projectKey: string = LOCAL_PROJECT_KEY): AssistantConversationState | null {
   try {
     const raw = storage.getItem(ASSISTANT_CONVERSATION_STORAGE_KEY);
     if (!raw || new TextEncoder().encode(raw).byteLength > MAX_SERIALIZED_BYTES) return null;
     const persisted = parseState(JSON.parse(raw));
     if (!persisted) return null;
+    // 会话按项目身份绑定（I-14-01）：内容 digest 相同的另一个项目（如两个空项目）
+    // 不得继承已保存会话，新项目从干净的新对话开始。
+    if (persisted.projectKey !== projectKey) return null;
     const currentDigest = digestFor(project);
     const projectMatches = persisted.projectDigest === currentDigest;
     const conversations = persisted.conversations.flatMap((conversation) => {
@@ -294,7 +305,7 @@ export function loadAssistantConversationState(storage: StorageLike, project: Pr
   }
 }
 
-export function saveAssistantConversationState(storage: StorageLike, project: ProjectDocument, state: AssistantConversationState): void {
+export function saveAssistantConversationState(storage: StorageLike, project: ProjectDocument, state: AssistantConversationState, projectKey: string = LOCAL_PROJECT_KEY): void {
   try {
     const conversations = state.conversations.filter((conversation) => !isPristineDraft(conversation)).slice(-MAX_CONVERSATIONS).map((conversation) => {
       if (conversation.title.length > MAX_STRING_LENGTH || conversation.request.length > MAX_STRING_LENGTH || conversation.summary.length > MAX_STRING_LENGTH || conversation.error.length > MAX_STRING_LENGTH) throw new Error("持久化字段过大");
@@ -311,6 +322,7 @@ export function saveAssistantConversationState(storage: StorageLike, project: Pr
     const safeConversations = conversations.filter((conversation): conversation is NonNullable<typeof conversation> => conversation !== null);
     const persisted: PersistedState = {
       schemaVersion: SCHEMA_VERSION,
+      projectKey,
       projectDigest: digestFor(project),
       mode: state.mode,
       activeId: safeConversations.some((conversation) => conversation.id === state.activeId) ? state.activeId : safeConversations[0]?.id ?? null,

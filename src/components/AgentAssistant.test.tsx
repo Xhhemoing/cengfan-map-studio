@@ -523,9 +523,12 @@ describe("AgentAssistant", () => {
     expect(container.querySelectorAll('.agent-assistant-window input[type="checkbox"]')).toHaveLength(0);
     expect(container.querySelector('[aria-label="确认应用"]')).toBeNull();
     expect(container.querySelector('button[aria-label="确认应用"]')).toBeNull();
+    // 已应用对话本身保持终态（无可再选步骤），但输入新需求后仍可「开始规划」
+    // 开启下一个任务（I-14-02），不再永久禁用。
     const runButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("开始规划") || button.textContent?.includes("继续对话"));
     expect(runButton).toBeDefined();
-    expect(runButton?.disabled).toBe(true);
+    expect(runButton?.textContent).toContain("开始规划");
+    expect(runButton?.disabled).toBe(false);
     root.unmount();
   });
 
@@ -604,6 +607,79 @@ describe("AgentAssistant", () => {
     renderWith(<AgentAssistant project={fresh} assets={[]} onCommit={onCommit} />);
     await vi.waitFor(() => expect(container.textContent).not.toContain("已应用"));
     await vi.waitFor(() => expect(container.textContent).toContain("新对话"));
+    root.unmount();
+  });
+
+  it("keeps a pending preview from following an identical-content project with a different id (I-14-01)", async () => {
+    window.localStorage.clear();
+    const projectA = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "digest-collision", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "方案完成" })));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const renderWith = (children: React.ReactNode) => flushSync(() => root.render(<AssistantConversationProvider>{children}</AssistantConversationProvider>));
+    renderWith(<AgentAssistant project={projectA} projectKey="project-a" assets={[]} onCommit={vi.fn()} />);
+    openAssistant(container);
+    setMessage(container, "规划但不应用");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("方案完成"));
+    await vi.waitFor(() => expect(container.textContent).toContain("待应用"));
+
+    // 项目切换经过加载壳：AI 面板卸载，再挂到内容完全相同（digest 碰撞）但
+    // id 不同的空项目 B 上。B 必须是干净新对话，不继承 A 的待应用预览。
+    renderWith(null);
+    const projectB = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    renderWith(<AgentAssistant project={projectB} projectKey="project-b" assets={[]} onCommit={vi.fn()} />);
+    await vi.waitFor(() => expect(container.textContent).not.toContain("待应用"));
+    expect(container.textContent).not.toContain("规划但不应用");
+    expect(container.textContent).toContain("新对话");
+    root.unmount();
+  });
+
+  it("starts the next task in a fresh conversation right after applying (I-14-02)", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "task-one", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "第一个任务完成" }))
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "task-two", name: "update_cards", arguments: { patch: { fontSize: project.cards.fontSize + 2 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "第二个任务完成" })));
+    const { container, root, onCommit } = renderAssistant(project);
+    openAssistant(container);
+    setMessage(container, "第一个任务");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("第一个任务完成"));
+    clickText(container, "确认应用");
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("已应用");
+
+    // 项目内容没有变化也能直接开始下一个任务：输入新需求后「开始规划」自动开新对话。
+    setMessage(container, "第二个任务");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("第二个任务完成"));
+    expect(container.textContent).toContain("待应用");
+    expect(container.querySelector('[aria-label="确认应用"]')).not.toBeNull();
+    // 已应用的第一个任务仍留在历史里，保持终态。
+    expect(container.textContent).toContain("第一个任务");
+    root.unmount();
+  });
+
+  it("offers a new-conversation entry in the docked presentation (I-14-02)", async () => {
+    window.localStorage.clear();
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <AssistantConversationProvider>
+        <AgentAssistant presentation="docked" project={project} assets={[]} onCommit={vi.fn()} />
+      </AssistantConversationProvider>,
+    ));
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="描述 AI 修改需求"]')).not.toBeNull());
+    const newButton = container.querySelector<HTMLButtonElement>('.agent-assistant-history button[aria-label="新建对话"]');
+    expect(newButton).not.toBeNull();
+    expect(newButton?.disabled).toBe(false);
+    flushSync(() => newButton?.click());
+    expect(container.textContent).toContain("新对话");
     root.unmount();
   });
 

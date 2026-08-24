@@ -711,6 +711,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
     reportStatus: setStatusMessage,
   });
 
+  // 「确认导出工程」对话框与其它浮层一致支持 Esc 关闭（I-14-04）。
+  const { showProjectExportDialog, setShowProjectExportDialog } = posterExport;
+  useEffect(() => {
+    if (!showProjectExportDialog) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setShowProjectExportDialog(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [showProjectExportDialog, setShowProjectExportDialog]);
+
   const canUndo = project.history.past.length > 0;
   const canRedo = project.history.future.length > 0;
   const undoLabel = canUndo
@@ -1630,6 +1642,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const studioAssistantRail = (
     <StudioAssistantRail
       project={project}
+      projectKey={projectId}
       assets={userAssets}
       syncStatus={syncState.status}
       collaboration={{ roomId: collaboration.roomId, status: collaboration.collaborationStatus, participantCount: collaboration.roomParticipants.length }}

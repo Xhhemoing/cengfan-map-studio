@@ -162,6 +162,8 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     if (room.members) setRoomMembers(room.members);
     if (room.readonly !== undefined) setRoomReadonly(room.readonly);
     if (room.closed) {
+      // 房间已关闭：立即清掉本机凭证与最近房间标记，刷新后不再回填死房间（I-14-03）。
+      if (roomRef.current) forgetRoomAccess(roomRef.current);
       setRoomClosed(true);
       setCollaborationStatus("closed");
       setCollaborationMessage("房间已关闭，无法继续同步或编辑");
@@ -250,6 +252,8 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       version: versionRef.current,
       onMembers: (members) => setRoomMembers(members),
       onClosed: () => {
+        // 关房通知同样清凭证：死房间不再参与刷新回填（I-14-03）。
+        forgetRoomAccess(roomId);
         setRoomClosed(true);
         setRoomReadonly(true);
         setCollaborationStatus("closed");
@@ -351,7 +355,9 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
           // 成员列表退回房间快照里的名单。
         }
       }
-      persistRoomAccess(normalizedRoomId, access.accessToken);
+      // 已关闭的房间不保存凭证（并清掉旧凭证），避免刷新后回填死房间（I-14-03）。
+      if (room.closed) forgetRoomAccess(normalizedRoomId);
+      else persistRoomAccess(normalizedRoomId, access.accessToken);
       setRoomId(normalizedRoomId);
       setRoomAccessToken(access.accessToken);
       setRoomRole(room.role ?? access.role);
@@ -425,6 +431,8 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
       const updated = await setRoomAccess(roomId, roomAccessToken, clientId, action);
       setRoomReadonly(updated.readonly ?? false);
       if (updated.closed) {
+        // 房主关闭房间后清凭证与最近房间标记，刷新不再回填、不再提示一键回连（I-14-03）。
+        forgetRoomAccess(roomId);
         setRoomClosed(true);
         setCollaborationStatus("closed");
         setCollaborationMessage("房间已关闭，无法继续同步或编辑");

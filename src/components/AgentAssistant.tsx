@@ -3,7 +3,7 @@ import { AlertTriangle, Check, LoaderCircle, Minus, Plus, ShieldCheck, Sparkles,
 import { AgentSession, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
 import type { UserAsset } from "../lib/assets";
 import { agentStepLabel } from "../lib/agent-step-labels";
-import { loadAssistantConversationState, saveAssistantConversationState, type AssistantConversationRecord } from "../lib/agent-conversation-store";
+import { LOCAL_PROJECT_KEY, loadAssistantConversationState, saveAssistantConversationState, type AssistantConversationRecord } from "../lib/agent-conversation-store";
 import { fingerprintProject } from "../lib/project-digest";
 import type { ProjectDocument, ProjectTransaction } from "../lib/project-document";
 
@@ -26,6 +26,8 @@ type AssistantConversation = {
   route?: "primary" | "fallback" | "local";
   provider: string;
   restored: boolean;
+  /** 会话所属项目的身份键（项目 id）。内容 digest 相同的另一个项目不共享会话（I-14-01）。 */
+  projectKey: string;
   projectDigest: string;
 };
 
@@ -41,7 +43,7 @@ function browserStorage(): Storage | null {
   }
 }
 
-function restoreConversation(project: ProjectDocument, assets: UserAsset[], record: AssistantConversationRecord): AssistantConversation {
+function restoreConversation(project: ProjectDocument, assets: UserAsset[], record: AssistantConversationRecord, projectKey: string): AssistantConversation {
   const session = record.snapshot
     ? (() => {
       try {
@@ -66,6 +68,7 @@ function restoreConversation(project: ProjectDocument, assets: UserAsset[], reco
     route: record.route,
     provider: record.provider,
     restored: true,
+    projectKey,
     projectDigest: record.projectDigest ?? digestFor(project),
   };
 }
@@ -122,7 +125,7 @@ function rebaseTextSession(project: ProjectDocument, assets: UserAsset[], conver
   }
 }
 
-function createConversation(project: ProjectDocument, mode: Mode, assets: UserAsset[], onProgress?: (progress: { round: number; name: string; status: "running" | "done" | "rejected" }) => void): AssistantConversation {
+function createConversation(project: ProjectDocument, mode: Mode, assets: UserAsset[], projectKey: string, onProgress?: (progress: { round: number; name: string; status: "running" | "done" | "rejected" }) => void): AssistantConversation {
   return {
     id: newId(),
     title: "新对话",
@@ -137,6 +140,7 @@ function createConversation(project: ProjectDocument, mode: Mode, assets: UserAs
     progress: "",
     provider: "",
     restored: false,
+    projectKey,
     projectDigest: digestFor(project),
   };
 }
@@ -156,7 +160,7 @@ type AssistantConversationState = {
   message: string;
   setMessage: Dispatch<SetStateAction<string>>;
   hydrated: boolean;
-  hydrate: (project: ProjectDocument, assets: UserAsset[]) => void;
+  hydrate: (project: ProjectDocument, assets: UserAsset[], projectKey: string) => void;
 };
 
 const AssistantConversationContext = createContext<AssistantConversationState | null>(null);
@@ -170,15 +174,15 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
   const [message, setMessage] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
-  const hydrate = (project: ProjectDocument, assets: UserAsset[]) => {
+  const hydrate = (project: ProjectDocument, assets: UserAsset[], projectKey: string) => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
     const storage = browserStorage();
-    const saved = storage ? loadAssistantConversationState(storage, project) : null;
+    const saved = storage ? loadAssistantConversationState(storage, project, projectKey) : null;
     if (saved) {
       setMode(saved.mode);
       setActiveId(saved.activeId);
-      setConversations(saved.conversations.map((record) => restoreConversation(project, assets, record)));
+      setConversations(saved.conversations.map((record) => restoreConversation(project, assets, record, projectKey)));
     }
     setHydrated(true);
   };
@@ -192,6 +196,7 @@ export function AgentAssistant({
   onCommit,
   onPendingCountChange,
   presentation = "floating",
+  projectKey = LOCAL_PROJECT_KEY,
 }: {
   project: ProjectDocument;
   assets: UserAsset[];
@@ -199,6 +204,8 @@ export function AgentAssistant({
   onCommit: (transaction: ProjectTransaction) => void;
   onPendingCountChange?: (count: number) => void;
   presentation?: "floating" | "docked";
+  /** 项目身份键（项目 id）。会话按项目绑定，内容相同的两个项目不共享会话（I-14-01）。 */
+  projectKey?: string;
 }) {
   const state = useContext(AssistantConversationContext);
   if (!state) throw new Error("AgentAssistant must be rendered inside AssistantConversationProvider");
@@ -206,6 +213,7 @@ export function AgentAssistant({
   const mountedRef = useRef(false);
   const hasMountedRef = useRef(false);
   const projectDigestRef = useRef<string | null>(null);
+  const projectKeyRef = useRef<string | null>(null);
   const latestProjectDigestRef = useRef<string | null>(null);
   const projectGenerationRef = useRef(0);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -221,47 +229,53 @@ export function AgentAssistant({
   const active = conversations.find((conversation) => conversation.id === activeId) ?? null;
   const currentProjectDigest = useMemo(() => digestFor(project), [project]);
   latestProjectDigestRef.current = currentProjectDigest;
-  const projectIsCurrent = active === null || active.projectDigest === currentProjectDigest;
+  const projectIsCurrent = active === null || (active.projectKey === projectKey && active.projectDigest === currentProjectDigest);
   const pendingCount = useMemo(() => conversations.filter((conversation) =>
-    conversation.projectDigest === currentProjectDigest && conversation.status === "completed" && conversation.selectedStepIds.length > 0,
-  ).length, [conversations, currentProjectDigest]);
+    conversation.projectKey === projectKey && conversation.projectDigest === currentProjectDigest && conversation.status === "completed" && conversation.selectedStepIds.length > 0,
+  ).length, [conversations, currentProjectDigest, projectKey]);
   const activeWriteSteps = projectIsCurrent ? active?.steps.filter((step) => !READ_ONLY.has(step.name)) ?? [] : [];
   const selectedIds = new Set(projectIsCurrent ? active?.selectedStepIds ?? [] : []);
   const selectedWriteSteps = activeWriteSteps.filter((step) => step.result.ok && selectedIds.has(step.id));
   useEffect(() => {
-    hydrate(project, assets);
-  }, [assets, hydrate, project]);
+    hydrate(project, assets, projectKey);
+  }, [assets, hydrate, project, projectKey]);
 
   useEffect(() => {
     if (!hydrated) return;
     if (hasMountedRef.current) return;
     hasMountedRef.current = true;
     if (conversations.length === 0) {
-      const draft = createConversation(project, mode, assets);
+      const draft = createConversation(project, mode, assets, projectKey);
       setConversations([draft]);
       setActiveId(draft.id);
     }
-  }, [assets, conversations.length, hydrated, mode, project, setActiveId, setConversations]);
+  }, [assets, conversations.length, hydrated, mode, project, projectKey, setActiveId, setConversations]);
 
   useEffect(() => {
     if (!hydrated) return;
     const currentDigest = currentProjectDigest;
-    // 项目切换有两条路径：同一挂载内 project prop 变化（digest ref 不等），以及
-    // 经过加载壳卸载重挂载（digest ref 为 null，但共享状态里仍留着绑定旧项目的
-    // 对话）。两条路径都要走同一套跨项目重绑/丢弃逻辑（I-13-03）。
-    const remountRebind = projectDigestRef.current === null && conversations.some((conversation) => conversation.projectDigest !== currentDigest);
+    // 项目切换有两条路径：同一挂载内 project prop 变化（digest/key ref 不等），
+    // 以及经过加载壳卸载重挂载（ref 为 null，但共享状态里仍留着绑定旧项目的
+    // 对话）。两条路径都要走同一套跨项目重绑/丢弃逻辑（I-13-03/I-14-01）。
+    const staleConversation = conversations.some((conversation) => conversation.projectKey !== projectKey || conversation.projectDigest !== currentDigest);
+    const remountRebind = projectDigestRef.current === null && staleConversation;
     if (projectDigestRef.current === null && !remountRebind) {
       projectDigestRef.current = currentDigest;
-    } else if (remountRebind || projectDigestRef.current !== currentDigest) {
+      projectKeyRef.current = projectKey;
+    } else if (remountRebind || projectDigestRef.current !== currentDigest || projectKeyRef.current !== projectKey) {
       projectGenerationRef.current += 1;
       activeRunRef.current?.cancel();
       projectDigestRef.current = currentDigest;
+      projectKeyRef.current = projectKey;
       // 只有「刚提交应用」的对话允许跟随这次 digest 变化重绑（应用本身改变了
       // 项目内容）；其余已应用对话属于旧项目，直接丢弃，不再让「已应用」
       // 幽灵跟到每个新项目（I-13-03）。
       const appliedFollowerId = appliedCommitRef.current;
       appliedCommitRef.current = null;
       const carried = conversations.flatMap((conversation): AssistantConversation[] => {
+        // 不同项目（按项目 id 判定）：会话整条不带过去，即使两个项目内容
+        // 相同（digest 碰撞）也让新项目从干净的新对话开始（I-14-01）。
+        if (conversation.projectKey !== projectKey) return [];
         if (conversation.projectDigest === currentDigest) return [conversation];
         if (conversation.status === "applied" && conversation.id !== appliedFollowerId) return [];
         return [{
@@ -273,13 +287,13 @@ export function AgentAssistant({
           projectDigest: currentDigest,
         }];
       });
-      const nextConversations = carried.length > 0 ? carried : [createConversation(project, mode, assets)];
+      const nextConversations = carried.length > 0 ? carried : [createConversation(project, mode, assets, projectKey)];
       const nextActiveId = nextConversations.some((conversation) => conversation.id === activeId) ? activeId : nextConversations[nextConversations.length - 1]?.id ?? null;
       setConversations(nextConversations);
       if (nextActiveId !== activeId) setActiveId(nextActiveId);
       onPreview?.(null);
       const changedStorage = browserStorage();
-      if (changedStorage) saveAssistantConversationState(changedStorage, project, { mode, activeId: nextActiveId, conversations: nextConversations.map(persistedConversation) });
+      if (changedStorage) saveAssistantConversationState(changedStorage, project, { mode, activeId: nextActiveId, conversations: nextConversations.map(persistedConversation) }, projectKey);
       return;
     }
     const storage = browserStorage();
@@ -290,7 +304,7 @@ export function AgentAssistant({
       // 环境销毁(jsdom teardown)后定时器仍可能触发;挂载守卫避免卸载后 setState。
       if (!mountedRef.current) return;
       const records = conversations.map(persistedConversation);
-      saveAssistantConversationState(storage, project, { mode, activeId, conversations: records });
+      saveAssistantConversationState(storage, project, { mode, activeId, conversations: records }, projectKey);
       if (records.some((record, index) => record.status === "failed" && conversations[index]?.steps.length)) {
         setConversations((current) => current.map((conversation) => {
           const record = records.find((candidate) => candidate.id === conversation.id);
@@ -307,7 +321,7 @@ export function AgentAssistant({
         persistTimerRef.current = null;
       }
     };
-  }, [activeId, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, setActiveId, setConversations]);
+  }, [activeId, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, projectKey, setActiveId, setConversations]);
 
   useEffect(() => () => {
     if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);
@@ -329,7 +343,7 @@ export function AgentAssistant({
 
   const openAssistant = () => {
     if (!activeId) {
-      const draft = createConversation(project, mode, assets);
+      const draft = createConversation(project, mode, assets, projectKey);
       setConversations((current) => [...current, draft]);
       setActiveId(draft.id);
     }
@@ -355,7 +369,7 @@ export function AgentAssistant({
 
   const createNewConversation = () => {
     if (active?.status === "running") return;
-    const conversation = createConversation(project, mode, assets);
+    const conversation = createConversation(project, mode, assets, projectKey);
     setConversations((current) => [...current, conversation]);
     setActiveId(conversation.id);
     setMessage("");
@@ -365,7 +379,7 @@ export function AgentAssistant({
   const selectConversation = (conversation: AssistantConversation) => {
     if (conversation.status === "running") return;
     setActiveId(conversation.id);
-    if (conversation.projectDigest !== currentProjectDigest) {
+    if (conversation.projectKey !== projectKey || conversation.projectDigest !== currentProjectDigest) {
       onPreview?.(null);
       return;
     }
@@ -381,23 +395,30 @@ export function AgentAssistant({
   const run = async () => {
     if (!mountedRef.current || !active || !projectIsCurrent || !message.trim() || active.status === "running") return;
     const request = message.trim();
+    // 已应用的对话是已完成任务的记录：输入新需求再点「开始规划」时自动开启
+    // 新对话承接下一个任务，不必等项目内容变化解锁（I-14-02）。
+    const target = active.status === "applied" ? createConversation(project, active.mode, assets, projectKey) : active;
+    if (target !== active) {
+      setConversations((current) => [...current, target]);
+      setActiveId(target.id);
+    }
     const runProjectDigest = currentProjectDigest;
     const runProjectGeneration = projectGenerationRef.current;
-    const isCurrentRun = () => mountedRef.current && activeRunIdRef.current === active.id &&
+    const isCurrentRun = () => mountedRef.current && activeRunIdRef.current === target.id &&
       latestProjectDigestRef.current === runProjectDigest && projectGenerationRef.current === runProjectGeneration;
     const progress = ({ round, name, status }: { round: number; name: string; status: "running" | "done" | "rejected" }) => {
-      if (isCurrentRun()) updateConversation(active.id, (conversation) => ({
+      if (isCurrentRun()) updateConversation(target.id, (conversation) => ({
         ...conversation,
         progress: `第 ${round} 轮 · ${name} · ${status === "running" ? "执行中" : status === "done" ? "已完成" : "已拒绝"}`,
       }));
     };
-    const isFresh = active.status === "draft" || active.status === "failed" || active.status === "cancelled";
+    const isFresh = target.status === "draft" || target.status === "failed" || target.status === "cancelled";
     const session = isFresh
-      ? new AgentSession(project, { mode: active.mode, assets, onProgress: progress })
-      : active.session;
+      ? new AgentSession(project, { mode: target.mode, assets, onProgress: progress })
+      : target.session;
     activeRunRef.current = session;
-    activeRunIdRef.current = active.id;
-    updateConversation(active.id, (conversation) => ({
+    activeRunIdRef.current = target.id;
+    updateConversation(target.id, (conversation) => ({
       ...conversation,
       session,
       request,
@@ -405,10 +426,10 @@ export function AgentAssistant({
       status: "running",
       error: "",
       summary: "",
-      steps: isFresh ? [] : active.steps,
-      selectedStepIds: isFresh ? [] : active.selectedStepIds,
+      steps: isFresh ? [] : target.steps,
+      selectedStepIds: isFresh ? [] : target.selectedStepIds,
       progress: "",
-      mode: active.mode,
+      mode: target.mode,
     }));
     try {
       const sessionWithProgress = session;
@@ -419,25 +440,25 @@ export function AgentAssistant({
       try {
         sessionWithProgress.exportSnapshot();
       } catch {
-        updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", summary: "会话无法保存，预览已取消", error: "会话快照过大或无效", steps: [], selectedStepIds: [], progress: "" }));
+        updateConversation(target.id, (conversation) => ({ ...conversation, status: "failed", summary: "会话无法保存，预览已取消", error: "会话快照过大或无效", steps: [], selectedStepIds: [], progress: "" }));
         onPreview?.(null);
         return;
       }
       if (outcome.kind === "cancelled") {
-        updateConversation(active.id, (conversation) => ({ ...conversation, status: "cancelled", summary: "已取消，预览未应用", steps: preview.steps, selectedStepIds: [], progress: "" }));
+        updateConversation(target.id, (conversation) => ({ ...conversation, status: "cancelled", summary: "已取消，预览未应用", steps: preview.steps, selectedStepIds: [], progress: "" }));
         onPreview?.(null);
         return;
       }
       if (outcome.kind === "failed") {
-        updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", error: outcome.error ?? "AI 会话失败", steps: preview.steps, progress: "" }));
+        updateConversation(target.id, (conversation) => ({ ...conversation, status: "failed", error: outcome.error ?? "AI 会话失败", steps: preview.steps, progress: "" }));
         onPreview?.(null);
         return;
       }
-      const selectedStepIds = [...new Set([...active.selectedStepIds, ...validWrites.map((step) => step.id)])];
+      const selectedStepIds = [...new Set([...target.selectedStepIds, ...validWrites.map((step) => step.id)])];
       const completed = outcome.kind === "finish";
       const allLowRisk = validWrites.length > 0 && validWrites.every((step) => step.risk === "low");
-      const smartApply = active.mode === "smart" && !active.restored && completed && allLowRisk;
-      updateConversation(active.id, (conversation) => ({
+      const smartApply = target.mode === "smart" && !target.restored && completed && allLowRisk;
+      updateConversation(target.id, (conversation) => ({
         ...conversation,
         status: smartApply ? "applied" : "completed",
         summary: `${outcome.summary ?? "已完成。"}${smartApply ? " 低风险修改已自动应用。" : ""}`,
@@ -451,7 +472,7 @@ export function AgentAssistant({
         const transaction = sessionWithProgress.transactionForSteps(new Set(selectedStepIds));
         if (transaction) {
           onCommit(transaction);
-          appliedCommitRef.current = active.id;
+          appliedCommitRef.current = target.id;
         }
         onPreview?.(null);
       } else if (isCurrentRun()) {
@@ -459,9 +480,9 @@ export function AgentAssistant({
         onPreview?.(transaction?.apply(project) ?? null);
       }
     } catch (cause) {
-      if (isCurrentRun()) updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", error: cause instanceof Error ? cause.message : "AI 会话失败" }));
+      if (isCurrentRun()) updateConversation(target.id, (conversation) => ({ ...conversation, status: "failed", error: cause instanceof Error ? cause.message : "AI 会话失败" }));
     } finally {
-      if (activeRunIdRef.current === active.id && projectGenerationRef.current === runProjectGeneration) {
+      if (activeRunIdRef.current === target.id && projectGenerationRef.current === runProjectGeneration) {
         activeRunRef.current = null;
         activeRunIdRef.current = null;
       }
@@ -518,6 +539,11 @@ export function AgentAssistant({
   const renderConversation = (conversation: AssistantConversation) => (
     <>
       <div className="agent-assistant-history" aria-label="对话历史">
+        {presentation === "docked" && (
+          <button type="button" className="agent-assistant-history-new" title="新建对话" aria-label="新建对话" disabled={conversation.status === "running"} onClick={createNewConversation}>
+            <Plus size={13} aria-hidden /> 新建对话
+          </button>
+        )}
         {conversations.map((item) => (
           <button key={item.id} type="button" className={item.id === conversation.id ? "is-active" : undefined} disabled={item.status === "running"} title={item.request || "新对话"} onClick={() => selectConversation(item)}>
             <span>{item.title}</span>
@@ -535,7 +561,7 @@ export function AgentAssistant({
         {conversation.status === "running" ? (
           <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
         ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && conversation.status === "completed" ? "继续对话" : "开始规划"}</button>
+          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim()}><Sparkles size={16} aria-hidden /> {projectIsCurrent && conversation.status === "completed" ? "继续对话" : "开始规划"}</button>
         )}
         {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
         {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
@@ -578,6 +604,7 @@ export function AgentAssistant({
     progress: "",
     provider: "",
     restored: false,
+    projectKey,
     projectDigest: currentProjectDigest,
   } : null);
 

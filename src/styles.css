@@ -573,6 +573,8 @@ button { font: inherit; }
 .agent-assistant-history { display: flex; gap: 4px; min-height: 42px; padding: 6px 8px; overflow-x: auto; background: var(--editor-surface-muted); border-bottom: 1px solid var(--editor-line); }
 .agent-assistant-history button { display: inline-flex; min-width: max-content; align-items: center; gap: 5px; padding: 4px 8px; color: var(--editor-ink-muted); background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; font-size: 11px; }
 .agent-assistant-history button.is-active { color: var(--editor-ink); background: var(--editor-surface-raised); border-color: var(--editor-line); }
+.agent-assistant-history button.agent-assistant-history-new { color: var(--editor-accent); border-color: var(--editor-line); border-style: dashed; }
+.agent-assistant-history button.agent-assistant-history-new:disabled { opacity: 0.5; cursor: not-allowed; }
 .agent-assistant-history small { color: var(--editor-danger); }
 .agent-assistant-body { display: grid; align-content: start; gap: 10px; min-height: 0; padding: 12px; overflow: auto; }
 .agent-assistant-body textarea { width: 100%; min-height: 72px; padding: 8px 9px; color: var(--editor-ink); background: var(--editor-surface-raised); border: 1px solid var(--editor-line); border-radius: 4px; font: inherit; resize: vertical; }

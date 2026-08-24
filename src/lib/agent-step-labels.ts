@@ -1,6 +1,7 @@
 /**
- * AI 修改预览的中文步骤标签（I-13-04）：把工具名与补丁字段翻译成与属性
- * 面板一致的中文说法，未收录的字段按原名回退，保证任何步骤都有可读标签。
+ * AI 修改预览的中文步骤标签（I-13-04/I-14-05）：把工具名与补丁字段翻译成与
+ * 属性面板一致的中文说法。字段表对照 SCENE_DOMAIN_PROPS 补齐常用字段；未收录
+ * 的工具或字段用中文引导语包住原名回退，不以裸英文示人，保证任何步骤可读。
  */
 
 const TOOL_LABELS: Record<string, string> = {
@@ -74,6 +75,38 @@ const FIELD_LABELS: Record<string, string> = {
   label: "名称",
   appearance: "省份贴图",
   textureSrc: "贴图图片",
+  // 省份（update_province）
+  fill: "填色",
+  visible: "显示状态",
+  labelFontId: "标注字体",
+  // 地图（update_map）
+  provinceLabelFontId: "省份标注字体",
+  provinceLabelTypography: "省份标注排版",
+  renderSource: "地图渲染来源",
+  provinceStyles: "省份样式",
+  provinceTextureUniformSize: "贴图统一尺寸",
+  // 数据卡片（update_cards）
+  displayFrame: "卡片展示框",
+  fieldFonts: "字段字体",
+  fieldTypography: "字段排版",
+  noWrapFields: "不分行字段",
+  expressionTemplates: "文案表达式",
+  nameFormat: "姓名格式",
+  // 嘉宾栏（update_guests）
+  titleFontId: "标题字体",
+  peopleFontId: "名单字体",
+  titleTypography: "标题排版",
+  peopleTypography: "名单排版",
+  displayMode: "显示方式",
+  customText: "自定义文本",
+  // 文本（update_text）
+  role: "文本用途",
+  fontId: "字体",
+  // 素材（update_asset）
+  assetId: "素材来源",
+  kind: "素材类型",
+  province: "所属省份",
+  rotation: "旋转角度",
 };
 
 const DATA_VIEW_LABELS: Record<string, string> = {
@@ -101,18 +134,18 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 export function agentStepLabel(step: { name: string; arguments: Record<string, unknown> }): string {
   if (step.name === "set_data_view") {
     const view = String(step.arguments.view ?? "");
-    return `切换数据视图：${DATA_VIEW_LABELS[view] ?? view}`;
+    return `切换数据视图：${DATA_VIEW_LABELS[view] ?? `视图（${view}）`}`;
   }
   if (step.name === "auto_layout") {
     const mode = String(step.arguments.mode ?? "quadrant");
-    return `自动排版：${LAYOUT_MODE_LABELS[mode] ?? mode}`;
+    return `自动排版：${LAYOUT_MODE_LABELS[mode] ?? `方式（${mode}）`}`;
   }
-  const tool = TOOL_LABELS[step.name] ?? step.name;
+  const tool = TOOL_LABELS[step.name] ?? `执行修改（${step.name}）`;
   const patch = isPlainRecord(step.arguments.patch)
     ? step.arguments.patch
     : step.name.startsWith("update_")
       ? Object.fromEntries(Object.entries(step.arguments).filter(([key]) => !IDENTIFIER_KEYS.has(key)))
       : {};
-  const fields = Object.keys(patch).map((key) => FIELD_LABELS[key] ?? key);
+  const fields = Object.keys(patch).map((key) => FIELD_LABELS[key] ?? `属性（${key}）`);
   return fields.length > 0 ? `${tool}：${fields.join("、")}` : tool;
 }

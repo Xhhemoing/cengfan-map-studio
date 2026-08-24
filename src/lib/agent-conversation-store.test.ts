@@ -56,6 +56,25 @@ describe("agent-conversation-store", () => {
     expect(loaded?.activeId).toBeNull();
   });
 
+  it("binds saved conversations to the project id, not the content digest (I-14-01)", () => {
+    const projectA = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    // 内容完全相同的另一个空项目：digest 碰撞，但项目 id 不同。
+    const projectB = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const target = storage();
+    const step = { id: "pending-step", name: "update_map", arguments: { patch: { scale: 0.9 } }, risk: "low" as const };
+    const snapshot = new AgentSession(projectA, { mode: "conservative" }).exportSnapshot();
+    saveAssistantConversationState(target, projectA, state([record(projectA, {
+      steps: [step],
+      selectedStepIds: [step.id],
+      snapshot: { ...snapshot, steps: [step], completed: true },
+    })]), "project-a");
+
+    // 同一项目 id：会话照常恢复（含待应用步骤）。
+    expect(loadAssistantConversationState(target, projectA, "project-a")?.conversations[0]).toMatchObject({ status: "completed", selectedStepIds: [step.id] });
+    // 不同项目 id：即使内容 digest 相同，也不得继承任何会话，B 从干净状态开始。
+    expect(loadAssistantConversationState(target, projectB, "project-b")).toBeNull();
+  });
+
   it("keeps applied conversations for the same project but drops them for a different project (I-13-03)", () => {
     const original = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const current = { ...original, map: { ...original.map, width: original.map.width + 1 } };
