@@ -34,6 +34,7 @@ import {
 } from "../../lib/prepared-card-content";
 import {
   destinationCardFixedRowHeight,
+  destinationCardFlowContentStart,
   destinationCardHeaderOffset,
   destinationCardRowFontSize,
 } from "../../lib/destination-card-metrics";
@@ -448,7 +449,7 @@ function PosterCanvasView({
       flowTitleFontSize: flowTitleBlock?.style?.fontSize ?? project.cards.fieldTypography?.title?.fontSize ?? project.cards.fontSize,
       flowNameFontSize: flowNameBlock?.style?.fontSize ?? project.cards.fieldTypography?.name?.fontSize ?? project.cards.fontSize,
       flowContentStart: displayFrame.mode === "flow"
-        ? flowBlocks.reduce((cursor, block) => cursor + block.spacing + (block.style?.fontSize ?? (block.field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize)) * block.lineHeight, 12)
+        ? destinationCardFlowContentStart(flowBlocks, project.cards.fontSize)
         : 0,
       userFonts,
     };

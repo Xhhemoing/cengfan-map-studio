@@ -1,4 +1,4 @@
-import type { DisplayFrameMode } from "./display-frame";
+import type { DisplayFrameFlowBlock, DisplayFrameMode } from "./display-frame";
 import type { ResolvedDisplayFrameSurface } from "./display-frame-style";
 import type { CardPreset } from "./template-document";
 
@@ -159,6 +159,27 @@ export function destinationCardTitleBaseline(input: { top: number; index: number
 /** Divider baseline; extra title lines push the whole body band down by the same amount. */
 export function destinationCardDividerY(headerExtra: number): number {
   return DESTINATION_CARD_DIVIDER_Y + headerExtra;
+}
+
+/**
+ * Flow-mode cursor the header ends at: the title top plus every block's spacing and line box.
+ * Feed it to {@link destinationCardBodyTop} as `flowContentStart`.
+ *
+ * A block without its own `style.fontSize` falls back to the plain card font size — the city
+ * heading to one step smaller, floored at 9 — and deliberately **not** to `fieldTypography`,
+ * unlike `cardFieldFontSize` in `prepared-card-content`. The two chains differ on purpose here:
+ * consulting typography would move the flow cursor of every document that sets it, which is a
+ * pixel change, not a refactor. The mismatch (a `fieldTypography.title` document paints the
+ * title glyphs at the typography size while the cursor advances at the plain size) belongs to
+ * the flow-height approximation family and is resolved when that solver is reworked as a whole.
+ */
+export function destinationCardFlowContentStart(blocks: readonly DisplayFrameFlowBlock[], fontSize: number): number {
+  return blocks.reduce(
+    (cursor, block) => cursor
+      + block.spacing
+      + (block.style?.fontSize ?? (block.field === "city" ? Math.max(9, fontSize - 1) : fontSize)) * block.lineHeight,
+    DESTINATION_CARD_TITLE_TOP,
+  );
 }
 
 /** First body baseline before `headerExtra`: the fixed body box, or the end of the flow header. */

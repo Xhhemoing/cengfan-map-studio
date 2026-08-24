@@ -19,6 +19,7 @@ import {
   destinationCardBodyTop,
   destinationCardDividerY,
   destinationCardFixedRowHeight,
+  destinationCardFlowContentStart,
   destinationCardFlowRowHeight,
   destinationCardHeaderOffset,
   destinationCardRowFontSize,
@@ -29,6 +30,7 @@ import {
   destinationCardTitleTop,
   destinationCardTitleX,
 } from "./destination-card-metrics";
+import type { DisplayFrameFlowBlock } from "./display-frame";
 import type { ResolvedDisplayFrameSurface } from "./display-frame-style";
 
 const surface: Pick<ResolvedDisplayFrameSurface, "borderColor" | "borderWidth" | "borderRadius"> = {
@@ -44,6 +46,55 @@ function canvasSources(): Array<[string, string]> {
     .filter((file) => file.endsWith(".tsx") && !file.includes(".test."))
     .map((file): [string, string] => [file, readFileSync(join(canvasDir, file), "utf8")]);
 }
+
+/**
+ * The flow cursor exactly as `PosterCanvas` inlined it before the helper took it over, kept
+ * character for character so the move can be shown to be pixel-free.
+ */
+function inlinedFlowContentStart(blocks: DisplayFrameFlowBlock[], fontSize: number): number {
+  return blocks.reduce((cursor, block) => cursor + block.spacing + (block.style?.fontSize ?? (block.field === "city" ? Math.max(9, fontSize - 1) : fontSize)) * block.lineHeight, 12);
+}
+
+function flowBlock(overrides: Partial<DisplayFrameFlowBlock> & Pick<DisplayFrameFlowBlock, "id">): DisplayFrameFlowBlock {
+  return { kind: "field", order: 0, spacing: 6, lineHeight: 1.2, ...overrides };
+}
+
+/** Documents the flow cursor has to keep stepping the same way through. */
+const flowFixtures: Array<{ name: string; blocks: DisplayFrameFlowBlock[]; fontSize: number }> = [
+  { name: "no blocks at all", blocks: [], fontSize: 12 },
+  {
+    name: "the derived title / name / city stack",
+    fontSize: 12,
+    blocks: [
+      flowBlock({ id: "title", field: "title", order: 0, spacing: 0 }),
+      flowBlock({ id: "name", field: "name", order: 1 }),
+      flowBlock({ id: "city", field: "city", order: 2 }),
+    ],
+  },
+  {
+    name: "blocks carrying their own size and leading",
+    fontSize: 12,
+    blocks: [
+      flowBlock({ id: "title", field: "title", order: 0, spacing: 0, lineHeight: 1.5, style: { fontSize: 18 } }),
+      flowBlock({ id: "city", field: "city", order: 1, spacing: 10, style: { fontSize: 20 } }),
+    ],
+  },
+  {
+    name: "a tiny card font size, where the city heading hits its floor",
+    fontSize: 9,
+    blocks: [
+      flowBlock({ id: "name", field: "name", order: 0, spacing: 0 }),
+      flowBlock({ id: "city", field: "city", order: 1 }),
+    ],
+  },
+  {
+    name: "a text block with no field of its own",
+    fontSize: 14,
+    blocks: [
+      flowBlock({ id: "note", kind: "text", content: "毕业快乐", order: 0, spacing: 4, lineHeight: 1 }),
+    ],
+  },
+];
 
 describe("destination card chrome metrics", () => {
   it("stacks the header band in the order the card paints it", () => {
@@ -92,6 +143,28 @@ describe("destination card chrome metrics", () => {
     expect(destinationCardBodyTop({ mode: "fixed", fixedItemY: 50, flowContentStart: 0, flowTitleFontSize: 12 })).toBe(50);
     expect(destinationCardBodyTop({ mode: "fixed", flowContentStart: 0, flowTitleFontSize: 12 })).toBe(DESTINATION_CARD_FIXED_BODY_TOP);
     expect(destinationCardBodyTop({ mode: "flow", flowContentStart: 40, flowTitleFontSize: 12 })).toBe(60);
+  });
+
+  it("walks the flow cursor exactly as the canvas inlined it before the move", () => {
+    for (const fixture of flowFixtures) {
+      expect(destinationCardFlowContentStart(fixture.blocks, fixture.fontSize), fixture.name)
+        .toBe(inlinedFlowContentStart(fixture.blocks, fixture.fontSize));
+    }
+
+    // Starts at the title top and steps each block by its spacing plus its own line box.
+    expect(destinationCardFlowContentStart([], 12)).toBe(DESTINATION_CARD_TITLE_TOP);
+    expect(destinationCardFlowContentStart([flowBlock({ id: "name", field: "name", spacing: 0, lineHeight: 1 })], 12)).toBe(24);
+    // The city heading steps one size smaller, floored at 9 — never at a typography size.
+    expect(destinationCardFlowContentStart([flowBlock({ id: "city", field: "city", spacing: 0, lineHeight: 1 })], 12)).toBe(23);
+    expect(destinationCardFlowContentStart([flowBlock({ id: "city", field: "city", spacing: 0, lineHeight: 1 })], 9)).toBe(21);
+  });
+
+  it("keeps the flow cursor out of the canvas as a literal", () => {
+    const [, posterCanvas] = canvasSources().find(([file]) => file === "PosterCanvas.tsx")!;
+    expect(posterCanvas).toContain("destinationCardFlowContentStart");
+    for (const [file, source] of canvasSources()) {
+      expect(source, `${file} re-inlines the flow cursor`).not.toMatch(/cursor \+ block\.spacing/);
+    }
   });
 
   it("steps body baselines from the body top after the header offset", () => {
