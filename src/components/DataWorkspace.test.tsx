@@ -1,4 +1,4 @@
-import { type ReactElement, useState } from "react";
+import { act, type ReactElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -109,6 +109,7 @@ afterEach(() => {
     flushSync(() => root.unmount());
     container.remove();
   });
+  vi.useRealTimers();
   globalWithWorker.Worker = originalWorker;
 });
 
@@ -1049,6 +1050,76 @@ describe("DataWorkspace import fidelity", () => {
     expect(container.textContent).toContain("最大支持 25 MB");
     expect(read).not.toHaveBeenCalled();
     expect(FakeWorkbookWorker.instances).toHaveLength(0);
+  });
+
+  it("reuses one worker for repeat imports and tears it down after the idle window", async () => {
+    vi.useFakeTimers();
+    const container = renderWorkspace();
+    const firstBytes = new TextEncoder().encode("姓名,院校,城市\n第一位,北京大学,北京市\n").buffer;
+    const secondBytes = new TextEncoder().encode("姓名,院校,城市\n第二位,浙江大学,杭州市\n").buffer;
+
+    dropFile(container, fileWithBytes("first.csv", async () => firstBytes));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector(".import-review")?.textContent).toContain("第一位");
+
+    dropFile(container, fileWithBytes("second.csv", async () => secondBytes));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(FakeWorkbookWorker.instances).toHaveLength(1);
+    const worker = FakeWorkbookWorker.instances[0]!;
+    expect(worker.messages).toHaveLength(2);
+    expect(worker.transfers).toEqual([[firstBytes], [secondBytes]]);
+    expect(container.querySelector(".import-review")?.textContent).toContain("第二位");
+
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(worker.terminated).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(worker.terminated).toBe(true);
+  });
+
+  it("times out a wedged worker and creates a fresh worker for the next import", async () => {
+    vi.useFakeTimers();
+    globalWithWorker.Worker = DeferredWorkbookWorker;
+    const container = renderWorkspace();
+
+    dropFile(
+      container,
+      fileWithBytes("wedged.csv", async () =>
+        new TextEncoder().encode("姓名,院校,城市\n卡住同学,北京大学,北京市\n").buffer),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(DeferredWorkbookWorker.instances).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+
+    expect(DeferredWorkbookWorker.instances[0]?.terminated).toBe(true);
+    expect(container.textContent).toContain("解析超时，文件可能已损坏");
+
+    globalWithWorker.Worker = FakeWorkbookWorker;
+    dropFile(
+      container,
+      fileWithBytes("recovered.csv", async () =>
+        new TextEncoder().encode("姓名,院校,城市\n恢复同学,浙江大学,杭州市\n").buffer),
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(FakeWorkbookWorker.instances).toHaveLength(1);
+    expect(container.querySelector(".import-review")?.textContent).toContain("恢复同学");
   });
 
   it("keeps main-thread task chunks moving while a 10k-row workbook waits in the worker", async () => {
