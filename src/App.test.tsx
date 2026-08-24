@@ -2430,4 +2430,170 @@ describe("Collaboration send effect recovery (R2-3)", () => {
       }
     });
   });
+
+  /**
+   * 送出侧此前只认识"房间已关闭"一种终局,也没法把自己的传输层失败并进离线叙事:
+   * 过期房间还会再发一笔注定失败的事务,而提交超时只改文案、面板上看不出仍在重试。
+   */
+  describe("collaboration taxonomy wiring (R4-2)", () => {
+    function timedOut(): never {
+      throw new CollaborationClientError("REQUEST_TIMEOUT", "协作服务无响应，网络可能已中断");
+    }
+
+    /** 房间被清理后,ticket 与补齐都会拿到这个终局码。 */
+    function roomGone(): Response {
+      return json({ error: { code: "ROOM_NOT_FOUND", message: "房间不存在" } }, 404);
+    }
+
+    function offlineBanner(container: HTMLElement): HTMLElement | null {
+      return container.querySelector<HTMLElement>('[data-collaboration-offline="true"]');
+    }
+
+    function expiredBanner(container: HTMLElement): HTMLElement | null {
+      return container.querySelector<HTMLElement>('p[data-collaboration-terminal="expired"]');
+    }
+
+    it("stops uploading and keeps the expired copy when the room dies during a partition", async () => {
+      const container = renderApp();
+      const roomId = "EXPIR1";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const uploads: UploadedTransaction[] = [];
+      let expired = false;
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+          uploads.push(body);
+          if (expired) return roomGone();
+          return timedOut();
+        }
+        if (url.includes(`/api/rooms/${roomId}/operations`)) {
+          if (expired) return roomGone();
+          return timedOut();
+        }
+        if (url.endsWith("/events-ticket")) {
+          if (expired) return roomGone();
+          return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        }
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+        renameStudent(container, "林舟", "过期林舟");
+        await vi.waitFor(() => expect(uploads).toHaveLength(1), { timeout: 5_000 });
+        // 上传超时是传输层失败:面板要说"仍在重试",而不是笼统的一个错误态。
+        await vi.waitFor(() => expect(offlineBanner(container)).not.toBeNull(), { timeout: 5_000 });
+
+        // 分区期间房间被清理:补齐拿到终局码,订阅永久停止。
+        ScriptedEventSource.instances[0]!.onerror!();
+        await vi.waitFor(() => expect(ScriptedEventSource.instances.length).toBeGreaterThan(1), { timeout: 5_000 });
+        expired = true;
+        ScriptedEventSource.instances[1]!.onerror!();
+        await vi.waitFor(() => expect(expiredBanner(container)).not.toBeNull(), { timeout: 5_000 });
+
+        // 终局房间没有任何可送达的事务:再发一笔只会拿回错误,把终局提示盖成"网络异常"。
+        await new Promise((resolve) => setTimeout(resolve, COLLABORATION_SEND_DELAY_MS * 4));
+        expect(uploads).toHaveLength(1);
+        expect(collaborationStatus(container)?.getAttribute("data-collaboration-terminal")).toBe("expired");
+        expect(collaborationStatus(container)?.textContent).toContain("房间已过期或已失效");
+        // 终局与离线互斥:不会再有重连,就不能继续承诺"恢复后自动续传"。
+        expect(offlineBanner(container)).toBeNull();
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
+
+    it("shows the offline banner for a submit-only partition and resends exactly once on heal", async () => {
+      const container = renderApp();
+      const roomId = "OFFLN1";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const uploads: UploadedTransaction[] = [];
+      let partitioned = true;
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+          uploads.push(body);
+          if (partitioned) timedOut();
+          return json({ id: roomId, version: 3, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        }
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+        renameStudent(container, "林舟", "半边分区林舟");
+        await vi.waitFor(() => expect(uploads).toHaveLength(1), { timeout: 5_000 });
+
+        // 只有上传方向断了,流还是健康的:这一侧的失败同样属于离线,而不是"同步失败"。
+        await vi.waitFor(() => expect(offlineBanner(container)).not.toBeNull(), { timeout: 5_000 });
+        expect(collaborationStatus(container)?.textContent).toContain("网络异常，本地修改已保留，恢复后会自动续传");
+
+        // 流上收到远端事件即为愈合:补投一次,且只补投一次。
+        partitioned = false;
+        ScriptedEventSource.instances[0]!.emit("snapshot", {
+          id: roomId,
+          version: 2,
+          updatedBy: "c-remote",
+          lastTxId: "tx-remote",
+          operations: [{ type: "set", path: ["renderSettings", "fixedFps"], value: 45 }],
+        });
+
+        await vi.waitFor(() => expect(uploads).toHaveLength(2), { timeout: 5_000 });
+        expect(uploads[1]!.baseVersion).toBe(2);
+        expect(pathsOf(uploads[1]!)).toContain("project.students");
+        await vi.waitFor(() => expect(offlineBanner(container)).toBeNull(), { timeout: 5_000 });
+        await new Promise((resolve) => setTimeout(resolve, COLLABORATION_SEND_DELAY_MS * 4));
+        expect(uploads).toHaveLength(2);
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
+
+    it("keeps a version conflict out of the offline story", async () => {
+      const container = renderApp();
+      const roomId = "CONF03";
+      const restoreStream = stubStream();
+      const originalFetch = globalThis.fetch;
+      const uploads: UploadedTransaction[] = [];
+      const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+        if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+          const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+          if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+          uploads.push(body);
+          return json({ error: { code: "VERSION_CONFLICT", message: "版本冲突", currentVersion: uploads.length + 1 } }, 409);
+        }
+        if (url.includes(`/api/rooms/${roomId}/operations`)) {
+          return json({ id: roomId, version: 2, afterVersion: 1, operations: [{ type: "set", path: ["renderSettings", "fixedFps"], value: 45 }] });
+        }
+        if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+        return json({});
+      });
+      globalThis.fetch = request as unknown as typeof fetch;
+      try {
+        await createRoomFromMenu(container);
+        renameStudent(container, "林舟", "冲突不离线林舟");
+        await vi.waitFor(() => expect(collaborationStatus(container)?.getAttribute("data-collaboration-status")).toBe("conflict"), { timeout: 5_000 });
+
+        // 服务端明确拒绝,网络好得很:摆出离线态会让用户以为等一等就能自己上去。
+        expect(offlineBanner(container)).toBeNull();
+        expect(container.textContent).toContain("同一内容被其他成员修改");
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreStream();
+      }
+    });
+  });
 });
