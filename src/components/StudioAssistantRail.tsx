@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, type KeyboardEvent } from "react";
+import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { AgentAssistant, useAssistantRailState, type RailTabId } from "./AgentAssistant";
 import { StageOverviewPanel } from "./StageOverviewPanel";
 import type { StageOverviewAction, StageOverviewModel } from "../lib/stage-overview";
@@ -138,6 +138,38 @@ export function StudioAssistantRail({
     })),
   ], [project.assetElements, project.textElements]);
 
+  // listbox 是一个整体 tab 停靠点：只有一个 option 可 tab 进入，其余靠方向键。
+  // 停靠点默认落在已选中项上，用过键盘/焦点后跟随最后一次落焦的 option。
+  const optionRefs = useRef(new Map<number, HTMLButtonElement>());
+  const [focusedOption, setFocusedOption] = useState<number | null>(null);
+  const selectedOption = outline.findIndex((item) => sameSelection(selection, item.selection));
+  const tabStopOption = Math.min(
+    Math.max(focusedOption ?? (selectedOption >= 0 ? selectedOption : 0), 0),
+    Math.max(outline.length - 1, 0),
+  );
+
+  // 与 tablist 不同：listbox 到头即停，不环绕（ARIA APG 单选列表的默认行为）。
+  const nextOptionIndex = (key: string, index: number): number | null => {
+    switch (key) {
+      case "ArrowDown":
+      case "ArrowRight": return Math.min(index + 1, outline.length - 1);
+      case "ArrowUp":
+      case "ArrowLeft": return Math.max(index - 1, 0);
+      case "Home": return 0;
+      case "End": return outline.length - 1;
+      default: return null;
+    }
+  };
+
+  const onOptionKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const next = nextOptionIndex(event.key, index);
+    if (next === null) return;
+    event.preventDefault();
+    if (next === index) return;
+    setFocusedOption(next);
+    optionRefs.current.get(next)?.focus();
+  };
+
   return (
     <div className="studio-assistant-rail">
       <div className="studio-assistant-rail__tabs" role="tablist" aria-label="左侧工具">
@@ -216,14 +248,24 @@ export function StudioAssistantRail({
                 <section className="studio-advanced__group" aria-label="画布元素">
                   <div className="studio-advanced__section-heading"><h3>画布元素</h3><small>{outline.length} 个</small></div>
                   <div className="studio-advanced__element-list" role="listbox" aria-label="内容对象列表">
-                    {outline.map(({ selection: itemSelection, label }) => (
+                    {outline.map(({ selection: itemSelection, label }, index) => (
                       <button
                         key={`${itemSelection.type}-${"id" in itemSelection ? itemSelection.id : ""}-${"province" in itemSelection ? itemSelection.province : ""}`}
+                        ref={(node) => {
+                          if (node) optionRefs.current.set(index, node);
+                          else optionRefs.current.delete(index);
+                        }}
                         type="button"
                         role="option"
                         aria-selected={sameSelection(selection, itemSelection)}
                         className={sameSelection(selection, itemSelection) ? "is-active" : undefined}
-                        onClick={() => onSelectElement(itemSelection)}
+                        tabIndex={index === tabStopOption ? 0 : -1}
+                        onFocus={() => setFocusedOption(index)}
+                        onKeyDown={(event) => onOptionKeyDown(event, index)}
+                        onClick={() => {
+                          setFocusedOption(index);
+                          onSelectElement(itemSelection);
+                        }}
                       >
                         <span>{label}</span><small>{selectionLabel(itemSelection)}</small>
                       </button>

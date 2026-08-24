@@ -21,6 +21,13 @@ function selectedTab(container: HTMLElement): string | undefined {
   return container.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("data-rail-tab") ?? undefined;
 }
 
+/** 高级功能 → 元素查看，返回列表里的全部 option。 */
+function openElementList(container: HTMLElement): HTMLButtonElement[] {
+  click(container.querySelector('[role="tab"][data-rail-tab="advanced"]'));
+  click(container.querySelector('button[aria-label="打开元素查看"]'));
+  return Array.from(container.querySelectorAll<HTMLButtonElement>('.studio-advanced__element-list [role="option"]'));
+}
+
 function railProps(overrides: Partial<StudioAssistantRailProps> = {}): StudioAssistantRailProps {
   return {
     project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
@@ -217,6 +224,75 @@ describe("StudioAssistantRail", () => {
 
     press(tabs[0]!, "End");
     expect(tabs.map((tab) => tab.tabIndex)).toEqual([-1, -1, 0]);
+  });
+
+  it("keeps a single tab stop in the element listbox, anchored on the selected option", () => {
+    const { container } = renderRail();
+    const options = openElementList(container);
+    expect(options.length).toBeGreaterThanOrEqual(4);
+    expect(options.filter((option) => option.tabIndex === 0)).toHaveLength(1);
+    expect(options[0]!.tabIndex).toBe(0);
+
+    const { container: withSelection } = renderRail({ selection: { type: "cards" } });
+    const selectedOptions = openElementList(withSelection);
+    expect(selectedOptions.filter((option) => option.tabIndex === 0)).toHaveLength(1);
+    // outline 顺序为 画布 / 地图展示框 / 数据展示框 / 嘉宾板块。
+    expect(selectedOptions[2]!.getAttribute("aria-selected")).toBe("true");
+    expect(selectedOptions[2]!.tabIndex).toBe(0);
+  });
+
+  it("moves option focus with arrow, Home and End keys without selecting or leaving the tab", () => {
+    const onSelectElement = vi.fn();
+    const { container } = renderRail({ onSelectElement });
+    const options = openElementList(container);
+    const last = options.length - 1;
+
+    press(options[0]!, "ArrowDown");
+    expect(document.activeElement).toBe(options[1]);
+    expect(options[0]!.tabIndex).toBe(-1);
+    expect(options[1]!.tabIndex).toBe(0);
+
+    press(options[1]!, "ArrowUp");
+    expect(document.activeElement).toBe(options[0]);
+    expect(options[0]!.tabIndex).toBe(0);
+
+    press(options[0]!, "End");
+    expect(document.activeElement).toBe(options[last]);
+    expect(options.filter((option) => option.tabIndex === 0)).toEqual([options[last]]);
+
+    press(options[last]!, "Home");
+    expect(document.activeElement).toBe(options[0]);
+
+    // 方向键只挪焦点：既不改选中项，也不该冒泡改动 rail 页签。
+    expect(onSelectElement).not.toHaveBeenCalled();
+    expect(options[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(options[1]!.getAttribute("aria-selected")).toBe("false");
+    expect(selectedTab(container)).toBe("advanced");
+  });
+
+  it("stops at both ends of the element listbox instead of wrapping", () => {
+    const { container } = renderRail();
+    const options = openElementList(container);
+    const last = options.length - 1;
+
+    press(options[0]!, "ArrowUp");
+    expect(document.activeElement).not.toBe(options[last]);
+    expect(options[0]!.tabIndex).toBe(0);
+
+    press(options[0]!, "End");
+    press(options[last]!, "ArrowDown");
+    expect(document.activeElement).toBe(options[last]);
+    expect(options[0]!.tabIndex).toBe(-1);
+  });
+
+  it("moves the listbox tab stop to the clicked option", () => {
+    const onSelectElement = vi.fn();
+    const { container } = renderRail({ onSelectElement });
+    const options = openElementList(container);
+
+    click(options[1]!);
+    expect(onSelectElement).toHaveBeenCalledTimes(1);
+    expect(options.filter((option) => option.tabIndex === 0)).toEqual([options[1]]);
   });
 
   it("derives unique tab and panel ids so desktop and drawer copies never collide", () => {
