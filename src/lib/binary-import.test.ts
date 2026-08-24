@@ -328,6 +328,23 @@ describe("binary import adapters", () => {
     ]);
   });
 
+  it("drops a column of Excel date serials instead of importing one as a student name", () => {
+    // An unformatted 日期 column reaches the fallback as the bare serial numbers xlsx stores.
+    // Read by position, 45810 became the student and pushed 姓名 into 院校 and 院校 into 城市 —
+    // three plausible-looking records the 未识别 panel never mentioned.
+    const result = parseExcelWorkbookRows([
+      [45810, "林舟", "北京大学", "北京市"],
+      [45811, "苏禾", "浙江大学", "杭州市"],
+    ]);
+
+    expect(result.headerRowIndex).toBeUndefined();
+    expect(result.candidates).toEqual([
+      { name: "林舟", university: "北京大学", city: "北京市", sourceLine: 1, rawLine: "45810\t林舟\t北京大学\t北京市" },
+      { name: "苏禾", university: "浙江大学", city: "杭州市", sourceLine: 2, rawLine: "45811\t苏禾\t浙江大学\t杭州市" },
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("re-exports the html table parser extracted into html-table-parse", () => {
     // Call sites import parseHtmlTableRows from binary-import; the identity check pins the
     // re-export to the extracted implementation (behaviour lives in html-table-parse.test.ts).

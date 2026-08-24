@@ -28,5 +28,7 @@ jobs:
         run: npx tsc --noEmit -p tsconfig.app.json
       - name: Type-check Node
         run: npx tsc --noEmit -p tsconfig.node.json
+      - name: Lint
+        run: npx eslint .
       - name: Test
         run: npx vitest run

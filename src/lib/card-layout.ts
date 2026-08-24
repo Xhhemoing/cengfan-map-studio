@@ -151,7 +151,7 @@ function repairLadder(
 ): { legal: CardPlacement[] | null; swept: CardPlacement[] | null } {
   const repacked = repackAll(cards, space);
   if (repacked) {
-    const ordered = orderResult(cards, repacked);
+    const ordered = orderResult(cards, repacked, space);
     if (validateHard(ordered, space)) return { legal: ordered, swept: null };
   }
   const swept = sweepPack(cards, space);
@@ -267,7 +267,7 @@ function solve(
 
   if (mode === "grid") {
     debug.decision = "skipped-mode";
-    const grid = orderResult(inputs, layoutGrid(inputs, space));
+    const grid = orderResult(inputs, layoutGrid(inputs, space), space);
     if (validateHard(grid, space)) return { status: "solved", placements: grid, mode };
     return degrade(inputs, space, mode, grid);
   }
@@ -275,7 +275,7 @@ function solve(
   // Side packing first, then the repair ladder: whichever legal layout comes
   // out is both what the solver ships and what the connector-aware search has
   // to beat, so the search can only ever improve the result.
-  const packed = orderResult(inputs, packSides(inputs, space, mode, options));
+  const packed = orderResult(inputs, packSides(inputs, space, mode, options), space);
   if (validateHard(packed, space)) return refine(inputs, space, mode, options, packed, debug);
   const { legal, swept } = repairLadder(inputs, space);
   if (legal) return refine(inputs, space, mode, options, legal, debug);

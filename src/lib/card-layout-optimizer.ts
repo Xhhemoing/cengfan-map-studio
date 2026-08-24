@@ -342,5 +342,5 @@ export function optimizedLayout(
   // Nothing beat the layout the caller already had; say so rather than handing
   // back a copy, so the caller keeps its own status and ordering.
   if (best === seeded) return { placements: null, trace };
-  return { placements: best ? orderResult(cards, best) : null, trace };
+  return { placements: best ? orderResult(cards, best, space) : null, trace };
 }

@@ -66,10 +66,7 @@ export function parseLocationScopeValue(value: string | undefined): "internation
 }
 
 /** One physical line of the source, with the 1-based number it came from. */
-interface SourceLine {
-  text: string;
-  sourceLine: number;
-}
+interface SourceLine { text: string; sourceLine: number }
 
 /**
  * Blank lines are dropped but never renumber the rest: an unparsed row is
@@ -179,13 +176,20 @@ export function splitDelimitedLine(line: string, delimiter: string): string[] {
   return scanDelimitedLine(line, delimiter).cells.map(trimImportCell);
 }
 
-type PaddingColumns = Map<string, ReadonlySet<number>>;
+type UsableColumns = Map<string, ReadonlySet<number>>;
+
+/** A cell of digits alone: a 序号, a 学号, a date Excel left as its serial. */
+const SERIAL_CELL = /^\d+(?:\.\d+)?$/;
 
 /**
- * Columns no line of the paste fills, kept per delimiter. Such a column is
- * padding an export left behind — an empty 序号 column on the left, the trailing
- * separator of a CSV row — and dropping it lets the positional reader find
- * 姓名/院校/城市 where they really start.
+ * Columns the positional reader may use, per delimiter: the ones at least one
+ * line fills with a value a 姓名/院校/城市 could take. A column no line fills is
+ * padding an export left behind — an empty 序号 column, a trailing CSV separator
+ * — and a column of bare numbers is a 学号 or a date left as its serial. Reading
+ * either shifts the row left: "1,林舟,北京大学,北京市" imported a student called
+ * 1 attending 林舟, with no warning at all. A header line names its own columns,
+ * so a number column only ever goes from a paste without one, and never when it
+ * would leave too few columns: "001,北京大学,北京市" may be an anonymized name.
  *
  * A cell blank on only some lines is the opposite: a gap in a column the rest of
  * the paste uses. Dropping that one pulls every later cell of the row a column
@@ -193,24 +197,24 @@ type PaddingColumns = Map<string, ReadonlySet<number>>;
  * 海外 — a complete-looking record nothing warned about. So the gap stays,
  * {@link toCandidate} sees the blank, and the row is reported instead.
  */
-function paddingColumnsByDelimiter(lines: readonly SourceLine[]): PaddingColumns {
+function usableColumnsByDelimiter(lines: readonly SourceLine[]): UsableColumns {
   const filled = new Map<string, Set<number>>();
-  const blank = new Map<string, Set<number>>();
+  const named = new Map<string, Set<number>>();
   for (const { text } of lines) {
     const delimiter = detectDelimiter(text);
     if (!delimiter) continue;
-    if (!blank.has(delimiter)) {
-      filled.set(delimiter, new Set());
-      blank.set(delimiter, new Set());
-    }
+    if (!named.has(delimiter)) { filled.set(delimiter, new Set()); named.set(delimiter, new Set()); }
     splitCells(text, delimiter).forEach((cell, index) => {
-      (cell ? filled : blank).get(delimiter)!.add(index);
+      if (!cell) return;
+      filled.get(delimiter)!.add(index);
+      if (!SERIAL_CELL.test(cell)) named.get(delimiter)!.add(index);
     });
   }
-  for (const [delimiter, empty] of blank) {
-    for (const index of filled.get(delimiter)!) empty.delete(index);
+  for (const [delimiter, usable] of named) {
+    if (usable.size >= REQUIRED_STUDENT_COLUMNS.length) continue;
+    for (const index of filled.get(delimiter)!) usable.add(index);
   }
-  return blank;
+  return named;
 }
 
 /**
@@ -222,19 +226,17 @@ const FREEFORM_SEPARATOR = /\s+[-–—]+\s+|[\s、]+/;
 
 /**
  * Cells of one source line. A delimited line keeps every column, blank ones
- * included, so the positional reader stays aligned and only the `padding`
- * columns go; an unlabeled line holds no columns, so its runs of spaces
- * collapse instead.
+ * included, so the positional reader stays aligned and only unusable columns
+ * go; an unlabeled line holds no columns, so its runs of spaces collapse.
  */
-function splitCells(line: string, delimiter: string | null, padding?: PaddingColumns): string[] {
+function splitCells(line: string, delimiter: string | null, usable?: UsableColumns): string[] {
   const content = line.replace(LIST_MARKER, "");
   if (!delimiter) return content.split(FREEFORM_SEPARATOR).map(trimImportCell).filter(Boolean);
-  const dropped = padding?.get(delimiter);
-  return splitDelimitedLine(content, delimiter).filter((_, index) => !dropped?.has(index));
+  const columns = usable?.get(delimiter);
+  return splitDelimitedLine(content, delimiter).filter((_, index) => columns?.has(index) ?? true);
 }
 
 function toCandidate(parts: string[], sourceLine: number, rawLine: string): ImportCandidate | null {
-  if (parts.length < 3) return null;
   const [name, university, city, scope] = parts;
   if (!name || !university || !city) return null;
   const locationScope = parseLocationScopeValue(scope);
@@ -269,15 +271,13 @@ function parseLabeledCandidate(line: string, sourceLine: number): ImportCandidat
     const end = matches[index + 1]?.index ?? line.length;
     fields.set(label, trimImportCell(line.slice(start, end).replace(/^[\s,，;；|｜]+|[\s,，;；|｜]+$/g, "")));
   }
-  const name = fields.get("姓名") ?? fields.get("学生") ?? fields.get("学生姓名") ?? fields.get("name");
-  const university = fields.get("就读院校") ?? fields.get("就读学校") ?? fields.get("录取院校")
-    ?? fields.get("院校") ?? fields.get("学校") ?? fields.get("university") ?? fields.get("school");
-  const city = fields.get("城市") ?? fields.get("所在城市") ?? fields.get("city");
+  const pick = (...labels: string[]): string => labels.map((label) => fields.get(label)).find((value) => value !== undefined) ?? "";
+  const name = pick("姓名", "学生", "学生姓名", "name");
+  const university = pick("就读院校", "就读学校", "录取院校", "院校", "学校", "university", "school");
+  const city = pick("城市", "所在城市", "city");
   if (!name || !university || !city) return null;
-  const locationScope = parseLocationScopeValue(fields.get("去向类型") ?? fields.get("destination type"));
-  const province = locationScope === "international"
-    ? ""
-    : (fields.get("省份") ?? fields.get("省") ?? fields.get("province") ?? "");
+  const locationScope = parseLocationScopeValue(pick("去向类型", "destination type"));
+  const province = locationScope === "international" ? "" : pick("省份", "省", "province");
   return {
     name, university, city, ...(province ? { province } : {}),
     ...(locationScope ? { locationScope } : {}), sourceLine, rawLine: line,
@@ -333,7 +333,7 @@ export function parseStudentText(text: string): TextImportResult {
   const unparsed: UnparsedLine[] = [];
   const header = detectTextHeader(lines);
   const headerIsComplete = header !== null && missingRequiredColumns(header.mapping).length === 0;
-  const padding = paddingColumnsByDelimiter(lines);
+  const usable = usableColumnsByDelimiter(lines);
 
   lines.forEach(({ text, sourceLine }, index) => {
     if (header && index === header.lineIndex) return;
@@ -381,7 +381,7 @@ export function parseStudentText(text: string): TextImportResult {
     }
 
     if (!mappedPartially) {
-      const parts = splitCells(text, detectDelimiter(text), padding);
+      const parts = splitCells(text, detectDelimiter(text), usable);
       const candidate = toCandidate(parts, sourceLine, text);
       if (candidate) {
         candidates.push(candidate);

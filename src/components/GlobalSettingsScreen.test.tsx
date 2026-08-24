@@ -107,6 +107,39 @@ describe("GlobalSettingsScreen tablist keyboard support", () => {
   });
 });
 
+describe("GlobalSettingsScreen skip link", () => {
+  it("focuses the settings content landmark without touching the hash route or the studio stage id", () => {
+    const { container } = renderScreen();
+
+    const skip = container.querySelector<HTMLAnchorElement>("a.skip-link");
+    expect(skip).not.toBeNull();
+    expect(skip?.getAttribute("href")).toBe("#global-settings-main");
+
+    const target = container.querySelector<HTMLElement>("#global-settings-main");
+    expect(target).not.toBeNull();
+    expect(target?.getAttribute("tabindex")).toBe("-1");
+    // 落点包住设置主内容：分区导航（tablist）与当前表单面板（tabpanel）。
+    expect(target?.querySelector('[role="tablist"]')).not.toBeNull();
+    expect(target?.querySelector('[role="tabpanel"]')).not.toBeNull();
+    // 设置页持有自己的落点 id，不占用工作室的 #studio-stage。
+    expect(container.querySelector("#studio-stage")).toBeNull();
+
+    const hashBefore = window.location.hash;
+    click(skip);
+    expect(document.activeElement).toBe(target);
+    // Hash 路由（#/project/…）不受片段跳转影响。
+    expect(window.location.hash).toBe(hashBefore);
+  });
+
+  it("puts the skip link ahead of the header history actions in the tab order", () => {
+    const { container } = renderScreen();
+    const skip = container.querySelector<HTMLAnchorElement>("a.skip-link")!;
+    const header = container.querySelector(".global-settings-header")!;
+    // DOM 顺序即 Tab 顺序：跳转链接先于页头撤销/重做等操作。
+    expect(skip.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  });
+});
+
 describe("GlobalSettingsScreen history announcements", () => {
   it("announces undo/redo through a persistent polite live region in the header", () => {
     const { container, props } = renderScreen({

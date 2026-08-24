@@ -397,6 +397,68 @@ describe("empty cells in a header-less paste", () => {
   });
 });
 
+describe("number columns in a header-less paste", () => {
+  it("drops a 学号 column instead of importing the student number as the name", () => {
+    // Read by position the serial took the 姓名 slot and pushed every later value
+    // one column left: a student called 20260001 attending 林舟, a record complete
+    // enough that nothing ever warned about it.
+    const result = parseStudentText("20260001,林舟,北京大学,北京市\n20260002,苏禾,浙江大学,杭州市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("keeps the overseas marker aligned once a 序号 column is gone", () => {
+    const result = parseStudentText("1\t林舟\t北京大学\t北京市\t中国去向\n2\t周晴\t哈佛大学\t波士顿\t海外");
+
+    expect(result.candidates[0]).not.toHaveProperty("locationScope");
+    expect(result.candidates[1]).toEqual(expect.objectContaining({ name: "周晴", locationScope: "international" }));
+    // The quoted line still holds the serial, so it maps back to what the user pasted.
+    expect(result.candidates[1]?.rawLine).toBe("2\t周晴\t哈佛大学\t波士顿\t海外");
+  });
+
+  it("reads a number sitting between two named columns as a column of its own", () => {
+    const result = parseStudentText("林舟,20260001,北京大学,北京市\n苏禾,20260002,浙江大学,杭州市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+  });
+
+  it("keeps the numbers of a paste that has no column to spare", () => {
+    // Nothing is left to read as 姓名 once the digits go, so "001" is taken at face
+    // value: an anonymized roster imports rather than disappearing.
+    const result = parseStudentText("001,北京大学,北京市\n002,浙江大学,杭州市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "001", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "002", university: "浙江大学", city: "杭州市" }),
+    ]);
+  });
+
+  it("keeps a column another row fills with a name", () => {
+    // 苏禾 makes the first column a real one, so the paste is malformed rather than
+    // numbered, and no column is dropped behind the user's back.
+    const result = parseStudentText("1,林舟,北京大学,北京市\n苏禾,浙江大学,杭州市,");
+
+    expect(result.candidates[1]).toEqual(expect.objectContaining({ name: "苏禾", university: "浙江大学" }));
+    expect(result.candidates[0]).toEqual(expect.objectContaining({ name: "1", university: "林舟" }));
+  });
+
+  it("leaves a numeric column that a header names to the header mapping", () => {
+    const result = parseStudentText("学号,姓名,院校,城市\n20260001,林舟,北京大学,北京市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市", sourceLine: 2 }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+});
+
 describe("hyphens in an unlabeled line", () => {
   it("keeps a hyphenated name whole instead of reading it as two fields", () => {
     // Splitting on the hyphen made 克莱尔 her university and 巴黎高等师范 her

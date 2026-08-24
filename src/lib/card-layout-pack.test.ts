@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { overlaps } from "./card-layout-geometry";
-import { containFree, stackAtMargin } from "./card-layout-pack";
+import { containFree, orderResult, stackAtMargin } from "./card-layout-pack";
 import { LayoutSpace, PlacementIndex } from "./card-layout-space";
-import type { CardArea, CardPlacement } from "./card-layout-types";
+import type { CardArea, CardLayoutInput, CardPlacement } from "./card-layout-types";
 
 const map: CardArea = { x: 300, y: 220, width: 300, height: 260 };
 
@@ -316,5 +316,79 @@ describe("stackAtMargin", () => {
     placed.add({ ...columnCard("aside", 0), x: 200 });
 
     expect(stackAtMargin(probeAtMargin(), space, placed).y).toBe(space.margin);
+  });
+});
+
+function inputCard(id: string, overrides: Partial<CardLayoutInput> = {}): CardLayoutInput {
+  return { id, anchorX: 700, anchorY: 600, width: 120, height: 100, ...overrides };
+}
+
+function placementFor(card: CardLayoutInput, x: number, y: number): CardPlacement {
+  return { ...card, x, y, side: placeholderSide };
+}
+
+describe("orderResult", () => {
+  it("seats a card the solver dropped inside the padded canvas, not at the origin", () => {
+    const space = makeSpace();
+    const cards = [inputCard("kept"), inputCard("dropped")];
+
+    const ordered = orderResult(cards, [placementFor(cards[0]!, 700, 500)], space);
+
+    expect(ordered.map((card) => card.id)).toEqual(["kept", "dropped"]);
+    const dropped = ordered[1]!;
+    expect(dropped.x).toBe(space.margin);
+    expect(dropped.y).toBe(space.margin);
+    expect(space.inside(dropped)).toBe(true);
+  });
+
+  it("sides the dropped card by its seat rather than stamping the placeholder", () => {
+    const space = makeSpace();
+
+    const [dropped] = orderResult([inputCard("dropped")], [], space);
+
+    // The seat is west of the map, so a card labelled "right" would draw its
+    // leader line out of the edge facing away from the anchor.
+    expect(dropped!.side).toBe("left");
+    expect(dropped!.side).not.toBe(placeholderSide);
+    expect(dropped!.side).toBe(space.sideOf(dropped!));
+  });
+
+  it("reads the seat's side off the map, so the margin column is not always left", () => {
+    // A wide, shallow map turns the top-left margin corner into the map's *top*.
+    const wideMap: CardArea = { x: 100, y: 300, width: 700, height: 100 };
+    const space = makeSpace([wideMap], wideMap);
+
+    const [dropped] = orderResult([inputCard("dropped")], [], space);
+
+    expect(dropped!.side).toBe("top");
+    expect(dropped!.side).toBe(space.sideOf(dropped!));
+  });
+
+  it("still seats a card too large for the canvas at the margin", () => {
+    const space = makeSpace();
+
+    const [oversized] = orderResult([inputCard("huge", { width: 2000, height: 1800 })], [], space);
+
+    expect(oversized!.x).toBe(space.margin);
+    expect(oversized!.y).toBe(space.margin);
+    expect(oversized!.side).toBe(space.sideOf(oversized!));
+  });
+
+  it("fills only the gaps and keeps duplicate ids paired one to one", () => {
+    const space = makeSpace();
+    const cards = [inputCard("twin"), inputCard("twin"), inputCard("solo")];
+    const placements = [placementFor(cards[0]!, 700, 100), placementFor(cards[1]!, 700, 300)];
+
+    const ordered = orderResult(cards, placements, space);
+
+    expect(ordered.map((card) => [card.x, card.y])).toEqual([[700, 100], [700, 300], [space.margin, space.margin]]);
+    // Cards the solver did place keep whatever side it decided on.
+    expect(ordered.slice(0, 2).map((card) => card.side)).toEqual([placeholderSide, placeholderSide]);
+  });
+
+  it("keeps the legacy origin seat when no space is available to measure", () => {
+    const [dropped] = orderResult([inputCard("dropped")], []);
+
+    expect([dropped!.x, dropped!.y]).toEqual([0, 0]);
   });
 });

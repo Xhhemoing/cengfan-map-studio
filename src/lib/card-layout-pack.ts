@@ -25,10 +25,21 @@ const DENSE_RAILS_PER_AXIS = 16;
 /** Above this card count the extra repack orders cost more than they gain. */
 const DENSE_REPACK_CARDS = 60;
 
-/** Reorder solver output back to the caller's input order, tolerating gaps. */
+/** Seat for a card no placement came back for; the side follows the seat. */
+function marginSeat(card: CardLayoutInput, space: LayoutSpace): CardPlacement {
+  const seat = { ...card, x: space.clampX(space.margin, card.width), y: space.clampY(space.margin, card.height) };
+  return { ...seat, side: space.sideOf(seat) };
+}
+
+/**
+ * Reorder solver output back to the caller's input order, tolerating gaps.
+ * Without a `space` a missing id can only fall back to the origin, which lies
+ * outside the padded canvas with a side unrelated to where the card is drawn.
+ */
 export function orderResult(
   cards: readonly CardLayoutInput[],
   placements: readonly CardPlacement[],
+  space?: LayoutSpace,
 ): CardPlacement[] {
   const byId = new Map<string, CardPlacement[]>();
   for (const placement of placements) {
@@ -37,7 +48,7 @@ export function orderResult(
     else byId.set(placement.id, [placement]);
   }
   return cards.map((card) => byId.get(card.id)?.shift()
-    ?? { ...card, x: 0, y: 0, side: "right" as CardSide });
+    ?? (space ? marginSeat(card, space) : { ...card, x: 0, y: 0, side: "right" as CardSide }));
 }
 
 /** Candidate coordinates ordered by closeness to `target`, capped for cost. */
@@ -296,7 +307,7 @@ export function sweepPack(
     const probe: CardPlacement = { ...card, x: space.margin, y: space.margin, side: "left" };
     placed.add(stackAtMargin(probe, space, placed));
   }
-  return orderResult(cards, placed.items);
+  return orderResult(cards, placed.items, space);
 }
 
 /**
@@ -333,7 +344,7 @@ export function shelfLayout(cards: readonly CardLayoutInput[], space: LayoutSpac
     x += card.width + space.gap;
     rowHeight = Math.max(rowHeight, card.height);
   }
-  return orderResult(cards, placements);
+  return orderResult(cards, placements, space);
 }
 
 /** Uniform grid layout (the `grid` mode), skipping obstacles and collisions. */

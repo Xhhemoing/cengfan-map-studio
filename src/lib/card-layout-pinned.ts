@@ -15,7 +15,7 @@
  */
 import { finiteOr, sideForPlacement } from "./card-layout-geometry";
 import { orderResult } from "./card-layout-pack";
-import { normalizeBounds, protectedZones } from "./card-layout-space";
+import { LayoutSpace, normalizeBounds, protectedZones } from "./card-layout-space";
 import {
   type CardArea,
   type CardLayoutBounds,
@@ -90,7 +90,7 @@ export function mergePinnedCards(
   plan: PinnedCardPlan,
   solved: readonly CardPlacement[],
 ): CardPlacement[] {
-  const placed = orderResult(plan.free, solved);
+  const placed = orderResult(plan.free, solved, new LayoutSpace(plan.bounds));
   let cursor = 0;
   return plan.slots.map((slot) => {
     if (slot) return slot;
