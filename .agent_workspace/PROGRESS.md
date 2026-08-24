@@ -14,16 +14,16 @@
 
 严禁静默降级。子代理输出首行必须声明实际使用的模型 slug。
 
-## 文件所有权（Cycle 1 Round 2）
+## 文件所有权（Cycle 1 Round 3）
 
 | 角色 | 可写路径 | 禁止 |
 | --- | --- | --- |
-| fable-A | `.agent_workspace/cycle1-round2-fable-a.md` | 生产代码 |
-| fable-B | `.agent_workspace/cycle1-round2-fable-b.md` | 生产代码 |
-| opus-fast-A | `src/App.tsx`、`src/components/canvas/useCardLayoutWorker.ts*`、`src/lib/card-layout-cache.ts*`、`src/components/canvas/PosterCanvas.tsx` **仅** layout memo 依赖（provincePolygons / preparedCards / layoutRequest）、相关测试 | `DestinationCard.tsx`、`display-frame-style.ts`、`card-templates.ts` |
-| opus-fast-B | `DestinationCard.tsx*`、`src/lib/card-templates.ts*`、`src/lib/display-frame-style.ts*`、新建 `ReferenceCardVisual.tsx`、`PosterCanvas.tsx` **仅** 抽出/替换 `renderReferenceCardVisual` | `App.tsx`、`useCardLayoutWorker.ts` |
-| gpt-sol-A | `scripts/perf-canvas-bench.ts`、`src/lib/canvas-render-metrics.ts*` | UI 大重构 |
-| gpt-sol-B | 新建测试文件 `*.round2.test.ts(x)` | 生产实现 |
+| fable-A | `.agent_workspace/cycle1-round3-fable-a.md` | 生产代码 |
+| fable-B | `.agent_workspace/cycle1-round3-fable-b.md` | 生产代码 |
+| opus-fast-A | `PosterCanvas.tsx`（memo 包装、抽出 guests）、新建 `GuestsLayer.tsx*`、`src/lib/guest-panel-layout.ts*`、`MapLayer.tsx` 投影/path memo、`App.tsx` 仅若需配合 memo、相关测试 | `DestinationCard.tsx`、`ReferenceCardVisual.tsx`、`card-templates.ts` |
+| opus-fast-B | `DestinationCard.tsx*`、`ReferenceCardVisual.tsx*`、`display-frame-style.ts*`、对应测试 | `App.tsx`、`useCardLayoutWorker.ts`、`GuestsLayer.tsx`、`PosterCanvas.tsx` |
+| gpt-sol-A | `scripts/perf-canvas-bench.ts`、`canvas-render-metrics.ts*` | UI 大重构 |
+| gpt-sol-B | 新建 `*.round3.test.ts(x)`；可扩 `export-poster.test.ts` | 生产实现 |
 
 ## 循环状态
 
@@ -34,14 +34,14 @@
   - opus-fast-B `claude-opus-5-thinking-high-fast` 展示框 token/子画布 → `bc-835ca65f-3f64-5aa1-a14b-2ecad94e54be`
   - gpt-sol-A `gpt-5.6-sol-xhigh-fast` 画布基准脚本 → `bc-99c96d63-7966-5b5d-b937-90e98d6b50bd`
   - gpt-sol-B `gpt-5.6-sol-xhigh-fast` 边界测试 → `bc-d390ddb4-b179-59da-81e4-21ac391945cf`
-- [ ] Cycle 1 Round 2 — 靶向重构与深度优化（进行中，6 子代理并发）
+- [x] Cycle 1 Round 2 — 靶向重构与深度优化（完成，见 `cycle1-round2-conclusion.md`）
   - fable-A → `bc-4cfb2913-f556-5f00-b797-1dd50941e21e`
   - fable-B → `bc-1a45644a-e9e4-52ce-bc9f-71da5e3b21ff`
   - opus-fast-A → `bc-02056c3d-d4dd-5c18-91ad-ea64bdfa539e`
   - opus-fast-B → `bc-42165287-40ae-53a9-ab03-be92cc120dc0`
   - gpt-sol-A → `bc-f4e8c95d-f6e1-5205-9eca-12545f81f39d`
   - gpt-sol-B → `bc-7e13aad9-37bd-55ad-9958-4d2031d69a8c`
-- [ ] Cycle 1 Round 3 — SOTA 打磨与交叉核验
+- [ ] Cycle 1 Round 3 — SOTA 打磨与交叉核验（派发中）
 - [ ] Cycle 2 Round 1
 - [ ] Cycle 2 Round 2
 - [ ] Cycle 2 Round 3
@@ -59,4 +59,5 @@
 
 ## Round 结论简报
 
-- Cycle 1 Round 1：见 `.agent_workspace/cycle1-round1-conclusion.md`
+- Cycle 1 Round 1：`.agent_workspace/cycle1-round1-conclusion.md`
+- Cycle 1 Round 2：`.agent_workspace/cycle1-round2-conclusion.md`
