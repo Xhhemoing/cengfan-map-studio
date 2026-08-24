@@ -22,7 +22,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
-| 6 | IN_PROGRESS | R6-1–R6-9 + R6-5b | — | Proofs merged. Awaiting full suite + fable + R6-10. |
+| 6 | IN_PROGRESS | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn. Awaiting fable. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -99,6 +99,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R6-3 (`aaddff2` / `9e740d9`): crash-disaster journey green (1/1). Product unchanged. R7: `ProjectWorkbench.createProject` does not `refresh()`, so the degraded export list can omit a just-created memory project; `editorProjectStore` has no test-only `scheduleRecover` seam.
 - R6-9 (`9d19bc9` / `900cf6a`): server durability journey green (1/1) against real `dataDir`. No product defects. Rollback = revert the merge.
 - CI hotfix (`b7ed418`): unmount `StudioAssistantRail` test roots. Rollback = revert `b7ed418`.
+- Full suite on merged tree: **181 files, 1656 passed / 2 skipped** (79.9s). Lint: 0 errors, 7 warnings (StorageNotice react-refresh added). Typecheck already 0 at merge.
 
 ## Round Briefings
 
