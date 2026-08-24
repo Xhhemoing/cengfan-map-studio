@@ -22,7 +22,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
-| 6 | IN_PROGRESS | R6-1, R6-7, R6-8 | — | History-first persist + lastPersistOutcome. Awaiting R6-2/4/5. |
+| 6 | IN_PROGRESS | R6-1, R6-4, R6-7, R6-8 | — | History-first persist + unified StorageNotice. Awaiting R6-2/5. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -91,6 +91,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 - Visibility chain: R6-1 → R6-2 → R6-6. Independent: R6-4, R6-5 (copy+extract), R6-7, R6-8. Proofs R6-3/R6-9 after code merges.
 - R6-1 (`5bc3b29`): history-first trim before skip; aggregate snapshot budget 12 MiB; envelope `trimmedRoomIds`; `lastPersistOutcome(): { skippedIds, trimmedIds, at }`; interval persist errors deduped. Rollback = revert the merge. Snapshot-only records above 8 MiB remain skipped by design.
+- R6-4 (`4d7e3a2` / `af002ab`): shared `StorageNotice`; editor banner drops `workbench-resume`. Rollback = revert the merge. Owned tests 41/41; tsc app+node 0.
 
 ## Round Briefings
 
