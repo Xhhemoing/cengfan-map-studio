@@ -2,7 +2,16 @@ import { Trash2, Type } from "lucide-react";
 import { useState } from "react";
 import type { ProjectDocument } from "../lib/project-document";
 import type { CardFontField } from "../lib/scene-document";
-import { createUserFont, DEFAULT_FONT_ID, detectFontFormat, listFonts, type UserFont } from "../lib/fonts";
+import {
+  createUserFont,
+  DEFAULT_FONT_ID,
+  findExistingFont,
+  formatFontBytes,
+  listFonts,
+  MAX_USER_FONT_BYTES,
+  validateFontFile,
+  type UserFont,
+} from "../lib/fonts";
 import type { TypographyTarget } from "../lib/typography";
 import type { SceneSelection } from "../lib/scene-document";
 import { DeferredInput } from "./DeferredInput";
@@ -55,9 +64,9 @@ export function TypographyPanel({
   const [message, setMessage] = useState("");
   const handleFontUpload = (file: File | null) => {
     if (!file) return;
-    const format = detectFontFormat(file.name);
-    if (!format) {
-      setMessage("仅支持 TTF / OTF / WOFF 字体文件");
+    const validation = validateFontFile(file);
+    if (!validation.ok) {
+      setMessage(validation.reason);
       return;
     }
     const reader = new FileReader();
@@ -68,7 +77,12 @@ export function TypographyPanel({
         setMessage("字体内容为空，未保存");
         return;
       }
-      const font = createUserFont({ label: file.name.replace(/\.[^.]+$/, ""), src, format });
+      const existing = findExistingFont(userFonts, src);
+      if (existing) {
+        setMessage(`字体已在字体库中，复用「${existing.label}」`);
+        return;
+      }
+      const font = createUserFont({ label: file.name.replace(/\.[^.]+$/, ""), src, format: validation.format });
       onUploadFont?.(font);
       setMessage(`已上传字体：${font.label}`);
     };
@@ -96,7 +110,7 @@ export function TypographyPanel({
 
       <fieldset>
         <legend>字体库</legend>
-        <FileDropzone id="typography-font-upload" label="上传字体文件" hint="TTF / OTF / WOFF · 点击或拖拽" accept=".ttf,.otf,.woff,.woff2" icon={<Type size={16} aria-hidden />} onFile={handleFontUpload} />
+        <FileDropzone id="typography-font-upload" label="上传字体文件" hint={`TTF / OTF / WOFF · 单个不超过 ${formatFontBytes(MAX_USER_FONT_BYTES)} · 点击或拖拽`} accept=".ttf,.otf,.woff,.woff2" icon={<Type size={16} aria-hidden />} onFile={handleFontUpload} />
         {fonts.filter((font) => font.source === "user").map((font) => (
           <div key={font.id} className="asset-panel__font-row">
             <span className="asset-panel__font-preview" style={{ fontFamily: `\"${font.family}\"` }}>{font.label}</span>

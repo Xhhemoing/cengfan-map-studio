@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
+import { MAX_USER_FONT_BYTES } from "../lib/fonts";
 import { createProjectDocument } from "../lib/project-document";
 import { TypographyPanel } from "./TypographyPanel";
 
@@ -12,6 +13,28 @@ const userFont = {
   format: "truetype" as const,
   source: "user" as const,
 };
+
+function stubFileReader(result: string) {
+  class ImmediateFileReader {
+    result = result;
+    onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+    onerror: (() => void) | null = null;
+    readAsDataURL() { queueMicrotask(() => this.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>)); }
+  }
+  vi.stubGlobal("FileReader", ImmediateFileReader);
+}
+
+function uploadFontFile(container: HTMLElement, file: File) {
+  const input = container.querySelector("#typography-font-upload") as HTMLInputElement;
+  Object.defineProperty(input, "files", { configurable: true, value: [file] });
+  flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+}
+
+function fontFile(name: string, size: number) {
+  const file = new File(["x"], name, { type: "font/ttf" });
+  Object.defineProperty(file, "size", { configurable: true, value: size });
+  return file;
+}
 
 function setSelect(select: HTMLSelectElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
@@ -118,6 +141,75 @@ describe("TypographyPanel", () => {
     });
     expect(onPatch).toHaveBeenCalledWith({ type: "cards" }, { fieldTypography: { name: { fontSize: 18 } } });
     flushSync(() => root.unmount());
+  });
+
+  it("rejects a font file above the collaboration-safe ceiling before reading it", async () => {
+    stubFileReader("data:font/ttf;base64,QkJC");
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const onUploadFont = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <TypographyPanel project={project} provinces={["陕西省"]} userFonts={[]} onApplyFont={vi.fn()} onPatch={vi.fn()} onUploadFont={onUploadFont} />,
+    ));
+
+    expect(container.textContent).toContain("单个不超过 5MB");
+
+    uploadFontFile(container, fontFile("思源黑体.ttf", MAX_USER_FONT_BYTES + 1));
+
+    await vi.waitFor(() => {
+      expect(container.querySelector("[role=status]")?.textContent).toContain("超过 5MB 上限");
+    });
+    expect(onUploadFont).not.toHaveBeenCalled();
+
+    flushSync(() => root.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  it("reuses an existing font instead of storing the same bytes twice", async () => {
+    stubFileReader(userFont.src);
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const onUploadFont = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <TypographyPanel project={project} provinces={["陕西省"]} userFonts={[userFont]} onApplyFont={vi.fn()} onPatch={vi.fn()} onUploadFont={onUploadFont} />,
+    ));
+
+    uploadFontFile(container, fontFile("重复字体.ttf", 2048));
+
+    await vi.waitFor(() => {
+      expect(container.querySelector("[role=status]")?.textContent).toContain(`复用「${userFont.label}」`);
+    });
+    expect(onUploadFont).not.toHaveBeenCalled();
+
+    flushSync(() => root.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  it("stores a new font once it passes the size and duplicate checks", async () => {
+    stubFileReader("data:font/ttf;base64,Q0NDQw==");
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const onUploadFont = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <TypographyPanel project={project} provinces={["陕西省"]} userFonts={[userFont]} onApplyFont={vi.fn()} onPatch={vi.fn()} onUploadFont={onUploadFont} />,
+    ));
+
+    uploadFontFile(container, fontFile("新字体.otf", 3 * 1024 * 1024));
+
+    await vi.waitFor(() => {
+      expect(onUploadFont).toHaveBeenCalledWith(expect.objectContaining({
+        label: "新字体",
+        format: "opentype",
+        src: "data:font/ttf;base64,Q0NDQw==",
+      }));
+    });
+    expect(container.querySelector("[role=status]")?.textContent).toContain("已上传字体：新字体");
+
+    flushSync(() => root.unmount());
+    vi.unstubAllGlobals();
   });
 
   it("writes the global line-height multiplier to canvas settings", () => {

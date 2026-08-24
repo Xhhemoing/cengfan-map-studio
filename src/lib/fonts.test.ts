@@ -4,11 +4,22 @@ import {
   createUserFont,
   detectFontFormat,
   ensureUserFontsLoaded,
+  estimateFontBytes,
+  findExistingFont,
+  formatFontBytes,
+  LARGE_USER_FONT_BYTES,
   listFonts,
   loadUserFonts,
+  MAX_USER_FONT_BYTES,
   resolveFontFamily,
   saveUserFonts,
+  validateFontFile,
 } from "./fonts";
+
+/** Build a font data URL whose decoded payload is at least `bytes` long. */
+function fontDataUrlOfBytes(bytes: number, fill = "A", mime = "font/ttf"): string {
+  return `data:${mime};base64,${fill.repeat(Math.ceil(bytes / 3) * 4)}`;
+}
 
 describe("fonts library", () => {
   it("detects common font formats from file names", () => {
@@ -16,6 +27,47 @@ describe("fonts library", () => {
     expect(detectFontFormat("Title.OTF")).toBe("opentype");
     expect(detectFontFormat("body.woff2")).toBe("woff2");
     expect(detectFontFormat("notes.txt")).toBeNull();
+  });
+
+  it("accepts font files up to the collaboration-safe ceiling and rejects the rest", () => {
+    expect(validateFontFile({ name: "Hand.ttf", size: 1024 })).toEqual({
+      ok: true,
+      format: "truetype",
+      size: 1024,
+    });
+    expect(validateFontFile({ name: "Hand.ttf", size: MAX_USER_FONT_BYTES })).toMatchObject({ ok: true });
+    expect(validateFontFile({ name: "notes.txt", size: 1024 })).toEqual({
+      ok: false,
+      reason: "仅支持 TTF / OTF / WOFF 字体文件",
+    });
+    expect(validateFontFile({ name: "empty.ttf", size: 0 })).toMatchObject({ ok: false });
+
+    const oversized = validateFontFile({ name: "SourceHanSans.ttf", size: MAX_USER_FONT_BYTES + 1 });
+    expect(oversized.ok).toBe(false);
+    expect(oversized.ok === false && oversized.reason).toContain("超过 5MB 上限");
+  });
+
+  it("keeps the large-font warning threshold below the hard ceiling", () => {
+    expect(LARGE_USER_FONT_BYTES).toBeLessThan(MAX_USER_FONT_BYTES);
+    expect(validateFontFile({ name: "CJK.ttf", size: LARGE_USER_FONT_BYTES + 1 })).toMatchObject({ ok: true });
+  });
+
+  it("estimates decoded bytes from a data URL and formats them for humans", () => {
+    expect(estimateFontBytes("data:font/ttf;base64,AA==")).toBe(1);
+    expect(estimateFontBytes("data:font/ttf;base64,QUJD")).toBe(3);
+    expect(estimateFontBytes(fontDataUrlOfBytes(3 * 1024 * 1024))).toBeGreaterThanOrEqual(3 * 1024 * 1024);
+    expect(formatFontBytes(MAX_USER_FONT_BYTES)).toBe("5MB");
+    expect(formatFontBytes(2 * 1024 * 1024 + 512 * 1024)).toBe("2.5MB");
+    expect(formatFontBytes(64 * 1024)).toBe("64KB");
+  });
+
+  it("reuses the stored font when the same bytes arrive again under a different MIME type", () => {
+    const stored = createUserFont({ label: "手写体", src: "data:font/ttf;base64,QUJD", format: "truetype" });
+
+    expect(findExistingFont([stored], "data:application/octet-stream;base64,QUJD")).toBe(stored);
+    expect(findExistingFont([stored], "data:font/ttf;base64,QUJE")).toBeUndefined();
+    expect(findExistingFont([stored], "")).toBeUndefined();
+    expect(findExistingFont([], "data:font/ttf;base64,QUJD")).toBeUndefined();
   });
 
   it("persists user fonts and resolves families for built-in and custom fonts", () => {

@@ -1,5 +1,11 @@
 import type { UserAsset } from "./assets";
-import type { UserFont } from "./fonts";
+import {
+  estimateFontBytes,
+  findExistingFont,
+  formatFontBytes,
+  MAX_USER_FONT_BYTES,
+  type UserFont,
+} from "./fonts";
 
 export const RESOURCE_PACK_VERSION = 1 as const;
 
@@ -15,6 +21,8 @@ export interface ParsedResourcePack {
   pack: ResourcePack;
   assetCount: number;
   fontCount: number;
+  /** Fonts dropped because they exceed the collaboration-safe size ceiling. */
+  skippedFontCount: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -118,13 +126,23 @@ export function parseResourcePack(raw: string, options: { allowEmpty?: boolean }
     assetsByContent.set(contentKey, asset);
   }
   const fontIds = new Set<string>();
-  const fonts = normalizedFonts.filter((font) => {
-    if (fontIds.has(font.id)) return false;
+  const fonts: UserFont[] = [];
+  let skippedFontCount = 0;
+  for (const font of normalizedFonts) {
+    if (fontIds.has(font.id)) continue;
     fontIds.add(font.id);
-    return true;
-  });
+    if (estimateFontBytes(font.src) > MAX_USER_FONT_BYTES) {
+      skippedFontCount += 1;
+      continue;
+    }
+    // Same bytes under a different id would ship the payload twice through collaboration.
+    if (findExistingFont(fonts, font.src)) continue;
+    fonts.push(font);
+  }
   if (!options.allowEmpty && assets.length === 0 && fonts.length === 0) {
-    throw new Error("资源包中没有可用的素材或字体");
+    throw new Error(skippedFontCount > 0
+      ? `资源包中的字体超过 ${formatFontBytes(MAX_USER_FONT_BYTES)} 上限，未导入`
+      : "资源包中没有可用的素材或字体");
   }
   const pack = createResourcePack({
     assets,
@@ -132,20 +150,28 @@ export function parseResourcePack(raw: string, options: { allowEmpty?: boolean }
     now: validDate(parsed.exportedAt),
   });
   if (validDate(parsed.exportedAt)) pack.exportedAt = parsed.exportedAt as string;
-  return { pack, assetCount: assets.length, fontCount: fonts.length };
+  return { pack, assetCount: assets.length, fontCount: fonts.length, skippedFontCount };
 }
 
 export function mergeResourcePack(input: {
   existingAssets: UserAsset[];
   existingFonts: UserFont[];
   incoming: ResourcePack;
-}): { assets: UserAsset[]; fonts: UserFont[]; addedAssets: number; addedFonts: number } {
+}): {
+  assets: UserAsset[];
+  fonts: UserFont[];
+  addedAssets: number;
+  addedFonts: number;
+  /** Incoming fonts rejected by the size ceiling; duplicates are not counted here. */
+  skippedFonts: number;
+} {
   const assetIds = new Set(input.existingAssets.map((asset) => asset.id));
   const fontIds = new Set(input.existingFonts.map((font) => font.id));
   const nextAssets = [...input.existingAssets];
   const nextFonts = [...input.existingFonts];
   let addedAssets = 0;
   let addedFonts = 0;
+  let skippedFonts = 0;
 
   for (const asset of input.incoming.assets) {
     if (assetIds.has(asset.id)) continue;
@@ -155,12 +181,18 @@ export function mergeResourcePack(input: {
   }
   for (const font of input.incoming.fonts) {
     if (fontIds.has(font.id)) continue;
+    if (estimateFontBytes(font.src) > MAX_USER_FONT_BYTES) {
+      skippedFonts += 1;
+      continue;
+    }
+    // A font already stored under another id keeps that id, so references stay on one copy.
+    if (findExistingFont(nextFonts, font.src)) continue;
     nextFonts.push(font);
     fontIds.add(font.id);
     addedFonts += 1;
   }
 
-  return { assets: nextAssets, fonts: nextFonts, addedAssets, addedFonts };
+  return { assets: nextAssets, fonts: nextFonts, addedAssets, addedFonts, skippedFonts };
 }
 
 export function downloadResourcePack(pack: ResourcePack, filename = `cengfan-resource-pack-${pack.exportedAt.slice(0, 10)}.json`): void {

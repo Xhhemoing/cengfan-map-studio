@@ -76,9 +76,79 @@ const FORMAT_BY_EXTENSION: Record<string, FontFormat> = {
   woff2: "woff2",
 };
 
+/**
+ * Hard ceiling for one uploaded font file. A font is stored as a base64 data URL (~4/3 of the
+ * file) and travels inside a single collaboration transaction, which the server caps at 8MiB,
+ * so anything past this size makes incremental sync fail permanently instead of degrading.
+ */
+export const MAX_USER_FONT_BYTES = 5 * 1024 * 1024;
+
+/** Fonts at or above this size still upload, but resource health flags the sync cost. */
+export const LARGE_USER_FONT_BYTES = 2 * 1024 * 1024;
+
 export function detectFontFormat(fileName: string): FontFormat | null {
   const extension = fileName.toLowerCase().split(".").pop() ?? "";
   return FORMAT_BY_EXTENSION[extension] ?? null;
+}
+
+export function formatFontBytes(bytes: number): string {
+  const mib = 1024 * 1024;
+  if (bytes >= mib) {
+    const value = bytes / mib;
+    return `${Number.isInteger(value) ? value : value.toFixed(1)}MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
+const BASE64_MARKER = ";base64,";
+
+function base64PayloadStart(src: string): number {
+  const marker = src.indexOf(BASE64_MARKER);
+  return marker === -1 ? 0 : marker + BASE64_MARKER.length;
+}
+
+/** Decoded byte length of a font data URL, computed from the payload length so no bytes are copied. */
+export function estimateFontBytes(src: string): number {
+  const start = base64PayloadStart(src);
+  if (start === 0) return src.length;
+  const payloadLength = src.length - start;
+  const padding = src.endsWith("==") ? 2 : src.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(payloadLength / 4) * 3 - padding);
+}
+
+/** Compare the encoded payloads directly so the same file uploaded under a different MIME type still matches. */
+function sameFontBytes(left: string, right: string): boolean {
+  const leftStart = base64PayloadStart(left);
+  const rightStart = base64PayloadStart(right);
+  const length = left.length - leftStart;
+  if (length !== right.length - rightStart) return false;
+  for (let index = 0; index < length; index += 1) {
+    if (left.charCodeAt(leftStart + index) !== right.charCodeAt(rightStart + index)) return false;
+  }
+  return true;
+}
+
+/** Locate an already stored font with identical bytes so re-uploads reuse its id instead of duplicating megabytes. */
+export function findExistingFont(fonts: readonly UserFont[], src: string): UserFont | undefined {
+  if (!src) return undefined;
+  return fonts.find((font) => sameFontBytes(font.src, src));
+}
+
+export type FontFileValidation =
+  | { ok: true; format: FontFormat; size: number }
+  | { ok: false; reason: string };
+
+export function validateFontFile(file: { name: string; size: number }): FontFileValidation {
+  const format = detectFontFormat(file.name);
+  if (!format) return { ok: false, reason: "仅支持 TTF / OTF / WOFF 字体文件" };
+  if (file.size <= 0) return { ok: false, reason: "字体内容为空，未保存" };
+  if (file.size > MAX_USER_FONT_BYTES) {
+    return {
+      ok: false,
+      reason: `字体文件 ${formatFontBytes(file.size)} 超过 ${formatFontBytes(MAX_USER_FONT_BYTES)} 上限，超出后协作同步会失败，请压缩或裁剪字符集`,
+    };
+  }
+  return { ok: true, format, size: file.size };
 }
 
 export function createUserFont(input: {

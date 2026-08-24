@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createUserAsset } from "./assets";
-import { createUserFont } from "./fonts";
+import { createUserFont, LARGE_USER_FONT_BYTES, MAX_USER_FONT_BYTES } from "./fonts";
 import { createProjectDocument } from "./project-document";
 import { createDefaultDisplayFrame } from "./display-frame";
 import { listResourceHealthIssues } from "./resource-health";
+
+/** Build a font data URL whose decoded payload is at least `bytes` long. */
+function fontDataUrlOfBytes(bytes: number, fill = "A"): string {
+  return `data:font/ttf;base64,${fill.repeat(Math.ceil(bytes / 3) * 4)}`;
+}
 
 const projectWithResources = () => {
   const project = createProjectDocument({
@@ -92,5 +97,34 @@ describe("resource health", () => {
     project.textElements = project.textElements.map((text) => ({ ...text, fontId: font.id }));
 
     expect(listResourceHealthIssues(project, [asset], [font])).toEqual([]);
+  });
+
+  it("warns about large fonts and blocks fonts past the collaboration ceiling", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const large = createUserFont({ label: "思源黑体", src: fontDataUrlOfBytes(LARGE_USER_FONT_BYTES), format: "truetype" });
+    const oversized = createUserFont({ label: "全字库宋体", src: fontDataUrlOfBytes(MAX_USER_FONT_BYTES + 3, "B"), format: "truetype" });
+    const small = createUserFont({ label: "小字体", src: "data:font/ttf;base64,QUJD", format: "truetype" });
+
+    const issues = listResourceHealthIssues(project, [], [large, oversized, small]);
+
+    expect(issues).toEqual([
+      expect.objectContaining({ kind: "font", target: `font:${large.id}`, severity: "warning" }),
+      expect.objectContaining({ kind: "font", target: `font:${oversized.id}`, severity: "error" }),
+    ]);
+    expect(issues[0]?.detail).toContain("裁剪字符集");
+    expect(issues[1]?.detail).toContain("协作同步会失败");
+  });
+
+  it("warns when the font library holds two copies of the same bytes", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const original = createUserFont({ label: "手写体", src: "data:font/ttf;base64,QUJD", format: "truetype" });
+    const copy = createUserFont({ label: "手写体副本", src: "data:application/octet-stream;base64,QUJD", format: "truetype" });
+
+    const issues = listResourceHealthIssues(project, [], [original, copy]);
+
+    expect(issues).toEqual([
+      expect.objectContaining({ target: `font:${copy.id}`, severity: "warning" }),
+    ]);
+    expect(issues[0]?.detail).toContain("内容重复");
   });
 });

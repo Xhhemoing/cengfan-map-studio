@@ -1,5 +1,13 @@
 import { listSystemAssets, type UserAsset } from "./assets";
-import { BUILT_IN_FONTS, type UserFont } from "./fonts";
+import {
+  BUILT_IN_FONTS,
+  estimateFontBytes,
+  findExistingFont,
+  formatFontBytes,
+  LARGE_USER_FONT_BYTES,
+  MAX_USER_FONT_BYTES,
+  type UserFont,
+} from "./fonts";
 import type { ProjectDocument } from "./project-document";
 import type { DisplayFrameDefinition } from "./display-frame";
 
@@ -64,6 +72,43 @@ function addMissingFont(
     detail: `${label}字体缺失（${fontId}）`,
     severity: "error",
   });
+}
+
+/**
+ * Uploaded fonts ride along in every workspace/collaboration payload, so oversized or duplicated
+ * entries are reported even when no element references them yet.
+ */
+function addFontLibraryIssues(issues: ResourceHealthIssue[], fonts: readonly UserFont[]): void {
+  const seen: UserFont[] = [];
+  for (const font of fonts) {
+    const duplicate = findExistingFont(seen, font.src);
+    seen.push(font);
+    if (duplicate) {
+      issues.push({
+        kind: "font",
+        target: `font:${font.id}`,
+        detail: `字体 ${font.label} 与 ${duplicate.label} 内容重复，建议删除其一`,
+        severity: "warning",
+      });
+      continue;
+    }
+    const bytes = estimateFontBytes(font.src);
+    if (bytes > MAX_USER_FONT_BYTES) {
+      issues.push({
+        kind: "font",
+        target: `font:${font.id}`,
+        detail: `字体 ${font.label} 约 ${formatFontBytes(bytes)}，超过 ${formatFontBytes(MAX_USER_FONT_BYTES)} 上限，协作同步会失败`,
+        severity: "error",
+      });
+    } else if (bytes >= LARGE_USER_FONT_BYTES) {
+      issues.push({
+        kind: "font",
+        target: `font:${font.id}`,
+        detail: `字体 ${font.label} 约 ${formatFontBytes(bytes)}，会拖慢协作同步与导出，建议裁剪字符集`,
+        severity: "warning",
+      });
+    }
+  }
 }
 
 function displayFrameFontReferences(frame: DisplayFrameDefinition | undefined): Array<{ target: string; fontId?: string; label: string }> {
@@ -135,6 +180,7 @@ export function listResourceHealthIssues(
   for (const reference of displayFrameFontReferences(project.cards.displayFrame)) {
     addMissingFont(issues, reference.target, reference.fontId, reference.label, userFonts);
   }
+  addFontLibraryIssues(issues, userFonts);
 
   return issues;
 }
