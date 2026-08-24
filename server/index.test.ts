@@ -1194,6 +1194,15 @@ describe("unified application server", () => {
     });
     expect(heartbeatOnClosed.status).toBe(409);
     await expect(heartbeatOnClosed.json()).resolves.toMatchObject({ error: { code: "ROOM_CLOSED" } });
+
+    // 关闭后离开与心跳同码:沿用 sendRoomError 里 ROOM_CLOSED → 409 的既有映射。
+    const leaveOnClosed = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "client-a" }),
+    });
+    expect(leaveOnClosed.status).toBe(409);
+    await expect(leaveOnClosed.json()).resolves.toMatchObject({ error: { code: "ROOM_CLOSED" } });
   });
 
   it("lets only the owner change access; readonly blocks writes and close blocks joins", async () => {

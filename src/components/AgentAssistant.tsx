@@ -171,6 +171,8 @@ type AssistantConversationState = {
   // 过期判定也必须跨卸载存活，否则重新挂载后代次归零会把仍然有效的结果误判为过期。
   projectGenerationRef: MutableRefObject<number>;
   latestProjectDigestRef: MutableRefObject<string | null>;
+  latestProjectRef: MutableRefObject<ProjectDocument | null>;
+  observeProject: (project: ProjectDocument, digest: string) => void;
 };
 
 const AssistantConversationContext = createContext<AssistantConversationState | null>(null);
@@ -186,6 +188,20 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
   const providerMountedRef = useRef(true);
   const projectGenerationRef = useRef(0);
   const latestProjectDigestRef = useRef<string | null>(null);
+  const latestProjectRef = useRef<ProjectDocument | null>(null);
+  /**
+   * 当前工程的登记入口，由 useAssistantProjectSync 在渲染阶段调用。
+   * 记账放在 Provider 而不是 AgentAssistant：关抽屉会卸载助手，指纹若停在卸载那一刻，
+   * 会话跑完时 isCurrentRun() 仍判"当前"，就会把旧快照上算出的 transaction 盖到已编辑的工程上。
+   */
+  const observeProject = (nextProject: ProjectDocument, digest: string) => {
+    latestProjectRef.current = nextProject;
+    const previous = latestProjectDigestRef.current;
+    if (previous === digest) return;
+    latestProjectDigestRef.current = digest;
+    // 首次登记只是建立基线，不算"工程变了"。
+    if (previous !== null) projectGenerationRef.current += 1;
+  };
   useEffect(() => {
     providerMountedRef.current = true;
     return () => {
@@ -207,7 +223,36 @@ export function AssistantConversationProvider({ children }: { children: ReactNod
     }
     setHydrated(true);
   };
-  return <AssistantConversationContext.Provider value={{ mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef }}>{children}</AssistantConversationContext.Provider>;
+  return <AssistantConversationContext.Provider value={{ mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef, latestProjectRef, observeProject }}>{children}</AssistantConversationContext.Provider>;
+}
+
+/**
+ * 把当前工程登记进 Provider，并在工程变化时中止仍在跑的会话，返回当前工程指纹。
+ * 编辑器（StudioApp）与 AgentAssistant 都调用它：助手随抽屉关闭卸载后由前者接力，
+ * 指纹与代次因此不会停在卸载那一刻。渲染阶段登记（而不是只在 effect 里）是为了让指纹
+ * 先于任何异步回写可见；同一份工程重复登记是幂等的，StrictMode 双渲染不会多记一代。
+ *
+ * 回滚：删掉本 hook、Provider 的 observeProject/latestProjectRef 与 App.tsx 里的调用，
+ * 把指纹赋值与代次自增搬回 AgentAssistant 的 digest 看门狗即可；
+ * 但这样会回到"关抽屉→改工程→会话完成→旧预览盖掉新工程"的 bug。
+ */
+export function useAssistantProjectSync(project: ProjectDocument): string {
+  const state = useContext(AssistantConversationContext);
+  if (!state) throw new Error("useAssistantProjectSync must be called inside AssistantConversationProvider");
+  const { observeProject, activeRunRef } = state;
+  const digest = useMemo(() => digestFor(project), [project]);
+  observeProject(project, digest);
+  const cancelledDigestRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (cancelledDigestRef.current === null || cancelledDigestRef.current === digest) {
+      cancelledDigestRef.current = digest;
+      return;
+    }
+    cancelledDigestRef.current = digest;
+    // 工程已变：进行中的会话结果注定过期，早点中止省掉后续模型往返。
+    activeRunRef.current?.cancel();
+  }, [activeRunRef, digest]);
+  return digest;
 }
 
 export function AgentAssistant({
@@ -225,7 +270,7 @@ export function AgentAssistant({
 }) {
   const state = useContext(AssistantConversationContext);
   if (!state) throw new Error("AgentAssistant must be rendered inside AssistantConversationProvider");
-  const { mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef } = state;
+  const { mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate, activeRunRef, activeRunIdRef, providerMountedRef, projectGenerationRef, latestProjectDigestRef, latestProjectRef } = state;
   const [message, setMessage] = useState("");
   const mountedRef = useRef(false);
   const hasMountedRef = useRef(false);
@@ -233,8 +278,8 @@ export function AgentAssistant({
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const active = conversations.find((conversation) => conversation.id === activeId) ?? null;
-  const currentProjectDigest = useMemo(() => digestFor(project), [project]);
-  latestProjectDigestRef.current = currentProjectDigest;
+  // 助手挂载时也走同一条登记路径；卸载后由编辑器里的调用接力，两边幂等。
+  const currentProjectDigest = useAssistantProjectSync(project);
   const projectIsCurrent = active === null || active.projectDigest === currentProjectDigest;
   const pendingCount = useMemo(() => conversations.filter((conversation) =>
     conversation.projectDigest === currentProjectDigest && conversation.status === "completed" && conversation.selectedStepIds.length > 0,
@@ -263,8 +308,7 @@ export function AgentAssistant({
     if (projectDigestRef.current === null) {
       projectDigestRef.current = currentDigest;
     } else if (projectDigestRef.current !== currentDigest) {
-      projectGenerationRef.current += 1;
-      activeRunRef.current?.cancel();
+      // 代次自增与中止会话都归 useAssistantProjectSync：那条路径在助手卸载后仍然生效。
       projectDigestRef.current = currentDigest;
       setConversations((current) => current.map((conversation) => {
         if (conversation.projectDigest === currentDigest) return conversation;
@@ -315,7 +359,7 @@ export function AgentAssistant({
         persistTimerRef.current = null;
       }
     };
-  }, [activeId, activeRunRef, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, projectGenerationRef, setConversations]);
+  }, [activeId, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, setConversations]);
 
   useEffect(() => () => {
     if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);
@@ -368,8 +412,30 @@ export function AgentAssistant({
     const request = message.trim();
     const runProjectDigest = currentProjectDigest;
     const runProjectGeneration = projectGenerationRef.current;
-    const isCurrentRun = () => providerMountedRef.current && activeRunIdRef.current === active.id &&
+    // 回写归属：Provider 仍在，且这一路仍是该对话的当前会话。助手自己卸载不改变归属。
+    const runOwnsConversation = () => providerMountedRef.current && activeRunIdRef.current === active.id;
+    // "当前"取 Provider 记的最新工程指纹，而不是助手最后一次渲染时的那一份。
+    const isCurrentRun = () => runOwnsConversation() &&
       latestProjectDigestRef.current === runProjectDigest && projectGenerationRef.current === runProjectGeneration;
+    /**
+     * 会话跑完时工程已经变了：这次回执是在旧快照上算出来的，落地会覆盖用户新改的内容。
+     * 与 digest 看门狗同样处理——归 draft、清掉可应用步骤、只把文本历史 rebase 到当前工程。
+     * 不这样标记的话，关抽屉期间改工程会让对话永远停在 running。
+     */
+    const dropStaleRun = () => {
+      if (!runOwnsConversation()) return;
+      const currentProject = latestProjectRef.current ?? project;
+      updateConversation(active.id, (conversation) => ({
+        ...conversation,
+        session: rebaseTextSession(currentProject, assets, conversation),
+        status: conversation.status === "running" || conversation.status === "completed" ? "draft" : conversation.status,
+        steps: [],
+        selectedStepIds: [],
+        progress: "",
+        projectDigest: latestProjectDigestRef.current ?? conversation.projectDigest,
+      }));
+      onPreview?.(null);
+    };
     const progress = ({ round, name, status }: { round: number; name: string; status: "running" | "done" | "rejected" }) => {
       if (isCurrentRun()) updateConversation(active.id, (conversation) => ({
         ...conversation,
@@ -401,7 +467,10 @@ export function AgentAssistant({
     try {
       const sessionWithProgress = session;
       const outcome = await (isFresh ? sessionWithProgress.run(request) : sessionWithProgress.continue(request));
-      if (!isCurrentRun()) return;
+      if (!isCurrentRun()) {
+        dropStaleRun();
+        return;
+      }
       const preview = sessionWithProgress.landingPreview();
       const validWrites = preview.steps.filter((step) => !READ_ONLY.has(step.name) && step.result.ok);
       try {
@@ -447,6 +516,7 @@ export function AgentAssistant({
       }
     } catch (cause) {
       if (isCurrentRun()) updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", error: cause instanceof Error ? cause.message : "AI 会话失败" }));
+      else dropStaleRun();
     } finally {
       if (activeRunIdRef.current === active.id && projectGenerationRef.current === runProjectGeneration) {
         activeRunRef.current = null;

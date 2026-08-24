@@ -445,13 +445,16 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
    * - 自离:只从成员列表移除,保留 accessRecords 中的 token,沿用“凭已保存的访问凭证可重进”的现有语义;
    * - 房主踢人:同时撤销被踢者的全部 token,否则 authorize 仍会放行其读写,
    *   并且被踢者的 refreshMember 心跳会把自己重新加回成员列表。
-   * 回滚:删除下面的 revokeParticipantAccess 调用即可恢复“只删成员、不撤凭证”的旧行为。
+   * 房间关闭后成员名单已经冻结,自离与踢人都按 refreshMember 的同一口径拒绝。
+   * 回滚:删除下面的 revokeParticipantAccess 调用即可恢复“只删成员、不撤凭证”的旧行为;
+   * 删除 room.closed 检查即可恢复“关闭房间仍可离开/踢人”的旧行为。
    */
   const leave = (id: string, accessToken: string, clientId: string): { id: string; version: number; members: RoomMember[] } => {
     const participant = authorize(id, accessToken, "read");
     const key = id.toUpperCase();
     const room = rooms.get(key);
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
+    if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
     const leavingClientId = clientId || participant.id;
     if (leavingClientId !== participant.id && participant.role !== "owner") {
       throw new CollaborationError("ROOM_FORBIDDEN", "只有房间创建者可以移除其他成员");

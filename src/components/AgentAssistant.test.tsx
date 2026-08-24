@@ -2,11 +2,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { StrictMode, act } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { AgentAssistant, AssistantConversationProvider } from "./AgentAssistant";
+import { AgentAssistant, AssistantConversationProvider, useAssistantProjectSync } from "./AgentAssistant";
 import { AgentSession } from "../lib/agent-session";
 import { createProjectDocument } from "../lib/project-document";
 import { loadAssistantConversationState } from "../lib/agent-conversation-store";
-import type { ProjectTransaction } from "../lib/project-document";
+import type { ProjectDocument, ProjectTransaction } from "../lib/project-document";
+
+// StudioApp 里那层登记器的最小替身：只把当前工程报给 Provider，不渲染界面。
+function ProjectSync({ project }: { project: ProjectDocument }) {
+  useAssistantProjectSync(project);
+  return null;
+}
 
 // 停靠助手在挂载副作用里补出首条草稿对话；交互前先把副作用刷干净，
 // 否则点击句柄仍持有 active=null 的旧闭包。
@@ -621,6 +627,53 @@ describe("AgentAssistant", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("关抽屉后仍然完成"));
     expect(container.querySelector('[aria-label="取消 AI 会话"]')).toBeNull();
     expect(onCommit).not.toHaveBeenCalled();
+    root.unmount();
+  });
+
+  it("drops a run that lands after the project changed while the assistant was unmounted", async () => {
+    const original = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const changed = { ...original, map: { ...original.map, width: original.map.width + 1 } };
+    let release!: (value: ReturnType<typeof response>) => void;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "stale-preview", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: "旧快照方案" } }))
+      // 中止不影响这一次回执：模拟服务端已经算完、结果正在路上的竞态。
+      .mockImplementationOnce(() => new Promise<ReturnType<typeof response>>((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", fetchMock);
+    const onCommit = vi.fn();
+    const onPreview = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    // 抽屉只挂载/卸载助手；登记器与 Provider 一样常驻，对应 StudioApp 那一层。
+    const renderTree = (project: ProjectDocument, assistantOpen: boolean) => flushSync(() => root.render(
+      <AssistantConversationProvider>
+        <ProjectSync project={project} />
+        {assistantOpen ? <AgentAssistant project={project} assets={[]} onCommit={onCommit} onPreview={onPreview} /> : null}
+      </AssistantConversationProvider>,
+    ));
+    renderTree(original, true);
+    await settle();
+    setMessage(container, "关抽屉后工程还会改");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    renderTree(original, false);
+    renderTree(changed, false);
+    release(response({ kind: "finish", summary: "旧工程上的结论" }));
+    await settle();
+
+    expect(onPreview).not.toHaveBeenCalledWith(expect.objectContaining({ map: expect.objectContaining({ scale: 0.9 }) }));
+    expect(onCommit).not.toHaveBeenCalled();
+
+    // 重开抽屉：会话被判过期归 draft，既不留可应用步骤，也不会卡在 running。
+    renderTree(changed, true);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="描述 AI 修改需求"]')).not.toBeNull());
+    expect(container.querySelectorAll('.agent-assistant--docked input[type="checkbox"]')).toHaveLength(0);
+    expect(container.querySelector('[aria-label="取消 AI 会话"]')).toBeNull();
+    expect(container.querySelector('[aria-label="确认应用"]')).toBeNull();
+    expect(container.textContent).not.toContain("旧工程上的结论");
+    // draft 才会显示"开始规划"；"继续对话"意味着它还被当成已完成的可续聊会话。
+    expect(container.textContent).toContain("开始规划");
+    expect(container.textContent).not.toContain("继续对话");
     root.unmount();
   });
 

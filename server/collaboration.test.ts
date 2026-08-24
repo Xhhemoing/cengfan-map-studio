@@ -159,6 +159,12 @@ describe("collaboration room store", () => {
     expect(() => store.refreshMember("ACC01", editor.access.accessToken, "editor")).toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
     expect(() => store.setAccess("ACC01", owner.access.accessToken, "owner", "set-readonly")).toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
 
+    // 关闭后成员名单冻结:自离与房主踢人都与心跳同码拒绝,名单保持不变。
+    expect(() => store.leave("ACC01", editor.access.accessToken, "editor")).toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
+    expect(() => store.leave("ACC01", owner.access.accessToken, "editor")).toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
+    expect(store.get("ACC01")!.members.map((member) => member.clientId)).toEqual(["owner", "editor"]);
+    expect(store.authorize("ACC01", editor.access.accessToken, "read")).toMatchObject({ id: "editor" });
+
     const lateInvite = store.createInvitation("ACC01", owner.access.accessToken, "viewer");
     expect(() => store.join("ACC01", { inviteToken: lateInvite.token, clientId: "late", displayName: "迟到" }))
       .toThrowError(expect.objectContaining({ code: "ROOM_CLOSED" }));
@@ -228,13 +234,16 @@ describe("collaboration room store", () => {
     store.setAccess("EVT01", owner.access.accessToken, "owner", "set-readonly");
     expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "access", room: expect.objectContaining({ readonly: true }) }));
 
-    store.setAccess("EVT01", owner.access.accessToken, "owner", "close");
-    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "closed", room: expect.objectContaining({ closed: true }) }));
-
+    // 退订后的静默校验必须在关闭之前做:房间一旦关闭,leave 会与心跳一样被拒绝,不再产生事件。
+    const before = listener.mock.calls.length;
     unsubscribe();
     store.leave("EVT01", owner.access.accessToken, "owner");
-    const before = listener.mock.calls.length;
     expect(listener.mock.calls.length).toBe(before);
+
+    const reopened = vi.fn();
+    store.subscribeLifecycle("EVT01", owner.access.accessToken, reopened);
+    store.setAccess("EVT01", owner.access.accessToken, "owner", "close");
+    expect(reopened).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "closed", room: expect.objectContaining({ closed: true }) }));
   });
 
   it("permits an invited editor to update a room and rejects a viewer write", () => {

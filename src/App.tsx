@@ -43,7 +43,7 @@ import {
 import { createId } from "./lib/ids";
 import { editorProjectStore } from "./lib/editor-project-store";
 
-import { AssistantConversationProvider } from "./components/AgentAssistant";
+import { AssistantConversationProvider, useAssistantProjectSync } from "./components/AgentAssistant";
 import { ProjectMenu } from "./components/ProjectMenu";
 import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayoutTemplate";
@@ -183,6 +183,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [browserStores] = useState(() => createBrowserWorkspaceStores());
   const [initialWorkspace] = useState(() => loadBrowserWorkspaceMirror(browserStores.mirror));
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
+  // AI 助手会随抽屉关闭卸载，工程指纹必须由编辑器这一层持续登记给 Provider，
+  // 否则进行中的会话跑完后会拿关抽屉那一刻的旧工程判"当前"，把旧预览盖到已编辑的工程上。
+  useAssistantProjectSync(project);
   const [agentPreview, setAgentPreview] = useState<ProjectDocument | null>(null);
   const [workspaceSession] = useState(() => typeof window === "undefined"
     ? loadWorkspaceSession(null)
