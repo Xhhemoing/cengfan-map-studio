@@ -8,7 +8,7 @@
 
 | 轮次 | 主题 | 状态 |
 |------|------|------|
-| Round 1 | 初始调研与基线探索 | in_progress |
+| Round 1 | 初始调研与基线探索 | completed |
 | Round 2 | 靶向深化与优先级收敛 | pending |
 | Round 3 | SOTA 打磨与可合入落地 | pending |
 
@@ -25,6 +25,6 @@
 
 ## 结论简报
 
-- Round 1：待汇总
+- Round 1：见 `ROUND1-BRIEF.md`（文档层完整、产品层无钩子；Round 3 候选 A–H）
 - Round 2：待汇总
 - Round 3：待汇总
