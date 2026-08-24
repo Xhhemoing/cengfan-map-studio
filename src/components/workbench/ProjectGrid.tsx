@@ -1,19 +1,26 @@
 import { MapPinned } from "lucide-react";
-import type { StoredProject } from "../../lib/project-store";
+import type { ProjectListItem } from "../../lib/project-store";
 import { ProjectCard } from "./ProjectCard";
 
+/**
+ * 列表页只有元数据视图:`store.list()` 不加载工程包本体,卡片需要的字段
+ * (名称、更新时间、学生数)都在 `ProjectListItem` 里。用完整的 `StoredProject`
+ * 声明属性会逼调用方伪造工程包,所以这里按元数据形状收窄。
+ */
+export type ProjectGridItem = Pick<ProjectListItem, "id" | "name" | "updatedAt" | "pack">;
+
 export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete }: {
-  projects: StoredProject[];
+  projects: ProjectGridItem[];
   loading: boolean;
   hasError: boolean;
   openMenuId: string | null;
   formatUpdatedAt: (value: string) => string;
   onOpen: (id: string) => void;
   onToggleMenu: (id: string) => void;
-  onRename: (project: StoredProject) => void;
-  onDuplicate: (project: StoredProject) => void;
-  onExport: (project: StoredProject) => void;
-  onDelete: (project: StoredProject) => void;
+  onRename: (project: ProjectGridItem) => void;
+  onDuplicate: (project: ProjectGridItem) => void;
+  onExport: (project: ProjectGridItem) => void;
+  onDelete: (project: ProjectGridItem) => void;
 }) {
   return <section className="workbench-grid" aria-label="项目列表">
     {loading && projects.length === 0 ? (

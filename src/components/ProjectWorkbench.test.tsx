@@ -48,6 +48,16 @@ describe("ProjectWorkbench", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("示例：2026届毕业去向"));
   });
 
+  it("renders card counts from the list metadata without fetching packs", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const getSpy = vi.spyOn(store, "get");
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector(".workbench-card-count")).not.toBeNull());
+    expect(container.querySelector(".workbench-card-count")?.textContent).toBe("12");
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+
   it("navigates to the editor when a card is opened", async () => {
     const store = createMemoryProjectStore();
     const sample = createSampleProject();
@@ -149,6 +159,23 @@ describe("ProjectWorkbench", () => {
       expect(projects).toHaveLength(2);
       expect(projects.some((p) => p.name === "project")).toBe(true);
     });
+  });
+
+  it("rejects an oversized package by File.size without reading its text", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const file = new File(["{}"], "huge.json", { type: "application/json" });
+    Object.defineProperty(file, "size", { value: 256 * 1024 * 1024, configurable: true });
+    const readSpy = vi.spyOn(file, "text");
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('input[type="file"]')).not.toBeNull());
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    Object.defineProperty(input!, "files", { value: [file] as unknown as FileList, configurable: true });
+    input!.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("工程包过大"));
+    expect(container.querySelector(".workbench-error")?.textContent).toContain("128.0 MB");
+    expect(readSpy).not.toHaveBeenCalled();
+    expect(await store.list()).toHaveLength(1);
   });
 
   it("keeps a project when deletion is cancelled", async () => {

@@ -12,7 +12,7 @@
 import { useRef, useState, type RefObject } from "react";
 import { downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
-import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
+import { assertProjectPackageSize, createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
 import type { CustomTemplateRecord } from "./template-store";
 import type { UserAsset } from "./assets";
 import type { ProjectDocument } from "./project-document";
@@ -121,6 +121,13 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
 
   const importProjectPackage = (file: File | null) => {
     if (!file) return;
+    try {
+      // 先用 File.size 挡掉超限工程包：readAsText 会把整份文本读进内存。
+      assertProjectPackageSize(file.size);
+    } catch (error) {
+      reportStatus(error instanceof Error ? error.message : "工程包导入失败");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       try {
