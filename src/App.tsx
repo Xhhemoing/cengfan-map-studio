@@ -23,7 +23,6 @@ import { createNoteElement, createTextElement } from "./lib/canvas-data";
 import {
   loadInitialProject,
   loadBrowserValue,
-  WorkbenchBackButton,
 } from "./lib/app-initialization";
 import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
 import {
@@ -95,6 +94,7 @@ import {
 
 import { AssistantConversationProvider } from "./components/AgentAssistant";
 import { ProjectMenu } from "./components/ProjectMenu";
+import { WorkbenchBackButton } from "./components/WorkbenchBackButton";
 import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayoutTemplate";
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
