@@ -1185,10 +1185,11 @@ describe("PosterCanvas", () => {
     const root = createRoot(container);
     flushSync(() => root.render(<PosterCanvas project={project} onSelect={onSelect} />));
 
-    const svg = container.querySelector("svg")!;
+    // 真实点击空白处命中的是铺满画布的背景 rect,不是 svg 根节点,只对根派发会掩盖背景层抢事件的回归。
+    const background = container.querySelector("[data-canvas-background]")!;
     const map = container.querySelector("[data-map-frame]")!;
     const cards = container.querySelector("[data-cards-layer]")!;
-    flushSync(() => svg.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    flushSync(() => background.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     flushSync(() => map.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     flushSync(() => cards.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onSelect).toHaveBeenCalledWith({ type: "canvas" });
@@ -1198,6 +1199,49 @@ describe("PosterCanvas", () => {
     flushSync(() => root.render(<PosterCanvas project={project} exportMode onSelect={onSelect} />));
     expect(container.querySelector("[data-map-selection-overlay]")).toBeNull();
     expect(container.querySelector("[data-selection-overlay]")).toBeNull();
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("selects the canvas from blank hits on the background layers instead of letting them swallow the click", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.canvas = { ...project.canvas, backgroundImageSrc: "data:image/png;base64,bg" };
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onSelect={onSelect} />));
+
+    const background = container.querySelector("[data-canvas-background]")!;
+    const backgroundImage = container.querySelector("[data-background-image]")!;
+    // 背景层不参与命中测试,浏览器里点击直接穿透到 svg 根。
+    expect(background.getAttribute("pointer-events")).toBe("none");
+    expect(backgroundImage.getAttribute("pointer-events")).toBe("none");
+
+    flushSync(() => backgroundImage.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onSelect).toHaveBeenCalledWith({ type: "canvas" });
+
+    onSelect.mockClear();
+    flushSync(() => root.render(<PosterCanvas project={project} exportMode onSelect={onSelect} />));
+    flushSync(() => container.querySelector("[data-canvas-background]")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onSelect).not.toHaveBeenCalled();
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("keeps element clicks out of the canvas selection when a layer lets the event bubble", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onSelect={onSelect} />));
+
+    const svg = container.querySelector("svg")!;
+    const stray = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    svg.append(stray);
+    flushSync(() => stray.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onSelect).not.toHaveBeenCalledWith({ type: "canvas" });
 
     flushSync(() => root.unmount());
     container.remove();

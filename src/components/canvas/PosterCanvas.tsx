@@ -43,6 +43,17 @@ const MemoizedRegionalAssetLayer = memo(RegionalAssetLayer);
 const MemoizedDecorationLayer = memo(DecorationLayer);
 const MemoizedTextLayer = memo(TextLayer);
 
+/**
+ * 判定一次点击是否落在画布空白处:svg 根,或铺满画布、只负责观感的背景 rect / 背景图。
+ * 背景层同时声明 pointer-events="none",浏览器里点击本就穿透到根节点;这里再兜住直接命中背景层的情况。
+ */
+function isBlankCanvasHit(target: EventTarget | null, root: SVGSVGElement): boolean {
+  if (target === root) return true;
+  if (!(target instanceof Element)) return false;
+  return target.parentNode === root
+    && (target.hasAttribute("data-canvas-background") || target.hasAttribute("data-background-image"));
+}
+
 /** Truncate a single-line guest text (name / title / note) with an ellipsis. */
 function truncateGuestText(text: string, maxChars: number): string {
   if (maxChars <= 0) return "";
@@ -1252,7 +1263,8 @@ export function PosterCanvas({
       role="img"
       aria-label="毕业去向蹭饭图编辑画布"
       onClick={(event) => {
-        if (!exportMode && event.target === event.currentTarget) onSelect?.({ type: "canvas" });
+        // 空白命中包含铺满画布的背景 rect/图:它们只是画布本身的观感,不应把"点空白选画布"吞掉。
+        if (!exportMode && isBlankCanvasHit(event.target, event.currentTarget)) onSelect?.({ type: "canvas" });
       }}
     >
       {userFonts.length > 0 && (
@@ -1265,6 +1277,7 @@ export function PosterCanvas({
         height={project.canvas.height}
         fill={project.canvas.backgroundColor}
         opacity={project.canvas.backgroundOpacity}
+        pointerEvents="none"
         data-canvas-background
       />
       {project.canvas.backgroundImageSrc && (
@@ -1276,6 +1289,7 @@ export function PosterCanvas({
           height={project.canvas.height}
           opacity={project.canvas.backgroundOpacity}
           preserveAspectRatio={project.canvas.backgroundFit === "stretch" ? "none" : project.canvas.backgroundFit === "contain" ? "xMidYMid meet" : "xMidYMid slice"}
+          pointerEvents="none"
           data-background-image
         />
       )}
