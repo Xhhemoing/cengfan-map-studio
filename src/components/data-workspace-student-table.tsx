@@ -132,12 +132,12 @@ export function DataWorkspaceStudentTable({
                       <div className="student-row__buttons">
                         <IconButton
                           label={`保存 ${student.name}`}
-                          icon={<Check size={14} />}
+                          icon={<Check size={14} aria-hidden />}
                           onClick={(event) => { event.stopPropagation(); editing.onSave(student); }}
                         />
                         <IconButton
                           label={`取消编辑 ${student.name}`}
-                          icon={<X size={14} />}
+                          icon={<X size={14} aria-hidden />}
                           variant="ghost"
                           onClick={(event) => { event.stopPropagation(); editing.onCancel(); }}
                         />
@@ -167,12 +167,12 @@ export function DataWorkspaceStudentTable({
                           />
                           <IconButton
                             label={`保存 ${student.name} 省份`}
-                            icon={<Check size={14} />}
+                            icon={<Check size={14} aria-hidden />}
                             onClick={(event) => { event.stopPropagation(); provinceEditing.onSave(student); }}
                           />
                           <IconButton
                             label={`取消编辑 ${student.name} 省份`}
-                            icon={<X size={14} />}
+                            icon={<X size={14} aria-hidden />}
                             variant="ghost"
                             onClick={(event) => { event.stopPropagation(); provinceEditing.onCancel(); }}
                           />
@@ -196,17 +196,17 @@ export function DataWorkspaceStudentTable({
                       <div className="student-row__buttons">
                         <IconButton
                           label={`编辑 ${student.name}`}
-                          icon={<Pencil size={14} />}
+                          icon={<Pencil size={14} aria-hidden />}
                           onClick={(event) => { event.stopPropagation(); editing.onStart(student); }}
                         />
                         <IconButton
                           label={`${isVisible ? "隐藏" : "显示"} ${student.name}`}
-                          icon={isVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                          icon={isVisible ? <EyeOff size={14} aria-hidden /> : <Eye size={14} aria-hidden />}
                           onClick={(event) => { event.stopPropagation(); onToggleVisibility(student.id); }}
                         />
                         <IconButton
                           label={`删除 ${student.name}`}
-                          icon={<Trash2 size={14} />}
+                          icon={<Trash2 size={14} aria-hidden />}
                           variant="danger"
                           onClick={(event) => { event.stopPropagation(); if (confirmDelete(student)) onDeleteStudent(student.id); }}
                         />

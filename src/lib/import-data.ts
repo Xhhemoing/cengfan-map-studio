@@ -117,20 +117,20 @@ function joinQuotedLines(lines: string[]): SourceLine[] {
 }
 
 /** Delimiters a paste may use, in the order they are believed. Only the fullwidth ： and ／, never the ASCII : of a time or a URL, nor the ASCII / of 2026/08/24 or 哈佛大学/肯尼迪学院. */
-const CELL_DELIMITERS = ["\t", ",", "，", ";", "；", "|", "｜", "／", "：", "、"];
+const CELL_DELIMITERS = ["\t", ",", "，", ";", "；", "|", "｜", "／", "：", "、", "﹑"];
 
 /** The "1." / "2、" / "３)" / "４．" / "５）" / "６。" opening a numbered list: a marker, never a cell. */
-const LIST_MARKER = /^\p{Nd}+[.．。、)）]\s*(?=[^\p{Nd}])/u;
+const LIST_MARKER = /^\p{Nd}+[.．。、﹑)）]\s*(?=[^\p{Nd}])/u;
 
 /**
- * `、` is believed only from its second occurrence on: it is also the Chinese
- * enumeration mark *inside* one cell ("北京、上海") and the marker of a numbered
- * list, and a row needs three cells to describe a student, so a lone 、 opens
- * no column the positional reader could use.
+ * `、` and its small form `﹑`, which a CJK-width paste ships in its place, are believed only from
+ * their second occurrence on: the mark is also the Chinese enumeration mark *inside* one cell
+ * ("北京、上海") and the marker of a numbered list, and a row needs three cells to describe a
+ * student, so a lone 、 opens no column the positional reader could use.
  */
 function detectDelimiter(line: string): string | null {
   const content = line.replace(LIST_MARKER, "");
-  return CELL_DELIMITERS.find((delimiter) => content.split(delimiter).length >= (delimiter === "、" ? 3 : 2)) ?? null;
+  return CELL_DELIMITERS.find((delimiter) => content.split(delimiter).length >= (/^[、﹑]$/.test(delimiter) ? 3 : 2)) ?? null;
 }
 
 /** Cells of `line`, plus `open` when it ended inside a quoted cell whose record continues below. */
@@ -210,11 +210,11 @@ function usableColumnsByDelimiter(lines: readonly SourceLine[]): UsableColumns {
 }
 
 /**
- * Separators of an unlabeled line: whitespace, a 、 {@link detectDelimiter} refused,
+ * Separators of an unlabeled line: whitespace, a 、 or ﹑ {@link detectDelimiter} refused,
  * and a hyphen only where it stands between spaces. A glued hyphen belongs to the
  * value — 玛丽-克莱尔 is one name, and cutting it made 克莱尔 her university silently.
  */
-const FREEFORM_SEPARATOR = /\s+[-–—]+\s+|[\s、]+/;
+const FREEFORM_SEPARATOR = /\s+[-–—]+\s+|[\s、﹑]+/;
 
 /**
  * Cells of one source line. A delimited line keeps every column, blank ones

@@ -802,6 +802,41 @@ describe("、 | ； separated pastes", () => {
     ]);
     expect(result.unparsed).toEqual([]);
   });
+
+  it("reads a roster separated by the small ideographic comma a CJK-width paste ships", () => {
+    // ﹑ (U+FE51) is the small form of 、, so a roster typed with it held no
+    // delimiter the splitter knew and every row stayed a single field.
+    const result = parseStudentText([
+      "姓名﹑院校﹑城市﹑去向类型",
+      "苏禾﹑浙江大学﹑杭州市﹑",
+      "周晴﹑哈佛大学﹑波士顿﹑海外",
+      "林舟﹑﹑北京市﹑",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "周晴", university: "哈佛大学", city: "波士顿", locationScope: "international" }),
+    ]);
+    expect(result.candidates[0]?.locationScope).toBeUndefined();
+    expect(result.unparsed).toEqual([
+      { sourceLine: 4, rawLine: "林舟﹑﹑北京市﹑", reason: "缺少院校" },
+    ]);
+  });
+
+  it("still reads a ﹑ that numbers a list or enumerates inside one cell", () => {
+    const result = parseStudentText([
+      "1﹑林舟 北京大学 北京",
+      "2﹑苏禾﹑浙江大学﹑杭州市",
+      "3﹑周晴 哈佛大学 波士顿﹑剑桥",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "周晴", university: "哈佛大学", city: "波士顿" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
 });
 
 describe("／ separated pastes", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { overlaps } from "./card-layout-geometry";
-import { containFree, layoutGrid, marginSeat, orderResult, stackAtMargin, sweepPack } from "./card-layout-pack";
+import { containFree, layoutGrid, marginSeat, orderResult, repackAll, stackAtMargin, sweepPack } from "./card-layout-pack";
 import { LayoutSpace, PlacementIndex, validateHard } from "./card-layout-space";
 import type { CardArea, CardLayoutInput, CardPlacement } from "./card-layout-types";
 
@@ -601,5 +601,40 @@ describe("sweepPack", () => {
     for (const placement of placements) {
       expect(placement.side).toBe(space.sideOf(placement));
     }
+  });
+});
+
+describe("repackAll", () => {
+  /** An unobstructed 200x200 board the three cards below fill exactly. */
+  function tightSpace(): LayoutSpace {
+    const board: CardArea = { x: 0, y: 0, width: 200, height: 200 };
+    return new LayoutSpace({ width: 200, height: 200, map: board, occupiedAreas: [], margin: 0, gap: 0 });
+  }
+
+  it("hands back the caller's order even when a later candidate order solved the board", () => {
+    const space = tightSpace();
+    // The two squares take a corner each in input order, which leaves no
+    // 200-wide band for the third card, so the board is only solved once the
+    // area-sorted retry seats the band first.
+    const cards = [
+      inputCard("square-nw", { width: 100, height: 100, anchorX: 50, anchorY: 50 }),
+      inputCard("square-se", { width: 100, height: 100, anchorX: 150, anchorY: 150 }),
+      inputCard("band", { width: 200, height: 100, anchorX: 100, anchorY: 50 }),
+    ];
+
+    const placements = repackAll(cards, space);
+
+    expect(placements).not.toBeNull();
+    // The winning order seated the band first, so handing back the solver's own
+    // sequence would answer band, square-nw, square-se.
+    expect(placements!.map((placement) => placement.id)).toEqual(["square-nw", "square-se", "band"]);
+    expect(placements!.map((placement) => [placement.x, placement.y])).toEqual([[0, 100], [100, 100], [0, 0]]);
+    expect(validateHard(placements!, space)).toBe(true);
+  });
+
+  it("returns null when the canvas is fully occupied and no order can complete", () => {
+    const space = makeSpace([{ x: 0, y: 0, width: 900, height: 700 }]);
+
+    expect(repackAll([inputCard("a"), inputCard("b")], space)).toBeNull();
   });
 });

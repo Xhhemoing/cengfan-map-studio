@@ -2,11 +2,14 @@ import type http from "node:http";
 
 type HeaderValue = string | string[] | undefined;
 
+const ipv4WithPort = /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/;
+
 function rightmostHop(value: HeaderValue, arrayMode: "join" | "last"): string | undefined {
   const hops = Array.isArray(value)
     ? (arrayMode === "join" ? value.join(",") : value.at(-1))
     : value;
-  return hops?.split(",").map((hop) => hop.trim()).filter(Boolean).at(-1);
+  return hops?.split(",").map((hop) => hop.trim()).filter(Boolean).at(-1)
+    ?.replace(ipv4WithPort, "$1");
 }
 
 function forwardedParts(value: string): string[] {
@@ -48,8 +51,8 @@ function normalizeForwardedAddress(value: string): string | undefined {
   const bracketed = address.match(/^\[([^\]]+)\](?::\d+)?$/);
   if (bracketed) return bracketed[1];
 
-  const ipv4WithPort = address.match(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/);
-  return ipv4WithPort?.[1] ?? address;
+  const ipv4WithPortMatch = address.match(ipv4WithPort);
+  return ipv4WithPortMatch?.[1] ?? address;
 }
 
 function forwardedFor(value: HeaderValue): string | undefined {

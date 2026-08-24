@@ -32,6 +32,26 @@ describe("clientIp", () => {
     expect(clientIp(request, true)).toBe("203.0.113.2");
   });
 
+  it("strips an IPv4 source port from X-Forwarded-For", () => {
+    const request = requestWith({ "x-forwarded-for": "203.0.113.9:54321" });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("strips the port from the rightmost X-Forwarded-For hop", () => {
+    const request = requestWith({
+      "x-forwarded-for": "198.51.100.1:1, 203.0.113.9:2",
+    });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("does not treat an IPv6 X-Forwarded-For suffix as a port", () => {
+    const request = requestWith({ "x-forwarded-for": "2001:db8::1" });
+
+    expect(clientIp(request, true)).toBe("2001:db8::1");
+  });
+
   it("joins X-Forwarded-For arrays before selecting the rightmost non-empty hop", () => {
     const request = requestWith({
       "x-forwarded-for": ["198.51.100.1, ", " , 203.0.113.2, "],
@@ -48,6 +68,12 @@ describe("clientIp", () => {
     });
 
     expect(clientIp(request, true)).toBe("203.0.113.2");
+  });
+
+  it("strips an IPv4 source port from X-Real-IP", () => {
+    const request = requestWith({ "x-real-ip": "203.0.113.9:54321" });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
   });
 
   it("splits only the last X-Real-IP array element into hops", () => {

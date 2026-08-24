@@ -186,9 +186,8 @@ export function repackAll(cards: readonly CardLayoutInput[], space: LayoutSpace)
     if (seenOrders.has(signature)) continue;
     seenOrders.add(signature);
     const placed = PlacementIndex.forSpace(space);
-    const inputIndexes = new Map<CardPlacement, number>();
 
-    for (const { card, index } of order) {
+    for (const { card } of order) {
       const maxX = space.maxX(card.width);
       const maxY = space.maxY(card.height);
       const preferredX = clamp(card.anchorX - card.width / 2, space.margin, maxX);
@@ -222,13 +221,10 @@ export function repackAll(cards: readonly CardLayoutInput[], space: LayoutSpace)
         }
       }
       if (!best) break;
-      inputIndexes.set(best, index);
       placed.add(best);
     }
 
-    if (placed.size === cards.length) {
-      return [...placed.items].sort((a, b) => inputIndexes.get(a)! - inputIndexes.get(b)!);
-    }
+    if (placed.size === cards.length) return orderResult(cards, placed.items, space);
   }
   return null;
 }
