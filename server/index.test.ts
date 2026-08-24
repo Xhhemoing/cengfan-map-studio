@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -849,6 +849,34 @@ describe("unified application server", () => {
     await expect(restored.json()).resolves.toEqual(snapshot);
   });
 
+  it("removes the workspace temp file when the rename fails, and still reports the rename error", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-workspace-rename-"));
+    directories.push(dataDir);
+    // 最终路径被一个同名目录占住：临时文件照常写成功，只有 rename(2) 带着内核 errno 失败。
+    // 这是 R8-8「临时路径被占」的反面，两边合起来覆盖住原子写的两步各自出事的情形。
+    await mkdir(join(dataDir, "workspace.json"));
+    const server = createAiServer({ dataDir, workspaceApiToken: "workspace-test-token" });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await fetch(`${origin}/api/workspace`, {
+      method: "PUT",
+      ...workspaceRequestInit(),
+      body: JSON.stringify({
+        kind: "cengfan-workspace",
+        version: 1,
+        projectPackage: { kind: "cengfan-project-package", version: 2, project: { schemaVersion: 2, students: [] } },
+      }),
+    });
+
+    // 清理临时文件不能把原始的 rename 失败吞掉：调用方仍要看到真实 errno。
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "INTERNAL_ERROR", message: expect.stringContaining("EISDIR") },
+    });
+    // 反复失败时每个进程都会留下一份 <file>.<pid>.tmp，不清就是往数据目录里堆垃圾。
+    expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
 
   it("creates, reads, updates, and rejects stale collaboration room snapshots", async () => {
     const server = createAiServer();
@@ -2436,6 +2464,22 @@ describe("unified application server", () => {
     expect(contents).not.toContain("old-0");
     expect(contents).not.toContain("old-1");
     expect(contents).toEqual(expect.arrayContaining(["old-2", "old-3", "old-4", "old-5"]));
+  });
+
+  it("removes the room snapshot temp file when the rename fails, and still reports the rename error", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-rename-"));
+    directories.push(dataDir);
+    // 快照的最终路径被一个同名目录占住：写临时文件仍然成功，rename(2) 撞上目录给出真实 EISDIR。
+    await mkdir(join(dataDir, "collaboration-rooms.json"));
+    const server = await createReadyAiServer({ dataDir });
+    servers.push(server);
+    const origin = await startServer(server);
+    await createCollaborationRoom(origin, { title: "改名失败" });
+
+    // 清理临时文件不能顶掉原始失败：关停路径和健康检查都靠这个 errno 说清事故。
+    await expect(server.flushRooms!()).rejects.toThrow(/EISDIR/);
+    // 落盘按固定间隔重试，每失败一次就多一份 <file>.<pid>.tmp 的话，数据目录会被慢慢填满。
+    expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("keeps AI endpoints open without a token in development", async () => {
