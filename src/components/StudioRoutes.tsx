@@ -1,12 +1,8 @@
 import { useCallback, useState, useSyncExternalStore } from "react";
 import { App } from "../App";
 import { ProjectWorkbench } from "./ProjectWorkbench";
-import {
-  StorageNotice,
-  StorageNoticeActionError,
-  StorageNoticeExportAction,
-  projectPackageFileName,
-} from "./StorageNotice";
+import { StorageNotice, StorageNoticeActionError, StorageNoticeExportAction } from "./StorageNotice";
+import { projectPackageFileName } from "../lib/project-package-file-name";
 import {
   editorProjectStore,
   projectStoreHealthChannel,

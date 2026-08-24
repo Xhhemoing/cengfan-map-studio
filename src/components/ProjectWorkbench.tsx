@@ -10,13 +10,14 @@ import {
   type StoredProject,
 } from "../lib/project-store";
 import { assertProjectPackageSize, downloadProjectPackage, parseProjectPackage, projectPackageDisplayName } from "../lib/project-package";
+import { projectPackageFileName } from "../lib/project-package-file-name";
 import { createId } from "../lib/ids";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
 import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
 import { ContinueEditingCard } from "./workbench/ContinueEditingCard";
-import { StorageNotice, StorageNoticeExportAction, projectPackageFileName } from "./StorageNotice";
+import { StorageNotice, StorageNoticeExportAction } from "./StorageNotice";
 
 interface ProjectWorkbenchProps {
   store: ProjectStore;
