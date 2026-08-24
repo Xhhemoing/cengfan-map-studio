@@ -41,14 +41,27 @@ function agentToolNames(outcome: { kind: string; calls?: Array<{ name: string }>
   return outcome.kind === "finish" ? ["finish"] : undefined;
 }
 
+const IP_LITERAL = /^[0-9a-fA-F.:]{2,45}$/;
+
+/**
+ * 限流键取 X-Forwarded-For 的最后一跳:受信代理把它看到的对端地址追加在末尾,
+ * 客户端能伪造的内容只可能排在前面。取第一个值等于让任何人自选限流键,一行 header 就能绕开配额。
+ * 最后一跳不是合法 IP 字面量(代理没配好 / 直连伪造)时退回 socket 地址,不给攻击者塞任意长键的机会。
+ * 回滚:把取值改回 value.split(",")[0] 即可恢复旧行为。
+ */
 function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
-  if (trustProxy) {
-    const forwarded = request.headers["x-forwarded-for"];
-    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-    const firstIp = value?.split(",")[0]?.trim();
-    if (firstIp) return firstIp;
-  }
-  return (request.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
+  const socketIp = (request.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
+  if (!trustProxy) return socketIp;
+  const forwarded = request.headers["x-forwarded-for"];
+  const value = Array.isArray(forwarded) ? forwarded.join(",") : forwarded ?? "";
+  const hops = value.split(",").map((hop) => hop.trim()).filter(Boolean);
+  const lastHop = hops[hops.length - 1]?.replace(/^::ffff:/, "");
+  return lastHop && IP_LITERAL.test(lastHop) ? lastHop : socketIp;
+}
+
+function retryAfterSeconds(retryAfterMs: number | undefined, fallbackMs: number): number {
+  const ms = retryAfterMs !== undefined && retryAfterMs > 0 ? retryAfterMs : fallbackMs;
+  return Math.max(1, Math.ceil(ms / 1000));
 }
 
 export interface AiServerOptions {
@@ -62,6 +75,7 @@ export interface AiServerOptions {
     agent?: ReturnType<typeof createRateLimiter>;
     otherAi?: ReturnType<typeof createRateLimiter>;
     rooms?: ReturnType<typeof createRateLimiter>;
+    roomTickets?: ReturnType<typeof createRateLimiter>;
   };
   aiLogger?: ReturnType<typeof createAiLogger>;
   maxJsonBodyBytes?: number;
@@ -71,6 +85,8 @@ export interface AiServerOptions {
   roomTtlMs?: number;
   roomInvitationTtlMs?: number;
   roomEventsTicketTtlMs?: number;
+  maxRoomEventsTickets?: number;
+  maxRoomEventsTicketsPerRoom?: number;
   trustProxy?: boolean;
   budgetReceiptSecret?: string;
   budgetReceiptLedger?: BudgetReceiptLedger;
@@ -80,6 +96,7 @@ export interface AiServerOptions {
     agent?: { limit: number; windowMs: number; maxEntries?: number };
     otherAi?: { limit: number; windowMs: number; maxEntries?: number };
     rooms?: { limit: number; windowMs: number; maxEntries?: number };
+    roomTickets?: { limit: number; windowMs: number; maxEntries?: number };
   };
   onAiStateUnavailable?: () => void;
   productionConfig?: ReturnType<typeof validateProductionConfig>;
@@ -94,6 +111,11 @@ const DEFAULT_MAX_ROOM_SUBSCRIBERS = 50;
 const DEFAULT_ROOM_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_ROOM_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ROOM_EVENTS_TICKET_TTL_MS = 60 * 1000;
+const DEFAULT_MAX_ROOM_EVENTS_TICKETS = 10_000;
+const DEFAULT_MAX_ROOM_EVENTS_TICKETS_PER_ROOM = 200;
+const DEFAULT_ROOM_TICKET_RATE_LIMIT = 120;
+/** 房间侧 429(房间数/订阅数上限)没有精确的窗口剩余时间,给一个保守的重试提示。 */
+const DEFAULT_ROOM_RETRY_AFTER_MS = 30_000;
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -170,11 +192,13 @@ function sendJson(
   status: number,
   body: unknown,
   corsOrigins: readonly string[] = [],
+  extraHeaders: Record<string, string> = {},
 ) {
   response.writeHead(status, {
     ...securityHeaders(),
     ...corsHeaders(request, corsOrigins),
     "Content-Type": "application/json; charset=utf-8",
+    ...extraHeaders,
   });
   response.end(JSON.stringify(body));
 }
@@ -354,6 +378,12 @@ export function createAiServer(options: AiServerOptions = {}) {
     windowMs: options.rateLimitOptions?.rooms?.windowMs ?? 60_000,
     maxEntries: options.rateLimitOptions?.rooms?.maxEntries,
   });
+  // SSE 每次(重)连都要换一张 ticket,配额留得比重连节奏宽:限的是狂铸,不是正常重连。
+  const roomTicketRateLimiter = options.rateLimiters?.roomTickets ?? createRateLimiter({
+    limit: options.rateLimitOptions?.roomTickets?.limit ?? DEFAULT_ROOM_TICKET_RATE_LIMIT,
+    windowMs: options.rateLimitOptions?.roomTickets?.windowMs ?? 60_000,
+    maxEntries: options.rateLimitOptions?.roomTickets?.maxEntries,
+  });
   const aiLogger = options.aiLogger ?? createAiLogger();
   const maxJsonBodyBytes = options.maxJsonBodyBytes ?? DEFAULT_MAX_JSON_BODY_BYTES;
   const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
@@ -367,22 +397,34 @@ export function createAiServer(options: AiServerOptions = {}) {
   });
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomEventsTickets = new Map<string, { roomId: string; accessToken: string; expiresAt: number }>();
-  const MAX_ROOM_EVENTS_TICKETS = 10_000;
+  // 每个房间独立计数：全局池被单个房间铸满会让全服 SSE 都换不到 ticket，
+  // 分池后狂铸的房间先撞自己的上限，其他房间照常签发。
+  const roomEventsTicketCounts = new Map<string, number>();
+  const maxRoomEventsTickets = Math.max(1, Math.floor(options.maxRoomEventsTickets ?? DEFAULT_MAX_ROOM_EVENTS_TICKETS));
+  const maxRoomEventsTicketsPerRoom = Math.max(1, Math.floor(options.maxRoomEventsTicketsPerRoom ?? DEFAULT_MAX_ROOM_EVENTS_TICKETS_PER_ROOM));
+  const dropRoomEventsTicket = (ticket: string) => {
+    const record = roomEventsTickets.get(ticket);
+    if (!record) return;
+    roomEventsTickets.delete(ticket);
+    const remaining = (roomEventsTicketCounts.get(record.roomId) ?? 1) - 1;
+    if (remaining > 0) roomEventsTicketCounts.set(record.roomId, remaining);
+    else roomEventsTicketCounts.delete(record.roomId);
+  };
   const evictExpiredTickets = () => {
     const now = Date.now();
     for (const [ticket, record] of roomEventsTickets) {
-      if (record.expiresAt <= now) roomEventsTickets.delete(ticket);
+      if (record.expiresAt <= now) dropRoomEventsTicket(ticket);
     }
   };
   const storeRoomEventsTicket = (ticket: string, record: { roomId: string; accessToken: string; expiresAt: number }) => {
-    if (roomEventsTickets.size >= MAX_ROOM_EVENTS_TICKETS) {
+    const roomCount = () => roomEventsTicketCounts.get(record.roomId) ?? 0;
+    if (roomEventsTickets.size >= maxRoomEventsTickets || roomCount() >= maxRoomEventsTicketsPerRoom) {
       evictExpiredTickets();
-      if (roomEventsTickets.size >= MAX_ROOM_EVENTS_TICKETS) {
-        // 拒绝新 ticket，防止内存被恶意请求撑满。
-        return false;
-      }
     }
+    // 拒绝新 ticket，防止内存被恶意请求撑满：房间配额先撞顶，全局池才是最后一道闸。
+    if (roomCount() >= maxRoomEventsTicketsPerRoom || roomEventsTickets.size >= maxRoomEventsTickets) return false;
     roomEventsTickets.set(ticket, record);
+    roomEventsTicketCounts.set(record.roomId, roomCount() + 1);
     return true;
   };
   const flushAiState = async () => {
@@ -396,6 +438,9 @@ export function createAiServer(options: AiServerOptions = {}) {
 
   const server = http.createServer(async (request, response) => {
     const send = (status: number, body: unknown) => sendJson(request, response, status, body, corsOrigins);
+    // 429 一律带 Retry-After(整秒)：客户端不必自己猜退避窗口，错误码保持不变。
+    const sendThrottled = (status: number, body: unknown, retryAfterMs: number | undefined, fallbackMs: number) =>
+      sendJson(request, response, status, body, corsOrigins, { "Retry-After": String(retryAfterSeconds(retryAfterMs, fallbackMs)) });
     const url = request.url || "/";
     const pathname = new URL(url, "http://localhost").pathname;
     const requestIdHeader = request.headers["x-request-id"];
@@ -418,7 +463,7 @@ export function createAiServer(options: AiServerOptions = {}) {
     }
     if (aiLimit && !aiLimit.allowed) {
       aiLogger.log("ai.rate_limited", { requestId, errorCode: "AI_RATE_LIMITED" });
-      sendAi(429, { error: { code: "AI_RATE_LIMITED", message: "请求过于频繁，请稍后重试。" } });
+      sendThrottled(429, { error: { code: "AI_RATE_LIMITED", message: "请求过于频繁，请稍后重试。" }, requestId }, aiLimit.retryAfterMs, aiLimiter.windowMs);
       return;
     }
     try {
@@ -515,9 +560,19 @@ export function createAiServer(options: AiServerOptions = {}) {
             : error.code === "ROOM_FORBIDDEN" || error.code === "FORBIDDEN" || error.code === "READONLY_ROOM" ? 403
               : error.code === "ROOM_INITIALIZING" ? 425
                 : 400;
-      const sendRoomError = (error: CollaborationError) => send(roomErrorStatus(error), {
-        error: { code: error.code, message: error.message, currentVersion: error.currentVersion },
-      });
+      // 只从路径取房间号做观测键，避免把请求体里的任何内容写进日志。
+      const loggedRoomId = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]{1,64})(?:\/|$)/)?.[1]?.toUpperCase();
+      const sendRoomError = (error: CollaborationError) => {
+        const status = roomErrorStatus(error);
+        const body = { error: { code: error.code, message: error.message, currentVersion: error.currentVersion } };
+        if (status === 429) {
+          aiLogger.log("room.rate_limited", { roomId: loggedRoomId, errorCode: error.code });
+          sendThrottled(status, body, undefined, DEFAULT_ROOM_RETRY_AFTER_MS);
+          return;
+        }
+        if (error.code === "VERSION_CONFLICT") aiLogger.log("room.conflict", { roomId: loggedRoomId, errorCode: error.code });
+        send(status, body);
+      };
       const roomProjection = (room: ReturnType<typeof roomStore.get>, accessToken: string) => {
         if (!room) return null;
         const participant = roomStore.authorize(room.id, accessToken, "read");
@@ -527,7 +582,8 @@ export function createAiServer(options: AiServerOptions = {}) {
       if (request.method === "POST" && pathname === "/api/rooms") {
         const roomLimit = roomCreateRateLimiter.check(clientIp(request, trustProxy));
         if (!roomLimit.allowed) {
-          send(429, { error: { code: "ROOM_RATE_LIMITED", message: "创建房间过于频繁，请稍后重试。" } });
+          aiLogger.log("room.rate_limited", { errorCode: "ROOM_RATE_LIMITED" });
+          sendThrottled(429, { error: { code: "ROOM_RATE_LIMITED", message: "创建房间过于频繁，请稍后重试。" } }, roomLimit.retryAfterMs, roomCreateRateLimiter.windowMs);
           return;
         }
         const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
@@ -536,7 +592,9 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         try {
-          send(201, roomStore.create(body.snapshot, { clientId: body.clientId, displayName: body.displayName.trim() }));
+          const created = roomStore.create(body.snapshot, { clientId: body.clientId, displayName: body.displayName.trim() });
+          aiLogger.log("room.created", { roomId: created.room.id, role: created.access.role });
+          send(201, created);
         } catch (error) {
           if (error instanceof CollaborationError) {
             sendRoomError(error);
@@ -601,7 +659,9 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         try {
-          send(200, roomStore.join(joinMatch[1]!, { inviteToken: body.inviteToken, clientId: body.clientId, displayName: body.displayName }));
+          const joined = roomStore.join(joinMatch[1]!, { inviteToken: body.inviteToken, clientId: body.clientId, displayName: body.displayName });
+          aiLogger.log("room.joined", { roomId: joined.room.id, role: joined.access.role });
+          send(200, joined);
         } catch (error) {
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;
@@ -673,7 +733,11 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         try {
-          send(200, roomStore.leave(leaveMatch[1]!, accessToken, body.clientId));
+          // leave 自身第一步就是同样的 authorize，先取一次身份只为区分自离与踢人，不改变错误顺序。
+          const actor = roomStore.authorize(leaveMatch[1]!, accessToken, "read");
+          const result = roomStore.leave(leaveMatch[1]!, accessToken, body.clientId);
+          if (body.clientId !== actor.id) aiLogger.log("room.kicked", { roomId: result.id, role: actor.role });
+          send(200, result);
         } catch (error) {
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;
@@ -694,7 +758,9 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         try {
-          send(200, roomStore.setAccess(accessMatch[1]!, accessToken, body.clientId, body.action));
+          const result = roomStore.setAccess(accessMatch[1]!, accessToken, body.clientId, body.action);
+          if (result.closed) aiLogger.log("room.closed", { roomId: result.id });
+          send(200, result);
         } catch (error) {
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;
@@ -738,12 +804,20 @@ export function createAiServer(options: AiServerOptions = {}) {
           send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
           return;
         }
+        // 匿名成员可以无限狂铸 ticket 把全服 SSE 池挤爆，所以先按客户端 IP 限流，再按房间分池。
+        const ticketLimit = roomTicketRateLimiter.check(clientIp(request, trustProxy));
+        if (!ticketLimit.allowed) {
+          aiLogger.log("room.rate_limited", { roomId: eventsTicketMatch[1]!.toUpperCase(), errorCode: "ROOM_RATE_LIMITED" });
+          sendThrottled(429, { error: { code: "ROOM_RATE_LIMITED", message: "获取协作事件凭证过于频繁，请稍后重试。" } }, ticketLimit.retryAfterMs, roomTicketRateLimiter.windowMs);
+          return;
+        }
         try {
-          roomStore.authorize(eventsTicketMatch[1]!, accessToken, "read");
+          const participant = roomStore.authorize(eventsTicketMatch[1]!, accessToken, "read");
           const ticket = randomBytes(24).toString("base64url");
           const expiresAt = Date.now() + roomEventsTicketTtlMs;
           if (!storeRoomEventsTicket(ticket, { roomId: eventsTicketMatch[1]!.toUpperCase(), accessToken, expiresAt })) {
-            send(429, { error: { code: "ROOM_LIMIT_REACHED", message: "协作事件凭证过多，请稍后重试" } });
+            aiLogger.log("room.ticket_rejected", { roomId: eventsTicketMatch[1]!.toUpperCase(), role: participant.role, errorCode: "ROOM_LIMIT_REACHED" });
+            sendThrottled(429, { error: { code: "ROOM_LIMIT_REACHED", message: "协作事件凭证过多，请稍后重试" } }, roomEventsTicketTtlMs, DEFAULT_ROOM_RETRY_AFTER_MS);
             return;
           }
           send(201, { ticket, expiresAt: new Date(expiresAt).toISOString() });
@@ -760,11 +834,12 @@ export function createAiServer(options: AiServerOptions = {}) {
         const ticket = eventUrl.searchParams.get("ticket");
         const ticketRecord = ticket ? roomEventsTickets.get(ticket) : undefined;
         if (!ticketRecord || ticketRecord.roomId !== eventsMatch[1]!.toUpperCase() || ticketRecord.expiresAt <= Date.now()) {
-          if (ticket) roomEventsTickets.delete(ticket);
+          if (ticket) dropRoomEventsTicket(ticket);
+          aiLogger.log("room.ticket_rejected", { roomId: eventsMatch[1]!.toUpperCase(), errorCode: "ROOM_FORBIDDEN" });
           send(403, { error: { code: "ROOM_FORBIDDEN", message: "协作事件凭证无效或已过期" } });
           return;
         }
-        roomEventsTickets.delete(ticket!);
+        dropRoomEventsTicket(ticket!);
         const knownVersionParam = eventUrl.searchParams.get("version");
         const knownVersion = knownVersionParam === null ? Number.NaN : Number(knownVersionParam);
         let unsubscribe: (() => void) | undefined;

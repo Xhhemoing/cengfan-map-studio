@@ -53,7 +53,7 @@ async function createEventsTicket(origin: string, roomId: string, accessToken: s
   return (await response.json() as { ticket: string }).ticket;
 }
 
-async function rawPost(origin: string, path: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: string }> {
+async function rawPost(origin: string, path: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   const target = new URL(origin);
   const payload = JSON.stringify(body);
   return new Promise((resolve, reject) => {
@@ -66,7 +66,7 @@ async function rawPost(origin: string, path: string, body: unknown, headers: Rec
     }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-      response.on("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
+      response.on("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8"), headers: response.headers }));
     });
     request.on("error", reject);
     request.end(payload);
@@ -310,6 +310,174 @@ describe("unified application server", () => {
     const limited = await fetch(`${origin}/api/rooms`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     expect(limited.status).toBe(429);
     await expect(limited.json()).resolves.toMatchObject({ error: { code: "ROOM_RATE_LIMITED" } });
+  });
+
+  // 受信代理把真实客户端地址追加在 XFF 末尾，客户端自填的跳数只能排在前面。
+  it("keys rate limits on the last forwarded hop so spoofed hops cannot open a fresh window", async () => {
+    const server = createAiServer({
+      trustProxy: true,
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = { clientId: "client-a", displayName: "协作者", snapshot: { title: "room" } };
+
+    const first = await rawPost(origin, "/api/rooms", body, { "X-Forwarded-For": "203.0.113.9, 10.0.0.7" });
+    expect(first.status).toBe(201);
+    const spoofed = await rawPost(origin, "/api/rooms", body, { "X-Forwarded-For": "198.51.100.4, 10.0.0.7" });
+    expect(spoofed.status).toBe(429);
+    expect(JSON.parse(spoofed.body)).toMatchObject({ error: { code: "ROOM_RATE_LIMITED" } });
+    // 逐跳伪造也没用：末跳仍由代理写入，只有真的换了客户端才是新的限流键。
+    const chained = await rawPost(origin, "/api/rooms", body, { "X-Forwarded-For": "198.51.100.4, 198.51.100.5, 10.0.0.7" });
+    expect(chained.status).toBe(429);
+    const otherClient = await rawPost(origin, "/api/rooms", body, { "X-Forwarded-For": "203.0.113.9, 10.0.0.8" });
+    expect(otherClient.status).toBe(201);
+  });
+
+  it("ignores forwarded hops entirely when the proxy is not trusted", async () => {
+    const server = createAiServer({
+      trustProxy: false,
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = { clientId: "client-a", displayName: "协作者", snapshot: { title: "room" } };
+
+    expect((await rawPost(origin, "/api/rooms", body, { "X-Forwarded-For": "203.0.113.9, 10.0.0.7" })).status).toBe(201);
+    expect((await rawPost(origin, "/api/rooms", body, { "X-Forwarded-For": "198.51.100.4, 10.0.0.8" })).status).toBe(429);
+  });
+
+  it("attaches a Retry-After hint to rate-limited responses without changing the error codes", async () => {
+    const server = createAiServer({
+      rateLimiters: {
+        agent: createRateLimiter({ limit: 1, windowMs: 60_000 }),
+        rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }),
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const agentBody = { userMessage: "地图缩小一点", digest: { map: { scale: 1 } }, messages: [] };
+    expect((await rawPost(origin, "/api/ai/agent", agentBody)).status).toBe(200);
+    const limitedAgent = await rawPost(origin, "/api/ai/agent", agentBody, { "x-request-id": "retry-after-agent" });
+    expect(limitedAgent.status).toBe(429);
+    expect(JSON.parse(limitedAgent.body)).toMatchObject({ requestId: "retry-after-agent", error: { code: "AI_RATE_LIMITED" } });
+    expect(Number(limitedAgent.headers["retry-after"])).toBeGreaterThan(0);
+    expect(Number(limitedAgent.headers["retry-after"])).toBeLessThanOrEqual(60);
+
+    const roomBody = { clientId: "client-a", displayName: "协作者", snapshot: { title: "room" } };
+    expect((await rawPost(origin, "/api/rooms", roomBody)).status).toBe(201);
+    const limitedRoom = await rawPost(origin, "/api/rooms", roomBody);
+    expect(limitedRoom.status).toBe(429);
+    expect(JSON.parse(limitedRoom.body)).toMatchObject({ error: { code: "ROOM_RATE_LIMITED" } });
+    expect(Number(limitedRoom.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  it("rate-limits events ticket minting per client IP", async () => {
+    const server = createAiServer({
+      rateLimiters: { roomTickets: createRateLimiter({ limit: 2, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "ticket-flood" });
+
+    await createEventsTicket(origin, created.room.id, created.access.accessToken);
+    await createEventsTicket(origin, created.room.id, created.access.accessToken);
+    const limited = await rawPost(origin, `/api/rooms/${created.room.id}/events-ticket`, {}, roomHeaders(created.access.accessToken));
+
+    expect(limited.status).toBe(429);
+    expect(JSON.parse(limited.body)).toMatchObject({ error: { code: "ROOM_RATE_LIMITED" } });
+    expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  // 单个成员狂铸 ticket 只能撑爆自己房间的配额，其他房间照常换得到凭证。
+  it("caps events tickets per room so one flooded room cannot starve the others", async () => {
+    const server = createAiServer({
+      maxRoomEventsTicketsPerRoom: 2,
+      rateLimiters: { roomTickets: createRateLimiter({ limit: 100, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const flooded = await createCollaborationRoom(origin, { title: "flooded" }, "client-a");
+    const bystander = await createCollaborationRoom(origin, { title: "bystander" }, "client-b");
+
+    await createEventsTicket(origin, flooded.room.id, flooded.access.accessToken);
+    await createEventsTicket(origin, flooded.room.id, flooded.access.accessToken);
+    const rejected = await rawPost(origin, `/api/rooms/${flooded.room.id}/events-ticket`, {}, roomHeaders(flooded.access.accessToken));
+    expect(rejected.status).toBe(429);
+    expect(JSON.parse(rejected.body)).toMatchObject({ error: { code: "ROOM_LIMIT_REACHED" } });
+    expect(Number(rejected.headers["retry-after"])).toBeGreaterThan(0);
+
+    const unaffected = await rawPost(origin, `/api/rooms/${bystander.room.id}/events-ticket`, {}, roomHeaders(bystander.access.accessToken));
+    expect(unaffected.status).toBe(201);
+  });
+
+  it("frees the room ticket quota once a ticket is consumed by the event stream", async () => {
+    const server = createAiServer({ maxRoomEventsTicketsPerRoom: 1 });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "quota-recycle" });
+
+    const ticket = await createEventsTicket(origin, created.room.id, created.access.accessToken);
+    expect((await rawPost(origin, `/api/rooms/${created.room.id}/events-ticket`, {}, roomHeaders(created.access.accessToken))).status).toBe(429);
+
+    const controller = new AbortController();
+    try {
+      const stream = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=${ticket}`, { signal: controller.signal });
+      expect(stream.status).toBe(200);
+      const consumed = await rawPost(origin, `/api/rooms/${created.room.id}/events-ticket`, {}, roomHeaders(created.access.accessToken));
+      expect(consumed.status).toBe(201);
+    } finally {
+      controller.abort();
+    }
+  });
+
+  it("logs room lifecycle events with room id and role but never the snapshot", async () => {
+    const lines: string[] = [];
+    const server = createAiServer({ aiLogger: createAiLogger((line) => lines.push(line)) });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "机密去向名单" });
+    const invitation = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ role: "editor" }),
+    }).then((response) => response.json()) as { token: string };
+    await fetch(`${origin}/api/rooms/${created.room.id}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken: invitation.token, clientId: "client-b", displayName: "协作者 B" }),
+    });
+    await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "client-b" }),
+    });
+    await fetch(`${origin}/api/rooms/${created.room.id}/access`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ clientId: "client-a", action: "close" }),
+    });
+
+    const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events.map((event) => event.event)).toEqual(["room.created", "room.joined", "room.kicked", "room.closed"]);
+    expect(events[0]).toMatchObject({ roomId: created.room.id, role: "owner" });
+    expect(events[1]).toMatchObject({ roomId: created.room.id, role: "editor" });
+    expect(lines.join("\n")).not.toContain("机密去向名单");
+    expect(lines.join("\n")).not.toContain(created.access.accessToken);
+  });
+
+  it("logs rejected event tickets with the error code only", async () => {
+    const lines: string[] = [];
+    const server = createAiServer({ aiLogger: createAiLogger((line) => lines.push(line)) });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "ticket-log" });
+
+    const forbidden = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=not-a-ticket`);
+    expect(forbidden.status).toBe(403);
+    const rejected = lines.map((line) => JSON.parse(line) as Record<string, unknown>).filter((event) => event.event === "room.ticket_rejected");
+    expect(rejected).toEqual([expect.objectContaining({ roomId: created.room.id, errorCode: "ROOM_FORBIDDEN" })]);
   });
 
   it("requires a room token before returning private room data", async () => {
