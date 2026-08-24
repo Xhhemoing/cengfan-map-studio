@@ -16,6 +16,7 @@
 | Round 5 | complete | 2026-08-24 | 2026-08-24 | PosterCanvas 563；scene/migration 拆分；可选房间快照；jsdom 旅程 |
 | Round 6 | complete | 2026-08-24 | 2026-08-24 | 核心实现文件压到 ≤400；AgentAssistant a11y；协作 hook/store 再拆 |
 | Round 7 | complete | 2026-08-24 | 2026-08-24 | agent-session 拆分；印刷出血导出；出血健康警告；快照 flock |
+| Round 8 | complete | 2026-08-24 | 2026-08-24 | 印前体检；交付页出血尺寸；helpers 再拆；损坏快照跳过 |
 
 ## Round 1 结论摘要
 
@@ -67,7 +68,11 @@
 
 详见 [round7/BRIEF.md](round7/BRIEF.md)。集成：**tsc 绿、185×1607 tests 绿**。`agent-session` 已拆；印刷出血导出 + 检查器；同机快照锁。
 
-## 全局成果（七轮合计）
+## Round 8 结论简报
+
+详见 [round8/BRIEF.md](round8/BRIEF.md)。印前体检接入交付「印刷检查」；出血时同时显示成品框与媒体框像素；`studio-editor-helpers` 拆到 ≤400；损坏协作快照跳过。分辨率告警只出现在印前体检，不与资源缺失重复。
+
+## 全局成果（八轮合计）
 
 | 指标 | main 基线 | Round 3 结束 |
 | --- | ---: | ---: |

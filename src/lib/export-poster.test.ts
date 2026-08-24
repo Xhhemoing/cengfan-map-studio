@@ -186,6 +186,35 @@ describe("poster export", () => {
     expect(bled.width - 3000).toBe(bled.height - 2000);
   });
 
+  it("returns exact 300dpi pixel dimensions for trim, bleed, and crop-mark media boxes", () => {
+    const canvas = { width: 1500, height: 1000 };
+    const scale = 300 / 96;
+
+    expect(posterPngExportSize(canvas, { scale, printBleedMm: 0 }))
+      .toEqual({ width: 4688, height: 3125 });
+    expect(posterPngExportSize(canvas, { scale, printBleedMm: 3, cropMarks: false }))
+      .toEqual({ width: 4758, height: 3196 });
+    expect(posterPngExportSize(canvas, { scale, printBleedMm: 3 }))
+      .toEqual({ width: 4829, height: 3267 });
+  });
+
+  it("keeps png dimensions aligned with the serialized svg media box", () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 1500 1000");
+    svg.setAttribute("width", "1500");
+    svg.setAttribute("height", "1000");
+    const options = { scale: 2.5, printBleedMm: 3, cropMarkLengthMm: 5 };
+
+    const markup = serializePosterSvg(svg, options);
+    const mediaWidth = Number(markup.match(/\bwidth="([^"]+)"/)?.[1]);
+    const mediaHeight = Number(markup.match(/\bheight="([^"]+)"/)?.[1]);
+
+    expect(posterPngExportSize({ width: 1500, height: 1000 }, options)).toEqual({
+      width: Math.round(mediaWidth * options.scale),
+      height: Math.round(mediaHeight * options.scale),
+    });
+  });
+
   it("converts svg markup into a png data url", async () => {
     class MockImage {
       onload: (() => void) | null = null;

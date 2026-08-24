@@ -1,7 +1,10 @@
 import { CheckCircle2, Download, ImageDown, PackageOpen, RotateCcw, TriangleAlert } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 import type { DataIssue } from "../../lib/data-health";
+import { posterPngExportSize } from "../../lib/export-poster";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
+import { normalizePrintBleedMm } from "../../lib/print-bleed";
+import type { PrintPreflightIssue, PrintPreflightResult } from "../../lib/print-preflight";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
 import type { UserFont } from "../../lib/fonts";
@@ -10,7 +13,8 @@ import { PosterCanvas } from "../canvas/PosterCanvas";
 export type DeliveryIssue =
   | { kind: "data"; issue: DataIssue }
   | { kind: "layout"; issue: LayoutHealthIssue }
-  | { kind: "resource"; issue: ResourceHealthIssue };
+  | { kind: "resource"; issue: ResourceHealthIssue }
+  | { kind: "print"; issue: PrintPreflightIssue };
 
 export type DeliveryExportState = "idle" | "exporting" | "success" | "error";
 
@@ -20,6 +24,10 @@ export interface DeliveryWorkspaceProps {
   posterRef?: RefObject<SVGSVGElement | null>;
   dataIssues: DataIssue[];
   layoutIssues: LayoutHealthIssue[];
+  /** 印刷检查清单（如 object-in-bleed 出血风险）；旧调用方可省略，默认视为无问题。 */
+  printIssues?: LayoutHealthIssue[];
+  /** 印前体检（分辨率 / 透明出血 / 导出倍率）；旧调用方可省略。 */
+  printPreflight?: PrintPreflightResult;
   resourceIssues: ResourceHealthIssue[];
   fontIssues: ResourceHealthIssue[];
   pngScale: number;
@@ -43,6 +51,7 @@ export type DeliveryRailProps = Omit<DeliveryWorkspaceProps, "posterRef" | "user
 function issueKey(item: DeliveryIssue, index: number): string {
   if (item.kind === "data") return `data-${item.issue.studentId}-${item.issue.kind}-${index}`;
   if (item.kind === "layout") return `layout-${item.issue.id}-${item.issue.kind}-${index}`;
+  if (item.kind === "print") return `print-${item.issue.kind}-${item.issue.target}-${index}`;
   return `resource-${item.issue.target}-${item.issue.kind}-${index}`;
 }
 
@@ -101,6 +110,8 @@ export function DeliveryRail({
   project,
   dataIssues,
   layoutIssues,
+  printIssues = [],
+  printPreflight,
   resourceIssues,
   fontIssues,
   pngScale,
@@ -117,6 +128,16 @@ export function DeliveryRail({
   onExportProjectPackage,
   onRetry,
 }: DeliveryRailProps) {
+  const bleedMm = normalizePrintBleedMm(project.canvas.printBleedMm);
+  // trim = 成品裁切框（画布 × 倍率）；media = 实际导出的媒体框（出血 + 裁切标记）。
+  const trimSize = posterPngExportSize(project.canvas, { scale: pngScale });
+  const mediaSize = posterPngExportSize(project.canvas, { scale: pngScale, printBleedMm: bleedMm });
+  const printDeliveryIssues: DeliveryIssue[] = [
+    ...printIssues.map((issue) => ({ kind: "layout" as const, issue })),
+    ...(printPreflight?.issues ?? [])
+      .filter((issue) => issue.kind !== "missing-font")
+      .map((issue) => ({ kind: "print" as const, issue })),
+  ];
   return (
     <aside className="delivery-workspace__checks" aria-label="交付检查">
       <h2 className="delivery-workspace__checks-title">交付检查</h2>
@@ -124,6 +145,23 @@ export function DeliveryRail({
       <CheckSection title="排版问题" issues={layoutIssues.map((issue) => ({ kind: "layout", issue }))} onLocate={onLocate} />
       <CheckSection title="资源缺失" issues={resourceIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
       <CheckSection title="字体问题" issues={fontIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
+      <CheckSection title="印刷检查" issues={printDeliveryIssues} onLocate={onLocate}>
+        {/* 出血状态用文字说明，与 sr-only 的通过/待处理文案一致地不依赖颜色。 */}
+        <p className="delivery-workspace__print-note" style={{ margin: "10px 0 0" }}>
+          <small>
+            {bleedMm > 0
+              ? `已设置 ${bleedMm}mm 印刷出血，导出将扩出出血区并绘制裁切标记；请确认重要内容留在安全边距内。`
+              : "未设置印刷出血：屏幕分享或自行打印可直接导出；送印请先在画布属性填写出血。"}
+          </small>
+        </p>
+        {printPreflight && printPreflight.unmeasured.length > 0 && (
+          <p className="delivery-workspace__print-note" style={{ margin: "6px 0 0" }}>
+            <small>
+              有 {printPreflight.unmeasured.length} 处位图无法读取原图像素尺寸（远程链接或未知格式），送印请人工确认分辨率。
+            </small>
+          </p>
+        )}
+      </CheckSection>
       {exportState === "error" && (
         <div id="delivery-export-error" className="delivery-workspace__error" role="alert">
           <strong>导出失败</strong>
@@ -136,7 +174,15 @@ export function DeliveryRail({
       <section className="delivery-workspace__controls" aria-label="导出设置">
         {/* 可见文字与 aria-label 保持一字不差（WCAG 2.5.3 Label in Name）；aria-label 被 App 级测试钉住，故统一为「PNG 导出倍率」。 */}
         <label htmlFor="delivery-png-scale">PNG 导出倍率<select id="delivery-png-scale" aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option></select></label>
-        <span>最终像素尺寸：{project.canvas.width * pngScale} × {project.canvas.height * pngScale} px</span>
+        {bleedMm > 0 ? (
+          <>
+            {/* 出血 > 0 时导出的是媒体框（出血 + 裁切标记），只报一个尺寸会低估实际文件，成品与导出尺寸都要给。 */}
+            <span>成品尺寸（裁切后）：{trimSize.width} × {trimSize.height} px</span>
+            <span>导出尺寸（含 {bleedMm}mm 出血与裁切标记）：{mediaSize.width} × {mediaSize.height} px</span>
+          </>
+        ) : (
+          <span>最终像素尺寸：{trimSize.width} × {trimSize.height} px</span>
+        )}
         <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="透明背景" checked={transparentExport} onChange={(event) => onTransparentExportChange(event.target.checked)} />透明背景</label>
         <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="工程包包含资源" checked={includeResources} onChange={(event) => onIncludeResourcesChange(event.target.checked)} />工程包包含资源</label>
       </section>

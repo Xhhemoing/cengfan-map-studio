@@ -13,6 +13,7 @@ import {
   type ContentAssetPanelProps,
 } from "../workspaces/ContentLayoutWorkspace";
 import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "../workspaces/DeliveryWorkspace";
+import type { PrintPreflightResult } from "../../lib/print-preflight";
 import type { StudioAsset, UserAsset } from "../../lib/assets";
 import type { DataHealthSummary, DataIssue } from "../../lib/data-health";
 import type { UserFont } from "../../lib/fonts";
@@ -56,8 +57,11 @@ export interface StageSlotsContext {
   dataHealth: DataHealthSummary;
   dataIssues: DataIssue[];
   layoutIssues: LayoutHealthIssue[];
+  /** 出血区内对象等印刷几何问题；从 layoutIssues 拆出，避免与排版问题重复。 */
+  printIssues: LayoutHealthIssue[];
   resourceIssues: ResourceHealthIssue[];
   fontIssues: ResourceHealthIssue[];
+  printPreflight: PrintPreflightResult;
   /** 名单工作台完整 props（数据阶段与旧版名单面板共用）。 */
   dataWorkspaceProps: StudioDataWorkspaceProps;
   /** 素材面板共享 props（内容/地图/数据阶段与旧版素材面板共用）。 */
@@ -197,8 +201,10 @@ export function buildStageSlots(stage: WorkflowStageId, ctx: StageSlotsContext):
             project={ctx.renderProject}
             dataIssues={ctx.dataIssues}
             layoutIssues={ctx.layoutIssues}
+            printIssues={ctx.printIssues}
             resourceIssues={ctx.resourceIssues}
             fontIssues={ctx.fontIssues}
+            printPreflight={ctx.printPreflight}
             pngScale={ctx.posterExport.pngScale}
             transparentExport={ctx.posterExport.transparentExport}
             includeResources={ctx.posterExport.includeResourcesInProjectExport}
@@ -221,8 +227,10 @@ export function buildStageSlots(stage: WorkflowStageId, ctx: StageSlotsContext):
             userFonts={ctx.userFonts}
             dataIssues={ctx.dataIssues}
             layoutIssues={ctx.layoutIssues}
+            printIssues={ctx.printIssues}
             resourceIssues={ctx.resourceIssues}
             fontIssues={ctx.fontIssues}
+            printPreflight={ctx.printPreflight}
             pngScale={ctx.posterExport.pngScale}
             transparentExport={ctx.posterExport.transparentExport}
             includeResources={ctx.posterExport.includeResourcesInProjectExport}

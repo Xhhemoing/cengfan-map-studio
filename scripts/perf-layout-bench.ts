@@ -8,6 +8,7 @@
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
+import type { UserAsset } from "../src/lib/assets";
 import {
   solveCardLayout,
   type CardLayoutBounds,
@@ -15,8 +16,10 @@ import {
   type CardLayoutMode,
   type CardLayoutResult,
 } from "../src/lib/card-layout";
+import { posterPngExportSize } from "../src/lib/export-poster";
 import { assertLayoutInvariants } from "../src/lib/layout-perf";
 import { resolvePrintBleedGeometry } from "../src/lib/print-bleed";
+import { runPrintPreflight } from "../src/lib/print-preflight";
 
 export const DEFAULT_LAYOUT_BENCH_COUNTS = [16, 24, 36, 60, 100, 200, 400] as const;
 export const DEFAULT_LAYOUT_BENCH_MODES: readonly CardLayoutMode[] = [
@@ -83,6 +86,7 @@ export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
   clusteredAnchorFixture: ClusteredAnchorLayoutBenchmarkReport;
   workerMessageOverhead: WorkerMessageBenchmarkResult;
   printBleedExport: PrintBleedExportBenchmarkReport;
+  printPreflight: PrintPreflightBenchmarkReport;
 }
 
 export interface PrintBleedExportBenchmarkResult {
@@ -91,14 +95,27 @@ export interface PrintBleedExportBenchmarkResult {
   p95Ms: number;
   expandedWidth: number;
   expandedHeight: number;
+  pixelWidth: number;
+  pixelHeight: number;
 }
 
 export interface PrintBleedExportBenchmarkReport {
-  methodology: "print export geometry calculation; DOM cloning and XML serialization excluded";
+  methodology: "poster PNG export-size calculation; DOM cloning, rasterization, and XML serialization excluded";
   warmupIterations: number;
   iterations: number;
   canvas: { width: number; height: number };
+  scale: number;
   results: PrintBleedExportBenchmarkResult[];
+}
+
+export interface PrintPreflightBenchmarkReport {
+  methodology: "resource and print-resolution preflight; file I/O and image decoding excluded";
+  warmupIterations: number;
+  iterations: number;
+  referencedAssets: number;
+  issueCount: number;
+  p50Ms: number;
+  p95Ms: number;
 }
 
 export interface DensePolygonBenchmarkFixture {
@@ -477,41 +494,123 @@ export function runLayoutBenchmark(config: LayoutBenchmarkConfig = {}): LayoutBe
 export function runPrintBleedExportBenchmark(
   warmupIterations = 500,
   iterations = 5_000,
+  scale = 300 / 96,
 ): PrintBleedExportBenchmarkReport {
   positiveInteger(warmupIterations, "print bleed warmupIterations");
   positiveInteger(iterations, "print bleed iterations");
+  if (!Number.isFinite(scale) || scale <= 0) throw new Error("print bleed scale must be positive");
   const canvas = { width: 1500, height: 1000 };
   const results = [0, 3].map((bleedMm) => {
     for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
-      resolvePrintBleedGeometry({ x: 0, y: 0, ...canvas }, { printBleedMm: bleedMm });
+      posterPngExportSize(canvas, { printBleedMm: bleedMm, scale });
     }
     const samples: number[] = [];
-    let geometry = resolvePrintBleedGeometry(
+    let exportSize = posterPngExportSize(canvas, { printBleedMm: bleedMm, scale });
+    for (let iteration = 0; iteration < iterations; iteration += 1) {
+      const startedAt = performance.now();
+      exportSize = posterPngExportSize(canvas, { printBleedMm: bleedMm, scale });
+      samples.push(performance.now() - startedAt);
+    }
+    const geometry = resolvePrintBleedGeometry(
       { x: 0, y: 0, ...canvas },
       { printBleedMm: bleedMm },
     );
-    for (let iteration = 0; iteration < iterations; iteration += 1) {
-      const startedAt = performance.now();
-      geometry = resolvePrintBleedGeometry(
-        { x: 0, y: 0, ...canvas },
-        { printBleedMm: bleedMm },
-      );
-      samples.push(performance.now() - startedAt);
-    }
     return {
       bleedMm,
       p50Ms: rounded(percentile(samples, 0.5)),
       p95Ms: rounded(percentile(samples, 0.95)),
       expandedWidth: rounded(geometry.media.width),
       expandedHeight: rounded(geometry.media.height),
+      pixelWidth: exportSize.width,
+      pixelHeight: exportSize.height,
     };
   });
   return {
-    methodology: "print export geometry calculation; DOM cloning and XML serialization excluded",
+    methodology: "poster PNG export-size calculation; DOM cloning, rasterization, and XML serialization excluded",
     warmupIterations,
     iterations,
     canvas,
+    scale,
     results,
+  };
+}
+
+export function runPrintPreflightBenchmark(
+  warmupIterations = 50,
+  iterations = 500,
+): PrintPreflightBenchmarkReport {
+  positiveInteger(warmupIterations, "print preflight warmupIterations");
+  positiveInteger(iterations, "print preflight iterations");
+  const assets: Array<UserAsset & { naturalWidth: number; naturalHeight: number }> = Array.from(
+    { length: 48 },
+    (_, index) => ({
+      id: `print-bench-asset-${index}`,
+      label: `print benchmark asset ${index}`,
+      kind: "decoration",
+      src: `data:image/png;base64,print-bench-${index}`,
+      provinceIds: [],
+      source: "user",
+      naturalWidth: 600,
+      naturalHeight: 400,
+    }),
+  );
+  const project = {
+    canvas: {
+      width: 1500,
+      height: 1000,
+      backgroundImageSrc: assets[0]!.src,
+      backgroundFit: "cover",
+    },
+    map: {
+      provinceStyles: {},
+    },
+    cards: {
+      fieldFonts: { name: "missing-print-bench-font" },
+    },
+    guests: {
+      people: [],
+    },
+    textElements: [],
+    assetElements: assets.map((asset, index) => ({
+      id: `print-bench-element-${index}`,
+      assetId: asset.id,
+      label: asset.label,
+      src: asset.src,
+      kind: "decoration",
+      x: (index % 8) * 150,
+      y: Math.floor(index / 8) * 100,
+      width: 120,
+      height: 80,
+      rotation: 0,
+      opacity: 1,
+      zIndex: index,
+      visibility: true,
+    })),
+  } as unknown as Parameters<typeof runPrintPreflight>[0];
+  const options = {
+    assets,
+    fonts: [],
+    pngScale: 300 / 96,
+    transparentExport: false,
+  };
+  for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+    runPrintPreflight(project, options);
+  }
+  const samples: number[] = [];
+  let preflight = runPrintPreflight(project, options);
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const startedAt = performance.now();
+    preflight = runPrintPreflight(project, options);
+    samples.push(performance.now() - startedAt);
+  }
+  return {
+    methodology: "resource and print-resolution preflight; file I/O and image decoding excluded",
+    warmupIterations,
+    iterations,
+    referencedAssets: assets.length,
+    issueCount: preflight.issues.length,
+    p50Ms: rounded(percentile(samples, 0.5)),
+    p95Ms: rounded(percentile(samples, 0.95)),
   };
 }
 
@@ -592,6 +691,7 @@ if (isDirectRun) {
     clusteredAnchorFixture: runClusteredAnchorBenchmark(),
     workerMessageOverhead: await runWorkerMessageBenchmark(),
     printBleedExport: runPrintBleedExportBenchmark(),
+    printPreflight: runPrintPreflightBenchmark(),
   };
   console.log(JSON.stringify(report, null, 2));
 }

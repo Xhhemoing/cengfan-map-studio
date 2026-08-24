@@ -9,6 +9,7 @@ import type { UserAsset } from "../lib/assets";
 import { buildDataHealthSummary, listDataIssues } from "../lib/data-health";
 import type { UserFont } from "../lib/fonts";
 import type { DataViewId } from "../lib/project-data";
+import { runPrintPreflight } from "../lib/print-preflight";
 import type { ProjectDocument } from "../lib/project-document";
 import { listResourceHealthIssues } from "../lib/resource-health";
 import { deriveStageOverviewModel } from "../lib/stage-overview";
@@ -25,6 +26,10 @@ export interface UseProjectHealthOptions {
   /** 画布渲染文档（AI 预览优先）的数据呈现方式，用于总览文案。 */
   dataView: DataViewId;
   exportState: UsePosterExportResult["exportState"];
+  /** 交付页的 PNG 导出倍率，用于印前分辨率判定。默认 1×（96dpi）。 */
+  pngScale?: number;
+  /** 交付页的「透明背景」开关，用于出血露白判定。 */
+  transparentExport?: boolean;
 }
 
 export function useProjectHealth({
@@ -34,6 +39,8 @@ export function useProjectHealth({
   activeStage,
   dataView,
   exportState,
+  pngScale = 1,
+  transparentExport = false,
 }: UseProjectHealthOptions) {
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
   const dataHealth = useMemo(() => buildDataHealthSummary(project), [project]);
@@ -43,7 +50,7 @@ export function useProjectHealth({
     [project, userAssets, userFonts],
   );
   const resourceIssues = useMemo(
-    () => resourceHealthIssues.filter((issue) => issue.kind === "resource"),
+    () => resourceHealthIssues.filter((issue) => issue.kind === "resource" && issue.code !== "low-print-resolution"),
     [resourceHealthIssues],
   );
   const fontIssues = useMemo(
@@ -51,6 +58,10 @@ export function useProjectHealth({
     [resourceHealthIssues],
   );
   const contentLayoutIssues = useMemo(() => listContentLayoutIssues(project), [project]);
+  const printPreflight = useMemo(
+    () => runPrintPreflight(project, { assets: userAssets, fonts: userFonts, pngScale, transparentExport }),
+    [project, userAssets, userFonts, pngScale, transparentExport],
+  );
 
   const stageOverview = useMemo(
     () => deriveStageOverviewModel({
@@ -74,6 +85,7 @@ export function useProjectHealth({
     resourceIssues,
     fontIssues,
     contentLayoutIssues,
+    printPreflight,
     stageOverview,
   };
 }

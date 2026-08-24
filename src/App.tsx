@@ -135,6 +135,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
     activeStage: nav.activeStage,
     dataView: renderProject.dataView,
     exportState: posterExport.exportState,
+    pngScale: posterExport.pngScale,
+    transparentExport: posterExport.transparentExport,
   });
 
   const scene = useSceneActions({ project, showGrid, gridSize, commitProject, commitProjectTransaction, setStatusMessage });

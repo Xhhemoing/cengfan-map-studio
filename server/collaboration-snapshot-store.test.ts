@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,11 +18,11 @@ function createTemporaryDirectory(): string {
   return directory;
 }
 
-function roomState(version: number): PersistedRoomState {
+function roomState(version: number, id = "LOCKED1"): PersistedRoomState {
   return {
     schemaVersion: 1,
     room: {
-      id: "LOCKED1",
+      id,
       version,
       snapshot: { version, payload: "x".repeat(64 * 1024) },
       ready: true,
@@ -48,6 +48,27 @@ afterEach(() => {
 });
 
 describe("file room snapshot store", () => {
+  it("skips truncated and malformed snapshots while loading valid rooms", () => {
+    const directory = createTemporaryDirectory();
+    const store = createFileRoomSnapshotStore(directory);
+    const firstState = roomState(1, "GOOD001");
+    const secondState = roomState(2, "GOOD002");
+    store.save(firstState);
+    store.save(secondState);
+    writeFileSync(
+      join(directory, "TRUNCATED.json"),
+      JSON.stringify(roomState(3, "TRUNCATED")).slice(0, -1),
+    );
+    writeFileSync(join(directory, "MALFORMED.json"), "{not json");
+
+    let loaded: PersistedRoomState[] | undefined;
+    expect(() => {
+      loaded = store.load();
+    }).not.toThrow();
+    expect(loaded).toHaveLength(2);
+    expect(loaded).toEqual(expect.arrayContaining([firstState, secondState]));
+  });
+
   it("serializes sequential saves of the same room as one valid latest snapshot", () => {
     const directory = createTemporaryDirectory();
     const firstStore = createFileRoomSnapshotStore(directory);

@@ -5,6 +5,7 @@ import { DeliveryRail, DeliveryWorkspace, type DeliveryWorkspaceProps } from "./
 import { createProjectDocument } from "../../lib/project-document";
 import type { DataIssue } from "../../lib/data-health";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
+import type { PrintPreflightResult } from "../../lib/print-preflight";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -66,6 +67,7 @@ describe("DeliveryWorkspace", () => {
     expect(container.textContent).toContain("排版问题");
     expect(container.textContent).toContain("资源缺失");
     expect(container.textContent).toContain("字体问题");
+    expect(container.textContent).toContain("印刷检查");
     expect(container.textContent).toContain("1 项");
 
     const locateButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).filter((button) => button.textContent?.includes("地图"));
@@ -112,16 +114,16 @@ describe("DeliveryWorkspace", () => {
     expect(container.querySelector('button[aria-label="定位错误：地图资源缺失"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="定位警告：地图超出安全边距"]')).not.toBeNull();
 
-    // Section status is exposed as text, not only via icon color.
+    // Section status is exposed as text, not only via icon color. 印刷检查 has no issues in this fixture.
     const statuses = Array.from(container.querySelectorAll(".delivery-workspace__check header .sr-only")).map((node) => node.textContent);
-    expect(statuses).toEqual(["有待处理问题", "有待处理问题", "有待处理问题", "有待处理问题"]);
+    expect(statuses).toEqual(["有待处理问题", "有待处理问题", "有待处理问题", "有待处理问题", "检查通过"]);
   });
 
   it("announces a passing check as text when a section has no issues", () => {
     const container = renderWorkspace({ dataIssues: [], layoutIssues: [], resourceIssues: [], fontIssues: [] });
 
     const statuses = Array.from(container.querySelectorAll(".delivery-workspace__check header .sr-only")).map((node) => node.textContent);
-    expect(statuses).toEqual(["检查通过", "检查通过", "检查通过", "检查通过"]);
+    expect(statuses).toEqual(["检查通过", "检查通过", "检查通过", "检查通过", "检查通过"]);
     expect(container.querySelector("ul.delivery-workspace__issue-list")).toBeNull();
   });
 
@@ -154,5 +156,53 @@ describe("DeliveryWorkspace", () => {
 
     const success = renderWorkspace({ exportState: "success" });
     expect(success.querySelector('[data-export-status]')?.textContent).toBe("导出完成");
+  });
+
+  it("shows trim and media pixel sizes when print bleed is set", () => {
+    const bled = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    bled.canvas.printBleedMm = 3;
+    const container = renderWorkspace({ project: bled, pngScale: 2 });
+
+    expect(container.textContent).toContain("成品尺寸（裁切后）");
+    expect(container.textContent).toContain("导出尺寸（含 3mm 出血与裁切标记）");
+    expect(container.textContent).toContain("已设置 3mm 印刷出血");
+    expect(container.textContent).not.toContain("最终像素尺寸");
+  });
+
+  it("lists print preflight issues under 印刷检查 without repeating missing fonts", () => {
+    const onLocate = vi.fn();
+    const printPreflight: PrintPreflightResult = {
+      issues: [
+        {
+          kind: "transparent-bleed",
+          target: "background",
+          detail: "透明背景与出血冲突",
+          severity: "warning",
+        },
+        {
+          kind: "missing-font",
+          target: "text:title",
+          detail: "标题字体缺失，导出会回退",
+          severity: "error",
+        },
+      ],
+      exportDpi: 192,
+      requiredDpi: 192,
+      targetDpi: 300,
+      bleedMm: 3,
+      measuredRasters: 0,
+      unmeasured: ["asset:remote"],
+      ready: false,
+    };
+    const container = renderWorkspace({ onLocate, printPreflight });
+
+    expect(container.querySelector('button[aria-label="定位警告：透明背景与出血冲突"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="定位错误：标题字体缺失，导出会回退"]')).toBeNull();
+    expect(container.textContent).toContain("无法读取原图像素尺寸");
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="定位警告：透明背景与出血冲突"]')?.click());
+    expect(onLocate).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "print",
+      issue: expect.objectContaining({ kind: "transparent-bleed", target: "background" }),
+    }));
   });
 });

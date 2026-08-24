@@ -1,21 +1,31 @@
 import type { UserAsset } from "./assets";
-import { applyDataViewChange, findAssetUsage, isAssetInUse, type STYLE_LAYER_TARGETS } from "./catalog-usage";
+import { findAssetUsage, isAssetInUse, type STYLE_LAYER_TARGETS } from "./catalog-usage";
 import type { CollaborationRole } from "./collaboration-client";
 import { diffCollaborationDocument, type CollaborationOperation } from "./collaboration-operations";
 import type { WorkspaceSession } from "./workspace-session";
 import type { WorkflowStageId } from "./workflow-stages";
 import type { CustomTemplateRecord } from "./template-store";
-import { createCustomTemplateFromProject, type TemplateSaveScope } from "./template-store";
 import { checkLayoutHealth } from "./layout-health";
-import { createId } from "./ids";
 import { snapPoint } from "./grid";
 import type { UserFont } from "./fonts";
-import type { DataViewId, MapTemplateId } from "./project-data";
-import type { ProjectDocument, ProjectTransaction } from "./project-document";
+import type { ProjectDocument } from "./project-document";
 import { createProjectPackageEnvelope, type ProjectPackage } from "./project-package";
 import type { RenderSettings } from "./render-settings";
-import { createDefaultScene, type SceneSelection } from "./scene-document";
-import { createSystemTemplate, mergeTemplateDocuments, type TemplateDocument } from "./template-document";
+import type { SceneSelection } from "./scene-document";
+
+// 门面（facade）：模板构建与事务工厂已按领域拆分，公开导出保持不变。
+export { buildCustomTemplateDraft, buildResolvedTemplate } from "./studio-editor-helpers-templates";
+export {
+  createAppendStudentsTransaction,
+  createApplySystemTemplateTransaction,
+  createDataViewTransaction,
+  createReplaceStudentsTransaction,
+  createStudentDeleteTransaction,
+  createStudentsVisibilityTransaction,
+  createStudentUpdateTransaction,
+  createStudentVisibilityToggleTransaction,
+} from "./studio-editor-helpers-transactions";
+export type { StudentEditPatch } from "./studio-editor-helpers-transactions";
 
 /** 编辑器工作区的最新完整状态（用于打包保存与协作快照）。 */
 export interface WorkspaceStateSnapshot {
@@ -70,35 +80,6 @@ export function canSendCollaborationUpdate(room: CollaborationSendGate, hasBasel
  */
 export function planCollaborationSend(baseline: ProjectPackage, latest: WorkspaceStateSnapshot): CollaborationOperation[] {
   return diffCollaborationDocument(baseline, buildCollaborationPackage(latest, baseline.exportedAt));
-}
-
-export function buildResolvedTemplate(renderProject: ProjectDocument): TemplateDocument {
-  const base = createSystemTemplate(renderProject.templateId);
-  return mergeTemplateDocuments(base, {
-    background: {
-      ...base.background,
-      color: renderProject.canvas.backgroundColor || base.background.color,
-      imageSrc: renderProject.canvas.backgroundImageSrc,
-      type: renderProject.canvas.backgroundImageSrc ? "image" : "color",
-    },
-    map: {
-      ...base.map,
-      scale: renderProject.map.scale,
-      edgeColor: renderProject.map.edgeColor,
-      edgeStyle: renderProject.map.edgeStyle ?? "solid",
-      edgeWidth: renderProject.map.edgeWidth ?? 1,
-      landColor: renderProject.map.landColor,
-      activeColor: renderProject.map.activeColor,
-      showProvinceLabels: renderProject.map.showProvinceLabels,
-      provinceStyles: renderProject.map.provinceStyles ?? {},
-    },
-    cards: {
-      ...base.cards,
-      preset: renderProject.cards.preset,
-    },
-    visibleFields: renderProject.cards.visibleFields,
-    regionalAssets: renderProject.style.regionalAssets,
-  });
 }
 
 export function buildAssetUsageMap(project: ProjectDocument, userAssets: UserAsset[]): Record<string, string> {
@@ -230,172 +211,5 @@ export function describeProjectHistory(history: ProjectDocument["history"]): Pro
     redoLabel: canRedo
       ? `重做：${history.future[0]?.label ?? "下一步"}`
       : "暂无可重做操作",
-  };
-}
-
-export function createApplySystemTemplateTransaction(templateId: MapTemplateId): ProjectTransaction {
-  const scene = createDefaultScene(templateId);
-  return {
-    id: createId(`tx-template-${templateId}`),
-    label: `应用内置模板：${createSystemTemplate(templateId).name}`,
-    source: "manual",
-    apply: (current) => ({
-      ...current,
-      templateId,
-      canvas: scene.canvas,
-      map: scene.map,
-      cards: scene.cards,
-      textElements: scene.textElements,
-      assetElements: scene.assetElements,
-      style: {
-        ...current.style,
-        cardPreset: scene.cards.preset,
-        mapScale: scene.map.scale,
-        backgroundColor: scene.canvas.backgroundColor,
-        visibleFields: [...scene.cards.visibleFields],
-      },
-    }),
-  };
-}
-
-export function buildCustomTemplateDraft(
-  project: ProjectDocument,
-  name: string,
-  scope: TemplateSaveScope,
-): CustomTemplateRecord {
-  return createCustomTemplateFromProject({
-    name: name.trim(),
-    baseTemplateId: project.templateId,
-    scope,
-    overrides: {
-      background: {
-        type: project.canvas.backgroundImageSrc ? "image" : "color",
-        color: project.canvas.backgroundColor || createSystemTemplate(project.templateId).background.color,
-        imageSrc: project.canvas.backgroundImageSrc,
-        opacity: project.canvas.backgroundOpacity,
-        blur: 0,
-        layer: "behind-map",
-      },
-      map: {
-        ...createSystemTemplate(project.templateId).map,
-        scale: project.map.scale,
-        offsetX: project.map.x,
-        offsetY: project.map.y,
-        landColor: project.map.landColor,
-        activeColor: project.map.activeColor,
-        edgeColor: project.map.edgeColor,
-        edgeStyle: project.map.edgeStyle ?? "solid",
-        edgeWidth: project.map.edgeWidth ?? 1,
-        showProvinceLabels: project.map.showProvinceLabels,
-        provinceStyles: project.map.provinceStyles ?? {},
-      },
-      cards: {
-        ...createSystemTemplate(project.templateId).cards,
-        preset: project.cards.preset,
-        grouping: project.cards.grouping,
-        maxWidth: project.cards.maxWidth,
-        padding: project.cards.padding,
-        background: project.cards.background,
-        textColor: project.cards.textColor,
-      },
-      visibleFields: project.cards.visibleFields,
-      regionalAssets: project.style.regionalAssets,
-    },
-    scene: {
-      canvas: project.canvas,
-      map: project.map,
-      cards: project.cards,
-      guests: project.guests,
-      textElements: project.textElements,
-      assetElements: project.assetElements,
-    },
-    students: project.students,
-  });
-}
-
-export type StudentEditPatch = Partial<Pick<ProjectDocument["students"][number], "name" | "university" | "city" | "province" | "locationScope">>;
-
-export function createDataViewTransaction(view: DataViewId): ProjectTransaction {
-  return {
-    id: createId(`tx-data-view-${view}`),
-    label: `切换数据呈现：${view}`,
-    source: "manual",
-    apply: (current) => applyDataViewChange(current, view),
-  };
-}
-
-export function createAppendStudentsTransaction(records: ProjectDocument["students"]): ProjectTransaction {
-  return {
-    id: createId("tx-append"),
-    label: `追加 ${records.length} 名学生`,
-    source: "import",
-    apply: (current) => ({ ...current, students: [...current.students, ...records] }),
-  };
-}
-
-export function createReplaceStudentsTransaction(records: ProjectDocument["students"]): ProjectTransaction {
-  return {
-    id: createId("tx-replace"),
-    label: `替换为 ${records.length} 名学生`,
-    source: "import",
-    apply: (current) => ({ ...current, students: records }),
-  };
-}
-
-export function createStudentUpdateTransaction(id: string, patch: StudentEditPatch): ProjectTransaction {
-  return {
-    id: createId(`tx-student-update-${id}`),
-    label: "编辑学生记录",
-    source: "manual",
-    apply: (current) => ({
-      ...current,
-      students: current.students.map((student) => {
-        if (student.id !== id) return student;
-        const next = { ...student, ...patch };
-        if ("province" in patch && !patch.province) {
-          const { province: _cleared, ...withoutProvince } = next;
-          if ("locationScope" in patch && !patch.locationScope) {
-            const { locationScope: _locationScope, ...withoutLocationScope } = withoutProvince;
-            return withoutLocationScope;
-          }
-          return withoutProvince;
-        }
-        if ("locationScope" in patch && !patch.locationScope) {
-          const { locationScope: _cleared, ...rest } = next;
-          return rest;
-        }
-        return next;
-      }),
-    }),
-  };
-}
-
-export function createStudentVisibilityToggleTransaction(id: string): ProjectTransaction {
-  return {
-    id: createId(`tx-student-visibility-${id}`),
-    label: "切换学生显示状态",
-    source: "manual",
-    apply: (current) => ({
-      ...current,
-      students: current.students.map((student) => student.id === id ? { ...student, visibility: student.visibility === false } : student),
-    }),
-  };
-}
-
-export function createStudentDeleteTransaction(id: string): ProjectTransaction {
-  return {
-    id: createId(`tx-student-delete-${id}`),
-    label: "删除学生记录",
-    source: "manual",
-    apply: (current) => ({ ...current, students: current.students.filter((student) => student.id !== id) }),
-  };
-}
-
-export function createStudentsVisibilityTransaction(visibility: boolean): ProjectTransaction {
-  return {
-    id: createId(`tx-students-visibility-${visibility}`),
-    label: visibility ? "全部显示学生" : "全部隐藏学生",
-    source: "manual",
-    apply: (current) => ({ ...current, students: current.students.map((student) => ({ ...student, visibility })) }),
   };
 }
