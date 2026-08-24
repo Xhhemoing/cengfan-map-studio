@@ -17,7 +17,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | IMPLEMENTING | T4, T6 | — | T4 authz ~47.9×; T6 diff (b) 94.9% / (c) 97.6%; targeted tests 46 pass |
+| 1 | IMPLEMENTING | T4, T5, T6 | — | T4 ~47.9× authz; T5 txn 38.4%; T6 diff 94.9%/97.6%; remaining tasks isolated |
 
 ## Round 0 Baseline (pre-optimization)
 
