@@ -9,6 +9,62 @@ import { useStudioPreferences, type StudioPreferences } from "../lib/use-studio-
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
+const RIGHT_RAIL_PROBE_ID = "right-rail-probe";
+
+/** Kept in sync with the shell's breakpoint and the `@media` rules in styles.css. */
+const NARROW_VIEWPORT_QUERY = "(max-width: 760px)";
+
+/** Stable-id probe: a duplicated rail would collide on this id. */
+const rightRailProbe = <div id={RIGHT_RAIL_PROBE_ID}>右栏内容</div>;
+
+function probeCount(): number {
+  return document.querySelectorAll(`#${RIGHT_RAIL_PROBE_ID}`).length;
+}
+
+type MediaListener = (event: MediaQueryListEvent) => void;
+
+let restoreMatchMedia: (() => void) | null = null;
+
+function setMatchMedia(value: unknown): void {
+  const descriptor = Object.getOwnPropertyDescriptor(window, "matchMedia");
+  const previousRestore = restoreMatchMedia;
+  Object.defineProperty(window, "matchMedia", { configurable: true, writable: true, value });
+  restoreMatchMedia = () => {
+    if (descriptor) Object.defineProperty(window, "matchMedia", descriptor);
+    else Reflect.deleteProperty(window, "matchMedia");
+    restoreMatchMedia = previousRestore;
+  };
+}
+
+/** Drives `(max-width: 760px)` so tests can pick a viewport and cross the breakpoint. */
+function mockViewport(initialNarrow: boolean) {
+  const listeners = new Set<MediaListener>();
+  let narrow = initialNarrow;
+  setMatchMedia((query: string) => ({
+    get matches() {
+      return query === NARROW_VIEWPORT_QUERY ? narrow : false;
+    },
+    media: query,
+    onchange: null,
+    addEventListener: (_type: string, listener: MediaListener) => { listeners.add(listener); },
+    removeEventListener: (_type: string, listener: MediaListener) => { listeners.delete(listener); },
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  } as unknown as MediaQueryList));
+  return {
+    async setNarrow(next: boolean) {
+      narrow = next;
+      await act(async () => {
+        listeners.forEach((listener) => listener({ matches: next, media: NARROW_VIEWPORT_QUERY } as MediaQueryListEvent));
+      });
+    },
+    get listenerCount() {
+      return listeners.size;
+    },
+  };
+}
+
 function renderShell({
   rightRail,
   rightRailLabel,
@@ -50,6 +106,10 @@ function mountStudioPreferences(): () => StudioPreferences {
   return () => latest!;
 }
 
+async function flushEffects(): Promise<void> {
+  await act(async () => {});
+}
+
 function click(element: Element | null): void {
   if (!element) throw new Error("element missing");
   flushSync(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
@@ -71,11 +131,14 @@ afterEach(() => {
     container.remove();
   });
   window.localStorage.clear();
+  restoreMatchMedia?.();
+  restoreMatchMedia = null;
   vi.restoreAllMocks();
 });
 
 describe("StudioEditorShell", () => {
   it("renders the persistent left rail, center region and an optional labelled right rail", () => {
+    mockViewport(false);
     const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
 
     const shell = container.querySelector(".studio-editor-shell")!;
@@ -86,12 +149,19 @@ describe("StudioEditorShell", () => {
     expect(container.querySelector(".studio-editor-shell__main")?.textContent).toContain("中心");
   });
 
-  it("prepends the collapsible stage guide line to the right rail and the drawer", () => {
+  it("prepends the collapsible stage guide line to the docked right rail", () => {
+    mockViewport(false);
     const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
 
     const dockedGuide = container.querySelector(".studio-editor-shell__right .studio-stage-guide");
     expect(dockedGuide?.textContent).toContain("确定地图表达与外观");
     expect(dockedGuide?.getAttribute("aria-label")).toBe("地图样式说明");
+  });
+
+  it("prepends the collapsible stage guide line to the drawer copy", async () => {
+    mockViewport(true);
+    const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
+    await flushEffects();
 
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开地图属性"]')!);
     expect(document.querySelector(".studio-editor-shell__drawer .studio-stage-guide")?.textContent).toContain("确定地图表达与外观");
@@ -105,6 +175,7 @@ describe("StudioEditorShell", () => {
   });
 
   it("omits the left rail for the old-style top guidance and marks the shell", () => {
+    mockViewport(false);
     const { container } = renderShell({ leftRail: null, rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
 
     expect(container.querySelector('[data-has-left-rail="false"]')).not.toBeNull();
@@ -117,6 +188,7 @@ describe("StudioEditorShell", () => {
   });
 
   it("owns keyboard-accessible separators and persists panel widths", async () => {
+    mockViewport(false);
     window.localStorage.setItem(EDITOR_PANEL_LAYOUT_STORAGE_KEY, JSON.stringify({ sidebarWidth: 280, inspectorWidth: 260 }));
     const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
 
@@ -154,7 +226,9 @@ describe("StudioEditorShell", () => {
   });
 
   it("exposes the right rail through a labelled drawer toggle on narrow screens", async () => {
+    mockViewport(true);
     const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
+    await flushEffects();
 
     const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="打开地图属性"]');
     expect(toggle).not.toBeNull();
@@ -173,5 +247,73 @@ describe("StudioEditorShell", () => {
     // timeout after the exit transition duration, so poll generously.
     await vi.waitFor(() => expect(document.querySelector(".MuiDrawer-root")).toBeNull(), { timeout: 3000, interval: 50 });
     expect(document.activeElement).toBe(toggle);
+  });
+
+  it("mounts the right rail only in the docked aside on wide viewports", async () => {
+    mockViewport(false);
+    const { container } = renderShell({ rightRail: rightRailProbe, rightRailLabel: "地图属性" });
+    await flushEffects();
+
+    expect(container.querySelector(".studio-editor-shell__right")).not.toBeNull();
+    expect(container.querySelector('button[aria-label="打开地图属性"]')).toBeNull();
+    expect(document.querySelector(".MuiDrawer-root")).toBeNull();
+    expect(probeCount()).toBe(1);
+  });
+
+  it("mounts the right rail only inside the drawer on narrow viewports", async () => {
+    mockViewport(true);
+    const { container } = renderShell({ rightRail: rightRailProbe, rightRailLabel: "地图属性" });
+    await flushEffects();
+
+    expect(container.querySelector(".studio-editor-shell__right")).toBeNull();
+    expect(container.querySelector('[role="separator"][aria-label="调整右侧栏宽度"]')).toBeNull();
+    expect(probeCount()).toBe(0);
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开地图属性"]'));
+    expect(document.querySelector(".studio-editor-shell__drawer")).not.toBeNull();
+    expect(probeCount()).toBe(1);
+  });
+
+  it("swaps presentations without double-mounting when the viewport crosses the breakpoint", async () => {
+    const viewport = mockViewport(false);
+    const { container } = renderShell({ rightRail: rightRailProbe, rightRailLabel: "地图属性" });
+    await flushEffects();
+    expect(probeCount()).toBe(1);
+
+    await viewport.setNarrow(true);
+    expect(container.querySelector(".studio-editor-shell__right")).toBeNull();
+    expect(probeCount()).toBe(0);
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开地图属性"]'));
+    expect(probeCount()).toBe(1);
+
+    await viewport.setNarrow(false);
+    await vi.waitFor(() => expect(document.querySelector(".MuiDrawer-root")).toBeNull(), { timeout: 3000, interval: 50 });
+    expect(container.querySelector(".studio-editor-shell__right")).not.toBeNull();
+    expect(probeCount()).toBe(1);
+  });
+
+  it("drops the media query listener on unmount", async () => {
+    const viewport = mockViewport(false);
+    const { root, container } = renderShell({ rightRail: rightRailProbe, rightRailLabel: "地图属性" });
+    await flushEffects();
+    expect(viewport.listenerCount).toBe(1);
+
+    await act(async () => root.unmount());
+    container.remove();
+    const index = roots.findIndex((entry) => entry.container === container);
+    if (index >= 0) roots.splice(index, 1);
+
+    expect(viewport.listenerCount).toBe(0);
+  });
+
+  it("falls back to the docked desktop rail when matchMedia is unavailable", async () => {
+    setMatchMedia(undefined);
+    const { container } = renderShell({ rightRail: rightRailProbe, rightRailLabel: "地图属性" });
+    await flushEffects();
+
+    expect(container.querySelector(".studio-editor-shell__right")).not.toBeNull();
+    expect(container.querySelector('button[aria-label="打开地图属性"]')).toBeNull();
+    expect(probeCount()).toBe(1);
   });
 });
