@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { ProjectWorkbench } from "./ProjectWorkbench";
 import { createMemoryProjectStore, createSampleProject } from "../lib/project-store";
 import { serializeProjectPackage } from "../lib/project-package";
+import { MAX_PROJECT_PACKAGE_BYTES } from "../lib/import-file-limits";
 
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
 function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, navigate = vi.fn()) {
@@ -25,6 +26,24 @@ function changeInput(input: HTMLInputElement, value: string): void {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
+}
+
+/** 真造一份 24MB 文件会把测试拖垮，只改 `size` 就够触发体积闸门。 */
+function fileOfSize(content: string, name: string, size: number): File {
+  const file = new File([content], name, { type: "application/json" });
+  Object.defineProperty(file, "size", { value: size, configurable: true });
+  return file;
+}
+
+function selectFile(input: HTMLInputElement, file: File): void {
+  Object.defineProperty(input, "files", { value: [file] as unknown as FileList, configurable: true });
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+async function renderWithImportInput(store: ReturnType<typeof createMemoryProjectStore>) {
+  const { container } = renderWorkbench(store);
+  await vi.waitFor(() => expect(container.querySelector('input[type="file"]')).not.toBeNull());
+  return { container, input: container.querySelector<HTMLInputElement>('input[type="file"]')! };
 }
 
 function buttonByLabel(scope: ParentNode, label: string): HTMLButtonElement {
@@ -137,6 +156,39 @@ describe("ProjectWorkbench", () => {
       expect(projects).toHaveLength(2);
       expect(projects.some((p) => p.name === "project")).toBe(true);
     });
+  });
+
+  it("拒绝超过上限的工程包，且不把文件读进内存", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const file = fileOfSize(serializeProjectPackage(sample.pack), "巨大工程.cengfan", MAX_PROJECT_PACKAGE_BYTES + 1);
+    const text = vi.spyOn(file, "text");
+    const { container, input } = await renderWithImportInput(store);
+    selectFile(input, file);
+
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("工程包过大"));
+    const banner = container.querySelector(".workbench-error")!;
+    expect(banner.textContent).toContain("导入失败");
+    expect(banner.textContent).toContain("上限 24.0 MB");
+    expect(banner.textContent).toContain("请在导出时取消勾选");
+    // 超限的文件连读都不读，避免主线程被整份 JSON 卡住。
+    expect(text).not.toHaveBeenCalled();
+    expect(await store.list()).toHaveLength(1);
+    // 拒绝后清空 input，用户换一份小文件仍能触发 change。
+    expect(input.value).toBe("");
+  });
+
+  it("恰好等于上限的工程包仍然导入", async () => {
+    const store = createMemoryProjectStore();
+    const sample = createSampleProject();
+    await store.put(sample);
+    const file = fileOfSize(serializeProjectPackage(sample.pack), "临界工程.json", MAX_PROJECT_PACKAGE_BYTES);
+    const { container, input } = await renderWithImportInput(store);
+    selectFile(input, file);
+
+    await vi.waitFor(async () => expect(await store.list()).toHaveLength(2));
+    expect(container.querySelector(".workbench-error")).toBeNull();
   });
 
   it("shows an error banner for an invalid project package", async () => {

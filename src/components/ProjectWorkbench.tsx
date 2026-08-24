@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEmptyProject, createSampleProject, duplicateStoredProject, type ProjectStore, type StoredProject } from "../lib/project-store";
 import { downloadProjectPackage, parseProjectPackage, projectPackageDisplayName } from "../lib/project-package";
 import { createId } from "../lib/ids";
+import { PROJECT_PACKAGE_IMPORT_LIMIT, checkImportFileSize } from "../lib/import-file-limits";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
 import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
@@ -215,6 +216,13 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   const importProject = async (file: File | null) => {
     if (!file) return;
     try {
+      // 先判体积再读盘：`file.text()` 与 `JSON.parse` 都要把整份工程同步装进内存，
+      // 超限的文件读进来只会先卡死标签页，再抛一个用户看不懂的解析错误。
+      const oversized = checkImportFileSize(file, PROJECT_PACKAGE_IMPORT_LIMIT);
+      if (oversized) {
+        setError(`导入失败：${oversized}`);
+        return;
+      }
       const pack = parseProjectPackage(await file.text());
       await store.put({
         id: createId("proj"),
