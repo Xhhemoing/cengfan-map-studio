@@ -20,7 +20,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 1 | CLOSED | T1–T10 + R2-0 | — | Hotfix-after full suite 1391 pass / 1 skip |
 | 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
-| 4 | CLOSED | R4-1–R4-10 | — | Full suite 171 files / 1534 pass / 2 skip; lint 0 errors (7 warnings); fable review next |
+| 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
+| 5 | IN_PROGRESS | — | — | Calibration + shared store; R5-1 first for PR ready. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -75,7 +76,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - Full suite: **171 files, 1534 passed / 2 skipped** (70.0s).
 - Lint: 0 errors, 7 warnings (5 pre-existing react-refresh; DataWorkspace exhaustive-deps; new `main.tsx` react-refresh from WorkbenchRoute). Two `no-control-regex` errors from R4-4/R4-7 silenced with documented disables.
 - Typecheck: `npm run typecheck` (`tsc -b --noEmit`) exit 0.
-- Fable: pending `.agent_workspace/round-4-review.md`. PR stays draft until fable.
+- Fable: `.agent_workspace/round-4-review.md`. Briefing: `.agent_workspace/round-4-briefing.md`. No merge blocker. PR stays draft until R5-1 recalibrates persist cap.
 
 ## Round Briefings
 
