@@ -10,7 +10,7 @@ import { parseStudentText, type TextImportResult, type UnparsedLine } from "./im
 
 /**
  * 对外导出完整的列类型(含省份):识别面板要为省份渲染映射行,消费方的标签表也要覆盖省份。
- * 回滚省份列时改回 `export type { MappedStudentColumn as StudentColumn } from "./import-aliases";`。
+ * 回滚省份列时从 `StudentColumn` 联合类型去掉 `"province"`，并同步 `MAPPED_COLUMNS`。
  */
 export type { StudentColumn } from "./import-aliases";
 
