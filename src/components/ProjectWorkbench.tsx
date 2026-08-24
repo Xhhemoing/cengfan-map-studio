@@ -7,7 +7,7 @@ import {
   type ProjectStore,
   type StoredProject,
 } from "../lib/project-store";
-import { downloadProjectPackage, parseProjectPackage, projectPackageDisplayName } from "../lib/project-package";
+import { assertProjectPackageSize, downloadProjectPackage, parseProjectPackage, projectPackageDisplayName } from "../lib/project-package";
 import { createId } from "../lib/ids";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
 import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
@@ -178,6 +178,8 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   const importProject = async (file: File | null) => {
     if (!file) return;
     try {
+      // 先用 File.size 挡掉超限工程包：file.text() 会把整份文本读进内存。
+      assertProjectPackageSize(file.size);
       const pack = parseProjectPackage(await file.text());
       await store.put({
         id: createId("proj"),

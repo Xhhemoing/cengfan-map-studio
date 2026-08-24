@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { usePosterExport, type UsePosterExportResult } from "./usePosterExport";
+import { createProjectPackage, serializeProjectPackage, type ProjectPackage } from "./project-package";
 import { createProjectDocument } from "./project-document";
 import { sampleStudents } from "./project-data";
 
@@ -75,11 +76,13 @@ function installEnvironment(): void {
 interface Harness {
   result: () => UsePosterExportResult;
   statuses: string[];
+  imported: ProjectPackage[];
   render: () => void;
 }
 
 function mountHook(options: { withPoster?: boolean } = {}): Harness {
   const statuses: string[] = [];
+  const imported: ProjectPackage[] = [];
   let latest: UsePosterExportResult | null = null;
   const project = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
   const poster = options.withPoster === false
@@ -95,7 +98,7 @@ function mountHook(options: { withPoster?: boolean } = {}): Harness {
       userFonts: [],
       customTemplates: [],
       renderSettings: { mode: "normal", fixedFps: 20 },
-      applyImportedPackage: () => {},
+      applyImportedPackage: (pack) => imported.push(pack),
       reportStatus: (message) => statuses.push(message),
     });
     return null;
@@ -113,6 +116,7 @@ function mountHook(options: { withPoster?: boolean } = {}): Harness {
       return latest;
     },
     statuses,
+    imported,
     render: () => act(() => root.render(<HookHarness />)),
   };
 }
@@ -247,6 +251,34 @@ describe("usePosterExport", () => {
     expect(harness.result().exportError).toBeUndefined();
     expect(harness.result().exportingPng).toBe(false);
     expect(downloads).toHaveLength(1);
+  });
+
+  it("rejects an oversized package by File.size without starting a read", () => {
+    const harness = mountHook();
+    const readSpy = vi.spyOn(FileReader.prototype, "readAsText");
+    const file = new File(["{}"], "huge.json", { type: "application/json" });
+    Object.defineProperty(file, "size", { value: 256 * 1024 * 1024, configurable: true });
+
+    act(() => { harness.result().importProjectPackage(file); });
+
+    expect(readSpy).not.toHaveBeenCalled();
+    expect(harness.imported).toHaveLength(0);
+    expect(harness.statuses.at(-1)).toContain("工程包过大");
+    expect(harness.statuses.at(-1)).toContain("128.0 MB");
+  });
+
+  it("imports a package whose size is within the cap", async () => {
+    const harness = mountHook();
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    const project = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+    const source = serializeProjectPackage(createProjectPackage({ project, assets: [], fonts: [] }));
+    const file = new File([source], "project.json", { type: "application/json" });
+
+    act(() => { harness.result().importProjectPackage(file); });
+
+    await vi.waitFor(() => expect(harness.imported).toHaveLength(1));
+    expect(harness.imported[0]?.project.students).toHaveLength(sampleStudents.length);
+    expect(harness.statuses.at(-1)).toContain("完整工程包已导入");
   });
 
   it("exports the project package and reports the roster size", () => {

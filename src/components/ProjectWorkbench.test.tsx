@@ -151,6 +151,23 @@ describe("ProjectWorkbench", () => {
     });
   });
 
+  it("rejects an oversized package by File.size without reading its text", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const file = new File(["{}"], "huge.json", { type: "application/json" });
+    Object.defineProperty(file, "size", { value: 256 * 1024 * 1024, configurable: true });
+    const readSpy = vi.spyOn(file, "text");
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('input[type="file"]')).not.toBeNull());
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    Object.defineProperty(input!, "files", { value: [file] as unknown as FileList, configurable: true });
+    input!.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("工程包过大"));
+    expect(container.querySelector(".workbench-error")?.textContent).toContain("128.0 MB");
+    expect(readSpy).not.toHaveBeenCalled();
+    expect(await store.list()).toHaveLength(1);
+  });
+
   it("keeps a project when deletion is cancelled", async () => {
     const store = createMemoryProjectStore();
     const sample = createSampleProject();
