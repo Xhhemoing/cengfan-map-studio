@@ -124,11 +124,30 @@ describe("server lifecycle", () => {
       // 没有推进时钟：关停必须靠 close+flush 自己走完，而不是被截止时间兜住。
       await expect(lifecycle.shutdown("SIGTERM")).resolves.toBeUndefined();
       expect(onFlushError).toHaveBeenCalledOnce();
-      expect(onFlushError).toHaveBeenCalledWith(failure);
+      expect(onFlushError).toHaveBeenCalledWith(failure, { phase: "flush" });
       expect(onTimeout).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reports a rejected drain under the drain phase and still flushes afterwards", async () => {
+    const failure = new Error("SSE 断流失败");
+    const onFlushError = vi.fn();
+    const flush = vi.fn(async () => undefined);
+    const lifecycle = createServerLifecycle({
+      server: { close: vi.fn((callback: () => void) => callback()) },
+      flush,
+      drain: async () => { throw failure; },
+      onFlushError,
+      timeoutMs: 100,
+    });
+
+    await expect(lifecycle.shutdown("SIGTERM")).resolves.toBeUndefined();
+    // 排空失败以前被 `.catch(() => undefined)` 吞掉：连接没走干净，退出码却仍是 0。
+    expect(onFlushError).toHaveBeenCalledWith(failure, { phase: "drain" });
+    // 排空失败不能连累落盘：状态照样要写到盘上。
+    expect(flush).toHaveBeenCalledOnce();
   });
 
   it("falls back to console.error when no flush-error hook is provided", async () => {
@@ -142,6 +161,60 @@ describe("server lifecycle", () => {
       });
       await expect(lifecycle.shutdown("SIGTERM")).resolves.toBeUndefined();
       expect(consoleError).toHaveBeenCalledOnce();
+      expect(consoleError.mock.calls[0]).toContain(failure);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("reports a synchronous close failure and a throwing deadline hook under their own phases", async () => {
+    vi.useFakeTimers();
+    try {
+      const closeFailure = new Error("EADDRINUSE");
+      const onFlushError = vi.fn();
+      const flush = vi.fn(async () => undefined);
+      const lifecycle = createServerLifecycle({
+        server: { close: vi.fn(() => { throw closeFailure; }) },
+        flush,
+        onFlushError,
+        timeoutMs: 50,
+      });
+      await expect(lifecycle.shutdown("SIGTERM")).resolves.toBeUndefined();
+      expect(onFlushError).toHaveBeenCalledWith(closeFailure, { phase: "close" });
+      expect(flush).toHaveBeenCalledOnce();
+
+      const timeoutFailure = new Error("socket destroy failed");
+      const onTimeoutError = vi.fn();
+      const stalled = createServerLifecycle({
+        server: { close: vi.fn() },
+        flush: () => new Promise<void>(() => undefined),
+        onTimeout: () => { throw timeoutFailure; },
+        onFlushError: onTimeoutError,
+        timeoutMs: 50,
+      });
+      const pending = stalled.shutdown("SIGTERM");
+      await vi.advanceTimersByTimeAsync(50);
+      await expect(pending).resolves.toBeUndefined();
+      expect(onTimeoutError).toHaveBeenCalledWith(timeoutFailure, { phase: "timeout" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("labels the default console.error report with the failing phase", async () => {
+    const failure = new Error("ECONNRESET");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const lifecycle = createServerLifecycle({
+        server: { close: vi.fn((callback: () => void) => callback()) },
+        flush: async () => undefined,
+        drain: async () => { throw failure; },
+        timeoutMs: 100,
+      });
+      await expect(lifecycle.shutdown("SIGTERM")).resolves.toBeUndefined();
+      expect(consoleError).toHaveBeenCalledOnce();
+      // 默认日志要能区分排空失败与落盘失败，否则运维只知道「关停出事了」。
+      expect(String(consoleError.mock.calls[0]?.[0])).toContain("排空连接失败");
       expect(consoleError.mock.calls[0]).toContain(failure);
     } finally {
       consoleError.mockRestore();
@@ -207,6 +280,30 @@ describe("server lifecycle", () => {
     expect(server.close).toHaveBeenCalledOnce();
   });
 
+  // 这条曾经断言 shutdown() 把 onDraining 的异常抛出去。信号处理器里没人 catch，
+  // 抛出去就是 uncaughtException：进程死在关停中途，close/drain/flush 一个都没跑。
+  it("does not let a throwing draining hook escape the signal handler, and still closes, drains and flushes", async () => {
+    const failure = new Error("draining hook exploded");
+    const onFlushError = vi.fn();
+    const flush = vi.fn(async () => undefined);
+    const drain = vi.fn(async () => undefined);
+    const server = { close: vi.fn((callback: () => void) => callback()) };
+    const lifecycle = createServerLifecycle({
+      server,
+      flush,
+      drain,
+      onDraining: () => { throw failure; },
+      onFlushError,
+      timeoutMs: 100,
+    });
+
+    await expect(lifecycle.shutdown("SIGTERM")).resolves.toBeUndefined();
+    expect(onFlushError).toHaveBeenCalledWith(failure, { phase: "draining" });
+    expect(server.close).toHaveBeenCalledOnce();
+    expect(drain).toHaveBeenCalledOnce();
+    expect(flush).toHaveBeenCalledOnce();
+  });
+
   it("still lands the memoized shutdown at the deadline when a draining hook throws", async () => {
     vi.useFakeTimers();
     try {
@@ -216,9 +313,10 @@ describe("server lifecycle", () => {
         onDraining: () => { throw new Error("draining hook exploded"); },
         timeoutMs: 50,
       });
-      expect(() => lifecycle.shutdown("SIGTERM")).toThrow("draining hook exploded");
+      const first = lifecycle.shutdown("SIGTERM");
       // 记名的 promise 已经存在，第二个信号会拿到它：它必须能落地，不能永远挂着。
       const pending = lifecycle.shutdown("SIGINT");
+      expect(pending).toBe(first);
       await vi.advanceTimersByTimeAsync(50);
       await expect(pending).resolves.toBeUndefined();
     } finally {
