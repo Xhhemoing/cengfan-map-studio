@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-24T14:02:56.620Z",
+  "runtime": {
+    "node": "v22.14.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "seed": 7,
+  "warmupIterations": 2,
+  "iterations": 12,
+  "counts": [
+    36,
+    60,
+    100,
+    200,
+    400
+  ],
+  "modes": [
+    "quadrant",
+    "radial",
+    "right-stack",
+    "grid"
+  ],
+  "invariantChecks": {
+    "finiteNumbers": true,
+    "canvasBounds": true,
+    "placementCount": true,
+    "overlaps": "solved-results"
+  },
+  "results": [
+    {
+      "count": 36,
+      "mode": "quadrant",
+      "p50Ms": 13.343,
+      "p95Ms": 14.358,
+      "minMs": 9.93,
+      "maxMs": 14.358,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "radial",
+      "p50Ms": 9.92,
+      "p95Ms": 10.514,
+      "minMs": 9.766,
+      "maxMs": 10.514,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "right-stack",
+      "p50Ms": 10.283,
+      "p95Ms": 10.528,
+      "minMs": 10.182,
+      "maxMs": 10.528,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "grid",
+      "p50Ms": 2.908,
+      "p95Ms": 3.99,
+      "minMs": 2.833,
+      "maxMs": 3.99,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "quadrant",
+      "p50Ms": 15.54,
+      "p95Ms": 16.766,
+      "minMs": 15.184,
+      "maxMs": 16.766,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "radial",
+      "p50Ms": 14.805,
+      "p95Ms": 15.127,
+      "minMs": 14.611,
+      "maxMs": 15.127,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "right-stack",
+      "p50Ms": 14.908,
+      "p95Ms": 15.121,
+      "minMs": 14.836,
+      "maxMs": 15.121,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "grid",
+      "p50Ms": 2.709,
+      "p95Ms": 3.033,
+      "minMs": 2.659,
+      "maxMs": 3.033,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "quadrant",
+      "p50Ms": 23.479,
+      "p95Ms": 23.879,
+      "minMs": 23.122,
+      "maxMs": 23.879,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "radial",
+      "p50Ms": 23.263,
+      "p95Ms": 23.885,
+      "minMs": 23.137,
+      "maxMs": 23.885,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "right-stack",
+      "p50Ms": 23.466,
+      "p95Ms": 24.031,
+      "minMs": 23.304,
+      "maxMs": 24.031,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "grid",
+      "p50Ms": 3.014,
+      "p95Ms": 3.177,
+      "minMs": 2.987,
+      "maxMs": 3.177,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "quadrant",
+      "p50Ms": 46.197,
+      "p95Ms": 46.416,
+      "minMs": 45.913,
+      "maxMs": 46.416,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "radial",
+      "p50Ms": 44.588,
+      "p95Ms": 45.456,
+      "minMs": 44.195,
+      "maxMs": 45.456,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "right-stack",
+      "p50Ms": 45.384,
+      "p95Ms": 50.714,
+      "minMs": 44.947,
+      "maxMs": 50.714,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "grid",
+      "p50Ms": 4.446,
+      "p95Ms": 4.96,
+      "minMs": 4.32,
+      "maxMs": 4.96,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "quadrant",
+      "p50Ms": 92.497,
+      "p95Ms": 103.447,
+      "minMs": 90.824,
+      "maxMs": 103.447,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "radial",
+      "p50Ms": 88.145,
+      "p95Ms": 90.065,
+      "minMs": 85.971,
+      "maxMs": 90.065,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "right-stack",
+      "p50Ms": 87.823,
+      "p95Ms": 91.327,
+      "minMs": 87.317,
+      "maxMs": 91.327,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "grid",
+      "p50Ms": 6.966,
+      "p95Ms": 7.246,
+      "minMs": 6.754,
+      "maxMs": 7.246,
+      "fallbackRuns": 12
+    }
+  ]
+}
