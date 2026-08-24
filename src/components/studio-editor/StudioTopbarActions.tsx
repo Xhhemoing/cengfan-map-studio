@@ -4,7 +4,7 @@
  * 项目菜单节点由 App 构造一次，聚焦阶段与旧版编辑器共用同一实例。
  */
 import { Bot, Redo2, Undo2 } from "lucide-react";
-import type { ReactNode, RefObject } from "react";
+import { useState, type ReactNode, type RefObject } from "react";
 import { ProjectMenu } from "../ProjectMenu";
 import { SkinSelector } from "../SkinSelector";
 import { ThemeToggle } from "../ThemeToggle";
@@ -108,11 +108,37 @@ export function HistoryActionsGroup({
   onUndo: () => void;
   onRedo: () => void;
 }) {
+  // 与 MapStyleRail 相同的读屏反馈（WCAG 4.1.3 状态消息）：撤销/重做本身零反馈，
+  // 按钮 aria-label 的静默更新不会被读出。点击时用点击前的标签播报
+  // 「已撤销：某步骤 / 已重做：某步骤」；tick 的隐形空格后缀在两次播报之间切换，
+  // 保证连续撤销两个同名步骤时 DOM 文本仍有变化（aria-live 不会复读完全相同的文本）。
+  const [historyAnnouncement, setHistoryAnnouncement] = useState({ text: "", tick: 0 });
+  const announceHistory = (label: string) =>
+    setHistoryAnnouncement((prev) => ({ text: `已${label}`, tick: prev.tick + 1 }));
   return (
-    <ToolbarGroup label="历史与缩放" className="topbar-action-group--history">
-      <ToolbarButton label={history.undoLabel} icon={<Undo2 size={18} />} disabled={!history.canUndo} onClick={onUndo} />
-      <ToolbarButton label={history.redoLabel} icon={<Redo2 size={18} />} disabled={!history.canRedo} onClick={onRedo} />
-    </ToolbarGroup>
+    <>
+      <ToolbarGroup label="历史与缩放" className="topbar-action-group--history">
+        <ToolbarButton
+          label={history.undoLabel}
+          icon={<Undo2 size={18} />}
+          disabled={!history.canUndo}
+          onClick={() => { announceHistory(history.undoLabel); onUndo(); }}
+        />
+        <ToolbarButton
+          label={history.redoLabel}
+          icon={<Redo2 size={18} />}
+          disabled={!history.canRedo}
+          onClick={() => { announceHistory(history.redoLabel); onRedo(); }}
+        />
+      </ToolbarGroup>
+      {/* 持久存在（而非按需挂载）的播报区：区域必须先于变更就在 DOM 里，
+          读屏才能可靠播报；sr-only 绝对定位，不影响顶栏布局。窄屏 CSS 只隐藏
+          组内 icon-button，本节点在组外，不受影响。 */}
+      <span className="sr-only" role="status" aria-live="polite" data-topbar-history-announcement>
+        {historyAnnouncement.text}
+        {historyAnnouncement.tick % 2 === 1 ? "\u00A0" : ""}
+      </span>
+    </>
   );
 }
 

@@ -286,4 +286,40 @@ describe("Topbar action layering (T4)", () => {
     const themeGroup = container.querySelector('.topbar-actions [role="group"][aria-label="界面主题"]');
     expect(themeGroup?.className).toContain("topbar-action-group--theme");
   });
+
+  it("announces global undo/redo through a persistent polite live region", () => {
+    const container = renderPublicApp();
+
+    // The region sits in the topbar and exists before any interaction (live
+    // regions must be in the DOM ahead of the change to announce reliably),
+    // screen-reader-only and initially empty.
+    const initialRegion = container.querySelector('.topbar-actions [data-topbar-history-announcement]');
+    expect(initialRegion).not.toBeNull();
+    expect(initialRegion?.getAttribute("role")).toBe("status");
+    expect(initialRegion?.getAttribute("aria-live")).toBe("polite");
+    expect(initialRegion?.classList.contains("sr-only")).toBe(true);
+    expect(initialRegion?.textContent).toBe("");
+
+    // Commit two identically labelled map patches (different history groups,
+    // so they stay separate undo steps) to enable undo twice in a row.
+    click(workflowStage(container, "地图样式"));
+    click(container.querySelector<HTMLInputElement>("#map-labels")!);
+    click(container.querySelector<HTMLInputElement>("#map-collapse-south-sea")!);
+
+    const region = container.querySelector('.topbar-actions [data-topbar-history-announcement]');
+    const undoButton = () =>
+      container.querySelector<HTMLButtonElement>('.topbar-actions button[aria-label^="撤销："]')!;
+    click(undoButton());
+    expect(region?.textContent?.replace(/\u00A0/g, "")).toBe("已撤销：更新地图");
+
+    // Undoing a second, identically labelled step still mutates the DOM text
+    // (an invisible suffix toggles), so aria-live re-announces it.
+    const firstAnnouncement = region?.textContent;
+    click(undoButton());
+    expect(region?.textContent?.replace(/\u00A0/g, "")).toBe("已撤销：更新地图");
+    expect(region?.textContent).not.toBe(firstAnnouncement);
+
+    click(container.querySelector<HTMLButtonElement>('.topbar-actions button[aria-label^="重做："]')!);
+    expect(region?.textContent?.replace(/\u00A0/g, "")).toBe("已重做：更新地图");
+  });
 });

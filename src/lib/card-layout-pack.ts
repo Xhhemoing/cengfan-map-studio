@@ -56,13 +56,19 @@ function isFree(card: CardArea, space: LayoutSpace, placed: PlacementIndex): boo
  * Greedy containment repair: nudge a placement into the nearest free spot.
  * Rows and columns are visited by distance to the probe so the search can stop
  * as soon as no remaining track can beat the best hit.
+ *
+ * The repair is a fallback, so the incoming `side` is a placeholder rather than
+ * a column assignment — `packSides` labels every card it could not seat
+ * `"right"` before it has a position. Each exit therefore re-derives the side
+ * from where the card actually lands, or the leader line would leave from an
+ * edge facing away from the anchor.
  */
 export function containFree(
   placement: CardPlacement,
   space: LayoutSpace,
   placed: PlacementIndex,
 ): CardPlacement {
-  if (isFree(placement, space, placed)) return placement;
+  if (isFree(placement, space, placed)) return { ...placement, side: space.sideOf(placement) };
 
   const maxX = space.maxX(placement.width);
   const maxY = space.maxY(placement.height);
@@ -105,6 +111,9 @@ export function containFree(
  * margin, skipping past cards already there so nothing fully coincides. The
  * card stays visible and inside the canvas; any overlap here means the canvas
  * is saturated, which the caller reports as `fallback`.
+ *
+ * Like {@link containFree}, this is reached with a placeholder `side`, so the
+ * seat it picks decides the side rather than whatever the caller passed in.
  */
 export function stackAtMargin(
   placement: CardPlacement,
@@ -117,7 +126,13 @@ export function stackAtMargin(
       y = other.y + other.height + space.gap;
     }
   }
-  return { ...placement, x: space.margin, y: space.clampY(y, placement.height) };
+  const seat: CardArea = {
+    x: space.margin,
+    y: space.clampY(y, placement.height),
+    width: placement.width,
+    height: placement.height,
+  };
+  return { ...placement, x: seat.x, y: seat.y, side: space.sideOf(seat) };
 }
 
 /**

@@ -143,6 +143,45 @@ describe("packSides", () => {
     for (const id of ["c0", "c1", "c2", "c3"]) expect(byId.get(id)!.side).toBe("left");
   });
 
+  it("labels a leftover card by where it lands, not by the placeholder side", () => {
+    // The east column and the bottom band are both walled off, so the one card
+    // bounces right → bottom → right for every overflow round and drops out of
+    // side packing entirely. It is seated by `containFree`, which is reached
+    // with a `side` that was never assigned.
+    const eastWall = { x: 600, y: 20, width: 280, height: 660 };
+    const bottomWall = { x: 20, y: 480, width: 580, height: 200 };
+    const space = makeSpace([occupied, eastWall, bottomWall]);
+    const east: CardLayoutInput = { id: "east", anchorX: 700, anchorY: 300, width: 150, height: 120 };
+
+    const [placement] = packSides([east], space, "quadrant", {});
+
+    expect(placement!.x).toBeLessThan(occupied.x);
+    expect(placement!.side).toBe("left");
+    expect(placement!.side).toBe(space.sideOf(placement!));
+  });
+
+  it("labels stacked leftovers by their seat once the canvas is saturated", () => {
+    // Nothing can be placed anywhere, so the first card exhausts the free-spot
+    // scan, latches `saturated`, and the rest go straight to the margin stack.
+    const space = makeSpace([{ x: 0, y: 0, width: 900, height: 700 }]);
+    const cards: CardLayoutInput[] = Array.from({ length: 3 }, (_, index) => ({
+      id: `c${index}`,
+      anchorX: 700,
+      anchorY: 300,
+      width: 150,
+      height: 120,
+    }));
+
+    const placements = packSides(cards, space, "quadrant", {});
+
+    expect(placements).toHaveLength(3);
+    for (const placement of placements) {
+      expect(placement.x).toBe(space.margin);
+      expect(placement.side).toBe(space.sideOf(placement));
+      expect(placement.side).not.toBe("right");
+    }
+  });
+
   it("never places a card twice across randomized boards", () => {
     let seed = 12345;
     const random = () => {

@@ -1,4 +1,5 @@
 import type { Student } from "./project-data";
+import { parseLocationScopeValue } from "./import-data";
 import { resolveCity } from "./search-catalog";
 import { asRecord, asString, type UnknownRecord } from "./project-migration-helpers";
 
@@ -41,7 +42,10 @@ export function migrateStudents(value: unknown): Student[] {
     const id = uniqueStudentId(asString(record.id), usedIds, index);
     usedIds.add(id);
 
-    const locationScope = record.locationScope === "international" ? "international" : undefined;
+    // Hand-written and pre-canonical payloads spell the overseas scope the way the
+    // import parser accepts it ("overseas", "abroad", "海外"), so the same reader
+    // decides here: anything else stays a China destination.
+    const locationScope = parseLocationScopeValue(asString(record.locationScope));
     const manualProvince = locationScope ? "" : asString(record.province);
     students.push({
       id,

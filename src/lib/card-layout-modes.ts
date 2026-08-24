@@ -332,6 +332,8 @@ export function packSides(
   // Any cards still unplaced get a contained free spot (non-overlapping scan).
   // Once one scan comes up empty the canvas is saturated, so the rest skip
   // straight to the stacked last resort instead of rescanning a full canvas.
+  // The probe's `side` is a placeholder: these cards belong to no column, so
+  // both fallbacks re-derive it from the spot they end up choosing.
   const placedIds = new Set(placed.items.map((placement) => placement.id));
   let saturated = false;
   for (const card of cards) {

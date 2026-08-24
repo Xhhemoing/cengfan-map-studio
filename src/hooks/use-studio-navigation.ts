@@ -9,6 +9,7 @@ import type { DeliveryIssue } from "../components/workspaces/DeliveryWorkspace";
 import type { ActivePanel } from "../lib/app-constants";
 import { loadBrowserValue } from "../lib/app-initialization";
 import { resolveDeliveryIssueLocation } from "../lib/delivery-target";
+import type { LayoutHealthIssue } from "../lib/layout-health";
 import type { ProjectDocument } from "../lib/project-document";
 import type { SceneSelection } from "../lib/scene-document";
 import type { StageOverviewAction } from "../lib/stage-overview";
@@ -85,8 +86,9 @@ export function useStudioNavigation({
     setGlobalSettingsSection("advanced");
   };
 
-  const locateLayoutIssue = (issue: { id: string }) => {
-    const next = resolveLayoutIssueSelection(project, issue.id);
+  /** 体检报告随附 targets 时优先按原始 id 定位——卡片分组键含 ":" 时拆拼接 id 会认错对象。 */
+  const locateLayoutIssue = (issue: Pick<LayoutHealthIssue, "id" | "targets">) => {
+    const next = resolveLayoutIssueSelection(project, issue.id, issue.targets);
     if (next) setSelection(next);
   };
 
