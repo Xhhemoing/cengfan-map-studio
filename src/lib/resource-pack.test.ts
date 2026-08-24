@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_USER_FONT_BYTES } from "./fonts";
 import {
   createResourcePack,
+  downloadResourcePack,
   mergeResourcePack,
   parseResourcePack,
   serializeResourcePack,
@@ -164,5 +165,65 @@ describe("resource-pack", () => {
     expect(merged.duplicateFonts).toBe(1);
     expect(merged.fonts).toEqual(existingFonts);
     expect(merged.fontIdRemap).toEqual({ "font-user-renamed": "font-user-1" });
+  });
+
+  describe("downloadResourcePack", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    });
+
+    it("keeps the object url alive after the click so the download can start", async () => {
+      vi.useFakeTimers();
+      try {
+        const blobs: Blob[] = [];
+        const createObjectURL = vi.fn((blob: Blob) => {
+          blobs.push(blob);
+          return "blob:resource-pack";
+        });
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+        const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
+        const click = vi.spyOn(link, "click").mockImplementation(() => {});
+        vi.spyOn(document, "createElement").mockImplementation((tag: string) =>
+          tag === "a" ? link : (document.createElementNS("http://www.w3.org/1999/xhtml", tag) as HTMLElement),
+        );
+        const pack = createResourcePack({
+          assets: [],
+          fonts: [],
+          now: new Date("2026-07-26T00:00:00.000Z"),
+        });
+
+        downloadResourcePack(pack);
+
+        expect(link.getAttribute("href")).toBe("blob:resource-pack");
+        expect(link.download).toBe("cengfan-resource-pack-2026-07-26.json");
+        expect(click).toHaveBeenCalled();
+        expect(blobs[0]?.type).toBe("application/json;charset=utf-8");
+        await expect(blobs[0]?.text()).resolves.toBe(serializeResourcePack(pack));
+        // 资源包体积大，点击的同一个任务内 revoke 会让浏览器取消尚未开始的下载。
+        expect(revokeObjectURL).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(1000);
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:resource-pack");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("revokes the object url when the download click throws", () => {
+      const createObjectURL = vi.fn(() => "blob:resource-pack");
+      const revokeObjectURL = vi.fn();
+      vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+      const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
+      vi.spyOn(link, "click").mockImplementation(() => {
+        throw new Error("下载被拦截");
+      });
+      vi.spyOn(document, "createElement").mockImplementation((tag: string) =>
+        tag === "a" ? link : (document.createElementNS("http://www.w3.org/1999/xhtml", tag) as HTMLElement),
+      );
+
+      expect(() => downloadResourcePack(createResourcePack({ assets: [], fonts: [] }))).toThrow("下载被拦截");
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:resource-pack");
+    });
   });
 });

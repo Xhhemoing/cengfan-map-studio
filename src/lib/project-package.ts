@@ -1,4 +1,5 @@
 import type { UserAsset } from "./assets";
+import { downloadBlob } from "./export-poster";
 import {
   BUILT_IN_FONTS,
   estimateFontBytes,
@@ -375,13 +376,9 @@ export function projectPackageDisplayName(filename: string): string {
 }
 
 export function downloadProjectPackage(pack: ProjectPackage, filename = `cengfan-project-${pack.exportedAt.slice(0, 10)}.json`): void {
-  const blob = new Blob([serializeProjectPackage(pack)], { type: "application/json;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
+  // 工程包动辄数十 MB，同一个任务内 revoke 会让浏览器把还没开始的下载直接掐掉，
+  // 因此复用 downloadBlob 的延迟回收。
+  downloadBlob(new Blob([serializeProjectPackage(pack)], { type: "application/json;charset=utf-8" }), filename);
 }
 
 export function projectPackageResourcePack(pack: ProjectPackage) {

@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "./project-document";
 import { applyTransaction } from "./project-document";
 import { MAX_USER_FONT_BYTES } from "./fonts";
 import {
   createProjectPackage,
   createProjectPackageEnvelope,
+  downloadProjectPackage,
   MAX_PACKAGE_ASSET_BYTES,
   parseProjectPackage,
   projectPackageDisplayName,
@@ -430,5 +431,70 @@ describe("project package", () => {
     const pack = parseProjectPackage(raw);
     expect(pack.kind).toBe("cengfan-project-package");
     expect(pack.project.students.length).toBeGreaterThan(0);
+  });
+
+  describe("downloadProjectPackage", () => {
+    function samplePackage(now = new Date("2026-07-27T00:00:00.000Z")) {
+      const project = createProjectDocument({
+        students: [{ id: "s1", name: "苏禾", university: "浙江大学", city: "杭州市", visibility: true }],
+        templateId: "original",
+        dataView: "province",
+      });
+      return createProjectPackage({ project, assets: [asset], fonts: [font], now });
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    });
+
+    it("keeps the object url alive after the click so the download can start", async () => {
+      vi.useFakeTimers();
+      try {
+        const blobs: Blob[] = [];
+        const createObjectURL = vi.fn((blob: Blob) => {
+          blobs.push(blob);
+          return "blob:project-package";
+        });
+        const revokeObjectURL = vi.fn();
+        vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+        const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
+        const click = vi.spyOn(link, "click").mockImplementation(() => {});
+        vi.spyOn(document, "createElement").mockImplementation((tag: string) =>
+          tag === "a" ? link : (document.createElementNS("http://www.w3.org/1999/xhtml", tag) as HTMLElement),
+        );
+        const pack = samplePackage();
+
+        downloadProjectPackage(pack);
+
+        expect(link.getAttribute("href")).toBe("blob:project-package");
+        expect(link.download).toBe("cengfan-project-2026-07-27.json");
+        expect(click).toHaveBeenCalled();
+        expect(blobs[0]?.type).toBe("application/json;charset=utf-8");
+        await expect(blobs[0]?.text()).resolves.toBe(serializeProjectPackage(pack));
+        // 工程包体积大，点击的同一个任务内 revoke 会让浏览器取消尚未开始的下载。
+        expect(revokeObjectURL).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(1000);
+        expect(revokeObjectURL).toHaveBeenCalledWith("blob:project-package");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("revokes the object url when the download click throws", () => {
+      const createObjectURL = vi.fn(() => "blob:project-package");
+      const revokeObjectURL = vi.fn();
+      vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+      const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
+      vi.spyOn(link, "click").mockImplementation(() => {
+        throw new Error("下载被拦截");
+      });
+      vi.spyOn(document, "createElement").mockImplementation((tag: string) =>
+        tag === "a" ? link : (document.createElementNS("http://www.w3.org/1999/xhtml", tag) as HTMLElement),
+      );
+
+      expect(() => downloadProjectPackage(samplePackage())).toThrow("下载被拦截");
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:project-package");
+    });
   });
 });

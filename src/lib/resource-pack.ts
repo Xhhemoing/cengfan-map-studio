@@ -1,4 +1,5 @@
 import type { UserAsset } from "./assets";
+import { downloadBlob } from "./export-poster";
 import {
   estimateFontBytes,
   findExistingFont,
@@ -235,11 +236,7 @@ export function mergeResourcePack(input: {
 }
 
 export function downloadResourcePack(pack: ResourcePack, filename = `cengfan-resource-pack-${pack.exportedAt.slice(0, 10)}.json`): void {
-  const blob = new Blob([serializeResourcePack(pack)], { type: "application/json;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
+  // 资源包内嵌素材与字体的 data URL，体积大到下载不会立刻开始，
+  // 同步 revoke 会让浏览器取消它，交给 downloadBlob 延迟回收。
+  downloadBlob(new Blob([serializeResourcePack(pack)], { type: "application/json;charset=utf-8" }), filename);
 }
