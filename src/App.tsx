@@ -587,9 +587,20 @@ function StudioApp({ projectId }: { projectId?: string }) {
           baseVersion: collaborationVersionRef.current,
           operations,
         });
-        collaborationBaselineRef.current = applyCollaborationOperations(baseline, operations);
-        collaborationVersionRef.current = acknowledged.version;
-        collaboration.setRoomVersion(acknowledged.version);
+        // 上传在途期间远端事件可能已经把基线推进过。此时基于 await 之前那份旧基线覆写
+        // ref 会把远端修改从基线里抹掉,下一次 diff 会把它们当成本地改动重新上传,两端
+        // 静默分叉;所以必须把本次事务叠加到「当前」基线上。服务端在无冲突时做的正是
+        // 同一次叠加(有冲突会走下面的 VERSION_CONFLICT 分支),两边结果一致。
+        const activeBaseline = collaborationBaselineRef.current;
+        if (activeBaseline && collaborationRoomRef.current === roomId) {
+          collaborationBaselineRef.current = applyCollaborationOperations(activeBaseline, operations);
+          // 版本只能单调前进:远端事件已经把本地推到更高版本时回退会让后续事件看起来像
+          // 版本跳变,触发一次多余的区间补齐并重复应用已经落地的修改。
+          if (acknowledged.version > collaborationVersionRef.current) {
+            collaborationVersionRef.current = acknowledged.version;
+            collaboration.setRoomVersion(acknowledged.version);
+          }
+        }
         collaboration.setCollaborationStatus("connected");
         collaboration.setCollaborationMessage(acknowledged.rebasedFromVersion === undefined ? "增量同步已完成" : "已自动合并互不冲突的并发修改");
       } catch (error) {
