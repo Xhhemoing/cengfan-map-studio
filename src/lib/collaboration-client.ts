@@ -43,6 +43,12 @@ export interface RoomPersistence {
   outcome: RoomPersistenceOutcome;
   /** 最近一次**成功**落盘的时刻;从未成功落过盘或服务端没给出时刻时为 `null`。 */
   at: number | null;
+  /**
+   * 当前落盘失败连击的最近一次失败时刻(R8-2)。`outcome`/`at` 说的都是上一次**成功**落盘,
+   * 磁盘正在坏掉的那一段时间里它们只会重复上一次成功;失败连击只从这一项读得出来。
+   * 没有连击时服务端整个键都不出现,这里也就整个键都不出现——缺席即"没有连击"。
+   */
+  lastFailureAt?: number;
 }
 
 const ROOM_PERSISTENCE_OUTCOMES: readonly string[] = ["persisted", "trimmed", "skipped"];
@@ -335,15 +341,20 @@ function persistenceFlagOf(value: unknown): { persistedAtLastFlush?: boolean } {
  * 大小写的、被压成字符串的对象)就是"没有说法",调用方据此沿用只认布尔位时的说法,而不是
  * 凭一个自己不认识的词去挑文案。`at` 只是落盘时刻的装饰位,读不出数字就报 `null`——结论本身
  * 不跟着一起丢。
+ *
+ * `lastFailureAt` 用 `at` 那把尺子量,但缺席与"读不出数字"都得让整个键消失:没有连击时服务端
+ * 本来就不发这个键,补一个 `null` 上去会让 R7-2 那些精确等值的判定凭空多出一项。未知的额外
+ * 键照旧一律丢掉——解析结果的形状只由这里列出的字段决定。
  */
 function persistenceOutcomeOf(value: unknown): { persistence?: RoomPersistence } {
   if (!value || typeof value !== "object") return {};
-  const { outcome, at } = value as { outcome?: unknown; at?: unknown };
+  const { outcome, at, lastFailureAt } = value as { outcome?: unknown; at?: unknown; lastFailureAt?: unknown };
   if (typeof outcome !== "string" || !ROOM_PERSISTENCE_OUTCOMES.includes(outcome)) return {};
   return {
     persistence: {
       outcome: outcome as RoomPersistenceOutcome,
       at: typeof at === "number" && Number.isFinite(at) ? at : null,
+      ...(typeof lastFailureAt === "number" && Number.isFinite(lastFailureAt) ? { lastFailureAt } : {}),
     },
   };
 }

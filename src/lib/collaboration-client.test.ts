@@ -123,6 +123,44 @@ describe("collaboration client", () => {
     await expect(fetchRoom("abc123", "member-token", request)).resolves.toMatchObject({ persistence: { outcome: "trimmed", at: null } });
   });
 
+  /**
+   * 落盘连续失败的那一段时间里,三态与 `at` 说的都还是上一次**成功**落盘的处置——响应长得
+   * 和一切正常一模一样。失败连击只能从 R8-2 的 `lastFailureAt` 上读出来,读不到它,房里的人
+   * 就没有任何渠道知道此刻的改动可能撑不过一次服务端重启。
+   */
+  it("carries the persist-failure streak out of create, join and snapshot responses", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "owner-token" }, persistedAtLastFlush: true, persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: 1_764_000_000_900 } }, 201))
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "member-token" }, persistedAtLastFlush: false, persistence: { outcome: "trimmed", at: null, lastFailureAt: 1_764_000_000_901 } }, 200))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistedAtLastFlush: true, persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: 1_764_000_000_902 } }));
+
+    const created = await createRoom({ clientId: "c1", displayName: "创建者", request });
+    const joined = await joinRoom({ roomId: "abc123", inviteToken: "invite", clientId: "c2", displayName: "成员", request });
+    const room = await fetchRoom("abc123", "member-token", request);
+
+    expect(created.persistence).toEqual({ outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: 1_764_000_000_900 });
+    // 连击不改三态,也不改布尔兼容位:上一次成功落盘确实完整写下了这间房。
+    expect(created.persistedAtLastFlush).toBe(true);
+    expect(joined.persistence).toEqual({ outcome: "trimmed", at: null, lastFailureAt: 1_764_000_000_901 });
+    expect(room.persistence).toEqual({ outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: 1_764_000_000_902 });
+  });
+
+  it("only trusts a finite number for the failure timestamp and leaves the key out without a streak", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: "1764000000900" } }))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: null } }))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistence: { outcome: "persisted", at: 1_764_000_000_000, lastFailureAt: true } }))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistence: { outcome: "persisted", at: 1_764_000_000_000 } }));
+
+    // 没有连击时服务端整个键都不出现,所以"读不出有限数字"与"键缺席"必须是同一件事:解析出来
+    // 的形状要和只有 outcome/at 时一字不差,否则一个多出来的 null 就会让既有的精确等值判定变色。
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const room = await fetchRoom("abc123", "member-token", request);
+      expect(room.persistence).toEqual({ outcome: "persisted", at: 1_764_000_000_000 });
+      expect(room.persistence).not.toHaveProperty("lastFailureAt");
+    }
+  });
+
   it("creates an initializing room without serializing an initial snapshot", async () => {
     const request = vi.fn(() => ok({ room: { id: "FAST01", version: 0, ready: false }, access: { accessToken: "owner-token" } }, 201));
 

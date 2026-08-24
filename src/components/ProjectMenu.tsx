@@ -22,6 +22,13 @@ const PERSISTENCE_NOTE_COPY: Record<"skipped" | "trimmed", string> = {
   trimmed: "该房间体量超过服务器持久化上限，重启后房间会恢复，但最近的增量历史会丢失，长时间离线的成员需要重新加载完整快照，建议导出备份",
 };
 
+/**
+ * 上面两句说的是"这一间房太大了",这一句说的是"整台服务器此刻写不进磁盘"——两件事互不替代,
+ * 可以同时成立,所以这是一条附加的提示而不是替换。落盘连续失败期间三态与时刻报的都还是上一次
+ * **成功**落盘,房间看上去一切正常;真出事的时候丢的是这段时间里的全部改动,而不只是历史。
+ */
+const PERSIST_FAILURE_NOTE_COPY = "服务器暂时无法写入磁盘，此期间的改动在服务器重启后可能丢失，请及时导出备份";
+
 export interface ProjectMenuProps {
   roomId: string | null;
   roomVersion: number;
@@ -49,6 +56,11 @@ export interface ProjectMenuProps {
    * 布尔位的旧服务端)沿用跳过那句。
    */
   roomPersistenceKind?: RoomPersistenceOutcome | null;
+  /**
+   * 服务端当前落盘失败连击的最近一次失败时刻(R8-2 的 `persistence.lastFailureAt`),没有连击
+   * 时为 `null`。缺省(旧接线方还没传)同样视为没有连击:不替服务端宣布磁盘坏了。
+   */
+  roomPersistFailureAt?: number | null;
   invitationToken: string | null;
   hasStoredRoomAccess: boolean;
   collaborationStatus: CollaborationStatus;
@@ -89,6 +101,7 @@ export function ProjectMenu({
   collaborationOffline = false,
   roomPersistenceDegraded = false,
   roomPersistenceKind = null,
+  roomPersistFailureAt = null,
   invitationToken,
   hasStoredRoomAccess,
   collaborationStatus,
@@ -122,6 +135,10 @@ export function ProjectMenu({
   const showPersistenceNote = roomPersistenceDegraded && Boolean(roomId) && terminalKind === undefined && !isOffline;
   // 服务端说得出处置就按处置挑文案;说不出(或说的是 persisted 这种和降级矛盾的组合)沿用跳过那句。
   const persistenceNoteKind = roomPersistenceKind === "trimmed" || roomPersistenceKind === "skipped" ? roomPersistenceKind : undefined;
+  // 落盘失败排在容量降级之后,但两者不互斥:一间被裁剪过的房间同样会遇上磁盘写不进去,
+  // 那是两个各自成立的事实。终局与离线仍然把它压下去——房间已经没了的时候"及时导出备份"
+  // 无从执行,断线的时候连接本身更急。
+  const showPersistFailureNote = roomPersistFailureAt !== null && Boolean(roomId) && terminalKind === undefined && !isOffline;
   return (
     <details className="project-menu">
       <summary className="secondary-button" aria-label="打开项目菜单">
@@ -213,6 +230,15 @@ export function ProjectMenu({
                         data-collaboration-persist-kind={persistenceNoteKind}
                       >
                         {PERSISTENCE_NOTE_COPY[persistenceNoteKind ?? "skipped"]}
+                      </p>
+                    )}
+                    {showPersistFailureNote && (
+                      <p
+                        className="collaboration-persist-degraded collaboration-persist-failure"
+                        role="status"
+                        data-collaboration-persist-failure="true"
+                      >
+                        {PERSIST_FAILURE_NOTE_COPY}
                       </p>
                     )}
                     <small data-collaboration-status={collaborationStatus} data-collaboration-terminal={terminalKind}>{collaborationMessage}</small>

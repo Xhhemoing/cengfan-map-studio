@@ -245,6 +245,73 @@ describe("ProjectMenu collaboration state", () => {
         expect(offline.querySelector("[data-collaboration-persist]")).toBeNull();
       });
     });
+
+    /**
+     * 容量降级说的是"这一间房太大了",落盘失败说的是"整台服务器此刻写不进磁盘"——后者的
+     * 后果最重(服务端在这段时间里挂掉,房间连同所有改动一起没了),此前却是唯一没有任何成员侧
+     * 说法的一种:三态与时刻报的都还是上一次**成功**落盘,响应与一切正常长得一模一样。
+     */
+    describe("persist failure streak", () => {
+      const FAILURE_COPY = "服务器暂时无法写入磁盘，此期间的改动在服务器重启后可能丢失，请及时导出备份";
+      const TRIMMED_COPY = "该房间体量超过服务器持久化上限，重启后房间会恢复，但最近的增量历史会丢失，长时间离线的成员需要重新加载完整快照，建议导出备份";
+
+      it("tells a connected room that the server currently cannot write to disk", () => {
+        const container = renderMenu({ roomPersistFailureAt: 1_764_000_000_900 });
+
+        const notice = container.querySelector('[data-collaboration-persist-failure="true"]');
+        expect(notice?.textContent).toContain(FAILURE_COPY);
+        expect(notice?.getAttribute("role")).toBe("status");
+        // 不可关闭:提示里不该有任何能让它消失的控件。
+        expect(notice?.querySelector("button")).toBeNull();
+        // 纯附加:容量降级那条提示没有被顶掉,健康房间原本的协作操作也一个不少。
+        expect(container.querySelector("[data-collaboration-persist]")).toBeNull();
+        expect(panelText(container)).toContain("邀请编辑者");
+        expect(container.querySelector("[data-collaboration-offline]")).toBeNull();
+        expect(container.querySelector("[data-collaboration-terminal]")).toBeNull();
+      });
+
+      it("says nothing when the server reports no streak", () => {
+        expect(renderMenu().querySelector("[data-collaboration-persist-failure]")).toBeNull();
+        expect(renderMenu({ roomPersistFailureAt: null }).querySelector("[data-collaboration-persist-failure]")).toBeNull();
+        // 旧服务端根本不传这个 prop:缺省不能让面板开口。
+        expect(renderMenu({ roomPersistenceDegraded: true }).querySelector("[data-collaboration-persist-failure]")).toBeNull();
+      });
+
+      it("states both facts when a degraded room also sits in a failure streak", () => {
+        const container = renderMenu({
+          roomPersistenceDegraded: true,
+          roomPersistenceKind: "trimmed",
+          roomPersistFailureAt: 1_764_000_000_900,
+        });
+
+        // 两件事互不替代:容量降级说这间房的历史留不住,落盘失败说此刻整台服务器写不进去。
+        expect(container.querySelector("[data-collaboration-persist]")?.textContent).toContain(TRIMMED_COPY);
+        expect(container.querySelector("[data-collaboration-persist-failure]")?.textContent).toContain(FAILURE_COPY);
+      });
+
+      it("yields to the death copy of a room that is already gone", () => {
+        const closed = renderMenu({ roomPersistFailureAt: 1_764_000_000_900, roomClosed: true, collaborationStatus: "closed" });
+        expect(closed.querySelector("[data-collaboration-persist-failure]")).toBeNull();
+        expect(closed.querySelector(".collaboration-closed")?.textContent).toContain("房间已关闭");
+
+        const expired = renderMenu({ roomPersistFailureAt: 1_764_000_000_900, roomExpired: true, collaborationStatus: "error" });
+        expect(expired.querySelector("[data-collaboration-persist-failure]")).toBeNull();
+        expect(expired.querySelector('[data-collaboration-terminal="expired"]')).not.toBeNull();
+      });
+
+      it("yields to the offline notice while the connection is the more urgent problem", () => {
+        const container = renderMenu({ roomPersistFailureAt: 1_764_000_000_900, collaborationOffline: true, collaborationStatus: "error" });
+
+        expect(container.querySelector("[data-collaboration-persist-failure]")).toBeNull();
+        expect(container.querySelector("[data-collaboration-offline]")?.textContent).toContain("本地修改会保留");
+      });
+
+      it("keeps the note out of the disconnected join form", () => {
+        const container = renderMenu({ roomId: null, roomPersistFailureAt: 1_764_000_000_900 });
+
+        expect(container.querySelector("[data-collaboration-persist-failure]")).toBeNull();
+      });
+    });
   });
 
   it("reports both processes on the join form when there is no room yet", () => {
