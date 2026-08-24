@@ -265,6 +265,10 @@ describe("ProjectWorkbench", () => {
       flushSync(() => target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     }
 
+    function pressTab(target: Element, shiftKey = false) {
+      flushSync(() => target.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, shiftKey })));
+    }
+
     it("不再依赖 window.prompt / window.confirm", async () => {
       const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
       const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -329,6 +333,44 @@ describe("ProjectWorkbench", () => {
       expect(container.querySelector('[role="dialog"]')).toBeNull();
       expect(document.activeElement).toBe(trigger);
       expect((await store.list())[0].name).toBe(sample.name);
+    });
+
+    it("重命名对话框把 Tab 圈在面板内", async () => {
+      const { container, dialog } = await openMenuItem("重命名");
+      const panel = dialog.querySelector<HTMLElement>(".workbench-dialog__panel")!;
+      const input = dialog.querySelector<HTMLInputElement>('input[aria-label="项目名称"]')!;
+      const submit = buttonByLabel(dialog, "保存");
+      expect(panel.contains(document.activeElement)).toBe(true);
+
+      // 末尾再按 Tab 回到开头，不会走到对话框背后的新建/导入按钮上。
+      submit.focus();
+      pressTab(submit);
+      expect(document.activeElement).toBe(input);
+
+      pressTab(input, true);
+      expect(document.activeElement).toBe(submit);
+
+      // 焦点被别的方式挪到背后（比如点了遮罩）时，下一次 Tab 也会收回面板。
+      const outside = container.querySelector<HTMLButtonElement>('[aria-label="新建项目"]')!;
+      outside.focus();
+      pressTab(outside);
+      expect(panel.contains(document.activeElement)).toBe(true);
+    });
+
+    it("删除确认框把 Tab 圈在面板内，默认焦点仍在取消上", async () => {
+      const { dialog } = await openMenuItem("删除");
+      const panel = dialog.querySelector<HTMLElement>(".workbench-dialog__panel")!;
+      const cancel = buttonByLabel(dialog, "取消");
+      const remove = buttonByLabel(dialog, "删除");
+      expect(document.activeElement).toBe(cancel);
+
+      remove.focus();
+      pressTab(remove);
+      expect(document.activeElement).toBe(cancel);
+
+      pressTab(cancel, true);
+      expect(document.activeElement).toBe(remove);
+      expect(panel.contains(document.activeElement)).toBe(true);
     });
 
     it("点击遮罩关闭重命名对话框", async () => {

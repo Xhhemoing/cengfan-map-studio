@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { TemplateSaveScope } from "../lib/template-store";
+import { WorkbenchDialog } from "./workbench/WorkbenchDialog";
 import "./SaveTemplateDialog.css";
 
 export type SaveTemplateDialogProps = {
@@ -18,6 +19,8 @@ const SCOPE_OPTIONS: Array<{ value: TemplateSaveScope; label: string; hint: stri
  *
  * 取代 `window.prompt` + `window.confirm`：confirm 只有两个出口，
  * 「取消」会被当成第二种保存范围，用户无法放弃保存。
+ *
+ * 遮罩、Esc、焦点圈闭与焦点归还都交给 `WorkbenchDialog`，这里只画内容。
  */
 export function SaveTemplateDialog({ defaultName = "我的地图版式", onCancel, onSave }: SaveTemplateDialogProps) {
   const [name, setName] = useState(defaultName);
@@ -33,57 +36,50 @@ export function SaveTemplateDialog({ defaultName = "我的地图版式", onCance
 
   const trimmed = name.trim();
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!trimmed) return;
-    onSave({ name: trimmed, scope });
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
-    if (event.key !== "Escape") return;
-    event.stopPropagation();
-    onCancel();
-  };
-
   return (
-    <div className="save-template-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      <div className="save-template-dialog__backdrop" onClick={onCancel} />
-      <form className="save-template-dialog__panel" onSubmit={handleSubmit} onKeyDown={handleKeyDown}>
-        <strong id={titleId}>保存当前整体模板</strong>
-        <label className="save-template-dialog__field">
-          <span>模板名称</span>
-          <input
-            ref={nameRef}
-            type="text"
-            value={name}
-            aria-label="模板名称"
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <fieldset className="save-template-dialog__scope">
-          <legend>保存范围</legend>
-          {SCOPE_OPTIONS.map((option) => (
-            <label key={option.value}>
-              <input
-                type="radio"
-                name={scopeName}
-                value={option.value}
-                checked={scope === option.value}
-                aria-label={option.label}
-                onChange={() => setScope(option.value)}
-              />
-              <span>
-                {option.label}
-                <small>{option.hint}</small>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-        <div className="save-template-dialog__actions">
-          <button type="button" onClick={onCancel}>取消</button>
-          <button type="submit" className="primary-button" disabled={!trimmed}>保存</button>
-        </div>
-      </form>
-    </div>
+    <WorkbenchDialog
+      titleId={titleId}
+      className="save-template-dialog"
+      onCancel={onCancel}
+      onSubmit={() => {
+        if (!trimmed) return;
+        onSave({ name: trimmed, scope });
+      }}
+    >
+      <strong id={titleId}>保存当前整体模板</strong>
+      <label className="workbench-dialog__field">
+        <span>模板名称</span>
+        <input
+          ref={nameRef}
+          type="text"
+          value={name}
+          aria-label="模板名称"
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <fieldset className="save-template-dialog__scope">
+        <legend>保存范围</legend>
+        {SCOPE_OPTIONS.map((option) => (
+          <label key={option.value}>
+            <input
+              type="radio"
+              name={scopeName}
+              value={option.value}
+              checked={scope === option.value}
+              aria-label={option.label}
+              onChange={() => setScope(option.value)}
+            />
+            <span>
+              {option.label}
+              <small>{option.hint}</small>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <div className="workbench-dialog__actions">
+        <button type="button" onClick={onCancel}>取消</button>
+        <button type="submit" className="primary-button" disabled={!trimmed}>保存</button>
+      </div>
+    </WorkbenchDialog>
   );
 }

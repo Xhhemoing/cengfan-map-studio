@@ -1,45 +1,6 @@
-.save-template-dialog {
-  position: fixed;
-  z-index: 60;
-  display: grid;
-  place-items: center;
-  inset: 0;
-}
-
-.save-template-dialog__backdrop {
-  position: absolute;
-  background: rgb(16 24 32 / 42%);
-  inset: 0;
-}
-
-.save-template-dialog__panel {
-  position: relative;
-  display: flex;
+/* 外壳（遮罩、面板、字段、按钮行）复用 WorkbenchDialog.css，这里只留模板特有的部分。 */
+.save-template-dialog .workbench-dialog__panel {
   width: min(92vw, 420px);
-  flex-direction: column;
-  padding: 18px;
-  gap: 14px;
-  color: var(--editor-ink, #23303a);
-  background: var(--editor-surface-raised, #fff);
-  border: 1px solid var(--editor-line, #ccd7dd);
-  border-radius: 12px;
-  box-shadow: 0 18px 40px rgb(20 30 40 / 22%);
-}
-
-.save-template-dialog__field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12px;
-}
-
-.save-template-dialog__field input {
-  padding: 7px 10px;
-  color: inherit;
-  font-size: 13px;
-  background: var(--editor-surface, #fff);
-  border: 1px solid var(--editor-line, #ccd7dd);
-  border-radius: 8px;
 }
 
 .save-template-dialog__scope {
@@ -74,31 +35,4 @@
 .save-template-dialog__scope small {
   color: var(--editor-ink-muted, #8fa1ad);
   font-size: 11px;
-}
-
-.save-template-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.save-template-dialog__actions button {
-  padding: 6px 16px;
-  color: inherit;
-  font-size: 13px;
-  background: var(--editor-surface, #fff);
-  border: 1px solid var(--editor-line, #ccd7dd);
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.save-template-dialog__actions .primary-button {
-  color: #fff;
-  background: var(--editor-accent, #2f6f8f);
-  border-color: transparent;
-}
-
-.save-template-dialog__actions button[disabled] {
-  cursor: not-allowed;
-  opacity: 0.55;
 }

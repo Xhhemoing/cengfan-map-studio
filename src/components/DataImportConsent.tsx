@@ -2,7 +2,7 @@
  * 导入侧的出境闸门:本地规则读不全时,粘贴原文(含学生姓名)才会被送去第三方模型,
  * 而送出前必须先拿到用户的明确同意。显式点「智能识别」和一键导入的自动升级共用这一条路径。
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { loadAiParseConsent, saveAiParseConsent, type AiParseConsent } from "../lib/use-studio-preferences";
 import { ActionButton, ActionGroup, CompactButton, PanelHeader } from "./StudioUi";
 
@@ -86,16 +86,41 @@ export function AiUploadConsentMemo({ gate }: { gate: AiUploadConsentGate }) {
 
 export function AiUploadConsentDialog({ gate }: { gate: AiUploadConsentGate }) {
   if (!gate.pendingSource) return null;
+  return <AiUploadConsentPanel gate={gate} source={gate.pendingSource} />;
+}
+
+function AiUploadConsentPanel({ gate, source }: { gate: AiUploadConsentGate; source: AiUploadSource }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // 询问出现时把焦点收进来：否则键盘用户还停在「一键识别并导入」上，
+  // 完全不知道有一道出境闸门挡在前面。
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // 输入法候选框里的 Esc 属于候选框，别把询问收掉。
+    if (event.nativeEvent.isComposing) return;
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    // Esc 走最保守的那个出口：原文不出本机。
+    gate.settleConsent(false);
+  };
+
   return (
     <div
+      ref={panelRef}
       className="import-review ai-consent"
       role="dialog"
       aria-labelledby="ai-parse-consent-title"
       aria-describedby="ai-parse-consent-body"
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
     >
       <PanelHeader id="ai-parse-consent-title" title="发送到智能识别前请确认" meta="仅用于本次名单解析" />
       <p className="panel-note" id="ai-parse-consent-body">
-        {gate.pendingSource === "ocr" ? "本地 OCR 规则" : "本地规则"}没能读全这段文字。
+        {source === "ocr" ? "本地 OCR 规则" : "本地规则"}没能读全这段文字。
         继续会把你粘贴的原文（含学生姓名）发送给第三方 AI 服务，仅用于解析成候选名单。
         选择「仅用本地识别」则原文不出本机，未识别的行会照实列出。
       </p>
