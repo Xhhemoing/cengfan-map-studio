@@ -13,6 +13,7 @@
     "test": "node scripts/run-heavy.mjs vitest run",
     "test:watch": "vitest",
     "lint": "node scripts/run-heavy.mjs eslint .",
+    "typecheck": "tsc -b --noEmit",
     "security:audit": "node scripts/run-heavy.mjs npm audit --registry=https://registry.npmjs.org",
     "perf:layout": "tsx scripts/perf-layout-bench.ts",
     "data:sync:china-locations": "node scripts/sync-china-locations.mjs",
