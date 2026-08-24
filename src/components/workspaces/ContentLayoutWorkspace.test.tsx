@@ -170,4 +170,25 @@ describe("ContentLayoutWorkspace", () => {
     });
     expect(onSaveTemplate).toHaveBeenCalledTimes(1);
   });
+
+  it("opens the template disclosure through a native keyboard-focusable summary", () => {
+    const { container } = renderWorkspace();
+    const details = container.querySelector<HTMLDetailsElement>(
+      '.content-layout-workspace__context details[aria-label="整体模板与交换"]',
+    );
+    const summary = details?.querySelector<HTMLElement>("summary");
+
+    expect(summary?.tagName).toBe("SUMMARY");
+    expect(summary?.parentElement).toBe(details);
+    expect(summary?.hasAttribute("tabindex")).toBe(false);
+    expect(summary?.getAttribute("aria-hidden")).toBeNull();
+    expect(summary?.textContent).toBe("整体模板与交换");
+
+    summary?.focus();
+    expect(document.activeElement).toBe(summary);
+
+    expect(details?.open).toBe(false);
+    flushSync(() => summary?.click());
+    expect(details?.open).toBe(true);
+  });
 });
