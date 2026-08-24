@@ -9,6 +9,7 @@ import {
   isCollaborationAbortError,
   isCollaborationTransportError,
   isOwnRoomAcknowledgement,
+  joinRoom,
   leaveRoom,
   retryInitializingRoom,
   setRoomAccess,
@@ -30,6 +31,50 @@ describe("collaboration client", () => {
     expect(request).toHaveBeenLastCalledWith("/api/rooms/ABC123", expect.objectContaining({
       headers: { "X-Cengfan-Room-Token": "owner-token" },
     }));
+  });
+
+  it("carries the additive persistence flag out of create, join and snapshot responses", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "owner-token" }, persistedAtLastFlush: false }, 201))
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "member-token" }, persistedAtLastFlush: false }, 200))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, snapshot: { project: 1 }, persistedAtLastFlush: false }));
+
+    const created = await createRoom({ clientId: "c1", displayName: "创建者", request });
+    const joined = await joinRoom({ roomId: "abc123", inviteToken: "invite", clientId: "c2", displayName: "成员", request });
+    const room = await fetchRoom("abc123", "member-token", request);
+
+    // 兄弟字段(不在 room 里面)与快照上的房间字段是两处不同的位置,两处都要落到调用方手上。
+    expect(created.persistedAtLastFlush).toBe(false);
+    expect(joined.persistedAtLastFlush).toBe(false);
+    expect(room.persistedAtLastFlush).toBe(false);
+  });
+
+  it("reports a healthy room as persisted and stays silent when the server says nothing", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "owner-token" }, persistedAtLastFlush: true }, 201))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistedAtLastFlush: true }))
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "owner-token" } }, 201))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0 }));
+
+    await expect(createRoom({ clientId: "c1", displayName: "创建者", request })).resolves.toMatchObject({ persistedAtLastFlush: true });
+    await expect(fetchRoom("abc123", "owner-token", request)).resolves.toMatchObject({ persistedAtLastFlush: true });
+    // 旧服务端不带这个字段:必须是"没有说法",而不是任何一种说法。
+    await expect(createRoom({ clientId: "c1", displayName: "创建者", request })).resolves.not.toHaveProperty("persistedAtLastFlush");
+    await expect(fetchRoom("abc123", "owner-token", request)).resolves.not.toHaveProperty("persistedAtLastFlush");
+  });
+
+  it("only trusts a JSON boolean for the persistence flag", async () => {
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "owner-token" }, persistedAtLastFlush: "false" }, 201))
+      .mockImplementationOnce(() => ok({ room: { id: "ABC123", version: 0 }, access: { accessToken: "member-token" }, persistedAtLastFlush: null }, 200))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistedAtLastFlush: "true" }))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, persistedAtLastFlush: 0 }));
+
+    // 字符串 "false" 是真值,数字 0 是假值:任何一种漏过去,面板都会凭形状变化而不是服务端的判断说话。
+    await expect(createRoom({ clientId: "c1", displayName: "创建者", request })).resolves.not.toHaveProperty("persistedAtLastFlush");
+    await expect(joinRoom({ roomId: "abc123", inviteToken: "invite", clientId: "c2", displayName: "成员", request })).resolves.not.toHaveProperty("persistedAtLastFlush");
+    await expect(fetchRoom("abc123", "member-token", request)).resolves.not.toHaveProperty("persistedAtLastFlush");
+    await expect(fetchRoom("abc123", "member-token", request)).resolves.not.toHaveProperty("persistedAtLastFlush");
   });
 
   it("creates an initializing room without serializing an initial snapshot", async () => {

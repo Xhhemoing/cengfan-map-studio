@@ -127,6 +127,77 @@ describe("ProjectMenu collaboration state", () => {
     expect(container.querySelector("[data-collaboration-offline]")).toBeNull();
   });
 
+  /**
+   * 服务端已经知道这间房活不过一次重启(R6-2 的 `persistedAtLastFlush`),房里的人却只能
+   * 从服务器控制台里读到这件事。这条提示是他们唯一的告知渠道,所以不可关闭。
+   */
+  describe("persistence degradation notice", () => {
+    const PERSIST_COPY = "该房间体量超过服务器持久化上限，服务器重启后将无法恢复，请及时导出备份";
+
+    it("warns a connected room that it will not survive a server restart", () => {
+      const container = renderMenu({ roomPersistenceDegraded: true });
+
+      const notice = container.querySelector('[data-collaboration-persist="degraded"]');
+      expect(notice?.textContent).toContain(PERSIST_COPY);
+      expect(notice?.getAttribute("role")).toBe("status");
+      expect(notice?.classList.contains("collaboration-persist-degraded")).toBe(true);
+      // 不可关闭:提示里不该有任何能让它消失的控件。
+      expect(notice?.querySelector("button")).toBeNull();
+      // 纯附加:健康房间原本的协作操作一个都不少。
+      expect(panelText(container)).toContain("邀请编辑者");
+      expect(container.querySelector("[data-collaboration-offline]")).toBeNull();
+      expect(container.querySelector("[data-collaboration-terminal]")).toBeNull();
+    });
+
+    it("says nothing when the server reports the room is persisted", () => {
+      expect(renderMenu().querySelector("[data-collaboration-persist]")).toBeNull();
+      expect(renderMenu({ roomPersistenceDegraded: false }).querySelector("[data-collaboration-persist]")).toBeNull();
+    });
+
+    it("yields to the closed-room notice", () => {
+      const container = renderMenu({
+        roomPersistenceDegraded: true,
+        roomClosed: true,
+        collaborationStatus: "closed",
+        collaborationMessage: "房间已关闭，无法继续同步或编辑",
+      });
+
+      // 房间已经关了,"及时导出备份"是一条无法执行的建议。
+      expect(container.querySelector("[data-collaboration-persist]")).toBeNull();
+      expect(container.querySelector(".collaboration-closed")?.textContent).toContain("房间已关闭");
+    });
+
+    it("yields to the expired-room notice", () => {
+      const container = renderMenu({
+        roomPersistenceDegraded: true,
+        roomExpired: true,
+        collaborationStatus: "error",
+        collaborationMessage: "房间已过期或已失效，请重新创建房间或让创建者重新邀请",
+      });
+
+      expect(container.querySelector("[data-collaboration-persist]")).toBeNull();
+      expect(container.querySelector('[data-collaboration-terminal="expired"]')).not.toBeNull();
+    });
+
+    it("yields to the offline notice while the connection is the more urgent problem", () => {
+      const container = renderMenu({
+        roomPersistenceDegraded: true,
+        collaborationOffline: true,
+        collaborationStatus: "error",
+        collaborationMessage: "网络已断开，本地修改会保留，恢复后自动续传",
+      });
+
+      expect(container.querySelector("[data-collaboration-persist]")).toBeNull();
+      expect(container.querySelector("[data-collaboration-offline]")?.textContent).toContain("本地修改会保留");
+    });
+
+    it("keeps the note out of the disconnected join form", () => {
+      const container = renderMenu({ roomId: null, roomPersistenceDegraded: true });
+
+      expect(container.querySelector("[data-collaboration-persist]")).toBeNull();
+    });
+  });
+
   it("reports both processes on the join form when there is no room yet", () => {
     const offline = renderMenu({ roomId: null, collaborationOffline: true, collaborationStatus: "error" });
     expect(offline.querySelector("[data-collaboration-offline]")?.textContent).toContain("本地修改会保留");
