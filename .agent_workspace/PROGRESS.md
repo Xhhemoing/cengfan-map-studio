@@ -14,27 +14,27 @@
 
 严禁静默降级。子代理输出首行必须声明实际使用的模型 slug。
 
-## 文件所有权（防并发冲突）
+## 文件所有权（Cycle 1 Round 2）
 
 | 角色 | 可写路径 | 禁止 |
 | --- | --- | --- |
-| fable-A | `.agent_workspace/cycleN-roundM-fable-a.md` | 生产代码 |
-| fable-B | `.agent_workspace/cycleN-roundM-fable-b.md` | 生产代码 |
-| opus-fast-A | `src/components/canvas/PosterCanvas.tsx`、`src/components/canvas/DestinationCard*.tsx`、`src/components/canvas/CanvasDragPreview.*`、相关 canvas 测试 | `src/lib/display-frame.ts`、展示框工作台组件 |
-| opus-fast-B | `src/lib/display-frame.ts`、`src/lib/display-frame-style.ts`（新建）、`src/components/workspaces/DisplayFrame*`、`src/components/workspaces/ReferenceCardStyle*`、`src/components/workspaces/FlowFrame*`、展示框相关 CSS/测试 | `PosterCanvas.tsx` |
-| gpt-sol-A | `scripts/perf-canvas-bench.ts`、`src/lib/canvas-render-metrics.ts`（新建）、对应测试 | UI 组件大重构 |
-| gpt-sol-B | `src/components/canvas/*.boundary.test.tsx`、`src/lib/display-frame*.bench.test.ts`、探针脚本 | 与 opus 重叠的生产实现 |
+| fable-A | `.agent_workspace/cycle1-round2-fable-a.md` | 生产代码 |
+| fable-B | `.agent_workspace/cycle1-round2-fable-b.md` | 生产代码 |
+| opus-fast-A | `src/App.tsx`、`src/components/canvas/useCardLayoutWorker.ts*`、`src/lib/card-layout-cache.ts*`、`src/components/canvas/PosterCanvas.tsx` **仅** layout memo 依赖（provincePolygons / preparedCards / layoutRequest）、相关测试 | `DestinationCard.tsx`、`display-frame-style.ts`、`card-templates.ts` |
+| opus-fast-B | `DestinationCard.tsx*`、`src/lib/card-templates.ts*`、`src/lib/display-frame-style.ts*`、新建 `ReferenceCardVisual.tsx`、`PosterCanvas.tsx` **仅** 抽出/替换 `renderReferenceCardVisual` | `App.tsx`、`useCardLayoutWorker.ts` |
+| gpt-sol-A | `scripts/perf-canvas-bench.ts`、`src/lib/canvas-render-metrics.ts*` | UI 大重构 |
+| gpt-sol-B | 新建测试文件 `*.round2.test.ts(x)` | 生产实现 |
 
 ## 循环状态
 
-- [ ] Cycle 1 Round 1 — 初始构建与基线探索（进行中，6 子代理并发）
+- [x] Cycle 1 Round 1 — 初始构建与基线探索（完成，见 `cycle1-round1-conclusion.md`）
   - fable-A `claude-fable-5-thinking-xhigh` canvas 管线审计 → `bc-b86f76c3-f700-5e6a-b980-b16dfeb529e0`
   - fable-B `claude-fable-5-thinking-xhigh` 展示框样式审计 → `bc-59f43fbd-e6a3-57f4-bdc8-16443fa3e422`
   - opus-fast-A `claude-opus-5-thinking-high-fast` DestinationCard 拆分 → `bc-780913a7-4452-5a24-8207-5eca309d970d`
   - opus-fast-B `claude-opus-5-thinking-high-fast` 展示框 token/子画布 → `bc-835ca65f-3f64-5aa1-a14b-2ecad94e54be`
   - gpt-sol-A `gpt-5.6-sol-xhigh-fast` 画布基准脚本 → `bc-99c96d63-7966-5b5d-b937-90e98d6b50bd`
   - gpt-sol-B `gpt-5.6-sol-xhigh-fast` 边界测试 → `bc-d390ddb4-b179-59da-81e4-21ac391945cf`
-- [ ] Cycle 1 Round 2 — 靶向重构与深度优化
+- [ ] Cycle 1 Round 2 — 靶向重构与深度优化（派发中）
 - [ ] Cycle 1 Round 3 — SOTA 打磨与交叉核验
 - [ ] Cycle 2 Round 1
 - [ ] Cycle 2 Round 2
@@ -53,4 +53,4 @@
 
 ## Round 结论简报
 
-（各轮结束后由主调度器填写）
+- Cycle 1 Round 1：见 `.agent_workspace/cycle1-round1-conclusion.md`
