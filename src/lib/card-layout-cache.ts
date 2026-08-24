@@ -24,9 +24,27 @@ function polygonKey(polygon: CardPolygon): { rings: number[][][]; bounds?: [numb
   };
 }
 
+const EMPTY_POLYGONS: readonly CardPolygon[] = [];
+
+// Province outlines dominate the key: every ring point is serialized. Map styling
+// edits (colors, labels) keep the same polygon array instance, so memoizing on that
+// identity skips the whole traversal for the most common re-key.
+const serializedPolygons = new WeakMap<object, string>();
+
+function polygonsKey(polygons: readonly CardPolygon[]): string {
+  const memoized = serializedPolygons.get(polygons);
+  if (memoized !== undefined) return memoized;
+  const serialized = JSON.stringify(polygons.map(polygonKey));
+  serializedPolygons.set(polygons, serialized);
+  return serialized;
+}
+
 /** Creates a stable key for solver inputs without including renderer-only styling. */
 export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutCacheInput): string {
-  return JSON.stringify({
+  // The polygon segment is appended rather than nested so it can be reused verbatim;
+  // it only ever contains numbers, brackets and the fixed `rings`/`bounds` labels, so
+  // the `|` separator stays unambiguous.
+  return `${JSON.stringify({
     cards: cards.map(({ id, anchorX, anchorY, width, height }) => [id, anchorX, anchorY, width, height]),
     bounds: {
       width: bounds.width,
@@ -36,7 +54,6 @@ export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutC
       gap: bounds.gap,
       allowMapOverlap: bounds.allowMapOverlap === true,
       occupiedAreas: (bounds.occupiedAreas ?? []).map(areaKey),
-      occupiedPolygons: (bounds.occupiedPolygons ?? []).map(polygonKey),
     },
     options: {
       mode: options.mode ?? "quadrant",
@@ -45,7 +62,7 @@ export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutC
       connectorStyle: options.connectorStyle ?? "curve",
       connectorWidth: options.connectorWidth ?? 1.5,
     },
-  });
+  })}|${polygonsKey(bounds.occupiedPolygons ?? EMPTY_POLYGONS)}`;
 }
 
 export class CardLayoutCache {

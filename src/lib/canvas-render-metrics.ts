@@ -1,8 +1,10 @@
 import type { CardLayoutBounds, CardLayoutInput } from "./card-layout";
+import { chinaProvinces } from "../data/china-locations";
 import {
   createDefaultDisplayFrame,
   type DisplayFrameDefinition,
 } from "./display-frame";
+import type { Student } from "./project-data";
 import {
   createDefaultScene,
   type CardSettings,
@@ -19,6 +21,11 @@ export interface DisplayFrameBenchFixtures {
 export interface CardLayoutBenchFixture {
   cards: CardLayoutInput[];
   bounds: CardLayoutBounds;
+}
+
+export interface PosterCanvasBenchFixture {
+  students: Student[];
+  movedCardKey: string | null;
 }
 
 const BENCH_NAMES = [
@@ -135,6 +142,22 @@ export function buildLongNameFragments(count: number): CardTextFragment<CanvasBe
       ...(index === size - 1 ? [] : [{ text: "、", field: "separator" as const }]),
     ];
   }).flat();
+}
+
+/** Build one visible student per province so student and destination-group counts match. */
+export function buildPosterCanvasBenchFixture(count: number): PosterCanvasBenchFixture {
+  const size = Math.min(normalizedCount(count), chinaProvinces.length);
+  const students = chinaProvinces.slice(0, size).map((province, index): Student => ({
+    id: `render-student-${index}`,
+    name: `同学${index + 1}`,
+    university: `性能测试大学${index + 1}`,
+    city: province.name,
+    province: province.name,
+    visibility: true,
+  }));
+  const movedCardKey = students[0]?.province ?? null;
+
+  return { students, movedCardKey };
 }
 
 /** Build deterministic card anchors and occupied areas for solver benchmarks. */

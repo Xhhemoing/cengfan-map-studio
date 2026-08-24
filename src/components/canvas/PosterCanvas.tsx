@@ -25,10 +25,10 @@ import { resolveFontFamily, buildFontFaceCss, type UserFont } from "../../lib/fo
 import { clampGridSize, DEFAULT_GRID_SIZE } from "../../lib/grid";
 import { DEFAULT_CARD_EXPRESSION_TEMPLATES, formatCardExpression } from "../../lib/card-expression";
 import { DEFAULT_NAME_FORMAT, formatStudentName } from "../../lib/name-format";
-import { universityEmblems } from "../../data/university-emblems";
 import { wrapCardText, type CardTextFragment } from "../../lib/card-text-layout";
 import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
 import { DecorationLayer } from "./DecorationLayer";
+import { ReferenceCardVisual, referenceCardColor, type ReferenceCardPresentation } from "./ReferenceCardVisual";
 import { MapLayer } from "./MapLayer";
 import { RegionalAssetLayer } from "./RegionalAssetLayer";
 import { TextLayer } from "./TextLayer";
@@ -195,111 +195,6 @@ function studentFieldParts(
   return fields
     .map((field) => ({ field, value: student[field] }))
     .filter((part): part is SchoolRowPart => Boolean(part.value));
-}
-
-const REFERENCE_CARD_COLORS = ["#e95646", "#f3c847", "#efb8c6", "#3d8fc2", "#263b78"] as const;
-
-function referenceCardColor(key: string, fallback: string): string {
-  let hash = 0;
-  for (const character of key) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  return REFERENCE_CARD_COLORS[hash % REFERENCE_CARD_COLORS.length] ?? fallback;
-}
-
-function readableTextColor(background: string): string {
-  const match = /^#([0-9a-f]{6})$/i.exec(background);
-  if (!match) return "#ffffff";
-  const value = Number.parseInt(match[1]!, 16);
-  const luminance = ((value >> 16) * 299 + ((value >> 8) & 255) * 587 + (value & 255) * 114) / 1000;
-  return luminance > 160 ? "#1c3154" : "#ffffff";
-}
-
-function renderReferenceCardVisual({
-  presentation,
-  group,
-  rows,
-  width,
-  height,
-  accent,
-  background,
-  opacity,
-  textColor,
-  fontSize,
-  edgeColor,
-  titleFont,
-}: {
-  presentation: Exclude<import("../../lib/scene-document").CardPresentation, "standard">;
-  group: ReturnType<typeof buildLayoutGroups>[number];
-  rows: PreparedCardRow[];
-  width: number;
-  height: number;
-  accent: string;
-  background: string;
-  opacity: number;
-  textColor: string;
-  fontSize: number;
-  edgeColor: string;
-  titleFont?: string;
-}): ReactNode {
-  const bodyRows = rows.filter((row) => !row.cityHeading || presentation === "glass-stat");
-  const textFor = (row: PreparedCardRow) => row.lines.map((line) => line.map((part) => part.text).join("")).join(" ");
-  const lineHeight = Math.max(17, fontSize + 5);
-
-  if (presentation === "color-pill") {
-    const foreground = readableTextColor(accent);
-    const bodyStart = 32;
-    return (
-      <g data-card-visual="color-pill">
-        <rect x={0} y={12} width={width} height={Math.max(36, height - 12)} rx={Math.min(28, Math.max(18, height / 3))} fill={accent} fillOpacity={opacity} />
-        <text x={width / 2} y={19} textAnchor="middle" fill="#1c3154" fontSize={fontSize + 5} fontWeight={800} fontFamily={titleFont}>{group.title}</text>
-        {bodyRows.map((row, index) => <text key={row.key} x={width / 2} y={bodyStart + index * lineHeight} textAnchor="middle" fill={foreground} fontSize={fontSize} fontWeight={600}>{textFor(row)}</text>)}
-      </g>
-    );
-  }
-
-  if (presentation === "emblem-list") {
-    return (
-      <g data-card-visual="emblem-list">
-        <path d={`M20 19 Q${Math.round(width * 0.35)} 10 ${Math.round(width * 0.68)} 18`} fill="none" stroke="#f1c84b" strokeWidth={13} strokeLinecap="round" opacity={0.85} />
-        <circle cx={11} cy={14} r={5} fill="#e24d42" /><path d="M8 18 L11 25 L14 18" fill="#e24d42" />
-        <text x={24} y={20} fill="#263b78" fontSize={fontSize + 5} fontWeight={800} fontFamily={titleFont}>{group.title}</text>
-        {bodyRows.map((row, index) => {
-          const y = 40 + index * Math.max(22, lineHeight + 3);
-          const emblem = row.university ? universityEmblems[row.university] : undefined;
-          return <g key={row.key}>{emblem && <image href={emblem} x={7} y={y - 14} width={18} height={18} preserveAspectRatio="xMidYMid meet" />}<text x={emblem ? 31 : 9} y={y} fill={textColor} fontSize={fontSize} fontWeight={500}>{textFor(row)}</text></g>;
-        })}
-      </g>
-    );
-  }
-
-  if (presentation === "city-label") {
-    return (
-      <g data-card-visual="city-label">
-        <text x={6} y={fontSize + 8} fill={accent} stroke="#ffffff" strokeWidth={2.5} paintOrder="stroke" fontSize={fontSize + 8} fontWeight={900} fontFamily={titleFont}>{group.title}</text>
-        {bodyRows.map((row, index) => {
-          const y = 39 + index * lineHeight;
-          const emblem = row.university ? universityEmblems[row.university] : undefined;
-          return <g key={row.key}>{emblem && <image href={emblem} x={7} y={y - 13} width={16} height={16} preserveAspectRatio="xMidYMid meet" />}<text x={emblem ? 29 : 8} y={y} fill={textColor} fontSize={fontSize} fontWeight={600}>{textFor(row)}</text></g>;
-        })}
-      </g>
-    );
-  }
-
-  let bodyIndex = 0;
-  return (
-    <g data-card-visual="glass-stat">
-      <rect width={width} height={height} rx={4} fill={background} fillOpacity={Math.min(0.9, Math.max(0.55, opacity))} stroke={edgeColor} strokeOpacity={0.7} />
-      <rect x={8} y={8} width={15} height={15} rx={3} fill={accent} />
-      <text x={29} y={20} fill={textColor} fontSize={fontSize + 2} fontWeight={800} fontFamily={titleFont}>{group.title}</text>
-      <text x={width - 9} y={20} textAnchor="end" fill={accent} fontSize={fontSize} fontWeight={800}>{group.count} 人</text>
-      <line x1={8} x2={width - 8} y1={28} y2={28} stroke={edgeColor} strokeOpacity={0.55} />
-      {rows.map((row) => {
-        const isHeading = Boolean(row.cityHeading);
-        const y = 46 + bodyIndex * lineHeight;
-        bodyIndex += 1;
-        return <text key={row.key} x={isHeading ? 9 : 15} y={y} fill={isHeading ? accent : textColor} fontSize={isHeading ? Math.max(9, fontSize - 1) : fontSize} fontWeight={isHeading ? 800 : 500}>{textFor(row)}</text>;
-      })}
-    </g>
-  );
 }
 
 function rowFragments(
@@ -524,7 +419,20 @@ export function PosterCanvas({
         return projected ? [projected] : [];
       });
     });
-  }, [mainlandFeatures, project.map, projection]);
+    // Depend on the map fields the projection actually reads instead of the whole
+    // project.map object: recoloring the map replaces that object and would otherwise
+    // reproject every province ring and invalidate the layout cache key.
+  }, [
+    mainlandFeatures,
+    project.map.height,
+    project.map.provinceStyles,
+    project.map.renderSource,
+    project.map.scale,
+    project.map.width,
+    project.map.x,
+    project.map.y,
+    projection,
+  ]);
   const mapContentBounds = useMemo(
     () => computeMapContentBounds({ map: project.map, provinceAreas }),
     [project.map, provinceAreas],
@@ -1155,22 +1063,24 @@ export function PosterCanvas({
                       onPointerUp={cardDragEnabled ? handleCardPointerUp : undefined}
                       onPointerCancel={cardDragEnabled ? handleCardPointerCancel : undefined}
                     >
-                      {(project.cards.presentation ?? "standard") !== "standard" ? renderReferenceCardVisual({
-                        presentation: project.cards.presentation as Exclude<import("../../lib/scene-document").CardPresentation, "standard">,
-                        group,
-                        rows,
-                        width: placement.width,
-                        height: placement.height,
-                        accent: project.map.provinceStyles?.[province]?.appearance?.kind === "manual-color"
-                          ? project.map.provinceStyles[province]!.appearance!.color
-                          : referenceCardColor(group.key, project.map.activeColor),
-                        background: project.cards.background,
-                        opacity: project.cards.opacity,
-                        textColor: project.cards.textColor,
-                        fontSize: project.cards.fontSize,
-                        edgeColor: project.map.edgeColor,
-                        titleFont: resolveFontFamily(project.cards.fieldFonts?.title, userFonts),
-                      }) : (
+                      {(project.cards.presentation ?? "standard") !== "standard" ? (
+                        <ReferenceCardVisual
+                          presentation={project.cards.presentation as ReferenceCardPresentation}
+                          group={group}
+                          rows={rows}
+                          width={placement.width}
+                          height={placement.height}
+                          accent={project.map.provinceStyles?.[province]?.appearance?.kind === "manual-color"
+                            ? project.map.provinceStyles[province]!.appearance!.color
+                            : referenceCardColor(group.key, project.map.activeColor)}
+                          background={project.cards.background}
+                          opacity={project.cards.opacity}
+                          textColor={project.cards.textColor}
+                          fontSize={project.cards.fontSize}
+                          edgeColor={project.map.edgeColor}
+                          titleFont={resolveFontFamily(project.cards.fieldFonts?.title, userFonts)}
+                        />
+                      ) : (
                         <DestinationCard
                           style={cardStyle}
                           group={group}

@@ -13,6 +13,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -714,9 +715,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
   });
 
   const resolvedCardPositionsRef = useRef<Record<string, { x: number; y: number }> | null>(null);
-  const captureCardPositions = (positions: Record<string, { x: number; y: number }>) => {
+  const captureCardPositions = useCallback((positions: Record<string, { x: number; y: number }>) => {
     resolvedCardPositionsRef.current = positions;
-  };
+  }, []);
   const freezeCardPositionsForMapChange = (current: ProjectDocument) => {
     const positions = resolvedCardPositionsRef.current;
     if (!positions || Object.keys(positions).length === 0) return current.cards;
@@ -1017,6 +1018,92 @@ function StudioApp({ projectId }: { projectId?: string }) {
     // the dedicated map stage leave its own workflow context.
     if (activeStage === "content" && next.type === "province") setActivePanel("assets");
   };
+
+  // 画布回调同样走 latest-ref 模式:PosterCanvas 内的地图层 / 去向卡都靠 memo
+  // 跳过重渲染,渲染期新建的箭头函数会让这些 memo 每次都失效。ref 在渲染后的
+  // effect 中同步(lint 禁止渲染期写 ref),初始值即首帧闭包,覆盖首帧事件窗口。
+  const canvasCallbacksRef = useRef({
+    project,
+    maybeSnap,
+    commitProject,
+    patchScene,
+    handleSceneSelect,
+    handleLegacySceneSelect,
+  });
+  useEffect(() => {
+    canvasCallbacksRef.current = {
+      project,
+      maybeSnap,
+      commitProject,
+      patchScene,
+      handleSceneSelect,
+      handleLegacySceneSelect,
+    };
+  });
+
+  const handleCanvasSelect = useCallback((next: SceneSelection) => {
+    canvasCallbacksRef.current.handleSceneSelect(next);
+  }, []);
+
+  const handleCanvasLegacySelect = useCallback((next: SceneSelection) => {
+    canvasCallbacksRef.current.handleLegacySceneSelect(next);
+  }, []);
+
+  const handleCanvasMoveText = useCallback((id: string, x: number, y: number) => {
+    const context = canvasCallbacksRef.current;
+    const point = context.maybeSnap(x, y);
+    context.commitProject(applyTransaction(context.project, createSceneTransaction({ type: "text", id }, point)));
+  }, []);
+
+  const handleCanvasMoveAsset = useCallback((id: string, x: number, y: number) => {
+    const context = canvasCallbacksRef.current;
+    const point = context.maybeSnap(x, y);
+    const current = context.project.assetElements.find((asset) => asset.id === id);
+    if (!current || (current.x === point.x && current.y === point.y)) return;
+    context.commitProject(applyTransaction(context.project, createSceneTransaction({ type: "asset", id }, point)));
+  }, []);
+
+  const handleCanvasResizeAsset = useCallback((id: string, x: number, y: number, width: number, height: number) => {
+    const context = canvasCallbacksRef.current;
+    const point = context.maybeSnap(x, y);
+    const current = context.project.assetElements.find((asset) => asset.id === id);
+    if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
+    context.commitProject(applyTransaction(
+      context.project,
+      createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height }),
+    ));
+  }, []);
+
+  const handleCanvasMoveProvinceTexture = useCallback((province: string, offsetX: number, offsetY: number) => {
+    const context = canvasCallbacksRef.current;
+    const appearance = context.project.map.provinceStyles?.[province]?.appearance;
+    if (!appearance || appearance.kind === "manual-color") return;
+    context.patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
+  }, []);
+
+  const handleCanvasResizeMapImage = useCallback((alignment: { x: number; y: number; width: number; height: number; rotation: number }) => {
+    const context = canvasCallbacksRef.current;
+    const source = context.project.map.renderSource;
+    if (source?.kind !== "image" || !source.alignment) return;
+    context.patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
+  }, []);
+
+  const handleCanvasMoveCard = useCallback((id: string, x: number, y: number) => {
+    const context = canvasCallbacksRef.current;
+    const point = context.maybeSnap(x, y);
+    context.commitProject(applyTransaction(context.project, {
+      id: createId(`tx-card-position-${id}`),
+      label: "调整数据框位置",
+      source: "manual",
+      apply: (current) => ({ ...current, cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } } }),
+    }));
+  }, []);
+
+  const handleCanvasMoveGuests = useCallback((x: number, y: number) => {
+    const context = canvasCallbacksRef.current;
+    const point = context.maybeSnap(x, y);
+    context.commitProject(applyTransaction(context.project, createSceneTransaction({ type: "guests" }, point)));
+  }, []);
 
   const addText = () => {
     const element = createTextElement("给未来的一封信", 720, 870);
@@ -1706,17 +1793,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
             onResetMap={() => resetSceneTarget({ type: "map" })}
             onPatchProvince={(province, patch) => patchScene({ type: "province", province }, patch as Record<string, unknown>)}
             onCardPositionsResolved={captureCardPositions}
-            onSelect={handleSceneSelect}
-            onMoveProvinceTexture={(province, offsetX, offsetY) => {
-              const appearance = project.map.provinceStyles?.[province]?.appearance;
-              if (!appearance || appearance.kind === "manual-color") return;
-              patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
-            }}
-            onResizeMapImage={(alignment) => {
-              const source = project.map.renderSource;
-              if (source?.kind !== "image" || !source.alignment) return;
-              patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
-            }}
+            onSelect={handleCanvasSelect}
+            onMoveProvinceTexture={handleCanvasMoveProvinceTexture}
+            onResizeMapImage={handleCanvasResizeMapImage}
             onAddUserAsset={addUserAsset}
             onUndo={handleUndo}
             onRedo={handleRedo}
@@ -1836,7 +1915,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             undoLabel={undoLabel}
             redoLabel={redoLabel}
             assetPanelProps={mapStyleAssetPanelProps}
-            onSelect={handleSceneSelect}
+            onSelect={handleCanvasSelect}
             onPatch={patchScene}
             onReset={resetSceneTarget}
             onRefreshPositions={refreshDisplayFramePositions}
@@ -1854,46 +1933,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
               setStatusMessage(`已上传字体：${font.label}`);
             }}
             onDeleteUserFont={deleteUserFont}
-            onMoveText={(id, x, y) => {
-              const point = maybeSnap(x, y);
-              commitProject(applyTransaction(project, createSceneTransaction({ type: "text", id }, point)));
-            }}
-            onMoveAsset={(id, x, y) => {
-              const point = maybeSnap(x, y);
-              const current = project.assetElements.find((asset) => asset.id === id);
-              if (!current || (current.x === point.x && current.y === point.y)) return;
-              commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, point)));
-            }}
-            onResizeAsset={(id, x, y, width, height) => {
-              const point = maybeSnap(x, y);
-              const current = project.assetElements.find((asset) => asset.id === id);
-              if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
-              commitProject(applyTransaction(project, createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height })));
-            }}
-            onMoveProvinceTexture={(province, offsetX, offsetY) => {
-              const appearance = project.map.provinceStyles?.[province]?.appearance;
-              if (!appearance || appearance.kind === "manual-color") return;
-              patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
-            }}
-            onResizeMapImage={(alignment) => {
-              const source = project.map.renderSource;
-              if (source?.kind !== "image" || !source.alignment) return;
-              patchScene({ type: "map" }, { renderSource: { ...source, alignment: { ...source.alignment, ...alignment } } });
-            }}
+            onMoveText={handleCanvasMoveText}
+            onMoveAsset={handleCanvasMoveAsset}
+            onResizeAsset={handleCanvasResizeAsset}
+            onMoveProvinceTexture={handleCanvasMoveProvinceTexture}
+            onResizeMapImage={handleCanvasResizeMapImage}
             onCardPositionsResolved={captureCardPositions}
-            onMoveCard={(id, x, y) => {
-              const point = maybeSnap(x, y);
-              commitProject(applyTransaction(project, {
-                id: createId(`tx-card-position-${id}`),
-                label: "调整数据框位置",
-                source: "manual",
-                apply: (current) => ({ ...current, cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } } }),
-              }));
-            }}
-            onMoveGuests={(x, y) => {
-              const point = maybeSnap(x, y);
-              commitProject(applyTransaction(project, createSceneTransaction({ type: "guests" }, point)));
-            }}
+            onMoveCard={handleCanvasMoveCard}
+            onMoveGuests={handleCanvasMoveGuests}
           />
           ),
         };
@@ -2334,63 +2381,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
                   showGrid={showGrid}
                   gridSize={gridSize}
                   renderIntervalMs={resolvedRenderInterval}
-                  onSelect={handleLegacySceneSelect}
-                  onMoveText={(id, x, y) => {
-                    const point = maybeSnap(x, y);
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "text", id }, point)),
-                    );
-                  }}
-                  onMoveAsset={(id, x, y) => {
-                    const point = maybeSnap(x, y);
-                    const current = project.assetElements.find((asset) => asset.id === id);
-                    if (!current || (current.x === point.x && current.y === point.y)) return;
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "asset", id }, point)),
-                    );
-                  }}
-                  onResizeAsset={(id, x, y, width, height) => {
-                    const point = maybeSnap(x, y);
-                    const current = project.assetElements.find((asset) => asset.id === id);
-                    if (!current || (current.x === point.x && current.y === point.y && current.width === width && current.height === height)) return;
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "asset", id }, { x: point.x, y: point.y, width, height })),
-                    );
-                  }}
+                  onSelect={handleCanvasLegacySelect}
+                  onMoveText={handleCanvasMoveText}
+                  onMoveAsset={handleCanvasMoveAsset}
+                  onResizeAsset={handleCanvasResizeAsset}
                   mapSelected={selection.type === "map"}
-                  onMoveProvinceTexture={(province, offsetX, offsetY) => {
-                    const appearance = project.map.provinceStyles?.[province]?.appearance;
-                    if (!appearance || appearance.kind === "manual-color") return;
-                    patchScene({ type: "province", province }, { appearance: { ...appearance, offsetX, offsetY } });
-                  }}
-                  onResizeMapImage={(alignment) => {
-                    const rs = project.map.renderSource;
-                    if (rs?.kind !== "image" || !rs.alignment) return;
-                    patchScene({ type: "map" }, { renderSource: { ...rs, alignment: { ...rs.alignment, ...alignment } } });
-                  }}
+                  onMoveProvinceTexture={handleCanvasMoveProvinceTexture}
+                  onResizeMapImage={handleCanvasResizeMapImage}
                   onCardPositionsResolved={captureCardPositions}
                   selectedStudentId={selectedStudentId}
                   onSelectStudent={setSelectedStudentId}
-                  onMoveCard={(id, x, y) => {
-                    const point = maybeSnap(x, y);
-                    commitProject(
-                      applyTransaction(project, {
-                        id: createId(`tx-card-position-${id}`),
-                        label: "调整数据框位置",
-                        source: "manual",
-                        apply: (current) => ({
-                          ...current,
-                          cards: { ...current.cards, positions: { ...current.cards.positions, [id]: point } },
-                        }),
-                      }),
-                    );
-                  }}
-                  onMoveGuests={(x, y) => {
-                    const point = maybeSnap(x, y);
-                    commitProject(
-                      applyTransaction(project, createSceneTransaction({ type: "guests" }, point)),
-                    );
-                  }}
+                  onMoveCard={handleCanvasMoveCard}
+                  onMoveGuests={handleCanvasMoveGuests}
                 />
               </div>
             </div>

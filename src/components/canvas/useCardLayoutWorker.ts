@@ -28,6 +28,7 @@ function createLayoutWorker(): Worker | null {
 }
 
 interface KeyedCardLayoutWorkerState extends CardLayoutWorkerState {
+  /** Key the pending/settled request belongs to; `result` may still hold the previous key's layout. */
   key: string | null;
 }
 
@@ -112,7 +113,9 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
       };
     }
 
-    setState({ key: currentRequest.key, result: null, pending: true });
+    // Stale-while-revalidate: hold the previous layout until the worker answers so
+    // the card layer keeps its last good positions instead of unmounting entirely.
+    setState((previous) => ({ key: currentRequest.key, result: previous.result, pending: true }));
     const message: CardLayoutWorkerMessage = {
       type: "solve",
       requestId,
@@ -127,6 +130,9 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
   }, []);
 
   if (!request) return { result: null, pending: false };
-  if (state.key === request.key) return state;
-  return { result: resolved.result, pending: !resolved.cached && !forceSync };
+  if (state.key === request.key && state.result) return { result: state.result, pending: state.pending };
+  if (resolved.key === request.key && resolved.result) return { result: resolved.result, pending: false };
+  // The key changed and nothing is resolved yet: keep the last layout on screen
+  // (possibly from the previous key) while the worker solves the new one.
+  return { result: state.result, pending: true };
 }

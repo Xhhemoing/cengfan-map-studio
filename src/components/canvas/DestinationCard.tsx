@@ -6,6 +6,15 @@ import type {
   DisplayFrameMode,
   DisplayFrameStyle,
 } from "../../lib/display-frame";
+import {
+  displayFrameFontWeightValue,
+  displayFrameTextBaseline,
+  displayFrameTextX,
+  resolveDisplayFrameFieldFontSize,
+  resolveDisplayFrameItemPaint,
+  resolveDisplayFrameSurface,
+  type ResolvedDisplayFrameSurface,
+} from "../../lib/display-frame-style";
 import { resolveFontFamily, type UserFont } from "../../lib/fonts";
 import type { LayoutGroup, SchoolRowPart } from "../../lib/layout";
 import type { CardFontField, ProvinceAppearance, TextStyleOverride } from "../../lib/scene-document";
@@ -74,32 +83,21 @@ export interface DestinationCardProps {
   provinceTexture: CardProvinceTexture | null;
 }
 
-function frameTextAnchor(item: DisplayFrameFixedItem): "start" | "middle" | "end" {
-  if (item.style?.align === "center") return "middle";
-  if (item.style?.align === "right") return "end";
-  return "start";
-}
-
-function frameTextX(item: DisplayFrameFixedItem): number {
-  if (item.style?.align === "center") return item.x + item.width / 2;
-  if (item.style?.align === "right") return item.x + item.width;
-  return item.x;
-}
-
-function renderDisplayFrameItem(item: DisplayFrameFixedItem, frameStyle: { color: string; fontSize: number; align: "left" | "center" | "right" }, userFonts: UserFont[]): ReactNode {
-  const color = item.style?.color ?? frameStyle.color;
+function renderDisplayFrameItem(item: DisplayFrameFixedItem, surface: ResolvedDisplayFrameSurface, userFonts: UserFont[]): ReactNode {
+  const paint = resolveDisplayFrameItemPaint(item, surface);
   if (item.kind === "text") {
     return (
       <text
         key={item.id}
         data-display-frame-text={item.id}
-        x={frameTextX(item)}
-        y={item.y + Math.min(item.height, item.style?.fontSize ?? frameStyle.fontSize)}
-        fill={color}
-        fontSize={item.style?.fontSize ?? frameStyle.fontSize}
-        fontWeight={item.style?.fontWeight === "bold" ? 700 : item.style?.fontWeight === "medium" ? 500 : undefined}
-        fontFamily={resolveFontFamily(item.style?.fontId, userFonts)}
-        textAnchor={frameTextAnchor(item)}
+        x={displayFrameTextX(item, paint)}
+        y={displayFrameTextBaseline(item, paint)}
+        fill={paint.fill}
+        fontSize={paint.fontSize}
+        fontWeight={paint.fontWeight}
+        fontFamily={resolveFontFamily(paint.fontId, userFonts)}
+        textAnchor={paint.textAnchor}
+        opacity={paint.opacity}
         pointerEvents="none"
       >
         {item.content || " "}
@@ -107,10 +105,10 @@ function renderDisplayFrameItem(item: DisplayFrameFixedItem, frameStyle: { color
     );
   }
   if (item.kind === "decoration" && item.decoration === "line") {
-    return <line key={item.id} data-display-frame-decoration={item.id} x1={item.x} y1={item.y} x2={item.x + item.width} y2={item.y} stroke={color} strokeWidth={item.style?.strokeWidth ?? 1} pointerEvents="none" />;
+    return <line key={item.id} data-display-frame-decoration={item.id} x1={item.x} y1={item.y} x2={item.x + item.width} y2={item.y} stroke={paint.color} strokeWidth={paint.strokeWidth} opacity={paint.opacity} pointerEvents="none" />;
   }
   if (item.kind === "decoration") {
-    return <rect key={item.id} data-display-frame-decoration={item.id} x={item.x} y={item.y} width={item.width} height={item.height} fill={item.style?.fill ?? "transparent"} stroke={color} strokeWidth={item.style?.strokeWidth ?? 1} pointerEvents="none" />;
+    return <rect key={item.id} data-display-frame-decoration={item.id} x={item.x} y={item.y} width={item.width} height={item.height} fill={paint.fill} stroke={paint.color} strokeWidth={paint.strokeWidth} opacity={paint.opacity} pointerEvents="none" />;
   }
   return null;
 }
@@ -144,12 +142,33 @@ export const DestinationCard = memo(function DestinationCard({
     userFonts,
   } = style;
   const photoOffset = preset === "photo" ? 32 : 0;
+  // The card falls back to its own paint when the frame leaves a slot empty, then the shared
+  // resolver fills in every remaining optional token exactly like the display-frame renderer.
+  const surface = resolveDisplayFrameSurface({
+    ...frameStyle,
+    background: frameStyle.background || style.background,
+    opacity: frameStyle.opacity ?? style.opacity,
+    borderColor: frameStyle.borderColor ?? style.edgeColor,
+  });
+
+  // In fixed mode the frame items own the alignment; flow mode stacks everything at the padding.
+  const titlePaint = frameMode === "fixed" && frameTitleItem ? resolveDisplayFrameItemPaint(frameTitleItem, surface) : undefined;
+  const bodyPaint = frameMode === "fixed" && frameBodyItem ? resolveDisplayFrameItemPaint(frameBodyItem, surface) : undefined;
+  // Titles are bold by default, but an explicit weight — including "normal" — always wins.
+  const titleFontWeight = titlePaint?.fontWeight
+    ?? displayFrameFontWeightValue(flowTitleBlock?.style?.fontWeight, 700);
+  const titleX = (titlePaint && frameTitleItem ? displayFrameTextX(frameTitleItem, titlePaint) : horizontalPadding)
+    + photoOffset
+    + (provinceTexture ? 36 : 0);
+  const bodyX = bodyPaint && frameBodyItem ? displayFrameTextX(frameBodyItem, bodyPaint) : horizontalPadding;
 
   let lineIndex = 0;
   const bodyLines = rows.flatMap((row) => row.lines.map((line, index) => {
     const rowField = row.cityHeading ? "city" : "name";
     const block = frameMode === "flow" ? (rowField === "city" ? style.flowCityBlock : style.flowNameBlock) : undefined;
-    const rowFontSize = block?.style?.fontSize ?? style.fieldTypography?.[rowField]?.fontSize ?? (row.cityHeading ? Math.max(9, style.fontSize - 1) : flowNameFontSize);
+    const rowFontSize = block?.style?.fontSize
+      ?? style.fieldTypography?.[rowField]?.fontSize
+      ?? (row.cityHeading ? resolveDisplayFrameFieldFontSize("city", style.fontSize) : flowNameFontSize);
     const rowLineHeight = frameMode === "flow"
       ? Math.max(16, rowFontSize + 6) * (block?.lineHeight ?? 1.2)
       : rowHeight;
@@ -160,11 +179,12 @@ export const DestinationCard = memo(function DestinationCard({
         key={`${row.key}-${index}`}
         data-city-section={index === 0 ? row.cityHeading : undefined}
         data-card-row-line={row.key}
-        x={frameMode === "fixed" ? frameBodyItem?.x ?? horizontalPadding : horizontalPadding}
+        x={bodyX}
         y={y}
+        textAnchor={bodyPaint?.textAnchor}
         fill={block?.style?.color ?? style.fieldTypography?.[rowField]?.color ?? style.textColor}
         fontSize={rowFontSize}
-        fontWeight={row.cityHeading ? 700 : block?.style?.fontWeight === "bold" ? 700 : block?.style?.fontWeight === "medium" ? 500 : undefined}
+        fontWeight={displayFrameFontWeightValue(block?.style?.fontWeight, row.cityHeading ? 700 : 400)}
       >
         {line.map((fragment, fragmentIndex) => (
           <tspan
@@ -184,11 +204,11 @@ export const DestinationCard = memo(function DestinationCard({
         data-display-frame-surface
         width={width}
         height={height}
-        rx={preset === "ticket" ? 12 : preset === "borderless" ? 0 : frameStyle.borderRadius ?? 6}
-        fill={frameStyle.background || style.background}
-        fillOpacity={frameStyle.opacity ?? style.opacity}
-        stroke={preset === "borderless" ? "none" : frameStyle.borderColor ?? style.edgeColor}
-        strokeWidth={preset === "borderless" ? undefined : frameStyle.borderWidth ?? 1}
+        rx={preset === "ticket" ? 12 : preset === "borderless" ? 0 : surface.borderRadius}
+        fill={surface.background}
+        fillOpacity={surface.opacity}
+        stroke={preset === "borderless" ? "none" : surface.borderColor}
+        strokeWidth={preset === "borderless" ? undefined : surface.borderWidth}
         data-display-frame-mode={frameMode}
       />
       {provinceTexture && (
@@ -206,14 +226,15 @@ export const DestinationCard = memo(function DestinationCard({
       )}
       {preset === "ticket" && <><rect data-card-accent width={8} height={height} rx={4} fill={style.activeColor} /><circle cx={width - 18} cy={18} r={7} fill={style.activeColor} opacity={0.2} /></>}
       {preset === "photo" && <><circle data-card-avatar cx={horizontalPadding + 13} cy={21} r={13} fill={style.activeColor} opacity={0.2} /><text x={horizontalPadding + 13} y={25} textAnchor="middle" fill={style.activeColor} fontWeight={700} fontSize={11}>{group.title.slice(0, 1)}</text></>}
-      {customFrameItems.map((item) => renderDisplayFrameItem(item, frameStyle, userFonts))}
+      {customFrameItems.map((item) => renderDisplayFrameItem(item, surface, userFonts))}
       {titleLines.map((line, index) => (
         <text
           key={`title-${index}`}
           data-card-title-line
-          x={(frameMode === "fixed" ? frameTitleItem?.x ?? horizontalPadding : horizontalPadding) + photoOffset + (provinceTexture ? 36 : 0)}
+          x={titleX}
           y={(frameMode === "fixed" ? frameTitleItem?.y ?? 12 : 12 + (flowTitleBlock?.spacing ?? 0)) + (index + 1) * Math.max(16, flowTitleFontSize + 4) * (flowTitleBlock?.lineHeight ?? lineHeightMultiplier)}
-          fontWeight={flowTitleBlock?.style?.fontWeight === "medium" ? 500 : 700}
+          textAnchor={titlePaint?.textAnchor}
+          fontWeight={titleFontWeight}
           fontSize={flowTitleFontSize}
           fill={flowTitleBlock?.style?.color ?? style.fieldTypography?.title?.color ?? style.textColor}
           fontFamily={resolveFontFamily(flowTitleBlock?.style?.fontId ?? style.fieldFonts?.title, userFonts)}

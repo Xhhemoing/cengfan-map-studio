@@ -3,6 +3,7 @@ import {
   buildCardLayoutBenchFixture,
   buildDisplayFrameBenchFixtures,
   buildLongNameFragments,
+  buildPosterCanvasBenchFixture,
   medianDuration,
 } from "./canvas-render-metrics";
 
@@ -33,6 +34,17 @@ describe("canvas render benchmark metrics", () => {
     expect(fragments[1]).toEqual({ text: "、", field: "separator" });
     expect(fragments.at(-1)).toEqual({ text: "王芳12", field: "name" });
     expect(buildLongNameFragments(0)).toEqual([]);
+  });
+
+  it("builds matching student and destination-group fixtures for render probes", () => {
+    const first = buildPosterCanvasBenchFixture(24);
+    const second = buildPosterCanvasBenchFixture(24);
+
+    expect(first).toEqual(second);
+    expect(first.students).toHaveLength(24);
+    expect(new Set(first.students.map((student) => student.province))).toHaveLength(24);
+    expect(first.movedCardKey).toBe("北京市");
+    expect(buildPosterCanvasBenchFixture(0).movedCardKey).toBeNull();
   });
 
   it("builds seeded layout inputs and scales their bounds", () => {

@@ -137,6 +137,132 @@ describe("DestinationCard", () => {
     dispose();
   });
 
+  it("resolves surface paint through the display-frame layer, falling back to the card colours", () => {
+    const { container, dispose } = renderCard(createStyle({
+      background: "#fef7e8",
+      edgeColor: "#8b5a2b",
+      frameStyle: {
+        fontSize: 12,
+        color: "#1c3154",
+        background: "",
+        opacity: 0.5,
+        padding: 12,
+        margin: 0,
+        align: "left",
+      },
+    }));
+
+    const surface = container.querySelector("[data-display-frame-surface]")!;
+    expect(surface.getAttribute("fill")).toBe("#fef7e8");
+    expect(surface.getAttribute("fill-opacity")).toBe("0.5");
+    expect(surface.getAttribute("stroke")).toBe("#8b5a2b");
+    expect(surface.getAttribute("stroke-width")).toBe("1");
+    expect(surface.getAttribute("rx")).toBe("6");
+
+    dispose();
+  });
+
+  it("lets custom frame items inherit the frame alignment, font size and opacity", () => {
+    const { container, dispose } = renderCard(createStyle({
+      frameStyle: {
+        fontSize: 14,
+        color: "#334455",
+        background: "#ffffff",
+        opacity: 1,
+        padding: 12,
+        margin: 0,
+        align: "center",
+        borderColor: "#334455",
+        borderWidth: 1,
+        borderRadius: 6,
+      },
+      customFrameItems: [
+        { id: "text-1", kind: "text", content: "毕业快乐", x: 10, y: 80, width: 100, height: 20, zIndex: 5 },
+        { id: "text-2", kind: "text", content: "一路顺风", x: 10, y: 110, width: 100, height: 20, zIndex: 6, style: { align: "right", fontSize: 9, opacity: 0.4, color: "#aa0000" } },
+      ],
+    }));
+
+    const inherited = container.querySelector("[data-display-frame-text='text-1']")!;
+    expect(inherited.getAttribute("text-anchor")).toBe("middle");
+    expect(inherited.getAttribute("x")).toBe("60");
+    expect(inherited.getAttribute("font-size")).toBe("14");
+    expect(inherited.getAttribute("fill")).toBe("#334455");
+    expect(inherited.getAttribute("y")).toBe("94");
+
+    const overridden = container.querySelector("[data-display-frame-text='text-2']")!;
+    expect(overridden.getAttribute("text-anchor")).toBe("end");
+    expect(overridden.getAttribute("x")).toBe("110");
+    expect(overridden.getAttribute("opacity")).toBe("0.4");
+    expect(overridden.getAttribute("fill")).toBe("#aa0000");
+
+    dispose();
+  });
+
+  it("anchors the title and body rows on the frame alignment in fixed mode", () => {
+    const { container, dispose } = renderCard(createStyle({
+      frameStyle: {
+        fontSize: 12,
+        color: "#1c3154",
+        background: "#ffffff",
+        opacity: 0.9,
+        padding: 12,
+        margin: 0,
+        align: "center",
+        borderColor: "#1c3154",
+        borderWidth: 1,
+        borderRadius: 6,
+      },
+    }));
+
+    const title = container.querySelector("[data-card-title-line]")!;
+    expect(title.getAttribute("text-anchor")).toBe("middle");
+    expect(title.getAttribute("x")).toBe("102");
+
+    const row = container.querySelector("[data-card-row-line]")!;
+    expect(row.getAttribute("text-anchor")).toBe("middle");
+    expect(row.getAttribute("x")).toBe("110");
+
+    dispose();
+  });
+
+  it("keeps bold titles by default but honours an explicit normal weight", () => {
+    const bold = renderCard(createStyle());
+    expect(bold.container.querySelector("[data-card-title-line]")?.getAttribute("font-weight")).toBe("700");
+    bold.dispose();
+
+    const normal = renderCard(createStyle({
+      frameTitleItem: { id: "title", kind: "field", field: "title", x: 12, y: 12, width: 180, height: 24, zIndex: 0, style: { fontWeight: "normal" } },
+    }));
+    expect(normal.container.querySelector("[data-card-title-line]")?.getAttribute("font-weight")).toBe("400");
+    normal.dispose();
+
+    const flowNormal = renderCard(createStyle({
+      frameMode: "flow",
+      flowTitleBlock: { id: "title", kind: "field", field: "title", order: 0, spacing: 0, lineHeight: 1.2, style: { fontWeight: "normal" } },
+    }));
+    expect(flowNormal.container.querySelector("[data-card-title-line]")?.getAttribute("font-weight")).toBe("400");
+    flowNormal.dispose();
+
+    const flowMedium = renderCard(createStyle({
+      frameMode: "flow",
+      flowTitleBlock: { id: "title", kind: "field", field: "title", order: 0, spacing: 0, lineHeight: 1.2, style: { fontWeight: "medium" } },
+    }));
+    expect(flowMedium.container.querySelector("[data-card-title-line]")?.getAttribute("font-weight")).toBe("500");
+    flowMedium.dispose();
+  });
+
+  it("shrinks the city heading one step and never below the display-frame minimum", () => {
+    const { container, dispose } = renderCard(createStyle());
+    const cityHeading = container.querySelector("[data-city-section='北京市']")!;
+    expect(cityHeading.getAttribute("font-size")).toBe("11");
+    expect(cityHeading.getAttribute("font-weight")).toBe("700");
+    dispose();
+
+    const tiny = renderCard(createStyle({ fontSize: 8 }));
+    expect(tiny.container.querySelector("[data-city-section='北京市']")?.getAttribute("font-size")).toBe("9");
+    tiny.dispose();
+  });
+
   it("skips re-rendering while its props keep the same identity", () => {
     const style = createStyle();
     const { container, render, dispose } = renderCard(style);
