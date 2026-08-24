@@ -341,7 +341,8 @@ describe("collaboration room store", () => {
   it("restores an API-accepted near-limit room after degrading its operation history", async () => {
     let persisted: RoomStoreSnapshot | undefined;
     const payload = "x".repeat(MAX_PERSISTED_ROOM_BYTES - 8 * 1024);
-    const operation: CollaborationOperation = { type: "set", path: ["payload"], value: payload };
+    const historyPadding = "h".repeat(256);
+    const operation: CollaborationOperation = { type: "set", path: ["historyPadding"], value: historyPadding };
     const transaction = {
       txId: "near-limit-op",
       clientId: "owner",
@@ -370,7 +371,13 @@ describe("collaboration room store", () => {
         },
       });
       store.create({ payload }, { clientId: "owner", displayName: "Owner" });
-      store.apply("NEARLIMIT", "owner-access", transaction);
+      for (let version = 0; version < 64; version += 1) {
+        store.apply("NEARLIMIT", "owner-access", {
+          ...transaction,
+          txId: `near-limit-op-${version}`,
+          baseVersion: version,
+        });
+      }
 
       await store.flush();
 
@@ -378,7 +385,7 @@ describe("collaboration room store", () => {
         version: 1,
         trimmedRoomIds: ["NEARLIMIT"],
         rooms: [expect.objectContaining({
-          room: expect.objectContaining({ id: "NEARLIMIT", version: 1 }),
+          room: expect.objectContaining({ id: "NEARLIMIT", version: 64 }),
           operationHistory: [],
         })],
       });
@@ -391,14 +398,14 @@ describe("collaboration room store", () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("trimmed operation history"));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("NEARLIMIT"));
       const restored = createRoomStore({ restore: persisted, now: () => 1_000 });
-      expect(restored.get("NEARLIMIT")?.snapshot).toEqual({ payload });
+      expect(restored.get("NEARLIMIT")?.snapshot).toEqual({ payload, historyPadding });
       expect(restored.authorize("NEARLIMIT", "owner-access", "read"))
         .toMatchObject({ id: "owner", role: "owner" });
       expect(() => restored.getOperations("NEARLIMIT", "owner-access", 0))
         .toThrowError(expect.objectContaining({
           code: "VERSION_CONFLICT",
           message: "增量历史已被裁剪，请重新获取完整快照",
-          currentVersion: 1,
+          currentVersion: 64,
         }));
     } finally {
       warn.mockRestore();
@@ -408,6 +415,7 @@ describe("collaboration room store", () => {
   it("restores two five MiB rooms after trimming duplicate operation history", async () => {
     let persisted: RoomStoreSnapshot | undefined;
     const payload = "f".repeat(5 * 1024 * 1024);
+    const historyPadding = "h".repeat(16 * 1024);
     const roomIds = ["FIVEA", "FIVEB"];
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
@@ -422,12 +430,14 @@ describe("collaboration room store", () => {
       });
       for (const id of ["FIVEA", "FIVEB"]) {
         store.create({ payload }, { clientId: `${id}-owner`, displayName: `${id} Owner` });
-        store.apply(id, "owner-access", {
-          txId: `${id}-op`,
-          clientId: `${id}-owner`,
-          baseVersion: 0,
-          operations: [{ type: "set", path: ["payload"], value: payload }],
-        });
+        for (let version = 0; version < 256; version += 1) {
+          store.apply(id, "owner-access", {
+            txId: `${id}-op-${version}`,
+            clientId: `${id}-owner`,
+            baseVersion: version,
+            operations: [{ type: "set", path: ["historyPadding"], value: historyPadding }],
+          });
+        }
       }
 
       await store.flush();
@@ -459,6 +469,7 @@ describe("collaboration room store", () => {
   it("trims history before evicting a room from the aggregate snapshot budget", async () => {
     let persisted: RoomStoreSnapshot | undefined;
     const payload = "b".repeat(3.5 * 1024 * 1024);
+    const historyPadding = "h".repeat(14 * 1024);
     const roomIds = ["BUDGETA", "BUDGETB"];
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
@@ -473,12 +484,14 @@ describe("collaboration room store", () => {
       });
       for (const id of ["BUDGETA", "BUDGETB"]) {
         store.create({ payload }, { clientId: `${id}-owner`, displayName: `${id} Owner` });
-        store.apply(id, "owner-access", {
-          txId: `${id}-op`,
-          clientId: `${id}-owner`,
-          baseVersion: 0,
-          operations: [{ type: "set", path: ["payload"], value: payload }],
-        });
+        for (let version = 0; version < 256; version += 1) {
+          store.apply(id, "owner-access", {
+            txId: `${id}-op-${version}`,
+            clientId: `${id}-owner`,
+            baseVersion: version,
+            operations: [{ type: "set", path: ["historyPadding"], value: historyPadding }],
+          });
+        }
       }
 
       await store.flush();

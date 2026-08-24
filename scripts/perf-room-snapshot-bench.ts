@@ -29,6 +29,8 @@ const RUNS = 5;
 const ROOM_COUNTS = [1] as const;
 const PACK_MIB = [6, 8, 12] as const;
 const BYTES_PER_MIB = 1024 * 1024;
+const TRIM_HISTORY_ENTRIES = 256;
+const TRIM_HISTORY_VALUE_BYTES = 16 * 1024;
 // Leave space for room metadata so the target cell remains just below the cap.
 const RECORD_ENVELOPE_MARGIN_BYTES = 4 * 1024;
 
@@ -82,16 +84,19 @@ async function measureCell(roomCount: number, packMiB: number, trimHistory = fal
       displayName: `Owner ${roomIndex}`,
     });
     if (trimHistory) {
-      store.apply(created.room.id, created.access.accessToken, {
-        txId: `trim-bench-${roomIndex}`,
-        clientId: `owner-${roomIndex}`,
-        baseVersion: 0,
-        operations: [{
-          type: "set",
-          path: ["benchmarkPayload"],
-          value: testPackage.benchmarkPayload,
-        }],
-      });
+      const historyPadding = "h".repeat(TRIM_HISTORY_VALUE_BYTES);
+      for (let version = 0; version < TRIM_HISTORY_ENTRIES; version += 1) {
+        store.apply(created.room.id, created.access.accessToken, {
+          txId: `trim-bench-${roomIndex}-${version}`,
+          clientId: `owner-${roomIndex}`,
+          baseVersion: version,
+          operations: [{
+            type: "set",
+            path: ["historyPadding"],
+            value: historyPadding,
+          }],
+        });
+      }
     }
   }
 
@@ -139,5 +144,5 @@ for (const roomCount of ROOM_COUNTS) {
 }
 const trimResult = await measureCell(1, 5, true);
 console.log(
-  `| history trim | 1 | 5 (+ duplicate history) | 10 | ${trimResult.snapshotMs.toFixed(2)} | ${trimResult.stringifyMs.toFixed(2)} | ${(trimResult.snapshotMs + trimResult.stringifyMs).toFixed(2)} | ${trimResult.outputBytes} | ${trimResult.trimmedRooms} |`,
+  `| history trim | 1 | 5 (+ 4 MiB history) | 9 | ${trimResult.snapshotMs.toFixed(2)} | ${trimResult.stringifyMs.toFixed(2)} | ${(trimResult.snapshotMs + trimResult.stringifyMs).toFixed(2)} | ${trimResult.outputBytes} | ${trimResult.trimmedRooms} |`,
 );
