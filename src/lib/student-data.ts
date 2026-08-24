@@ -78,11 +78,34 @@ export function resolveCityLocation(city: string): {
   return resolveCity(city);
 }
 
+/**
+ * An overseas destination is stored as `locationScope: "international"`; the
+ * import parser folds every 海外 / overseas / abroad wording into that single
+ * value. Reading the scope through this helper keeps the literal in one place.
+ */
+export function isOverseasStudent(student: Pick<Student, "locationScope">): boolean {
+  return student.locationScope === "international";
+}
+
+/**
+ * Where a record sits on the China map. An overseas destination sits nowhere on
+ * it, so it comes back with an empty province and `status: "unresolved"` — the
+ * same shape {@link buildStudentRecords} gives a freshly imported overseas row.
+ * That status means "not on the China map", not "bad data", so a caller that
+ * reports 城市未匹配 still has to ask {@link isOverseasStudent} first.
+ */
 export function resolveStudentLocation(student: Student): {
   city: string;
   province: string;
   status: "resolved" | "unresolved";
 } {
+  const city = trimImportCell(student.city);
+  // A province surviving on an overseas record — hand-edited project file, or an
+  // archive written before imports started stripping it — is not an override:
+  // honoring it would file 哈佛大学 under 浙江省 in every province view.
+  if (isOverseasStudent(student)) {
+    return { city, province: "", status: "unresolved" };
+  }
   // A province cell holding only zero-width characters is not an override: read
   // like a filled-in one it would mark an unlocatable city as resolved and hide
   // the 城市未匹配 warning the roster should raise.
@@ -90,14 +113,14 @@ export function resolveStudentLocation(student: Student): {
   if (override) {
     const province = resolveProvinceName(override);
     return {
-      city: trimImportCell(student.city),
+      city,
       // 手动指定省份视为已定位：已知别名归一化为标准省名，自定义省份保留原名称，
       // 使其可以正常进入省份卡片等数据视图，而不是一直标记为未匹配。
       province: province || override,
       status: "resolved",
     };
   }
-  return resolveCityLocation(trimImportCell(student.city));
+  return resolveCityLocation(city);
 }
 
 /**
@@ -131,7 +154,7 @@ export function buildStudentRecords(inputs: StudentInput[]): StudentBuildResult 
     }));
     issues.push(...fieldIssues);
 
-    const isInternational = input.locationScope === "international";
+    const isInternational = isOverseasStudent(input);
     // Overseas destinations never carry a Chinese province, so they are also
     // never reported as an unresolved China city.
     const province = isInternational ? "" : trimImportCell(input.province);

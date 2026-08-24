@@ -1,6 +1,6 @@
 import type { ProjectDocument } from "./project-document";
 import type { Student } from "./project-data";
-import { resolveStudentLocation } from "./student-data";
+import { isOverseasStudent, resolveStudentLocation } from "./student-data";
 import { duplicateStudentIds } from "./data-duplicate";
 import { trimImportCell } from "./import-data";
 
@@ -99,6 +99,18 @@ function createIssue(
   };
 }
 
+/**
+ * A province left on an overseas record is named here instead of raising a
+ * 省份覆盖 issue: {@link resolveStudentLocation} ignores it, while the map
+ * mapping panel turns every 省份覆盖 row into a 指定省份 fix — an edit that on
+ * an overseas record writes a value nothing will ever read.
+ */
+function internationalDetail(student: Student): string {
+  const city = trimImportCell(student.city) || "未填写";
+  const stale = trimImportCell(student.province);
+  return stale ? `海外去向：${city}（省份 ${stale} 不参与中国地图，已忽略）` : `海外去向：${city}`;
+}
+
 export function buildDataHealthSummary(project: ProjectDocument): DataHealthSummary {
   let visible = 0;
   let international = 0;
@@ -112,7 +124,10 @@ export function buildDataHealthSummary(project: ProjectDocument): DataHealthSumm
     } else {
       visible += 1;
     }
-    if (student.locationScope === "international") {
+    // resolveStudentLocation reports an overseas record as unresolved because it
+    // has no place on the China map; counting it as 城市未匹配 too would report
+    // the same record twice, so the scope decides which bucket it lands in.
+    if (isOverseasStudent(student)) {
       international += 1;
     } else if (resolveStudentLocation(student).status === "unresolved") {
       unresolved += 1;
@@ -142,19 +157,20 @@ export function listDataIssues(project: ProjectDocument): ResolvedDataIssue[] {
   const duplicateIds = duplicateStudentIds(project.students);
 
   for (const student of project.students) {
+    const overseas = isOverseasStudent(student);
     const fields = missingFields(student);
     if (fields.length > 0) {
       missing.push(createIssue(student, "missing-field", `缺少${fields.join("、")}`, "warning"));
     }
-    if (student.locationScope !== "international" && resolveStudentLocation(student).status === "unresolved") {
+    if (!overseas && resolveStudentLocation(student).status === "unresolved") {
       unresolved.push(createIssue(student, "unresolved-location", `无法定位城市：${trimImportCell(student.city) || "未填写"}`, "warning"));
     }
     const province = trimImportCell(student.province);
-    if (province) {
+    if (province && !overseas) {
       manualProvince.push(createIssue(student, "manual-province", `使用省份覆盖：${province}`, "info"));
     }
-    if (student.locationScope === "international") {
-      international.push(createIssue(student, "international", `海外去向：${trimImportCell(student.city) || "未填写"}`, "info"));
+    if (overseas) {
+      international.push(createIssue(student, "international", internationalDetail(student), "info"));
     }
     if (duplicateIds.has(student.id)) {
       duplicate.push(createIssue(student, "duplicate", "姓名、院校、城市和去向类型与其他记录一致", "warning"));

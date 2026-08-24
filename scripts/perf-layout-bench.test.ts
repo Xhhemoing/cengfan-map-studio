@@ -69,20 +69,24 @@ describe("layout performance benchmark", () => {
   it("reports synthetic layout-health cost shape without asserting elapsed time", () => {
     const report = runLayoutHealthBenchmark({
       laneCounts: [2, 4],
+      shapes: ["direct-bounds", "pinned-card-positions"],
       warmupIterations: 1,
       iterations: 2,
     });
 
     expect(report).toMatchObject({
-      methodology: "synthetic card rectangles and three-segment polylines; checkLayoutHealth only; fixture creation and issue summarization excluded",
+      methodology: "synthetic card rectangles and three-segment polylines, with optional pinned card-position resolution; checkLayoutHealth only; fixture creation and issue summarization excluded",
       warmupIterations: 1,
       iterations: 2,
       laneCounts: [2, 4],
+      shapes: ["direct-bounds", "pinned-card-positions"],
       results: [
         {
+          shape: "direct-bounds",
           laneCount: 2,
           cardCount: 4,
           connectorCount: 2,
+          pinnedPositionCount: 0,
           segmentsPerConnector: 3,
           issueCount: expect.any(Number),
           issueCounts: {
@@ -94,9 +98,43 @@ describe("layout performance benchmark", () => {
           maxMs: expect.any(Number),
         },
         {
+          shape: "direct-bounds",
           laneCount: 4,
           cardCount: 8,
           connectorCount: 4,
+          pinnedPositionCount: 0,
+          segmentsPerConnector: 3,
+          issueCount: expect.any(Number),
+          issueCounts: {
+            "connector-crosses-card": expect.any(Number),
+          },
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number),
+          minMs: expect.any(Number),
+          maxMs: expect.any(Number),
+        },
+        {
+          shape: "pinned-card-positions",
+          laneCount: 2,
+          cardCount: 4,
+          connectorCount: 2,
+          pinnedPositionCount: 4,
+          segmentsPerConnector: 3,
+          issueCount: expect.any(Number),
+          issueCounts: {
+            "connector-crosses-card": expect.any(Number),
+          },
+          p50Ms: expect.any(Number),
+          p95Ms: expect.any(Number),
+          minMs: expect.any(Number),
+          maxMs: expect.any(Number),
+        },
+        {
+          shape: "pinned-card-positions",
+          laneCount: 4,
+          cardCount: 8,
+          connectorCount: 4,
+          pinnedPositionCount: 8,
           segmentsPerConnector: 3,
           issueCount: expect.any(Number),
           issueCounts: {

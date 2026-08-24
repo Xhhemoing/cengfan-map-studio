@@ -63,6 +63,12 @@ export interface LayoutHealthIssue {
   kind: LayoutHealthIssueKind;
   severity: LayoutHealthSeverity;
   detail: string;
+  /**
+   * 涉及对象的原始 id，按定位优先级排列（最该挪动的在前）。issue.id 由这些 id 用
+   * ":" 拼成，而卡片分组键本身可能含 ":"，从拼接串拆不回原值；定位时应优先用这里。
+   * 连接线不是画布对象，以其出发卡片（cardId）代表，缺失时退回连接线自身 id。
+   */
+  targets?: string[];
 }
 
 const EPSILON = 0.000001;
@@ -251,6 +257,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "out-of-bounds",
         severity: "error",
         detail: `${object.id} 超出画布边界`,
+        targets: [object.id],
       });
     } else if (outsideSafeArea(bounds, input.canvas)) {
       issues.push({
@@ -258,6 +265,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "overflow",
         severity: "warning",
         detail: `${object.id} 超出画布安全边距`,
+        targets: [object.id],
       });
     }
     if (bleedPx > 0 && BLEED_SENSITIVE_KINDS.has(object.kind)) {
@@ -270,6 +278,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
           detail: risk === "in-bleed"
             ? `${object.id} 落在出血区（裁切线之外），裁切后可能被切掉`
             : `${object.id} 距裁切线不足 ${bleedMm}mm`,
+          targets: [object.id],
         });
       }
     }
@@ -279,6 +288,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "unreadable-text",
         severity: "warning",
         detail: `${object.id} 的文字与背景对比度不足`,
+        targets: [object.id],
       });
     }
   }
@@ -299,6 +309,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "occlusion",
         severity: "warning",
         detail: `${front.id} 遮挡了 ${back.id}`,
+        targets: [back.id, front.id],
       });
     }
   }
@@ -314,6 +325,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "connector-conflict",
         severity: "warning",
         detail: `${left.id} 与 ${right.id} 的连接线发生冲突`,
+        targets: [left.cardId ?? left.id, right.cardId ?? right.id],
       });
     }
   }
@@ -330,11 +342,13 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
       // 折线的各段互不重叠，逐段弦长相加就是这条线压在卡内的总长度。
       const chord = segments.reduce((total, segment) => total + segmentRectOverlapLength(segment, bounds), 0);
       if (chord < CARD_CROSSING_MIN_CHORD) continue;
+      // 被穿的卡在前：那才是用户要挪的东西；出发卡殿后，供被穿卡已不可选时兜底。
       issues.push({
         id: `${connector.id}:${object.id}`,
         kind: "connector-crosses-card",
         severity: "warning",
         detail: `${connector.cardId ?? connector.id} 的连接线从 ${object.id} 上穿过`,
+        targets: [object.id, connector.cardId ?? connector.id],
       });
     }
   }

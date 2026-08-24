@@ -84,6 +84,62 @@ describe("file room snapshot store", () => {
     expect(firstStore.load()).toEqual([secondState]);
   });
 
+  it("keeps JSON intact when two local processes overlap snapshot writes", async () => {
+    const directory = createTemporaryDirectory();
+    const startFile = join(directory, "start");
+    const storeModuleUrl = new URL("./collaboration-snapshot-store.ts", import.meta.url).href;
+    const childScript = `
+      import { existsSync, readFileSync } from "node:fs";
+      import { createFileRoomSnapshotStore } from ${JSON.stringify(storeModuleUrl)};
+      const [directory, stateFile, startFile] = process.argv.slice(-3);
+      const state = JSON.parse(readFileSync(stateFile, "utf8"));
+      process.stdout.write("ready\\n");
+      const sleeper = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+      while (!existsSync(startFile)) Atomics.wait(sleeper, 0, 0, 5);
+      createFileRoomSnapshotStore(directory).save(state);
+    `;
+    const states = [roomState(1), roomState(2)];
+    const writers = states.map((state, index) => {
+      const stateFile = join(directory, `writer-${index}.input`);
+      writeFileSync(stateFile, JSON.stringify(state));
+      const child = spawn(process.execPath, [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        childScript,
+        directory,
+        stateFile,
+        startFile,
+      ], { stdio: ["ignore", "pipe", "pipe"] });
+      const ready = new Promise<void>((resolve, reject) => {
+        child.stdout.setEncoding("utf8");
+        child.stdout.once("data", (output: string) => {
+          if (output.includes("ready")) resolve();
+          else reject(new Error(`Unexpected snapshot writer output: ${output}`));
+        });
+        child.once("error", reject);
+      });
+      const exited = new Promise<void>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`Snapshot writer exited with ${code}: ${child.stderr.read()}`));
+        });
+      });
+      return { ready, exited };
+    });
+
+    await Promise.all(writers.map(({ ready }) => ready));
+    writeFileSync(startFile, "go");
+    await Promise.all(writers.map(({ exited }) => exited));
+
+    const serialized = readFileSync(join(directory, "LOCKED1.json"), "utf8");
+    const persisted = JSON.parse(serialized) as PersistedRoomState;
+    expect(states).toContainEqual(persisted);
+    expect(createFileRoomSnapshotStore(directory).load()).toEqual([persisted]);
+  });
+
   it("excludes a second local process from the same room file", async () => {
     const directory = createTemporaryDirectory();
     const target = join(directory, "LOCKED1.json");

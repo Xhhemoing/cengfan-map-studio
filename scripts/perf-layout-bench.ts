@@ -21,6 +21,7 @@ import { posterPngExportSize } from "../src/lib/export-poster";
 import {
   assertLayoutInvariants,
   makeLayoutHealthBenchmarkFixture,
+  type LayoutHealthBenchmarkShape,
 } from "../src/lib/layout-perf";
 import {
   checkLayoutHealth,
@@ -37,6 +38,10 @@ export const DEFAULT_LAYOUT_BENCH_MODES: readonly CardLayoutMode[] = [
   "grid",
 ];
 export const DEFAULT_LAYOUT_HEALTH_BENCH_LANES = [12, 30, 60, 120] as const;
+export const LAYOUT_HEALTH_BENCH_SHAPES: readonly LayoutHealthBenchmarkShape[] = [
+  "direct-bounds",
+  "pinned-card-positions",
+];
 
 export interface LayoutBenchmarkConfig {
   counts?: readonly number[];
@@ -126,14 +131,17 @@ export interface CardLayoutCacheKeyBenchmarkResult {
 
 export interface LayoutHealthBenchmarkConfig {
   laneCounts?: readonly number[];
+  shapes?: readonly LayoutHealthBenchmarkShape[];
   warmupIterations?: number;
   iterations?: number;
 }
 
 export interface LayoutHealthBenchmarkResult {
+  shape: LayoutHealthBenchmarkShape;
   laneCount: number;
   cardCount: number;
   connectorCount: number;
+  pinnedPositionCount: number;
   segmentsPerConnector: number;
   issueCount: number;
   issueCounts: Partial<Record<LayoutHealthIssueKind, number>>;
@@ -144,10 +152,11 @@ export interface LayoutHealthBenchmarkResult {
 }
 
 export interface LayoutHealthBenchmarkReport {
-  methodology: "synthetic card rectangles and three-segment polylines; checkLayoutHealth only; fixture creation and issue summarization excluded";
+  methodology: "synthetic card rectangles and three-segment polylines, with optional pinned card-position resolution; checkLayoutHealth only; fixture creation and issue summarization excluded";
   warmupIterations: number;
   iterations: number;
   laneCounts: number[];
+  shapes: LayoutHealthBenchmarkShape[];
   results: LayoutHealthBenchmarkResult[];
 }
 
@@ -602,15 +611,17 @@ export function runLayoutHealthBenchmark(
 ): LayoutHealthBenchmarkReport {
   const laneCounts = [...(config.laneCounts ?? DEFAULT_LAYOUT_HEALTH_BENCH_LANES)]
     .map((count) => positiveInteger(count, "layout health lane count"));
+  const shapes = [...(config.shapes ?? ["direct-bounds" satisfies LayoutHealthBenchmarkShape])];
   const warmupIterations = positiveInteger(
     config.warmupIterations ?? 3,
     "layout health warmupIterations",
   );
   const iterations = positiveInteger(config.iterations ?? 20, "layout health iterations");
   if (laneCounts.length === 0) throw new Error("layout health laneCounts must not be empty");
+  if (shapes.length === 0) throw new Error("layout health shapes must not be empty");
 
-  const results = laneCounts.map((laneCount): LayoutHealthBenchmarkResult => {
-    const fixture = makeLayoutHealthBenchmarkFixture(laneCount);
+  const results = shapes.flatMap((shape) => laneCounts.map((laneCount): LayoutHealthBenchmarkResult => {
+    const fixture = makeLayoutHealthBenchmarkFixture(laneCount, shape);
     for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
       checkLayoutHealth(fixture.input);
     }
@@ -631,9 +642,11 @@ export function runLayoutHealthBenchmark(
     }
 
     return {
+      shape,
       laneCount,
       cardCount: fixture.cardCount,
       connectorCount: fixture.connectorCount,
+      pinnedPositionCount: fixture.pinnedPositionCount,
       segmentsPerConnector: fixture.segmentsPerConnector,
       issueCount: issues.length,
       issueCounts,
@@ -642,13 +655,14 @@ export function runLayoutHealthBenchmark(
       minMs: rounded(Math.min(...samples)),
       maxMs: rounded(Math.max(...samples)),
     };
-  });
+  }));
 
   return {
-    methodology: "synthetic card rectangles and three-segment polylines; checkLayoutHealth only; fixture creation and issue summarization excluded",
+    methodology: "synthetic card rectangles and three-segment polylines, with optional pinned card-position resolution; checkLayoutHealth only; fixture creation and issue summarization excluded",
     warmupIterations,
     iterations,
     laneCounts,
+    shapes,
     results,
   };
 }
@@ -929,7 +943,7 @@ if (isDirectRun) {
     clusteredAnchorFixture: runClusteredAnchorBenchmark(),
     workerMessageOverhead: await runWorkerMessageBenchmark(),
     cacheKeyGeneration: runCardLayoutCacheKeyBenchmark(),
-    layoutHealth: runLayoutHealthBenchmark(),
+    layoutHealth: runLayoutHealthBenchmark({ shapes: LAYOUT_HEALTH_BENCH_SHAPES }),
     printBleedExport: runPrintBleedExportBenchmark(),
     printPreflight: runPrintPreflightBenchmark(),
   };

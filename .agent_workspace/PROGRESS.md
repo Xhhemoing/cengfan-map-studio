@@ -22,6 +22,7 @@
 | Round 11 | complete | 2026-08-24 | 2026-08-24 | Agent 健康与手摆钉扎；省份连接锚点；嵌套表；join 限流 |
 | Round 12 | complete | 2026-08-24 | 2026-08-24 | HTML 表解析拆分；引线穿卡；空单元格对齐；Host 校验 |
 | Round 13 | complete | 2026-08-24 | 2026-08-24 | matrixToText 空列；chips listitem；定位穿卡；导入重复折叠 |
+| Round 14 | integrating | 2026-08-24 | — | issue targets；海外 scope；isotonicPack 尾卡；撤销 live region |
 
 ## Round 1 结论摘要
 

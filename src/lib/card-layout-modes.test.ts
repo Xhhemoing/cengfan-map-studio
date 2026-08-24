@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { solveCardLayout } from "./card-layout";
 import {
   classifyQuadrant,
   isotonicPack,
@@ -6,28 +7,30 @@ import {
   packSides,
 } from "./card-layout-modes";
 import { LayoutSpace, PlacementIndex } from "./card-layout-space";
-import type { CardLayoutInput } from "./card-layout-types";
+import type { CardArea, CardLayoutBounds, CardLayoutInput } from "./card-layout-types";
 
 const occupied = { x: 300, y: 220, width: 300, height: 260 };
+/** Takes the bottom of the left column away, leaving room for three cards. */
+const lowerLeftZone = { x: 20, y: 500, width: 280, height: 180 };
 
-function makeSpace(): LayoutSpace {
+function makeSpace(occupiedAreas: CardArea[] = [occupied]): LayoutSpace {
   return new LayoutSpace({
     width: 900,
     height: 700,
     map: occupied,
-    occupiedAreas: [occupied],
+    occupiedAreas,
     margin: 20,
     gap: 12,
   });
 }
 
 /**
- * Seven cards on a 900×700 canvas whose left column cannot hold all four cards
- * assigned to it. The left assignment order (c0, c1, c2, c3) differs from the
- * order the cards pack in along the side axis (c3, c2, c0, c1), which is what
- * makes the overflow bookkeeping observable.
+ * Seven cards on a 900×700 canvas. The left assignment order (c0, c1, c2, c3)
+ * differs from the order the cards pack in along the side axis (c3, c2, c0,
+ * c1), which is what makes the overflow bookkeeping observable — but only on
+ * {@link lowerLeftZone}, where the column has room for three of the four.
  */
-const crowdedLeftColumn: CardLayoutInput[] = [
+const leftColumnBoard: CardLayoutInput[] = [
   { id: "c0", anchorX: 438, anchorY: 372, width: 167, height: 165 },
   { id: "c1", anchorX: 252, anchorY: 452, width: 121, height: 175 },
   { id: "c2", anchorX: 260, anchorY: 308, width: 140, height: 91 },
@@ -51,12 +54,52 @@ describe("isotonicPack", () => {
     expect(positions[0]!).toBeGreaterThanOrEqual(-1e-6);
     expect(positions[2]! + 100).toBeLessThanOrEqual(320 + 1e-6);
   });
+
+  it("slides a chain of low targets up as a block instead of stacking its tail", () => {
+    // Three 200px cards need 624px of the 660px span, so the span has room —
+    // but every target sits near its bottom, which pushes the forward pass
+    // past `span.end`.
+    const positions = isotonicPack([460, 480, 500], [200, 200, 200], 12, { start: 20, end: 680 });
+
+    expect(positions[1]! - positions[0]!).toBeGreaterThanOrEqual(212 - 1e-6);
+    expect(positions[2]! - positions[1]!).toBeGreaterThanOrEqual(212 - 1e-6);
+    expect(positions[0]!).toBeGreaterThanOrEqual(20 - 1e-6);
+    expect(positions[2]! + 200).toBeLessThanOrEqual(680 + 1e-6);
+  });
+
+  it("separates every card whenever the span has room for the chain", () => {
+    let seed = 987;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+
+    for (let trial = 0; trial < 400; trial += 1) {
+      const count = 2 + Math.floor(random() * 5);
+      const gap = Math.floor(random() * 20);
+      const sizes = Array.from({ length: count }, () => 40 + Math.floor(random() * 120));
+      const needed = sizes.reduce((sum, size) => sum + size, 0) + gap * (count - 1);
+      // Give the span room for the chain, then aim every target at a random
+      // point in it — including the tail, which is where the chain overhangs.
+      const span = { start: 20, end: 20 + needed + Math.floor(random() * 200) };
+      const targets = Array.from({ length: count }, () => span.start + random() * (span.end - span.start))
+        .sort((left, right) => left - right);
+
+      const positions = isotonicPack(targets, sizes, gap, span);
+
+      for (let index = 1; index < count; index += 1) {
+        expect(positions[index]! - positions[index - 1]!).toBeGreaterThanOrEqual(sizes[index - 1]! + gap - 1e-6);
+      }
+      expect(positions[0]!).toBeGreaterThanOrEqual(span.start - 1e-6);
+      expect(positions[count - 1]! + sizes[count - 1]!).toBeLessThanOrEqual(span.end + 1e-6);
+    }
+  });
 });
 
 describe("packSideCards", () => {
   it("pairs every placement with the input it came from, in side-axis order", () => {
     const space = makeSpace();
-    const assignment = classifyQuadrant(crowdedLeftColumn, space, {}).find((entry) => entry.side === "left")!;
+    const assignment = classifyQuadrant(leftColumnBoard, space, {}).find((entry) => entry.side === "left")!;
 
     const packed = packSideCards(assignment, space, PlacementIndex.forSpace(space));
 
@@ -70,22 +113,34 @@ describe("packSideCards", () => {
 
 describe("packSides", () => {
   it("overflows the card that broke the block, not the one at its index", () => {
-    const placements = packSides(crowdedLeftColumn, makeSpace(), "quadrant", {});
+    const placements = packSides(leftColumnBoard, makeSpace([occupied, lowerLeftZone]), "quadrant", {});
     const byId = new Map(placements.map((placement) => [placement.id, placement]));
 
-    // The left column fits c3, c2 and c0; c1 is the card it cannot take.
+    // The left column fits c3, c2 and c0; c1 is last along the side axis and
+    // the blocked zone takes its spot, so it is the card that overflows.
     expect(byId.get("c3")!.side).toBe("left");
     expect(byId.get("c2")!.side).toBe("left");
     expect(byId.get("c0")!.side).toBe("left");
-    // "top" is the neighbour side "left" overflows to.
+    // "top" is the neighbour side "left" overflows to. c3 sits at c1's index in
+    // the *assignment* order, so reading the rejected card off the index
+    // instead of the pairing would overflow c3 — which is already placed.
     expect(byId.get("c1")!.side).toBe("top");
   });
 
   it("places every card exactly once when a side rejects part of its block", () => {
-    const placements = packSides(crowdedLeftColumn, makeSpace(), "quadrant", {});
+    const placements = packSides(leftColumnBoard, makeSpace([occupied, lowerLeftZone]), "quadrant", {});
 
     expect(placements.map((placement) => placement.id).sort())
-      .toEqual(crowdedLeftColumn.map((card) => card.id).sort());
+      .toEqual(leftColumnBoard.map((card) => card.id).sort());
+  });
+
+  it("keeps a column that has room for its cards whole", () => {
+    // 173 + 91 + 165 + 175 with three gaps is 640px of the 660px side axis, so
+    // no card has to leave the left column for the canvas to stay legal.
+    const placements = packSides(leftColumnBoard, makeSpace(), "quadrant", {});
+    const byId = new Map(placements.map((placement) => [placement.id, placement]));
+
+    for (const id of ["c0", "c1", "c2", "c3"]) expect(byId.get(id)!.side).toBe("left");
   });
 
   it("never places a card twice across randomized boards", () => {
@@ -108,6 +163,75 @@ describe("packSides", () => {
           .map((placement) => placement.id);
         expect(new Set(ids).size).toBe(ids.length);
         expect(new Set(ids).size).toBe(cards.length);
+      }
+    }
+  });
+});
+
+const roomyBounds: CardLayoutBounds = {
+  width: 900,
+  height: 700,
+  map: { x: 300, y: 160, width: 300, height: 380 },
+  occupiedAreas: [{ x: 300, y: 160, width: 300, height: 380 }],
+  margin: 20,
+  gap: 12,
+};
+
+function rectsOverlap(left: CardArea, right: CardArea): boolean {
+  return left.x < right.x + right.width
+    && left.x + left.width > right.x
+    && left.y < right.y + right.height
+    && left.y + left.height > right.y;
+}
+
+describe("side packing through the solver", () => {
+  it("keeps a cluster of southern anchors in the column they belong to", () => {
+    // All three anchors sit low on the east flank and the right column has
+    // 660px for 624px of card, so the whole cluster belongs on the right.
+    const southern: CardLayoutInput[] = [
+      { id: "guangdong", anchorX: 700, anchorY: 560, width: 180, height: 200 },
+      { id: "guangxi", anchorX: 720, anchorY: 580, width: 180, height: 200 },
+      { id: "hainan", anchorX: 740, anchorY: 600, width: 180, height: 200 },
+    ];
+
+    const result = solveCardLayout(southern, roomyBounds, { mode: "quadrant" });
+
+    expect(result.status).toBe("solved");
+    for (const placement of result.placements) {
+      expect(placement.side).toBe("right");
+      // Anything flung to the far margin has to drag its leader line back
+      // across the whole map.
+      expect(placement.x).toBeGreaterThan(roomyBounds.map.x);
+    }
+  });
+
+  it("never overlaps cards while the canvas still has room for them", () => {
+    let seed = 4242;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+
+    for (let board = 0; board < 60; board += 1) {
+      const cards: CardLayoutInput[] = Array.from({ length: 2 + Math.floor(random() * 6) }, (_, index) => ({
+        id: `c${index}`,
+        // Anchors clustered into one corner are what drives a side's chain
+        // past the end of its span; the canvas still has ample room.
+        anchorX: 320 + random() * 260,
+        anchorY: 380 + random() * 150,
+        width: 110 + Math.floor(random() * 70),
+        height: 90 + Math.floor(random() * 90),
+      }));
+
+      for (const mode of ["quadrant", "radial"] as const) {
+        const { status, placements } = solveCardLayout(cards, roomyBounds, { mode });
+
+        expect(status).toBe("solved");
+        for (let left = 0; left < placements.length; left += 1) {
+          for (let right = left + 1; right < placements.length; right += 1) {
+            expect(rectsOverlap(placements[left]!, placements[right]!)).toBe(false);
+          }
+        }
       }
     }
   });

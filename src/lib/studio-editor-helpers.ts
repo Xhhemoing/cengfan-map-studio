@@ -143,20 +143,32 @@ function isSelectableLayoutTarget(project: ProjectDocument, id: string): boolean
     || project.assetElements.some((asset) => asset.id === id);
 }
 
-/**
- * 由排版问题 id 找到画布上应选中的对象；找不到时返回 null（保持当前选择不变）。
- *
- * 先按 id 里出现的顺序找真对象，于是穿卡（`connector-<出发卡>:<被穿的卡>`）落在被穿的
- * 那张卡上——那才是用户要挪的东西。都认不出来时再剥掉 `connector-` 前缀还原出发卡：
- * 被穿的卡已经不在手工位置里、或者两端都是连接线（引线互相冲突）时，点「定位」仍有反应。
- */
-export function resolveLayoutIssueSelection(project: ProjectDocument, issueId: string): SceneSelection | null {
-  const fragments = issueIdFragments(issueId);
-  const target = fragments.find((id) => isSelectableLayoutTarget(project, id))
-    ?? fragments
+/** 候选 id 里第一个真实存在的画布对象；都认不出时剥掉 `connector-` 前缀还原出发卡再找一轮。 */
+function findSelectableTarget(project: ProjectDocument, candidates: readonly string[]): string | undefined {
+  return candidates.find((id) => isSelectableLayoutTarget(project, id))
+    ?? candidates
       .filter((id) => id.startsWith(CONNECTOR_ID_PREFIX))
       .map((id) => id.slice(CONNECTOR_ID_PREFIX.length))
       .find((id) => isSelectableLayoutTarget(project, id));
+}
+
+/**
+ * 由排版问题找到画布上应选中的对象；找不到时返回 null（保持当前选择不变）。
+ *
+ * 体检报告随附的 `issue.targets` 直接给出涉及对象的原始 id（按定位优先级排列，穿卡
+ * 是「被穿的卡在前、出发卡殿后」），存在时优先采用——分组键含 ":" 时从拼接 id 里
+ * 拆不回原值。targets 缺失或全都认不出时退回 id 片段解析：先按 id 里出现的顺序找真
+ * 对象，于是穿卡（`connector-<出发卡>:<被穿的卡>`）落在被穿的那张卡上。两条路都会
+ * 在最后剥掉 `connector-` 前缀兜底：被穿的卡已经不在手工位置里、或者两端都是连接线
+ * （引线互相冲突）时，点「定位」仍有反应。
+ */
+export function resolveLayoutIssueSelection(
+  project: ProjectDocument,
+  issueId: string,
+  targets?: readonly string[],
+): SceneSelection | null {
+  const target = (targets?.length ? findSelectableTarget(project, targets) : undefined)
+    ?? findSelectableTarget(project, issueIdFragments(issueId));
   if (!target) return null;
   if (target === "map") return { type: "map" };
   if (target === "cards" || project.cards.positions?.[target]) return { type: "cards" };

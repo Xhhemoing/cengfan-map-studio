@@ -41,6 +41,10 @@ function toAssignments(sides: Record<CardSide, CardLayoutInput[]>): SideAssignme
  *
  * `targets[i]` is the preferred primary coordinate for card i (already sorted
  * along the side axis). Returns the final primary coordinate for each card.
+ *
+ * Whenever the chain fits — `sum(sizes) + gap * (n - 1)` no wider than the span
+ * — the result is guaranteed to be gap-separated. Only a span too small for its
+ * cards can return overlapping positions.
  */
 export function isotonicPack(
   targets: number[],
@@ -64,6 +68,12 @@ export function isotonicPack(
     const minStart = positions[i - 1]! + sizes[i - 1]! + packedGap;
     if (positions[i]! < minStart) positions[i] = minStart;
   }
+  // Seed the backward pass at the span's tail. The forward pass only ever knows
+  // the span's head, so a run of cards whose targets sit low leaves the chain
+  // hanging past `span.end`; the per-card clamp below would then squash every
+  // overhanging card onto the same coordinate instead of sliding the chain up
+  // as a block. Pulling the last card in first turns that squash into a shift.
+  positions[n - 1] = Math.min(positions[n - 1]!, Math.max(span.start, span.end - sizes[n - 1]!));
   // Backward: push each card above the next one's head.
   for (let i = n - 2; i >= 0; i -= 1) {
     const maxStart = positions[i + 1]! - sizes[i]! - packedGap;

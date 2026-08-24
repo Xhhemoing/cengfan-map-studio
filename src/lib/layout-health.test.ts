@@ -13,8 +13,8 @@ describe("layout health", () => {
     });
 
     expect(issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "safe-overflow", kind: "overflow", severity: "warning" }),
-      expect.objectContaining({ id: "outside", kind: "out-of-bounds", severity: "error" }),
+      expect.objectContaining({ id: "safe-overflow", kind: "overflow", severity: "warning", targets: ["safe-overflow"] }),
+      expect.objectContaining({ id: "outside", kind: "out-of-bounds", severity: "error", targets: ["outside"] }),
     ]));
   });
 
@@ -33,10 +33,26 @@ describe("layout health", () => {
     });
 
     expect(issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "back:front", kind: "occlusion" }),
-      expect.objectContaining({ id: "title", kind: "unreadable-text", severity: "warning" }),
-      expect.objectContaining({ id: "line-a:line-b", kind: "connector-conflict" }),
+      expect.objectContaining({ id: "back:front", kind: "occlusion", targets: ["back", "front"] }),
+      expect.objectContaining({ id: "title", kind: "unreadable-text", severity: "warning", targets: ["title"] }),
+      // 这两条连接线没有 cardId，targets 退回连接线自身 id。
+      expect.objectContaining({ id: "line-a:line-b", kind: "connector-conflict", targets: ["line-a", "line-b"] }),
     ]));
+  });
+
+  it("targets a connector conflict with the departure cards when the lines carry cardIds", () => {
+    const issues = checkLayoutHealth({
+      canvas: { width: 500, height: 400, safeMargin: 16 },
+      objects: [],
+      connectors: [
+        { id: "connector-北京市", cardId: "北京市", segments: [{ start: { x: 20, y: 200 }, end: { x: 300, y: 200 } }] },
+        { id: "connector-浙江省", cardId: "浙江省", segments: [{ start: { x: 160, y: 80 }, end: { x: 160, y: 300 } }] },
+      ],
+    });
+
+    expect(issues.filter((issue) => issue.kind === "connector-conflict")).toEqual([
+      expect.objectContaining({ id: "connector-北京市:connector-浙江省", targets: ["北京市", "浙江省"] }),
+    ]);
   });
 
   it("reports two overlapping cards on the shared card layer, using paint order for front/back", () => {
@@ -112,7 +128,24 @@ describe("layout health", () => {
           id: "connector-card-a:card-b",
           severity: "warning",
           detail: "card-a 的连接线从 card-b 上穿过",
+          // 被穿的卡在前（要挪的对象），出发卡殿后兜底。
+          targets: ["card-b", "card-a"],
         }),
+      ]);
+    });
+
+    it("targets a cardless line by its own id after the crossed card", () => {
+      const issues = checkLayoutHealth({
+        canvas,
+        objects: [card("card-b", 360, 260)],
+        connectors: [{
+          id: "free-line",
+          segments: [{ start: { x: 220, y: 300 }, end: { x: 800, y: 300 } }],
+        }],
+      });
+
+      expect(issues.filter((issue) => issue.kind === "connector-crosses-card")).toEqual([
+        expect.objectContaining({ id: "free-line:card-b", targets: ["card-b", "free-line"] }),
       ]);
     });
 

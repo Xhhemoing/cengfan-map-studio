@@ -240,7 +240,33 @@ describe("project data health", () => {
     });
 
     expect(buildDataHealthSummary(project)).toMatchObject({ unresolved: 0, international: 1 });
-    expect(listDataIssues(project).map((issue) => issue.kind)).toEqual(["manual-province", "international"]);
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({
+        id: "international:stale",
+        kind: "international",
+        detail: "海外去向：美国·波士顿（省份 浙江省 不参与中国地图，已忽略）",
+      }),
+    ]);
+  });
+
+  it("does not offer a province override as the fix for an overseas record", () => {
+    // 省份覆盖 rows are what the map mapping panel turns into a 指定省份 button.
+    // On an overseas record that write lands in data nothing reads, so the
+    // leftover province is reported on the 海外去向 row instead.
+    const project = createProjectDocument({
+      students: [
+        { id: "overseas", name: "苏禾", university: "哈佛大学", city: "美国·波士顿", province: "浙江省", locationScope: "international", visibility: true },
+        { id: "china", name: "林舟", university: "火星学院", city: "火星市", province: "浙江省", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    const mappingIssues = listDataIssues(project).filter(
+      (issue) => issue.kind === "unresolved-location" || issue.kind === "manual-province",
+    );
+
+    expect(mappingIssues.map((issue) => issue.id)).toEqual(["manual-province:china"]);
   });
 
   it("never asks an overseas record for a Chinese city or province", () => {

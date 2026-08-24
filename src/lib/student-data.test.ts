@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildStudentRecords,
+  isOverseasStudent,
   normalizeCityName,
   resolveCityLocation,
   resolveStudentLocation,
@@ -93,6 +94,73 @@ describe("student data", () => {
       province: "",
       status: "unresolved",
     });
+  });
+
+  it("ignores a province left behind on an overseas destination", () => {
+    // Imports strip the province of an overseas row, but a hand-edited project
+    // file or an older archive can still carry one. Read as an override it puts
+    // 哈佛大学 into the 浙江省 card and the 浙江省 pin on the China map.
+    const student: Student = {
+      id: "student-1",
+      name: "苏禾",
+      university: "哈佛大学",
+      city: "美国·波士顿",
+      province: "浙江省",
+      locationScope: "international",
+      visibility: true,
+    };
+
+    expect(resolveStudentLocation(student)).toEqual({
+      city: "美国·波士顿",
+      province: "",
+      status: "unresolved",
+    });
+  });
+
+  it("ignores a Chinese city on an overseas record instead of deriving its province", () => {
+    // The city column alone used to decide the province, so an overseas record
+    // whose city happens to match the China catalog was placed on the map even
+    // without a province cell to blame.
+    const student: Student = {
+      id: "student-1",
+      name: "苏禾",
+      university: "香港大学",
+      city: "杭州市",
+      locationScope: "international",
+      visibility: true,
+    };
+
+    expect(resolveStudentLocation(student)).toEqual({
+      city: "杭州市",
+      province: "",
+      status: "unresolved",
+    });
+    expect(resolveCityLocation("杭州市").province).toBe("浙江省");
+  });
+
+  it("keeps resolving a record that is explicitly a China destination", () => {
+    const student: Student = {
+      id: "student-1",
+      name: "林舟",
+      university: "浙江大学",
+      city: "杭州市",
+      locationScope: "china",
+      visibility: true,
+    };
+
+    expect(isOverseasStudent(student)).toBe(false);
+    expect(isOverseasStudent({ locationScope: undefined })).toBe(false);
+    expect(isOverseasStudent({ locationScope: "international" })).toBe(true);
+    expect(resolveStudentLocation(student)).toMatchObject({ province: "浙江省", status: "resolved" });
+  });
+
+  it("reads a stored overseas record exactly as the importer built it", () => {
+    const imported = buildStudentRecords([
+      { name: "苏禾", university: "哈佛大学", city: "美国·波士顿", province: "浙江省", locationScope: "international" },
+    ]).students[0]!;
+    const handEdited: Student = { ...imported, province: "浙江省" };
+
+    expect(resolveStudentLocation(handEdited)).toEqual(resolveStudentLocation(imported));
   });
 
   it("builds student records and flags unresolved cities and duplicates", () => {

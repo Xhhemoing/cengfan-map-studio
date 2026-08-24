@@ -80,9 +80,11 @@ describe("layout health benchmark fixture", () => {
     const fixture = makeLayoutHealthBenchmarkFixture(3);
 
     expect(fixture).toMatchObject({
+      shape: "direct-bounds",
       laneCount: 3,
       cardCount: 6,
       connectorCount: 3,
+      pinnedPositionCount: 0,
       segmentsPerConnector: 3,
       input: {
         canvas: {
@@ -96,6 +98,7 @@ describe("layout health benchmark fixture", () => {
     });
     expect(fixture.input.objects).toHaveLength(6);
     expect(fixture.input.connectors).toHaveLength(3);
+    expect(fixture.input.cardsPositions).toBeUndefined();
     expect(fixture.input.connectors?.[0]).toMatchObject({
       id: expect.any(String),
       cardId: expect.any(String),
@@ -106,5 +109,28 @@ describe("layout health benchmark fixture", () => {
         { start: { x: expect.any(Number), y: expect.any(Number) }, end: { x: expect.any(Number), y: expect.any(Number) } },
       ],
     });
+  });
+
+  it("optionally resolves the same health geometry through pinned card positions", () => {
+    const fixture = makeLayoutHealthBenchmarkFixture(2, "pinned-card-positions");
+
+    expect(fixture).toMatchObject({
+      shape: "pinned-card-positions",
+      laneCount: 2,
+      cardCount: 4,
+      connectorCount: 2,
+      pinnedPositionCount: 4,
+      segmentsPerConnector: 3,
+      input: {
+        cardsPositions: {
+          "health-source-0": { x: 40, y: 40 },
+          "health-crossed-0": { x: 300, y: 40 },
+          "health-source-1": { x: 40, y: 112 },
+          "health-crossed-1": { x: 300, y: 112 },
+        },
+      },
+    });
+    expect(fixture.input.objects).toHaveLength(4);
+    expect(fixture.input.objects.every(({ id, positionKey }) => positionKey === id)).toBe(true);
   });
 });

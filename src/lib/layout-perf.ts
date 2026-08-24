@@ -23,20 +23,27 @@ const EPSILON = 1e-7;
 
 export interface LayoutHealthBenchmarkFixture {
   input: LayoutHealthInput;
+  shape: LayoutHealthBenchmarkShape;
   laneCount: number;
   cardCount: number;
   connectorCount: number;
+  pinnedPositionCount: number;
   segmentsPerConnector: number;
 }
+
+export type LayoutHealthBenchmarkShape = "direct-bounds" | "pinned-card-positions";
 
 /**
  * Builds a map-independent health-check fixture from card rectangles and
  * three-segment polylines. Each lane contributes one connector that crosses a
  * different card, so connector-crosses-card remains represented as the
- * fixture scales without loading production geography.
+ * fixture scales without loading production geography. The pinned shape also
+ * exercises the cardsPositions/positionKey resolution used by hand-placed
+ * cards while preserving the same effective geometry.
  */
 export function makeLayoutHealthBenchmarkFixture(
   laneCount = 60,
+  shape: LayoutHealthBenchmarkShape = "direct-bounds",
 ): LayoutHealthBenchmarkFixture {
   if (!Number.isInteger(laneCount) || laneCount <= 0) {
     throw new Error("layout health laneCount must be a positive integer");
@@ -44,22 +51,31 @@ export function makeLayoutHealthBenchmarkFixture(
 
   const objects: LayoutHealthObject[] = [];
   const connectors: LayoutHealthConnector[] = [];
+  const cardsPositions: Record<string, { x: number; y: number }> = {};
   for (let lane = 0; lane < laneCount; lane += 1) {
     const y = 40 + lane * 72;
     const sourceId = `health-source-${lane}`;
     const crossedId = `health-crossed-${lane}`;
+    const sourceBounds = { x: 40, y, width: 120, height: 48 };
+    const crossedBounds = { x: 300, y, width: 120, height: 48 };
+    if (shape === "pinned-card-positions") {
+      cardsPositions[sourceId] = { x: sourceBounds.x, y: sourceBounds.y };
+      cardsPositions[crossedId] = { x: crossedBounds.x, y: crossedBounds.y };
+    }
     objects.push(
       {
         id: sourceId,
         kind: "card",
         zIndex: 30,
-        bounds: { x: 40, y, width: 120, height: 48 },
+        bounds: sourceBounds,
+        ...(shape === "pinned-card-positions" ? { positionKey: sourceId } : {}),
       },
       {
         id: crossedId,
         kind: "card",
         zIndex: 30,
-        bounds: { x: 300, y, width: 120, height: 48 },
+        bounds: crossedBounds,
+        ...(shape === "pinned-card-positions" ? { positionKey: crossedId } : {}),
       },
     );
     const anchor = { x: 560, y: y + 30 };
@@ -80,10 +96,13 @@ export function makeLayoutHealthBenchmarkFixture(
       canvas: { width: 640, height: laneCount * 72 + 40, safeMargin: 20 },
       objects,
       connectors,
+      ...(shape === "pinned-card-positions" ? { cardsPositions } : {}),
     },
+    shape,
     laneCount,
     cardCount: objects.length,
     connectorCount: connectors.length,
+    pinnedPositionCount: Object.keys(cardsPositions).length,
     segmentsPerConnector: 3,
   };
 }
