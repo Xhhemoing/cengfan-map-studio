@@ -29,6 +29,7 @@
 | Round 18 | complete | 2026-08-24 | 2026-08-24 | orderResult 边距座位；设置 skip-link；无表头学号列；CI eslint |
 | Round 19 | complete | 2026-08-24 | 2026-08-24 | orderResult space 必填；react-refresh 拆分；前导序号；eslint --max-warnings 0 |
 | Round 20 | complete | 2026-08-24 | 2026-08-24 | layoutGrid sideOf；全角序号；菜单图标；500 不泄路径 |
+| Round 21 | complete | 2026-08-24 | 2026-08-24 | LIST_MARKER 全角标点；sweep 剩余卡 marginSeat；XFF 最右跳 |
 
 ## Round 1 结论摘要
 
@@ -132,15 +133,19 @@
 
 详见 [round20/BRIEF.md](round20/BRIEF.md)。集成：**tsc 绿、eslint --max-warnings 0、212×1866 tests 绿**。`layoutGrid` 用座位 sideOf；全角数字序号；项目菜单图标隐藏；500 不泄漏路径。
 
-## 全局成果（二十轮合计）
+## Round 21 结论简报
 
-| 指标 | main 基线 | Round 20 结束 |
+详见 [round21/BRIEF.md](round21/BRIEF.md)。集成：**tsc 绿、eslint --max-warnings 0、216×1886 tests 绿**。`LIST_MARKER` 全角标点；sweep 剩余卡 `marginSeat`；trustProxy XFF 最右跳；ProjectCard / 明文按钮装饰图标隐藏。
+
+## 全局成果（二十一轮合计）
+
+| 指标 | main 基线 | Round 21 结束 |
 | --- | ---: | ---: |
 | App.tsx 行数 | 2466 | **333** |
-| card-layout 门面 | 1297 | 模块化 + 手摆障碍 + isotonic 尾卡 + leftover side + 列序重扫 + gap 占用 + orderResult 必填 space + grid sideOf |
+| card-layout 门面 | 1297 | 模块化 + 手摆障碍 + isotonic 尾卡 + leftover side + 列序重扫 + gap 占用 + orderResult 必填 space + grid sideOf + sweep marginSeat |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **398** |
-| 测试 | （基线已有大量单测） | **1866 passed / 212 files** |
+| 测试 | （基线已有大量单测） | **1886 passed / 216 files** |
 
 ## 回滚
 
