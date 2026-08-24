@@ -64,6 +64,19 @@ const sectionGroups: readonly SettingsSectionGroup[] = [
 
 const allSections: readonly SettingsSection[] = sectionGroups.flatMap((group) => group.sections);
 
+// 分区导航宽屏竖排、窄屏横排，上下与左右都映射到同一条扁平顺序（跨分组循环）。
+function nextSectionIndex(key: string, index: number): number | null {
+  switch (key) {
+    case "ArrowDown":
+    case "ArrowRight": return (index + 1) % allSections.length;
+    case "ArrowUp":
+    case "ArrowLeft": return (index - 1 + allSections.length) % allSections.length;
+    case "Home": return 0;
+    case "End": return allSections.length - 1;
+    default: return null;
+  }
+}
+
 const workflowStepDescriptions: Record<WorkflowStepId, string> = {
   roster: "整理名单并修正未匹配城市",
   presentation: "选择省份卡片、热力或图钉等地图呈现方式",
@@ -166,10 +179,9 @@ export function GlobalSettingsScreen({
   const active = allSections.find((section) => section.id === activeSection) ?? allSections[0]!;
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    const nextIndex = nextSectionIndex(event.key, index);
+    if (nextIndex === null) return;
     event.preventDefault();
-    const direction = event.key === "ArrowRight" ? 1 : -1;
-    const nextIndex = (index + direction + allSections.length) % allSections.length;
     const next = allSections[nextIndex];
     if (!next) return;
     setActiveSection(next.id);
