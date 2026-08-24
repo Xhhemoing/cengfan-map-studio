@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
 import { clientIp } from "./client-ip";
 
 function requestWith(
-  headers: IncomingHttpHeaders = {},
+  headers: Record<string, string | string[] | undefined> = {},
   remoteAddress = "::ffff:127.0.0.1",
 ): Pick<IncomingMessage, "headers" | "socket"> {
   return {
-    headers,
+    headers: headers as IncomingHttpHeaders,
     socket: { remoteAddress } as IncomingMessage["socket"],
   };
 }
