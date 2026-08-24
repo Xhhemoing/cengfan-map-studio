@@ -1677,6 +1677,33 @@ describe("unified application server", () => {
     }
   });
 
+  it("ends the SSE stream with a closed event once the room expires", async () => {
+    const server = createAiServer({ roomTtlMs: 300 });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const ticket = await createEventsTicket(origin, created.room.id, created.access.accessToken);
+
+    const controller = new AbortController();
+    const events = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(ticket)}&version=0`, { signal: controller.signal });
+    const reader = events.body!.getReader();
+    const decoder = new TextDecoder();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // 过期清理是懒触发的:任意一次房间请求都会驱逐过期房间,并让还连着的订阅收到终局 closed。
+      const afterExpiry = await fetch(`${origin}/api/rooms/${created.room.id}`, { headers: roomHeaders(created.access.accessToken) });
+      expect(afterExpiry.status).toBe(404);
+
+      const closedStream = decoder.decode((await reader.read()).value, { stream: true });
+      expect(closedStream).toContain("event: closed");
+      expect(closedStream).toContain("\"closed\":true");
+      await expect(reader.read()).resolves.toMatchObject({ done: true });
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => undefined);
+    }
+  });
+
   it("requires the workspace token for AI endpoints in locked-down production", async () => {
     const server = createAiServer({
       workspaceApiToken: "workspace-test-token",

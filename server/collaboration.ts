@@ -141,10 +141,18 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const invitations = new Map<string, Map<string, InvitationRecord>>();
   const legacyRoomIds = new Set<string>();
 
+  /**
+   * TTL 驱逐必须补一条终局 closed:静默删房间的话,仍连着的订阅方(SSE handler)收不到任何事件,
+   * 会一直挂着以为房间还在——客户端只认 closed/kicked 这两个终局事件才停流。
+   * 先摘掉房间状态再回调,这样回调里若又走进 purgeExpired 也不会重复广播。
+   * 回滚:删掉下面 expiredListeners 的广播即可恢复“过期静默清理”的旧行为。
+   */
   const purgeExpired = () => {
     const threshold = now() - roomTtlMs;
     for (const [id, activity] of lastActivity) {
       if (activity > threshold) continue;
+      const expired = rooms.get(id);
+      const expiredListeners = lifecycleListeners.get(id);
       rooms.delete(id);
       listeners.delete(id);
       lifecycleListeners.delete(id);
@@ -154,6 +162,10 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
       accessRecords.delete(id);
       invitations.delete(id);
       legacyRoomIds.delete(id);
+      if (!expired || !expiredListeners?.size) continue;
+      const closedRoom: CollaborationRoom = { ...expired, closed: true };
+      const members = membersOf(expired);
+      expiredListeners.forEach((listener) => listener({ kind: "closed", room: closedRoom, members }));
     }
   };
 

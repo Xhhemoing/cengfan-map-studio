@@ -343,6 +343,38 @@ describe("collaboration room store", () => {
     expect(reopened).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "closed", room: expect.objectContaining({ closed: true }) }));
   });
 
+  it("broadcasts a terminal closed lifecycle event when a room expires", () => {
+    let tick = 1_000;
+    const secrets = ["owner-access", "editor-invite", "editor-access"];
+    const store = createRoomStore({
+      generateId: () => "TTL01",
+      generateSecret: () => secrets.shift()!,
+      roomTtlMs: 1_000,
+      now: () => tick,
+    });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const editorInvite = store.createInvitation("TTL01", owner.access.accessToken, "editor");
+    store.join("TTL01", { inviteToken: editorInvite.token, clientId: "editor", displayName: "编辑同学" });
+    const listener = vi.fn();
+    store.subscribeLifecycle("TTL01", owner.access.accessToken, listener);
+
+    tick += 1_001;
+    expect(store.get("TTL01")).toBeUndefined();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({
+      kind: "closed",
+      room: expect.objectContaining({ id: "TTL01", closed: true }),
+      members: expect.arrayContaining([expect.objectContaining({ clientId: "editor" })]),
+    }));
+
+    // 房间连同监听器一起被摘掉,后续清理不会重复补播。
+    tick += 5_000;
+    store.get("TTL01");
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(() => store.authorize("TTL01", owner.access.accessToken, "read"))
+      .toThrowError(expect.objectContaining({ code: "ROOM_NOT_FOUND" }));
+  });
+
   it("permits an invited editor to update a room and rejects a viewer write", () => {
     const secrets = ["owner-access", "editor-invite", "viewer-invite", "editor-access", "viewer-access"];
     const store = createRoomStore({
