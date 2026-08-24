@@ -69,12 +69,60 @@ export interface CollaborationOperationTransaction {
 }
 
 export class CollaborationClientError extends Error {
-  constructor(public readonly code: string, message: string, public readonly currentVersion?: number) {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly currentVersion?: number,
+    /** HTTP 状态码;传输层失败(超时/断网)没有状态码。用于判定重试是否安全。 */
+    public readonly status?: number,
+  ) {
     super(message);
   }
 }
 
 type Requester = typeof fetch;
+
+/**
+ * 网络分区(移动网络切换、校园网门户、机房掉线)里最坏的形态不是连接被拒,而是连接建立后
+ * 响应永远不来:`fetch` 没有默认超时,协作面板会永久停在"正在同步",重连也不会发生,因为
+ * 上一次 `connect()` 还挂在 await 上。所以每一次协作请求都带一个 AbortController 截止时间,
+ * 到点主动 abort 并抛 `REQUEST_TIMEOUT`,把控制权交回调用方的重试/重连逻辑。
+ */
+export const COLLABORATION_REQUEST_TIMEOUT_MS = 6_000;
+/** 事务上传要序列化整包(可能是几 MB 的 base64 资源),给一个明显更宽的上限。 */
+export const COLLABORATION_UPLOAD_TIMEOUT_MS = 20_000;
+/** 只有幂等 GET 会重试:重放一次事务 POST 会在房间里写第二遍。 */
+export const COLLABORATION_GET_RETRY_DELAYS = [250, 750] as const;
+
+/** 传输层失败(超时/断网/网关错误):重试与"离线"提示的判据,和协议层错误区分开。 */
+const TRANSPORT_ERROR_CODES = new Set(["REQUEST_TIMEOUT", "NETWORK_ERROR", "SERVER_ERROR"]);
+/** 重试这些状态是安全的:要么服务端明说稍后再来,要么请求根本没被处理。 */
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+export interface CollaborationRequestOptions {
+  request?: Requester;
+  /** 单次尝试的截止时间(毫秒),到点 abort 底层请求。 */
+  timeoutMs?: number;
+  /** 调用方的取消信号(离开房间、组件卸载):触发后立即失败且不再重试。 */
+  signal?: AbortSignal;
+  /** 幂等 GET 的有界退避序列;传 `[]` 关闭重试。非幂等请求永远忽略此项。 */
+  retryDelays?: readonly number[];
+  /** 抖动随机源,注入后延迟可断言。 */
+  random?: () => number;
+  /** 注入定时器(返回取消函数),便于测试驱动截止时间与退避。 */
+  schedule?: (handler: () => void, delayMs: number) => () => void;
+}
+
+/** 旧签名传 `fetch` 本身,新签名传选项对象,两者都要能用。 */
+export type CollaborationRequestInput = Requester | CollaborationRequestOptions;
+
+export function isCollaborationTransportError(error: unknown): boolean {
+  return error instanceof CollaborationClientError && TRANSPORT_ERROR_CODES.has(error.code);
+}
+
+export function isCollaborationAbortError(error: unknown): boolean {
+  return error instanceof CollaborationClientError && error.code === "REQUEST_ABORTED";
+}
 
 function normalizedRoomId(roomId: string): string {
   return roomId.trim().toUpperCase();
@@ -84,18 +132,169 @@ function roomTokenHeaders(accessToken: string, headers: Record<string, string> =
   return { ...headers, "X-Cengfan-Room-Token": accessToken };
 }
 
-async function jsonRequest<T>(request: Promise<Response>): Promise<T> {
-  const response = await request;
-  const body = await response.json() as { error?: { code?: string; message?: string; currentVersion?: number } } & T;
-  if (!response.ok) {
-    throw new CollaborationClientError(body.error?.code ?? "REQUEST_FAILED", body.error?.message ?? "协作请求失败", body.error?.currentVersion);
-  }
-  return body;
+function requestOptionsOf(input: CollaborationRequestInput = {}): CollaborationRequestOptions {
+  return typeof input === "function" ? { request: input } : input;
 }
 
-export function createRoom<T>(input: { clientId: string; displayName: string; snapshot?: T; request?: Requester }): Promise<CreatedRoom<T>> {
-  const request = input.request ?? fetch;
-  return jsonRequest(request("/api/rooms", {
+const defaultSchedule = (handler: () => void, delayMs: number): (() => void) => {
+  const timer = setTimeout(handler, delayMs);
+  return () => clearTimeout(timer);
+};
+
+function timeoutError(): CollaborationClientError {
+  return new CollaborationClientError("REQUEST_TIMEOUT", "协作服务无响应，网络可能已中断");
+}
+
+function abortedError(): CollaborationClientError {
+  return new CollaborationClientError("REQUEST_ABORTED", "协作请求已取消");
+}
+
+/** equal jitter:一半固定一半随机,避免同一批断线客户端在同一毫秒一起重连。 */
+function jitteredDelay(delayMs: number, random: () => number): number {
+  return Math.round(delayMs / 2 + (delayMs / 2) * random());
+}
+
+function waitFor(
+  delayMs: number,
+  schedule: (handler: () => void, delayMs: number) => () => void,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let cancel: (() => void) | null = null;
+    let done = false;
+    const finish = (settle: () => void) => {
+      if (done) return;
+      done = true;
+      cancel?.();
+      signal?.removeEventListener("abort", onAbort);
+      settle();
+    };
+    const onAbort = () => finish(() => reject(abortedError()));
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    cancel = schedule(() => finish(resolve), delayMs);
+    if (done) return;
+    signal?.addEventListener("abort", onAbort);
+  });
+}
+
+interface RawResponse {
+  ok: boolean;
+  status: number;
+  body: ({ error?: { code?: string; message?: string; currentVersion?: number } } & Record<string, unknown>) | null;
+}
+
+/**
+ * 一次带截止时间的请求。读 body 也算在截止时间内:分区常见形态是响应头到了、body 卡住。
+ */
+async function sendOnce(
+  url: string,
+  init: RequestInit,
+  options: CollaborationRequestOptions,
+  timeoutMs: number,
+): Promise<RawResponse> {
+  const external = options.signal;
+  if (external?.aborted) throw abortedError();
+  const request = options.request ?? fetch;
+  const schedule = options.schedule ?? defaultSchedule;
+  const controller = new AbortController();
+  let settled = false;
+  let cause: CollaborationClientError | null = null;
+  const abortWith = (error: CollaborationClientError) => {
+    if (settled || cause) return;
+    cause = error;
+    controller.abort();
+  };
+  const onExternalAbort = () => abortWith(abortedError());
+  const cancelDeadline = schedule(() => abortWith(timeoutError()), timeoutMs);
+  external?.addEventListener("abort", onExternalAbort);
+  // 竞速而不是只等 fetch:测试替身与部分运行时不一定尊重 signal,截止时间必须自己兜底。
+  const aborted = new Promise<never>((_, reject) => {
+    if (controller.signal.aborted) {
+      reject(cause ?? abortedError());
+      return;
+    }
+    controller.signal.addEventListener("abort", () => reject(cause ?? abortedError()));
+  });
+  try {
+    return await Promise.race([
+      (async (): Promise<RawResponse> => {
+        const response = await request(url, { ...init, signal: controller.signal });
+        // 代理/门户可能回非 JSON:body 解析失败不该盖掉真正的状态码。
+        const body = await response.json().catch(() => null) as RawResponse["body"];
+        return { ok: response.ok, status: response.status, body };
+      })(),
+      aborted,
+    ]);
+  } catch (error) {
+    if (cause) throw cause;
+    if (error instanceof CollaborationClientError) throw error;
+    throw new CollaborationClientError("NETWORK_ERROR", "无法连接协作服务，请检查网络");
+  } finally {
+    settled = true;
+    cancelDeadline();
+    external?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+function responseError(raw: RawResponse): CollaborationClientError {
+  return new CollaborationClientError(
+    raw.body?.error?.code ?? (raw.status >= 500 ? "SERVER_ERROR" : "REQUEST_FAILED"),
+    raw.body?.error?.message ?? "协作请求失败",
+    raw.body?.error?.currentVersion,
+    raw.status,
+  );
+}
+
+/** 传输层失败或服务端明说稍后再来:重试有意义。协议层拒绝(冲突、无权限)重试也不会变好。 */
+function isRetryableFailure(error: unknown): boolean {
+  if (isCollaborationAbortError(error)) return false;
+  if (isCollaborationTransportError(error)) return true;
+  return error instanceof CollaborationClientError && error.status !== undefined && RETRYABLE_STATUS.has(error.status);
+}
+
+async function attemptJson<T>(
+  url: string,
+  init: RequestInit,
+  options: CollaborationRequestOptions,
+  timeoutMs: number,
+): Promise<T> {
+  const raw = await sendOnce(url, init, options, timeoutMs);
+  if (!raw.ok) throw responseError(raw);
+  if (raw.body === null) throw new CollaborationClientError("INVALID_RESPONSE", "协作服务返回了无法解析的响应");
+  return raw.body as unknown as T;
+}
+
+/**
+ * 带截止时间的 JSON 请求;`idempotent` 为真时对传输层失败做有界抖动重试。
+ */
+async function jsonRequest<T>(
+  url: string,
+  init: RequestInit,
+  input: CollaborationRequestInput,
+  mode: { idempotent: boolean; timeoutMs?: number },
+): Promise<T> {
+  const options = requestOptionsOf(input);
+  const timeoutMs = options.timeoutMs ?? mode.timeoutMs ?? COLLABORATION_REQUEST_TIMEOUT_MS;
+  const delays = mode.idempotent ? (options.retryDelays ?? COLLABORATION_GET_RETRY_DELAYS) : [];
+  const random = options.random ?? Math.random;
+  const schedule = options.schedule ?? defaultSchedule;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await attemptJson<T>(url, init, options, timeoutMs);
+    } catch (error) {
+      if (attempt >= delays.length || !isRetryableFailure(error)) throw error;
+      await waitFor(jitteredDelay(delays[attempt]!, random), schedule, options.signal);
+    }
+  }
+}
+
+export function createRoom<T>(
+  input: { clientId: string; displayName: string; snapshot?: T } & CollaborationRequestOptions,
+): Promise<CreatedRoom<T>> {
+  return jsonRequest(`/api/rooms`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -103,48 +302,49 @@ export function createRoom<T>(input: { clientId: string; displayName: string; sn
       displayName: input.displayName,
       ...(input.snapshot === undefined ? {} : { snapshot: input.snapshot }),
     }),
-  }));
+  }, input, { idempotent: false });
 }
 
-export function fetchRoom<T>(roomId: string, accessToken: string, request: Requester = fetch): Promise<CollaborationRoom<T>> {
-  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}`, {
+export function fetchRoom<T>(roomId: string, accessToken: string, input: CollaborationRequestInput = {}): Promise<CollaborationRoom<T>> {
+  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}`, {
     headers: roomTokenHeaders(accessToken),
-  }));
+  }, input, { idempotent: true });
 }
 
-export function joinRoom<T>(input: { roomId: string; inviteToken: string; clientId: string; displayName: string; request?: Requester }): Promise<CreatedRoom<T>> {
-  const request = input.request ?? fetch;
-  return jsonRequest(request(`/api/rooms/${normalizedRoomId(input.roomId)}/join`, {
+export function joinRoom<T>(
+  input: { roomId: string; inviteToken: string; clientId: string; displayName: string } & CollaborationRequestOptions,
+): Promise<CreatedRoom<T>> {
+  return jsonRequest(`/api/rooms/${normalizedRoomId(input.roomId)}/join`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ inviteToken: input.inviteToken, clientId: input.clientId, displayName: input.displayName }),
-  }));
+  }, input, { idempotent: false });
 }
 
 export function createRoomInvitation(
   roomId: string,
   accessToken: string,
   role: Exclude<CollaborationRole, "owner">,
-  request: Requester = fetch,
+  input: CollaborationRequestInput = {},
 ): Promise<RoomInvitation> {
-  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/invitations`, {
+  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}/invitations`, {
     method: "POST",
     headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json" }),
     body: JSON.stringify({ role }),
-  }));
+  }, input, { idempotent: false });
 }
 
 export function leaveRoom(
   roomId: string,
   accessToken: string,
   clientId: string,
-  request: Requester = fetch,
+  input: CollaborationRequestInput = {},
 ): Promise<Pick<CollaborationRoom, "id" | "version" | "members">> {
-  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/leave`, {
+  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}/leave`, {
     method: "POST",
     headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json" }),
     body: JSON.stringify({ clientId }),
-  }));
+  }, input, { idempotent: false });
 }
 
 export type RoomAccessAction = "set-readonly" | "close";
@@ -154,13 +354,13 @@ export function setRoomAccess(
   accessToken: string,
   clientId: string,
   action: RoomAccessAction,
-  request: Requester = fetch,
+  input: CollaborationRequestInput = {},
 ): Promise<Pick<CollaborationRoom, "id" | "version" | "readonly" | "closed">> {
-  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/access`, {
+  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}/access`, {
     method: "POST",
     headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json" }),
     body: JSON.stringify({ clientId, action }),
-  }));
+  }, input, { idempotent: false });
 }
 
 export interface RoomOperationsResponse {
@@ -174,38 +374,38 @@ export function fetchRoomOperations(
   roomId: string,
   accessToken: string,
   afterVersion: number,
-  request: Requester = fetch,
+  input: CollaborationRequestInput = {},
 ): Promise<RoomOperationsResponse> {
   const query = new URLSearchParams({ afterVersion: String(afterVersion) });
-  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/operations?${query}`, {
+  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}/operations?${query}`, {
     headers: roomTokenHeaders(accessToken),
-  }));
+  }, input, { idempotent: true });
 }
 
 export function submitRoomSnapshot<T>(
   roomId: string,
   accessToken: string,
   transaction: CollaborationTransaction<T>,
-  request: Requester = fetch,
+  input: CollaborationRequestInput = {},
 ): Promise<CollaborationRoom<T>> {
-  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/transactions`, {
+  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}/transactions`, {
     method: "POST",
     headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json", Prefer: "return=minimal" }),
     body: JSON.stringify(transaction),
-  }));
+  }, input, { idempotent: false, timeoutMs: COLLABORATION_UPLOAD_TIMEOUT_MS });
 }
 
 export function submitRoomOperations<T>(
   roomId: string,
   accessToken: string,
   transaction: CollaborationOperationTransaction,
-  request: Requester = fetch,
+  input: CollaborationRequestInput = {},
 ): Promise<CollaborationRoom<T>> {
-  return jsonRequest(request(`/api/rooms/${normalizedRoomId(roomId)}/transactions`, {
+  return jsonRequest(`/api/rooms/${normalizedRoomId(roomId)}/transactions`, {
     method: "POST",
     headers: roomTokenHeaders(accessToken, { "Content-Type": "application/json", Prefer: "return=minimal" }),
     body: JSON.stringify(transaction),
-  }));
+  }, input, { idempotent: false, timeoutMs: COLLABORATION_UPLOAD_TIMEOUT_MS });
 }
 
 export function isOwnRoomAcknowledgement(
@@ -243,11 +443,16 @@ export async function retryInitializingRoom<T>(
   }
 }
 
-export async function createRoomEventsTicket(roomId: string, accessToken: string, request: Requester = fetch): Promise<string> {
-  const response = await jsonRequest<{ ticket: string }>(request(`/api/rooms/${normalizedRoomId(roomId)}/events-ticket`, {
+export async function createRoomEventsTicket(
+  roomId: string,
+  accessToken: string,
+  input: CollaborationRequestInput = {},
+): Promise<string> {
+  // 不在这里重试:重连退避由 subscribeRoom 统一管,双层重试会把退避序列打乱。
+  const response = await jsonRequest<{ ticket: string }>(`/api/rooms/${normalizedRoomId(roomId)}/events-ticket`, {
     method: "POST",
     headers: roomTokenHeaders(accessToken),
-  }));
+  }, input, { idempotent: false });
   return response.ticket;
 }
 
@@ -267,6 +472,10 @@ export interface SubscribeRoomOptions {
   shouldReconnect?: () => boolean;
   /** 注入定时器(返回取消函数),便于测试驱动退避并断言没有遗留定时器。 */
   schedule?: (handler: () => void, delayMs: number) => () => void;
+  /** 调用方的取消信号(离开房间/卸载):触发后与 unsubscribe 等价,在途 ticket 请求一并中止。 */
+  signal?: AbortSignal;
+  /** ticket 请求的截止时间;分区时它必须自己失败,否则 connect() 会永远挂着不重连。 */
+  ticketTimeoutMs?: number;
 }
 
 const RECONNECT_DELAYS = [500, 1_000, 2_000, 4_000, 8_000] as const;
@@ -298,13 +507,19 @@ export function subscribeRoom<T>(
   let stopped = false;
   let attempt = 0;
   let cancelReconnect: (() => void) | null = null;
-  const createTicket = options.createTicket ?? ((id, token) => createRoomEventsTicket(id, token));
   const delays = options.reconnectDelays ?? RECONNECT_DELAYS;
   const idleDelay = options.idleReconnectDelayMs ?? IDLE_RECONNECT_DELAY_MS;
   const schedule = options.schedule ?? ((handler: () => void, delayMs: number) => {
     const timer = window.setTimeout(handler, delayMs);
     return () => window.clearTimeout(timer);
   });
+  /** 整条订阅的生命周期信号:stop() 时中止在途 ticket 请求,不留悬着的 fetch。 */
+  const lifetime = new AbortController();
+  const createTicket = options.createTicket ?? ((id, token) => createRoomEventsTicket(id, token, {
+    signal: lifetime.signal,
+    timeoutMs: options.ticketTimeoutMs,
+    schedule,
+  }));
   const knownVersion = (): number | undefined => (
     typeof options.version === "function" ? options.version() : options.version
   );
@@ -317,6 +532,8 @@ export function subscribeRoom<T>(
   const stop = () => {
     stopped = true;
     clearReconnect();
+    options.signal?.removeEventListener("abort", stop);
+    lifetime.abort();
     source?.close();
     source = null;
   };
@@ -402,6 +619,8 @@ export function subscribeRoom<T>(
       if (stopped) return;
       attachStream(ticket);
     } catch (error) {
+      // 取消是调用方发起的(离开房间/卸载):既不该上报错误,也不该拉起重连。
+      if (stopped || isCollaborationAbortError(error)) return;
       onError();
       if (error instanceof CollaborationClientError && TERMINAL_TICKET_ERROR_CODES.has(error.code)) {
         stop();
@@ -411,6 +630,11 @@ export function subscribeRoom<T>(
     }
   };
 
+  if (options.signal?.aborted) {
+    stop();
+    return stop;
+  }
+  options.signal?.addEventListener("abort", stop);
   void connect();
   return stop;
 }

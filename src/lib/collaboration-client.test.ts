@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  COLLABORATION_GET_RETRY_DELAYS,
+  COLLABORATION_REQUEST_TIMEOUT_MS,
   CollaborationClientError,
   createRoom,
   fetchRoom,
   fetchRoomOperations,
+  isCollaborationAbortError,
+  isCollaborationTransportError,
   isOwnRoomAcknowledgement,
   leaveRoom,
   retryInitializingRoom,
@@ -23,9 +27,9 @@ describe("collaboration client", () => {
       .mockImplementationOnce(() => ok({ id: "ABC123", version: 0, snapshot: { project: 1 } }));
     await expect(createRoom({ clientId: "c1", displayName: "创建者", snapshot: { project: 1 }, request })).resolves.toMatchObject({ room: { id: "ABC123" } });
     await expect(fetchRoom("abc123", "owner-token", request)).resolves.toMatchObject({ id: "ABC123" });
-    expect(request).toHaveBeenLastCalledWith("/api/rooms/ABC123", {
+    expect(request).toHaveBeenLastCalledWith("/api/rooms/ABC123", expect.objectContaining({
       headers: { "X-Cengfan-Room-Token": "owner-token" },
-    });
+    }));
   });
 
   it("creates an initializing room without serializing an initial snapshot", async () => {
@@ -142,7 +146,7 @@ describe("collaboration client", () => {
     await expect(fetchRoomOperations("ABC123", "owner-token", 1, request)).resolves.toMatchObject({ version: 2, afterVersion: 1, operations });
     await expect(fetchRoomOperations("ABC123", "owner-token", 0, request)).rejects.toMatchObject({ code: "VERSION_CONFLICT", currentVersion: 2 });
     await expect(fetchRoomOperations("ABC123", "owner-token", -1, request)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
-    expect(request).toHaveBeenCalledWith("/api/rooms/ABC123/operations?afterVersion=1", expect.objectContaining({
+    expect(request).toHaveBeenNthCalledWith(1, "/api/rooms/ABC123/operations?afterVersion=1", expect.objectContaining({
       headers: expect.objectContaining({ "X-Cengfan-Room-Token": "owner-token" }),
     }));
   });
@@ -205,6 +209,207 @@ class FakeEventSource {
     this.onerror?.();
   }
 }
+
+/** 手动时钟:请求截止与重试退避都走注入的 schedule,延迟序列可断言且不留真实定时器。 */
+function createManualClock() {
+  const tasks = new Map<number, () => void>();
+  let nextId = 0;
+  const delays: number[] = [];
+  const clock = {
+    delays,
+    get pending(): number {
+      return tasks.size;
+    },
+    schedule(handler: () => void, delayMs: number): () => void {
+      const id = nextId++;
+      delays.push(delayMs);
+      tasks.set(id, handler);
+      return () => {
+        tasks.delete(id);
+      };
+    },
+    /** 触发最早排入的定时器(截止时间先于其后的退避排入),模拟"这段时间过去了"。 */
+    async fireNext(): Promise<void> {
+      const first = tasks.entries().next();
+      if (first.done) throw new Error("没有待触发的定时器");
+      const [id, handler] = first.value;
+      tasks.delete(id);
+      handler();
+      await Promise.resolve();
+    },
+  };
+  return clock;
+}
+
+/** 网络分区:TCP 连上了,响应永远不来。没有截止时间的客户端会永久挂起。 */
+const neverSettles = (): Promise<Response> => new Promise<Response>(() => {});
+
+describe("collaboration HTTP partition handling", () => {
+  it("rejects a never-settling GET at the abort deadline instead of hanging forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: (AbortSignal | undefined)[] = [];
+      const request = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        signals.push(init?.signal ?? undefined);
+        return neverSettles();
+      });
+
+      const pending = fetchRoom("ABC123", "owner-token", request);
+      const settled = expect(pending).rejects.toMatchObject({ code: "REQUEST_TIMEOUT" });
+      await vi.advanceTimersByTimeAsync(
+        (COLLABORATION_GET_RETRY_DELAYS.length + 1) * COLLABORATION_REQUEST_TIMEOUT_MS + 10_000,
+      );
+      await settled;
+
+      // 有界重试:超时不是无限重连,尝试次数 = 退避序列长度 + 1。
+      expect(request).toHaveBeenCalledTimes(COLLABORATION_GET_RETRY_DELAYS.length + 1);
+      expect(signals.every((signal) => signal?.aborted)).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries an idempotent GET with jittered backoff and recovers on the next attempt", async () => {
+    const clock = createManualClock();
+    let attempts = 0;
+    const request = vi.fn(() => {
+      attempts += 1;
+      return attempts < 3 ? neverSettles() : ok({ id: "ABC123", version: 5, afterVersion: 4, operations: [] });
+    });
+
+    const pending = fetchRoomOperations("ABC123", "owner-token", 4, {
+      request,
+      timeoutMs: 5_000,
+      retryDelays: [400, 800],
+      random: () => 0.5,
+      schedule: clock.schedule,
+    });
+
+    await vi.waitFor(() => expect(clock.pending).toBe(1));
+    await clock.fireNext();
+    // equal jitter:400/2 + 400/2*0.5 = 300。
+    await vi.waitFor(() => expect(clock.delays).toEqual([5_000, 300]));
+    await clock.fireNext();
+    await vi.waitFor(() => expect(clock.delays).toEqual([5_000, 300, 5_000]));
+    await clock.fireNext();
+    await vi.waitFor(() => expect(clock.delays).toEqual([5_000, 300, 5_000, 600]));
+    await clock.fireNext();
+
+    await expect(pending).resolves.toMatchObject({ version: 5, operations: [] });
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(clock.pending).toBe(0);
+  });
+
+  it("keeps every jittered retry delay inside [delay/2, delay]", async () => {
+    for (const random of [0, 0.25, 1]) {
+      const clock = createManualClock();
+      const request = vi.fn(() => neverSettles());
+      const pending = fetchRoom("ABC123", "owner-token", {
+        request,
+        timeoutMs: 1_000,
+        retryDelays: [800],
+        random: () => random,
+        schedule: clock.schedule,
+      });
+      const settled = expect(pending).rejects.toMatchObject({ code: "REQUEST_TIMEOUT" });
+
+      await vi.waitFor(() => expect(clock.pending).toBe(1));
+      await clock.fireNext();
+      await vi.waitFor(() => expect(clock.delays).toHaveLength(2));
+      const backoff = clock.delays[1]!;
+      expect(backoff).toBeGreaterThanOrEqual(400);
+      expect(backoff).toBeLessThanOrEqual(800);
+      await clock.fireNext();
+      await vi.waitFor(() => expect(clock.pending).toBe(1));
+      await clock.fireNext();
+      await settled;
+      expect(clock.pending).toBe(0);
+    }
+  });
+
+  it("retries a 503 on an idempotent GET but never a client error", async () => {
+    const clock = createManualClock();
+    const request = vi.fn()
+      .mockImplementationOnce(() => ok({ error: { code: "UPSTREAM", message: "网关错误" } }, 503))
+      .mockImplementationOnce(() => ok({ id: "ABC123", version: 2, ready: true }));
+
+    const recovered = fetchRoom("ABC123", "owner-token", { request, retryDelays: [300], schedule: clock.schedule });
+    await vi.waitFor(() => expect(clock.delays).toHaveLength(2));
+    await clock.fireNext();
+    await expect(recovered).resolves.toMatchObject({ version: 2 });
+    expect(request).toHaveBeenCalledTimes(2);
+
+    const conflicting = vi.fn(() => ok({ error: { code: "VERSION_CONFLICT", message: "历史裁剪", currentVersion: 9 } }, 409));
+    await expect(fetchRoomOperations("ABC123", "owner-token", 1, {
+      request: conflicting,
+      retryDelays: [300],
+      schedule: clock.schedule,
+    })).rejects.toMatchObject({ code: "VERSION_CONFLICT", currentVersion: 9 });
+    expect(conflicting).toHaveBeenCalledTimes(1);
+  });
+
+  it("never replays a non-idempotent transaction, but still bounds it by a deadline", async () => {
+    const clock = createManualClock();
+    const request = vi.fn(() => neverSettles());
+
+    const pending = submitRoomOperations("ABC123", "owner-token", {
+      txId: "tx-1",
+      clientId: "c1",
+      baseVersion: 1,
+      operations: [{ type: "set", path: ["title"], value: "甲" }],
+    }, { request, timeoutMs: 2_000, schedule: clock.schedule });
+    const settled = expect(pending).rejects.toMatchObject({ code: "REQUEST_TIMEOUT" });
+
+    await vi.waitFor(() => expect(clock.pending).toBe(1));
+    await clock.fireNext();
+    await settled;
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(clock.pending).toBe(0);
+  });
+
+  it("honours an external abort signal without retrying and without issuing new requests", async () => {
+    const clock = createManualClock();
+    const controller = new AbortController();
+    const seen: (AbortSignal | undefined)[] = [];
+    const request = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(init?.signal ?? undefined);
+      return neverSettles();
+    });
+
+    const pending = fetchRoom("ABC123", "owner-token", {
+      request,
+      signal: controller.signal,
+      retryDelays: [300],
+      schedule: clock.schedule,
+    });
+    const settled = expect(pending).rejects.toMatchObject({ code: "REQUEST_ABORTED" });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+    await settled;
+    expect(seen[0]?.aborted).toBe(true);
+    expect(clock.pending).toBe(0);
+
+    // 已取消的信号不再发起任何请求。
+    await expect(fetchRoom("ABC123", "owner-token", { request, signal: controller.signal }))
+      .rejects.toMatchObject({ code: "REQUEST_ABORTED" });
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies transport failures apart from protocol failures", async () => {
+    const failing = vi.fn(() => Promise.reject(new TypeError("Failed to fetch")));
+    const error = await fetchRoom("ABC123", "owner-token", { request: failing, retryDelays: [] })
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(CollaborationClientError);
+    expect(isCollaborationTransportError(error)).toBe(true);
+    expect(isCollaborationAbortError(error)).toBe(false);
+    expect(isCollaborationTransportError(new CollaborationClientError("ROOM_CLOSED", "已关闭"))).toBe(false);
+    expect(isCollaborationAbortError(new CollaborationClientError("REQUEST_ABORTED", "已取消"))).toBe(true);
+  });
+});
 
 /** Manually driven timers so backoff is observable and leaks are assertable. */
 function createTimeline() {
@@ -404,6 +609,89 @@ describe("subscribeRoom reconnect loop", () => {
     await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     expect(timeline.pending.size).toBe(0);
     expect(createTicket).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+  });
+
+  it("recovers from an events-ticket request that never settles", async () => {
+    const timeline = createTimeline();
+    const onError = vi.fn();
+    const signals: (AbortSignal | undefined)[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      return neverSettles();
+    }) as unknown as typeof fetch;
+    try {
+      const unsubscribe = subscribeRoom("ABC123", "owner-token", () => {}, onError, {
+        version: () => 1,
+        reconnectDelays: [500],
+        ticketTimeoutMs: 3_000,
+        schedule: timeline.schedule.bind(timeline),
+      });
+
+      // 分区期间 ticket 请求永不返回:没有截止时间的话 connect() 会永久挂着,既不报错也不重连。
+      await vi.waitFor(() => expect(timeline.pending.size).toBe(1));
+      await timeline.runNext();
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+      expect(signals[0]?.aborted).toBe(true);
+      expect(timeline.delays).toEqual([3_000, 500]);
+
+      unsubscribe();
+      expect(timeline.pending.size).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("aborts an in-flight events-ticket request when the subscription stops", async () => {
+    const timeline = createTimeline();
+    const onError = vi.fn();
+    const signals: (AbortSignal | undefined)[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      return neverSettles();
+    }) as unknown as typeof fetch;
+    try {
+      const unsubscribe = subscribeRoom("ABC123", "owner-token", () => {}, onError, {
+        version: () => 1,
+        reconnectDelays: [500],
+        schedule: timeline.schedule.bind(timeline),
+      });
+      await vi.waitFor(() => expect(signals).toHaveLength(1));
+
+      unsubscribe();
+
+      expect(signals[0]?.aborted).toBe(true);
+      // 取消是调用方主动的:既不上报错误,也不排重连。
+      await vi.waitFor(() => expect(timeline.pending.size).toBe(0));
+      expect(onError).not.toHaveBeenCalled();
+      expect(FakeEventSource.instances).toHaveLength(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("stops the loop when the caller's abort signal fires", async () => {
+    const timeline = createTimeline();
+    const controller = new AbortController();
+    const createTicket = vi.fn(() => Promise.resolve("ticket"));
+    const unsubscribe = subscribeRoom("ABC123", "owner-token", () => {}, () => {}, {
+      version: () => 1,
+      createTicket,
+      reconnectDelays: [500],
+      signal: controller.signal,
+      schedule: timeline.schedule.bind(timeline),
+    });
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+
+    controller.abort();
+
+    expect(liveSources()).toHaveLength(0);
+    FakeEventSource.instances[0]!.fail();
+    expect(timeline.pending.size).toBe(0);
+    expect(FakeEventSource.instances).toHaveLength(1);
 
     unsubscribe();
   });
