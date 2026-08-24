@@ -97,6 +97,16 @@ function workflowStage(container: HTMLElement, label: string): HTMLButtonElement
   return container.querySelector<HTMLButtonElement>(`.workflow-stage-stepper button[aria-label="${label}"]`)!;
 }
 
+/** 自绘确认框取代 `window.confirm` 后，破坏性动作都要在这里点一次。 */
+function confirmDialog(container: HTMLElement): HTMLElement | null {
+  return container.querySelector<HTMLElement>('.workbench-dialog[role="dialog"]');
+}
+
+function clickConfirmDialogButton(container: HTMLElement, label: string): void {
+  const dialog = confirmDialog(container)!;
+  click(Array.from(dialog.querySelectorAll("button")).find((button) => button.textContent?.trim() === label)!);
+}
+
 function openGlobalData(container: HTMLElement): void {
   click(workflowStage(container, "数据与素材"));
 }
@@ -799,7 +809,6 @@ describe("App student editing", () => {
       }],
       fonts: [],
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     class ImmediateFileReader {
       result: string | ArrayBuffer | null = null;
       onload: null | (() => void) = null;
@@ -814,6 +823,7 @@ describe("App student editing", () => {
     Object.defineProperty(input, "files", { configurable: true, value: [new File(["package"], "project.json", { type: "application/json" })] });
 
     flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    clickConfirmDialogButton(container, "导入并替换");
 
     expect(container.querySelector('[data-background-image]')?.getAttribute("href")).toBe("data:image/png;base64,QkFDS0dST1VORA==");
     expect(container.querySelector('[data-province-texture]')?.getAttribute("href")).toBe("data:image/png;base64,VEVYVFVSRS==");
@@ -836,7 +846,6 @@ describe("App student editing", () => {
         source: "user",
       }],
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     class ImmediateFileReader {
       result: string | ArrayBuffer | null = null;
       onload: null | (() => void) = null;
@@ -851,6 +860,7 @@ describe("App student editing", () => {
     Object.defineProperty(input, "files", { configurable: true, value: [new File(["package"], "legacy-project.json", { type: "application/json" })] });
 
     flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    clickConfirmDialogButton(container, "导入并替换");
     click(container.querySelector<SVGGElement>("[data-cards-layer]")!);
     changeSelect(container.querySelector<HTMLSelectElement>("#cards-font-name")!, "font-system-kaiti");
 
@@ -913,12 +923,12 @@ describe("App student editing", () => {
   });
 
   it("replaces the project dataset with confirmed import candidates", () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const container = renderApp();
     openPeopleData(container);
     changeInput(container.querySelector("textarea")!, "新同学 北京大学 北京");
     click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("识别文本"))!);
     click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("替换全部"))!);
+    clickConfirmDialogButton(container, "替换全部");
 
     expect(container.querySelectorAll('[data-student-row]')).toHaveLength(1);
     expect(container.querySelector('[data-student-row]')?.textContent).toContain("新同学");
@@ -1098,10 +1108,14 @@ describe("App student editing", () => {
     expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform")).toBe(initialTransform);
 
     click(workflowStage(container, "展示框样式"));
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const confirm = vi.spyOn(window, "confirm");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="刷新展示框位置"]')!);
 
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(confirmDialog(container)?.textContent).toContain("刷新展示框位置？");
+    clickConfirmDialogButton(container, "取消");
+    expect(confirmDialog(container)).toBeNull();
+
     click(workflowStage(container, "内容与排版"));
     expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform")).toBe(initialTransform);
   });
@@ -1872,9 +1886,9 @@ describe("Studio status bar", () => {
     expect(status?.getAttribute("aria-live")).toBe("polite");
     expect(status?.textContent).toContain("仅在点击强制保存时写入本地");
 
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     click(workflowStage(container, "展示框样式"));
     click(container.querySelector<HTMLButtonElement>('button[aria-label="刷新展示框位置"]')!);
+    if (confirmDialog(container)) clickConfirmDialogButton(container, "刷新位置");
 
     // 同一个 live region 被原地更新，读屏才会播报这条反馈。
     expect(container.querySelector('.studio-status-bar[role="status"]')).toBe(status);
@@ -2131,5 +2145,68 @@ describe("Topbar action layering (T4)", () => {
     const container = renderPublicApp();
     const themeGroup = container.querySelector('.topbar-actions [role="group"][aria-label="界面主题"]');
     expect(themeGroup?.className).toContain("topbar-action-group--theme");
+  });
+});
+
+describe("破坏性动作的自绘确认框", () => {
+  it("asks before wiping the canvas for a new project and honours cancel", () => {
+    const confirm = vi.spyOn(window, "confirm");
+    const container = renderPublicApp();
+    click(workflowStage(container, "内容与排版"));
+    const rosterCount = container.querySelectorAll("[data-destination-card]").length;
+    expect(rosterCount).toBeGreaterThan(0);
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="新建项目"]')!);
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(confirmDialog(container)?.textContent).toContain("新建空项目？");
+    clickConfirmDialogButton(container, "取消");
+
+    expect(confirmDialog(container)).toBeNull();
+    expect(container.querySelectorAll("[data-destination-card]").length).toBe(rosterCount);
+  });
+
+  it("clears the project only after the new-project dialog is confirmed", () => {
+    const container = renderPublicApp();
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="新建项目"]')!);
+    clickConfirmDialogButton(container, "新建项目");
+
+    expect(confirmDialog(container)).toBeNull();
+    expect(container.querySelector('.studio-status-bar[role="status"]')?.textContent).toContain("已新建空项目");
+    click(workflowStage(container, "内容与排版"));
+    expect(container.querySelectorAll("[data-destination-card]")).toHaveLength(0);
+  });
+
+  it("keeps the current workspace when the project-package import dialog is cancelled", () => {
+    const pack = createProjectPackage({
+      project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
+      assets: [],
+      fonts: [],
+    });
+    class ImmediateFileReader {
+      result: string | ArrayBuffer | null = null;
+      onload: null | (() => void) = null;
+      readAsText() {
+        this.result = JSON.stringify(pack);
+        this.onload?.();
+      }
+    }
+    vi.stubGlobal("FileReader", ImmediateFileReader);
+    const container = renderPublicApp();
+    click(workflowStage(container, "内容与排版"));
+    const before = container.querySelectorAll("[data-destination-card]").length;
+    expect(before).toBeGreaterThan(0);
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="导入完整工程包"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["package"], "project.json", { type: "application/json" })] });
+
+    flushSync(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(confirmDialog(container)?.textContent).toContain("导入工程包「project.json」？");
+
+    clickConfirmDialogButton(container, "取消");
+
+    expect(confirmDialog(container)).toBeNull();
+    expect(container.querySelector('.studio-status-bar[role="status"]')?.textContent).toContain("已取消导入工程包");
+    expect(container.querySelectorAll("[data-destination-card]").length).toBe(before);
   });
 });

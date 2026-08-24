@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DataWorkspace } from "./DataWorkspace";
 import type { Student } from "../lib/project-data";
 import type { ParseDataResult } from "../lib/ai-client";
+import { MAX_SPREADSHEET_IMPORT_BYTES } from "../lib/import-file-limits";
 import { AI_PARSE_CONSENT_STORAGE_KEY } from "../lib/use-studio-preferences";
 
 const students: Student[] = [
@@ -1549,5 +1550,131 @@ describe("智能识别上送告知", () => {
 
     expect(requestAiParse).not.toHaveBeenCalled();
     expect(container.textContent).toContain("从OCR 文本（原文未发送）识别到 1 条候选，另有 1 行未识别");
+  });
+});
+
+describe("DataWorkspace 破坏性操作确认", () => {
+  function renderDefaults(overrides: Partial<React.ComponentProps<typeof DataWorkspace>> = {}) {
+    return render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        {...overrides}
+      />,
+    );
+  }
+
+  function dialog(container: HTMLDivElement): HTMLElement {
+    return container.querySelector<HTMLElement>('[role="dialog"]')!;
+  }
+
+  it("asks in a self-drawn dialog instead of window.confirm before deleting a student", () => {
+    const onDeleteStudent = vi.fn();
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const container = renderDefaults({ onDeleteStudent });
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="删除 林舟"]')!);
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(onDeleteStudent).not.toHaveBeenCalled();
+    expect(dialog(container).textContent).toContain("删除学生「林舟」？");
+
+    click(dialog(container).querySelector<HTMLButtonElement>("button.danger-button")!);
+
+    expect(onDeleteStudent).toHaveBeenCalledWith("student-1");
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    confirmSpy.mockRestore();
+  });
+
+  it("keeps the student when the delete dialog is dismissed with Escape", () => {
+    const onDeleteStudent = vi.fn();
+    const container = renderDefaults({ onDeleteStudent });
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="删除 林舟"]')!);
+    flushSync(() => {
+      dialog(container).querySelector(".workbench-dialog__panel")!
+        .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(onDeleteStudent).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("asks in a self-drawn dialog before replacing the whole roster", async () => {
+    const onReplaceStudents = vi.fn();
+    const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
+      provider: "local-fallback",
+      candidates: [{ name: "苏禾", university: "浙江大学", city: "杭州", sourceLine: 1, rawLine: "苏禾 浙江大学 杭州" }],
+      unparsed: [],
+    }));
+    const container = renderDefaults({ onReplaceStudents, requestAiParse });
+
+    changeInput(container.querySelector("textarea")!, "候选名单");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("替换全部"))!);
+
+    expect(onReplaceStudents).not.toHaveBeenCalled();
+    expect(dialog(container).textContent).toContain("替换全部学生名单？");
+    expect(dialog(container).textContent).toContain("当前 1 条名单会被 1 条新记录整体覆盖");
+
+    // 点遮罩取消：名单不动，候选仍在，用户可以改完再来一次。
+    click(dialog(container).querySelector<HTMLElement>(".workbench-dialog__backdrop")!);
+    expect(onReplaceStudents).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("已取消替换，名单未改动");
+
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("替换全部"))!);
+    click(dialog(container).querySelector<HTMLButtonElement>("button.danger-button")!);
+
+    expect(onReplaceStudents).toHaveBeenCalledWith([expect.objectContaining({ name: "苏禾" })]);
+    expect(container.textContent).toContain("已替换 1 条学生数据");
+  });
+
+  it("refuses an over-budget spreadsheet before reading it", async () => {
+    const onAppendStudents = vi.fn();
+    const container = renderDefaults({ onAppendStudents });
+    const file = new File([], "巨表.xlsx");
+    Object.defineProperty(file, "size", { value: MAX_SPREADSHEET_IMPORT_BYTES + 1 });
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
+    Object.defineProperty(file, "arrayBuffer", { value: arrayBuffer });
+
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { files: [file] } });
+    flushSync(() => dropzone.dispatchEvent(event));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(onAppendStudents).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("表格文件过大");
+    expect(container.textContent).toContain("上限 12.0 MB");
+  });
+
+  it("still imports a spreadsheet that sits right on the limit", async () => {
+    const onAppendStudents = vi.fn();
+    const container = renderDefaults({ onAppendStudents });
+    const file = new File([], "刚好.xlsx");
+    Object.defineProperty(file, "size", { value: MAX_SPREADSHEET_IMPORT_BYTES });
+    const arrayBuffer = vi.fn(async () => { throw new Error("读取失败"); });
+    Object.defineProperty(file, "arrayBuffer", { value: arrayBuffer });
+
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { files: [file] } });
+    flushSync(() => dropzone.dispatchEvent(event));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    // 上限之内就真的去读了，失败信息来自读取本身而不是体积校验。
+    expect(arrayBuffer).toHaveBeenCalled();
+    expect(container.textContent).toContain("读取失败");
+    expect(container.textContent).not.toContain("表格文件过大");
   });
 });

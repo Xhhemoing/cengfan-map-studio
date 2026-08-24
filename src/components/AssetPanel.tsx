@@ -24,6 +24,7 @@ import {
   smartTextureLayout,
   withTextureLayout,
 } from "../lib/province-texture";
+import { ConfirmDialog } from "./workbench/ConfirmDialog";
 import { FileDropzone } from "./FileDropzone";
 import { DeferredInput } from "./DeferredInput";
 import { RangeNumberControl } from "./RangeNumberControl";
@@ -128,6 +129,7 @@ export function AssetPanel({
   const [matchingThemes, setMatchingThemes] = useState(false);
   const [provinceColor, setProvinceColor] = useState("#5b8c5a");
   const [provinceFilter, setProvinceFilter] = useState("");
+  const [pendingAssetDeletion, setPendingAssetDeletion] = useState<UserAsset | null>(null);
   const activeTexture = selectedProvinceStyle?.appearance?.kind === "feature" || selectedProvinceStyle?.appearance?.kind === "texture"
     ? selectedProvinceStyle.appearance
     : null;
@@ -218,10 +220,10 @@ export function AssetPanel({
   const movableInstances = instances.filter((instance) => instance.kind !== "province-texture");
   const userGlobalAssets = userAssets.filter((asset) => asset.kind !== "province-texture");
 
-  const confirmDeleteAsset = (asset: UserAsset) => {
-    const usage = assetUsageById[asset.id];
-    const hint = usage ? `\n${usage}` : "";
-    return window.confirm(`确定从素材库删除「${asset.label}」？${hint}\n已应用到地图的外观不会自动清除。`);
+  const deleteAsset = (asset: UserAsset) => {
+    onDeleteUserAsset?.(asset.id);
+    setMessage(`已从素材库删除：${asset.label}`);
+    setPendingAssetDeletion(null);
   };
 
 
@@ -648,11 +650,7 @@ export function AssetPanel({
                   className="asset-thumb-delete"
                   label={`删除素材 ${asset.label}`}
                   variant="danger"
-                  onClick={() => {
-                    if (!confirmDeleteAsset(asset)) return;
-                    onDeleteUserAsset?.(asset.id);
-                    setMessage(`已从素材库删除：${asset.label}`);
-                  }}
+                  onClick={() => setPendingAssetDeletion(asset)}
                   icon={<Trash2 size={14} />}
                 />
               </div>
@@ -696,11 +694,7 @@ export function AssetPanel({
                 label={`删除素材 ${asset.label}`}
                 icon={<Trash2 size={14} />}
                 variant="danger"
-                onClick={() => {
-                  if (!confirmDeleteAsset(asset)) return;
-                  onDeleteUserAsset?.(asset.id);
-                  setMessage(`已从素材库删除：${asset.label}`);
-                }}
+                onClick={() => setPendingAssetDeletion(asset)}
               />
             </div>
           ))}
@@ -757,6 +751,16 @@ export function AssetPanel({
         <p className="panel-note">导出包含本地上传的图片素材与自定义字体，可备份或迁移到其他设备。</p>
       </PanelSection>
       {message && <p className="panel-note" role="status">{message}</p>}
+      {pendingAssetDeletion && (
+        <ConfirmDialog
+          title={`从素材库删除「${pendingAssetDeletion.label}」？`}
+          description={`${assetUsageById[pendingAssetDeletion.id] ? `${assetUsageById[pendingAssetDeletion.id]}。` : ""}已应用到地图的外观不会自动清除，删除后需要手动换成其他素材。`}
+          confirmLabel="删除素材"
+          tone="danger"
+          onConfirm={() => deleteAsset(pendingAssetDeletion)}
+          onCancel={() => setPendingAssetDeletion(null)}
+        />
+      )}
     </div>
   );
 }

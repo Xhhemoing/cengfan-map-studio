@@ -7,6 +7,7 @@
 import { useRef, useState, type RefObject } from "react";
 import { availablePngScales, describePngScaleLimit, downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
+import { PROJECT_PACKAGE_IMPORT_LIMIT, checkImportFileSize } from "./import-file-limits";
 import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
 import type { CustomTemplateRecord } from "./template-store";
 import type { UserAsset } from "./assets";
@@ -27,6 +28,18 @@ export interface UsePosterExportOptions {
   reportStatus: (message: string) => void;
 }
 
+/** 已解析但尚未落地的工程包，等调用方渲染的确认框给出答复。 */
+export interface ProjectImportConfirmation {
+  fileName: string;
+  /** 会被覆盖的当前名单条数。 */
+  currentStudentCount: number;
+  /** 导入后的名单条数。 */
+  nextStudentCount: number;
+  assetCount: number;
+  fontCount: number;
+  templateCount: number;
+}
+
 export interface UsePosterExportResult {
   exportingPng: boolean;
   exportState: DeliveryExportState;
@@ -45,6 +58,10 @@ export interface UsePosterExportResult {
   exportProjectPackage: () => void;
   retryLastExport: () => void;
   importProjectPackage: (file: File | null) => void;
+  /** 非空时调用方必须挂出确认框；在用户表态前工程不会被替换。 */
+  projectImportConfirmation: ProjectImportConfirmation | null;
+  confirmProjectImport: () => void;
+  cancelProjectImport: () => void;
 }
 
 export function usePosterExport(options: UsePosterExportOptions): UsePosterExportResult {
@@ -57,6 +74,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const [transparentExport, setTransparentExport] = useState(false);
   const [showProjectExportDialog, setShowProjectExportDialog] = useState(false);
   const [includeResourcesInProjectExport, setIncludeResourcesInProjectExport] = useState(true);
+  const [pendingProjectImport, setPendingProjectImport] = useState<{ pack: ProjectPackage; fileName: string } | null>(null);
 
   const exportSvg = () => {
     lastExportRef.current = "svg";
@@ -111,13 +129,20 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
 
   const importProjectPackage = (file: File | null) => {
     if (!file) return;
+    // 先判体积再读盘：`readAsText` + `JSON.parse` 都要把整份工程装进内存，
+    // 超限的文件读进来只会先卡死标签页，再抛一个用户看不懂的解析错误。
+    const oversized = checkImportFileSize(file, PROJECT_PACKAGE_IMPORT_LIMIT);
+    if (oversized) {
+      reportStatus(oversized);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       try {
         const pack = parseProjectPackage(String(reader.result ?? ""));
-        if (!window.confirm(`导入工程将替换当前画布和 ${project.students.length} 条名单，是否继续？`)) return;
-        applyImportedPackage(pack);
-        reportStatus(`完整工程包已导入：${pack.project.students.length} 条名单、${pack.assets.length} 个素材、${pack.fonts.length} 个字体、${pack.customTemplates.length} 个模板`);
+        // 替换整个工程是破坏性动作，交给调用方渲染的确认框决定，
+        // 而不是在 FileReader 回调里阻塞式 `window.confirm`。
+        setPendingProjectImport({ pack, fileName: file.name });
       } catch (error) {
         reportStatus(error instanceof Error ? error.message : "工程包导入失败");
       }
@@ -126,6 +151,20 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       reportStatus("工程包导入失败");
     };
     reader.readAsText(file);
+  };
+
+  const confirmProjectImport = () => {
+    if (!pendingProjectImport) return;
+    const { pack } = pendingProjectImport;
+    setPendingProjectImport(null);
+    applyImportedPackage(pack);
+    reportStatus(`完整工程包已导入：${pack.project.students.length} 条名单、${pack.assets.length} 个素材、${pack.fonts.length} 个字体、${pack.customTemplates.length} 个模板`);
+  };
+
+  const cancelProjectImport = () => {
+    if (!pendingProjectImport) return;
+    setPendingProjectImport(null);
+    reportStatus("已取消导入工程包，当前工程未改动");
   };
 
   const exportPng = async () => {
@@ -187,5 +226,17 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     exportProjectPackage,
     retryLastExport,
     importProjectPackage,
+    projectImportConfirmation: pendingProjectImport
+      ? {
+        fileName: pendingProjectImport.fileName,
+        currentStudentCount: project.students.length,
+        nextStudentCount: pendingProjectImport.pack.project.students.length,
+        assetCount: pendingProjectImport.pack.assets.length,
+        fontCount: pendingProjectImport.pack.fonts.length,
+        templateCount: pendingProjectImport.pack.customTemplates.length,
+      }
+      : null,
+    confirmProjectImport,
+    cancelProjectImport,
   };
 }

@@ -51,6 +51,7 @@ import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayout
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
 import { StatusBar } from "./components/StatusBar";
 import { SaveTemplateDialog } from "./components/SaveTemplateDialog";
+import { ConfirmDialog } from "./components/workbench/ConfirmDialog";
 
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
@@ -319,6 +320,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
   const [saveTemplateDialogOpen, setSaveTemplateDialogOpen] = useState(false);
+  /** 破坏性动作的自绘确认框；沙箱化 iframe 会抑制 `window.confirm`，用户点不到「确定」。 */
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    description: string;
+    confirmLabel: string;
+    tone?: "primary" | "danger";
+    onConfirm: () => void;
+  } | null>(null);
 
   const resolvedRenderInterval = renderIntervalMs(renderSettings);
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
@@ -716,9 +725,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     if (!positions || Object.keys(positions).length === 0) return current.cards;
     return { ...current.cards, positions: { ...positions, ...current.cards.positions } };
   };
-  const refreshDisplayFramePositions = () => {
-    if (typeof window !== "undefined" && Object.keys(project.cards.positions ?? {}).length > 0
-      && !window.confirm("刷新展示框位置会重新按当前地图计算数据框位置，是否继续？")) return;
+  const commitDisplayFramePositionRefresh = () => {
     resolvedCardPositionsRef.current = null;
     commitProjectTransaction({
       id: createId("tx-display-frame-position-refresh"),
@@ -727,6 +734,18 @@ function StudioApp({ projectId }: { projectId?: string }) {
       apply: (current) => ({ ...current, cards: { ...current.cards, positions: {} } }),
     });
     setStatusMessage("已刷新展示框位置");
+  };
+  const refreshDisplayFramePositions = () => {
+    if (Object.keys(project.cards.positions ?? {}).length === 0) {
+      commitDisplayFramePositionRefresh();
+      return;
+    }
+    setPendingConfirm({
+      title: "刷新展示框位置？",
+      description: "会按当前地图重新计算全部数据框位置，手动拖动过的展示框都会回到自动布局。刷新后可用撤销恢复。",
+      confirmLabel: "刷新位置",
+      onConfirm: commitDisplayFramePositionRefresh,
+    });
   };
   const patchScene = (target: SceneSelection, patch: Record<string, unknown>) => {
     if (target.type !== "map" && target.type !== "province") {
@@ -1162,8 +1181,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     <SaveTemplateDialog onCancel={() => setSaveTemplateDialogOpen(false)} onSave={confirmSaveTemplate} />
   ) : null;
 
-  const createNewProject = () => {
-    if (!window.confirm("新建项目会清空当前未保存修改，是否继续？")) return;
+  const commitNewProject = () => {
     const next = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     setProject(next);
     setAgentPreview(null);
@@ -1174,6 +1192,47 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setActiveStage("data");
     setStatusMessage("已新建空项目");
   };
+
+  const createNewProject = () => {
+    setPendingConfirm({
+      title: "新建空项目？",
+      description: "当前画布上未保存到本机的修改会被清空，名单、素材摆放和版式都会回到空白状态。需要留档请先「导出工程」。",
+      confirmLabel: "新建项目",
+      tone: "danger",
+      onConfirm: commitNewProject,
+    });
+  };
+
+  const projectImportConfirmation = posterExport.projectImportConfirmation;
+  /** 三处布局分支共用的确认框挂载点，与 `saveTemplateDialog` 一起渲染。 */
+  const confirmDialogs = (
+    <>
+      {pendingConfirm && (
+        <ConfirmDialog
+          title={pendingConfirm.title}
+          description={pendingConfirm.description}
+          confirmLabel={pendingConfirm.confirmLabel}
+          tone={pendingConfirm.tone ?? "primary"}
+          onConfirm={() => {
+            const confirmed = pendingConfirm.onConfirm;
+            setPendingConfirm(null);
+            confirmed();
+          }}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
+      {projectImportConfirmation && (
+        <ConfirmDialog
+          title={`导入工程包「${projectImportConfirmation.fileName}」？`}
+          description={`当前画布和 ${projectImportConfirmation.currentStudentCount} 条名单会被整体替换为 ${projectImportConfirmation.nextStudentCount} 条名单、${projectImportConfirmation.assetCount} 个素材、${projectImportConfirmation.fontCount} 个字体、${projectImportConfirmation.templateCount} 个模板。`}
+          confirmLabel="导入并替换"
+          tone="danger"
+          onConfirm={posterExport.confirmProjectImport}
+          onCancel={posterExport.cancelProjectImport}
+        />
+      )}
+    </>
+  );
 
   const restoreLocalProject = () => {
     const next = loadInitialProject();
@@ -1625,6 +1684,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onThemeChange={setThemeMode}
           />
         {saveTemplateDialog}
+        {confirmDialogs}
         <StatusBar message={statusMessage} syncStatus={syncState.status} savedAt={syncState.savedAt} />
       </div>
     );
@@ -1906,6 +1966,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         status={
           <>
             {saveTemplateDialog}
+            {confirmDialogs}
             <StatusBar message={statusMessage} syncStatus={syncState.status} savedAt={syncState.savedAt} />
           </>
         }
@@ -2450,6 +2511,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         />
       </section>
       {saveTemplateDialog}
+      {confirmDialogs}
     </main>
   );
 }

@@ -12,6 +12,7 @@ import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
 import { searchCities, searchProvinces, searchUniversities } from "../lib/search-catalog";
 import { SearchCombobox, type SearchComboboxOption } from "./SearchCombobox";
+import { ConfirmDialog } from "./workbench/ConfirmDialog";
 import { DataImportPanel } from "./DataImportPanel";
 import { UniversityEmblem } from "./UniversityEmblem";
 import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, SegmentedControl } from "./StudioUi";
@@ -41,8 +42,8 @@ export function DataWorkspace({
   dataView = "province",
   onChangeDataView = () => {},
   requestAiParse = requestAiParseData,
-  confirmDelete = (student) => window.confirm(`确认删除 ${student.name} 吗？`),
-  confirmReplace = ({ currentCount, nextCount }) => window.confirm(`确认替换全部名单？当前 ${currentCount} 条 -> 新 ${nextCount} 条`),
+  confirmDelete,
+  confirmReplace,
   hideDataExpression = false,
   hideTemplateDownload = false,
   compactRosterControls = false,
@@ -59,7 +60,9 @@ export function DataWorkspace({
   dataView?: DataViewId;
   onChangeDataView?: (view: DataViewId) => void;
   requestAiParse?: (input: { text: string; source: "paste" | "ocr" }) => Promise<ParseDataResult>;
+  /** 省略即由本组件弹自绘确认框；注入同步判定只用于测试与嵌入方。 */
   confirmDelete?: (student: Student) => boolean;
+  /** 同 `confirmDelete`，省略即由导入面板自己弹替换确认框。 */
   confirmReplace?: (input: { currentCount: number; nextCount: number }) => boolean;
   hideDataExpression?: boolean;
   hideTemplateDownload?: boolean;
@@ -72,6 +75,15 @@ export function DataWorkspace({
   const [provinceDraft, setProvinceDraft] = useState("");
   const [filter, setFilter] = useState("");
   const [message, setMessage] = useState("");
+  const [pendingDeletion, setPendingDeletion] = useState<Student | null>(null);
+
+  const requestDeleteStudent = (student: Student) => {
+    if (confirmDelete) {
+      if (confirmDelete(student)) onDeleteStudent(student.id);
+      return;
+    }
+    setPendingDeletion(student);
+  };
 
   const filteredStudents = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
@@ -385,7 +397,7 @@ export function DataWorkspace({
                       <td><div className="student-row__buttons">
                         <IconButton label={`编辑 ${student.name}`} icon={<Pencil size={14} />} onClick={(event) => { event.stopPropagation(); startEditing(student); }} />
                         <IconButton label={`${isVisible ? "隐藏" : "显示"} ${student.name}`} icon={isVisible ? <EyeOff size={14} /> : <Eye size={14} />} onClick={(event) => { event.stopPropagation(); onToggleVisibility(student.id); }} />
-                        <IconButton label={`删除 ${student.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={(event) => { event.stopPropagation(); if (confirmDelete(student)) onDeleteStudent(student.id); }} />
+                        <IconButton label={`删除 ${student.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={(event) => { event.stopPropagation(); requestDeleteStudent(student); }} />
                       </div></td>
                     </>
                   )}
@@ -395,6 +407,21 @@ export function DataWorkspace({
           </tbody>
         </table>
       </div>
+
+      {pendingDeletion && (
+        <ConfirmDialog
+          title={`删除学生「${pendingDeletion.name}」？`}
+          description={`${pendingDeletion.university || "未填学校"} · ${pendingDeletion.city || "未填城市"}。删除后该记录会从名单和地图上一起消失。`}
+          confirmLabel="删除"
+          tone="danger"
+          onConfirm={() => {
+            onDeleteStudent(pendingDeletion.id);
+            setMessage(`已删除 ${pendingDeletion.name}`);
+            setPendingDeletion(null);
+          }}
+          onCancel={() => setPendingDeletion(null)}
+        />
+      )}
     </div>
   );
 }

@@ -5,8 +5,10 @@ import { parseStudentText, type ImportCandidate, type UnparsedLine } from "../li
 import { createImportTemplateSheets, parseExcelWorkbookRows, parseOcrLikeText } from "../lib/binary-import";
 import { buildRosterExportSheets, createRosterExportFilename } from "../lib/roster-export";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
+import { SPREADSHEET_IMPORT_LIMIT, checkImportFileSize } from "../lib/import-file-limits";
 import type { Student } from "../lib/project-data";
 import type { StudentIssue } from "../lib/student-data";
+import { ConfirmDialog } from "./workbench/ConfirmDialog";
 import { FileDropzone } from "./FileDropzone";
 import {
   ExcelRecognitionPanel,
@@ -66,6 +68,14 @@ function importOutcomeSummary(success: number, skipped: number): string {
   return `成功 ${success} · 跳过 ${skipped}`;
 }
 
+/** 等待用户在替换确认框里表态的一批导入结果，确认前不碰名单。 */
+type PendingReplace = {
+  students: Student[];
+  skipped: ImportSkip[];
+  warnings: string[];
+  currentCount: number;
+};
+
 export function DataImportPanel({
   students,
   onAppendStudents,
@@ -81,7 +91,8 @@ export function DataImportPanel({
   onReplaceStudents: (students: Student[]) => void;
   onMessage: (message: string) => void;
   requestAiParse?: (input: { text: string; source: "paste" | "ocr" }) => Promise<ParseDataResult>;
-  confirmReplace: (input: { currentCount: number; nextCount: number }) => boolean;
+  /** 省略即由面板自己弹确认框；测试与嵌入方可以注入同步判定来跳过对话框。 */
+  confirmReplace?: (input: { currentCount: number; nextCount: number }) => boolean;
   hideTemplateDownload?: boolean;
   defaultExpanded?: boolean;
 }) {
@@ -93,6 +104,7 @@ export function DataImportPanel({
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
+  const [pendingReplace, setPendingReplace] = useState<PendingReplace | null>(null);
   const consent = useAiUploadConsent(onMessage);
   const aiBusy = isAiParsing || consent.isAsking;
 
@@ -203,6 +215,12 @@ export function DataImportPanel({
 
   const handleExcelFile = async (file: File | null) => {
     if (!file) return;
+    // 体积在读入前就判掉：`XLSX.read` 是同步的，超大文件会把标签页卡到无法操作。
+    const oversized = checkImportFileSize(file, SPREADSHEET_IMPORT_LIMIT);
+    if (oversized) {
+      onMessage(oversized);
+      return;
+    }
     setExcelRecognition(null);
     try {
       const XLSX = await import("xlsx");
@@ -228,6 +246,20 @@ export function DataImportPanel({
     }
   };
 
+  const landImport = (mode: "append" | "replace", next: Student[], skipped: ImportSkip[], warnings: string[]) => {
+    if (mode === "replace") onReplaceStudents(next);
+    else onAppendStudents(next);
+    setReviewRows([]);
+    setExcelRecognition(null);
+    setUnparsedRows([]);
+    setImportText("");
+    // 导入已经落地，替换摘要只服务于"确认前"的提示，落地后清掉。
+    setReplaceConfirmation(null);
+    setPendingReplace(null);
+    setOutcome({ title: mode === "replace" ? "替换导入结果" : "追加导入结果", success: next.length, skipped, warnings });
+    onMessage(`已${mode === "replace" ? "替换" : "追加"} ${next.length} 条学生数据 · ${importOutcomeSummary(next.length, skipped.length)}`);
+  };
+
   const applyImport = (mode: "append" | "replace") => {
     const result = confirmImportCandidates(reviewRows);
     const next = result.students;
@@ -241,17 +273,14 @@ export function DataImportPanel({
     if (mode === "replace") {
       const confirmation = { currentCount: students.length, nextCount: next.length };
       setReplaceConfirmation(confirmation);
-      if (!confirmReplace(confirmation)) return;
-      onReplaceStudents(next);
-    } else onAppendStudents(next);
-    setReviewRows([]);
-    setExcelRecognition(null);
-    setUnparsedRows([]);
-    setImportText("");
-    // 导入已经落地，替换摘要只服务于"确认前"的提示，落地后清掉。
-    setReplaceConfirmation(null);
-    setOutcome({ title: mode === "replace" ? "替换导入结果" : "追加导入结果", success: next.length, skipped, warnings });
-    onMessage(`已${mode === "replace" ? "替换" : "追加"} ${next.length} 条学生数据 · ${importOutcomeSummary(next.length, skipped.length)}`);
+      if (confirmReplace) {
+        if (!confirmReplace(confirmation)) return;
+      } else {
+        setPendingReplace({ students: next, skipped, warnings, currentCount: students.length });
+        return;
+      }
+    }
+    landImport(mode, next, skipped, warnings);
   };
 
   const importDirectly = async () => {
@@ -392,6 +421,20 @@ export function DataImportPanel({
       {outcome && <ImportOutcomePanel outcome={outcome} summary={importOutcomeSummary(outcome.success, outcome.skipped.length)} />}
 
       {replaceConfirmation && <p className="panel-note data-message">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</p>}
+
+      {pendingReplace && (
+        <ConfirmDialog
+          title="替换全部学生名单？"
+          description={`当前 ${pendingReplace.currentCount} 条名单会被 ${pendingReplace.students.length} 条新记录整体覆盖，替换后无法用撤销找回被删掉的行。`}
+          confirmLabel="替换全部"
+          tone="danger"
+          onConfirm={() => landImport("replace", pendingReplace.students, pendingReplace.skipped, pendingReplace.warnings)}
+          onCancel={() => {
+            setPendingReplace(null);
+            onMessage("已取消替换，名单未改动");
+          }}
+        />
+      )}
     </>
   );
 }

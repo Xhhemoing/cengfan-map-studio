@@ -677,7 +677,6 @@ describe("AssetPanel", () => {
 
   it("deletes user textures from the library with usage badges", () => {
     const onDeleteUserAsset = vi.fn();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { container, root } = renderPanel({
       userAssets: [{
         id: "asset-user-1",
@@ -697,10 +696,49 @@ describe("AssetPanel", () => {
     flushSync(() => {
       deleteAsset.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
+    // 删除先弹自绘确认框，素材库这一步还没动。
+    expect(onDeleteUserAsset).not.toHaveBeenCalled();
+    const dialog = container.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("从素材库删除「浙江·西湖」？");
+    expect(dialog.textContent).toContain("使用中 · 浙江");
+
+    flushSync(() => {
+      dialog.querySelector<HTMLButtonElement>("button.danger-button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     expect(onDeleteUserAsset).toHaveBeenCalledWith("asset-user-1");
     expect(container.textContent).toContain("已从素材库删除：浙江·西湖");
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
 
-    confirmSpy.mockRestore();
+    root.unmount();
+  });
+
+  it("keeps the asset in the library when the delete dialog is dismissed", () => {
+    const onDeleteUserAsset = vi.fn();
+    const { container, root } = renderPanel({
+      userAssets: [{
+        id: "asset-user-1",
+        label: "浙江·西湖",
+        kind: "province-texture",
+        src: "data:image/png;base64,abc",
+        provinceIds: ["浙江省"],
+        source: "user",
+      }],
+      onDeleteUserAsset,
+    });
+
+    flushSync(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="删除素材 浙江·西湖"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const dialog = container.querySelector('[role="dialog"]')!;
+    flushSync(() => {
+      dialog.querySelector<HTMLElement>(".workbench-dialog__backdrop")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onDeleteUserAsset).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.textContent).toContain("浙江·西湖");
+
     root.unmount();
   });
 
