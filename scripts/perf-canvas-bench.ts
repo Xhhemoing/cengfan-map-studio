@@ -180,6 +180,8 @@ try {
       const preparedHorizontalPadding = preparedBodyItem?.x
         ?? project.cards.horizontalPadding
         ?? project.cards.padding;
+      // Typography-first chain, mirroring `cardFieldFontSize` in `prepared-card-content` — not the
+      // flow cursor of `destinationCardFlowContentStart`, which ignores `fieldTypography` on purpose.
       const preparedFieldFontSize = (field: "title" | "name" | "university" | "city") =>
         project.cards.fieldTypography?.[field]?.fontSize
         ?? (field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize);
