@@ -23,7 +23,7 @@ import {
   parseDataRequestSchema,
   proposeEditsRequestSchema,
 } from "./ai/schemas";
-import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomStore, type RoomStoreOptions } from "./collaboration";
+import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomStore, type RoomStoreOptions, type RoomStoreSnapshot } from "./collaboration";
 
 export const DEFAULT_PORT = 8787;
 
@@ -39,17 +39,12 @@ export interface RoomStreamStats {
 }
 
 /**
- * 房间存储的持久化接线面。快照内容对本模块完全不透明：它由房间存储（R3-4）
- * 生成并解释，服务器只负责在启动时把它交回去、在关停时把它取出来落盘。
+ * 房间存储的持久化接线面。快照内容由房间存储定义并解释，服务器只负责在启动时把它
+ * 交回去、在关停时把它取出来落盘，因此 restore/persist 直接沿用房间存储的类型。
  */
-export interface RoomStoreFactoryOptions extends RoomStoreOptions {
-  /** 上次关停落下的快照，原样交给房间存储重建房间。 */
-  restore?: unknown;
-  /** 房间存储用它把快照交出来；服务器负责写入持久化介质。 */
-  persist?: (snapshot: unknown) => void | Promise<void>;
-}
+export type RoomStoreFactoryOptions = RoomStoreOptions;
 
-/** 房间存储在 R3-4 落地 flush() 之前仍然可用：缺失时关停路径静默跳过。 */
+/** 注入的房间存储替身可以省略 flush()：缺失时关停路径静默跳过。 */
 export type PersistableRoomStore = RoomStore & { flush?: () => void | Promise<void> };
 
 export type AiServer = http.Server & {
@@ -188,6 +183,15 @@ function requestApiAuth(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * 只数快照信封里的房间条数：房间存储不暴露房间清单，实际存活数由它按 TTL 与
+ * 房间上限自行裁剪，这里给的是「交回去多少条」而不是活房间普查。
+ */
+function countRestorableRooms(snapshot: unknown): number {
+  if (!isRecord(snapshot)) return 0;
+  return snapshot.version === 1 && Array.isArray(snapshot.rooms) ? snapshot.rooms.length : 0;
 }
 
 function isWorkspaceSnapshot(value: unknown): value is Record<string, unknown> {
@@ -461,12 +465,13 @@ export function createAiServer(options: AiServerOptions = {}) {
     maxSubscribers: options.maxRoomSubscribers ?? Number(process.env.MAX_ROOM_SUBSCRIBERS ?? DEFAULT_MAX_ROOM_SUBSCRIBERS),
     roomTtlMs: options.roomTtlMs ?? Number(process.env.ROOM_TTL_MS ?? DEFAULT_ROOM_TTL_MS),
     invitationTtlMs: options.roomInvitationTtlMs ?? DEFAULT_ROOM_INVITATION_TTL_MS,
-    ...(options.roomSnapshot === undefined ? {} : { restore: options.roomSnapshot }),
+    // 磁盘上的 JSON 到这里仍是 unknown；createRoomStore 会按 version、凭证哈希、TTL
+    // 与房间上限逐条校验后才恢复，所以这里的断言不会把未经检查的数据放进房间状态。
+    ...(options.roomSnapshot === undefined ? {} : { restore: options.roomSnapshot as RoomStoreSnapshot }),
     ...(options.persistRooms ? { persist: options.persistRooms } : {}),
   };
-  // restore/persist 是 R3-4 给 createRoomStore 加的入参；它还没落地时这两个字段
-  // 会被现有实现忽略，房间照旧是进程内状态，其余行为完全不变。
   const roomStore: PersistableRoomStore = (options.roomStoreFactory ?? createRoomStore)(roomStoreOptions);
+  console.info(`restored ${countRestorableRooms(options.roomSnapshot)} collaboration room(s) from snapshot`);
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
   const maxRoomEventBytes = positiveBytes(
@@ -560,8 +565,7 @@ export function createAiServer(options: AiServerOptions = {}) {
   };
   const flushRooms = async () => {
     const flush = roomStore.flush;
-    // 与 R3-4 的耦合点：房间存储支持 flush() 时由关停路径强制落一次快照，
-    // 尚未支持时静默跳过（此时房间仍是进程内状态，重启后消失）。
+    // 关停路径强制落一次快照；注入的替身没有 flush() 时静默跳过（此时房间只剩进程内状态）。
     if (typeof flush !== "function") return;
     await flush.call(roomStore);
   };
@@ -1375,6 +1379,17 @@ export function attachServerLifecycle(server: AiServer, options: AttachServerLif
   return lifecycle;
 }
 
+/** 坏快照的隔离路径：已有 .bad 时带上时间戳，绝不覆盖上一次的事故现场。 */
+function roomSnapshotQuarantinePath(file: string): string {
+  if (!existsSync(`${file}.bad`)) return `${file}.bad`;
+  let candidate = `${file}.${Date.now()}.bad`;
+  // 同一毫秒内连续两次坏启动会撞名，再补一个序号即可保证唯一。
+  for (let attempt = 1; existsSync(candidate); attempt += 1) {
+    candidate = `${file}.${Date.now()}.${attempt}.bad`;
+  }
+  return candidate;
+}
+
 /** 缺失或损坏的房间快照一律当作「没有房间」：启动不能被一份坏文件挡住。 */
 async function loadRoomSnapshot(file: string): Promise<unknown> {
   let raw: string;
@@ -1387,7 +1402,18 @@ async function loadRoomSnapshot(file: string): Promise<unknown> {
   try {
     return JSON.parse(raw) as unknown;
   } catch {
-    console.warn(`房间快照无法解析，本次启动不恢复房间: ${file}`);
+    // 坏文件留在正常路径上会被下一次成功落盘直接覆盖，事故现场就此消失，
+    // 所以先把它挪到 .bad 旁路；挪不动也只是少一份证据，启动照常继续。
+    const quarantine = roomSnapshotQuarantinePath(file);
+    try {
+      await rename(file, quarantine);
+      console.warn(`房间快照无法解析，已隔离到 ${quarantine}，本次启动不恢复房间: ${file}`);
+    } catch (error) {
+      console.warn(
+        `房间快照无法解析且隔离失败（目标 ${quarantine}），本次启动不恢复房间: ${file}`,
+        error instanceof Error ? error.message : error,
+      );
+    }
     return undefined;
   }
 }
