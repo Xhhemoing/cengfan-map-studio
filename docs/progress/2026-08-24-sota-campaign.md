@@ -33,7 +33,8 @@
 | 10 | 已完成 | 混编 ×5 | core 层标记、协作冲突补齐、确认列表省份、卡片交互 |
 | 11 | 已完成 | 混编 ×5 | 去重后仍保留 core 投影、分组卡片覆盖、确认列表 a11y |
 | 12 | 已完成 | 混编 ×5 | 踢人撤令牌、预路由词表、PNG blob、偏好 hook |
-| 13 | 进行中 | fable ×5 | 达标后继续：全仓剩余缺口复查 |
+| 13 | 已完成 | fable ×5 | 达标后继续：全仓剩余缺口复查 |
+| 14 | 进行中 | opus ×5 | 按第 13 轮结论落地最高价值切片 |
 
 ### 第 1 轮工作流（只读）
 
@@ -83,6 +84,27 @@
 - 2026-08-24：第 12 轮落地完成并合入专属分支。
 - 2026-08-24：第 5 轮复查跟进：Provider 级过期看门狗 + closed 房间 leave。
 - 2026-08-24：启动第 13 轮 5 个只读复查（AI / 画布 / 数据 / 协作与 API / 工作台）。
+- 2026-08-24：第 13 轮五区复查齐；启动第 14 轮 5 个落地子代理。
+
+## 第 13 轮结论（5 份只读复查）
+
+1. **协作/API**：`setAccess` 用可伪造 clientId 判房主，受邀者可关房或把房主顶下线；踢人不断 SSE，被踢者仍收全量工程。P0：身份判定改看 role。
+2. **导入导出**：非首行表头会变成假学生；带标签 OCR 行被吞成表头且 unparsed 为空；LLM 补认行丢掉向/省份；上送名单无告知。
+3. **工作台**：面板宽度 hook/shell 双源，resize 覆写拖拽值；AI 草稿在实例本地，关抽屉即丢；全局设置分支不挂 StatusBar。
+4. **画布**：`check_health` 不豁免同锚点花束、AABB 遮挡与 `allowMapOverlap` 冲突；emblem-list 拖拽改写装饰 path；求解 pending 整层卸卡片。
+5. **AI**：`rejectedCount` 跨任务毒化续聊；finish 总结不写入会话；预路由见过任何 tool 就永久关闭。
+
+本轮不落地：P2 视觉核对、SSE 重订阅、parse-data 同意框、健康检查语义（避免与 AI 会话测试抢文件）。
+
+## 第 14 轮落地（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 协作身份 | `server/collaboration.ts`、`server/collaboration.test.ts`、`server/index.test.ts`（仅新增伪造 clientId 用例） |
+| 导入零静默 | `src/lib/import-data.ts`、`src/lib/binary-import.ts` 及对应测试 |
+| AI 续聊三件 | `server/ai/agent-loop.ts`、`src/lib/agent-session.ts`、`server/ai/local-preroute.ts` 及对应测试 |
+| 画布拖拽与 pending | `src/components/canvas/PosterCanvas.tsx`、`useCardLayoutWorker.ts` 及对应测试 |
+| 面板宽度单源 | `src/lib/use-studio-preferences.ts`、`src/components/StudioEditorShell.tsx`、`src/App.tsx`（仅透传）、对应测试 |
 
 ## 第 2 轮已合入
 
