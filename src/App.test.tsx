@@ -6,6 +6,7 @@ import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { createProjectDocument, serializeProjectDocument } from "./lib/project-document";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
 import { sampleStudents } from "./lib/project-data";
+import { COLLABORATION_SEND_DELAY_MS } from "./lib/app-constants";
 import { createProjectPackage } from "./lib/project-package";
 
 import { LEGACY_EDITOR_STORAGE_KEY, WORKSPACE_SESSION_STORAGE_KEY } from "./lib/workspace-session";
@@ -1999,5 +2000,284 @@ describe("Topbar action layering (T4)", () => {
     const container = renderPublicApp();
     const themeGroup = container.querySelector('.topbar-actions [role="group"][aria-label="界面主题"]');
     expect(themeGroup?.className).toContain("topbar-action-group--theme");
+  });
+});
+
+describe("Collaboration send effect recovery (R2-3)", () => {
+  interface UploadedOperation {
+    type: string;
+    path: string[];
+    value?: unknown;
+    item?: { id: string };
+    itemId?: string;
+  }
+
+  interface UploadedTransaction {
+    txId: string;
+    clientId: string;
+    baseVersion: number;
+    operations: UploadedOperation[];
+    snapshot?: unknown;
+  }
+
+  class ScriptedEventSource {
+    static instances: ScriptedEventSource[] = [];
+    listeners = new Map<string, ((event: MessageEvent<string>) => void)[]>();
+    onerror: (() => void) | null = null;
+    closed = false;
+
+    constructor(public readonly url: string) {
+      ScriptedEventSource.instances.push(this);
+    }
+
+    addEventListener(type: string, handler: (event: MessageEvent<string>) => void): void {
+      const handlers = this.listeners.get(type) ?? [];
+      handlers.push(handler);
+      this.listeners.set(type, handlers);
+    }
+
+    close(): void {
+      this.closed = true;
+    }
+
+    emit(type: string, data: unknown): void {
+      flushSync(() => {
+        for (const handler of this.listeners.get(type) ?? []) handler({ data: JSON.stringify(data) } as MessageEvent<string>);
+      });
+    }
+  }
+
+  function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  }
+
+  function ownedRoom(roomId: string): Response {
+    return json({
+      room: { id: roomId, version: 0, ready: true, members: [{ clientId: "c-owner", role: "owner", joinedAt: "t0", lastSeenAt: "t0" }] },
+      access: { accessToken: "owner-token", role: "owner", participantId: "p1", id: "p1", displayName: "创建者" },
+    });
+  }
+
+  function collaborationStatus(container: HTMLElement): HTMLElement | null {
+    return container.querySelector<HTMLElement>("small[data-collaboration-status]");
+  }
+
+  async function createRoomFromMenu(container: HTMLElement): Promise<void> {
+    click(container.querySelector('[aria-label="增量在线协作"]')!);
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "创建房间")!);
+    await vi.waitFor(() => expect(container.textContent).toContain("房间已创建"));
+    await vi.waitFor(() => expect(ScriptedEventSource.instances).toHaveLength(1));
+  }
+
+  /** 走真实编辑路径产生一次增量:保存后回到编辑器,协作面板重新可见。 */
+  function renameStudent(container: HTMLElement, from: string, to: string): void {
+    openPeopleData(container);
+    click(container.querySelector<HTMLButtonElement>(`button[aria-label="编辑 ${from}"]`)!);
+    changeInput(container.querySelector<HTMLInputElement>('input[aria-label="编辑学生名称"]')!, to);
+    click(container.querySelector<HTMLButtonElement>(`button[aria-label="保存 ${from}"]`)!);
+    leaveFocusedWorkspace(container);
+    openRailAdvancedTab(container);
+  }
+
+  function pathsOf(transaction: UploadedTransaction): string[] {
+    return transaction.operations.map((operation) => operation.path.join("."));
+  }
+
+  function stubStream(): () => void {
+    const originalEventSource = globalThis.EventSource;
+    ScriptedEventSource.instances = [];
+    vi.stubGlobal("EventSource", ScriptedEventSource);
+    return () => {
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
+    };
+  }
+
+  it("recovers from a version conflict by backfilling, re-diffing and resubmitting once", async () => {
+    const container = renderApp();
+    const roomId = "CONF01";
+    const restoreStream = stubStream();
+    const originalFetch = globalThis.fetch;
+    const uploads: UploadedTransaction[] = [];
+    const backfills: string[] = [];
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+      if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+        const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+        if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        uploads.push(body);
+        // 第一笔增量撞上他人已经提交的 v2。
+        if (uploads.length === 1) return json({ error: { code: "VERSION_CONFLICT", message: "版本冲突", currentVersion: 2 } }, 409);
+        return json({ id: roomId, version: 3, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+      }
+      if (url.includes(`/api/rooms/${roomId}/operations`)) {
+        backfills.push(url);
+        return json({ id: roomId, version: 2, afterVersion: 1, operations: [{ type: "set", path: ["renderSettings", "fixedFps"], value: 45 }] });
+      }
+      if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+      return json({});
+    });
+    globalThis.fetch = request as unknown as typeof fetch;
+    try {
+      await createRoomFromMenu(container);
+      renameStudent(container, "林舟", "冲突林舟");
+
+      await vi.waitFor(() => expect(uploads).toHaveLength(2), { timeout: 5_000 });
+      expect(uploads[0]!.baseVersion).toBe(1);
+      expect(backfills).toHaveLength(1);
+      expect(backfills[0]).toContain("afterVersion=1");
+      // 重投必须落在补齐后的版本上,并且只带本地增量:把远端刚落地的修改当成本地改动
+      // 重新上传就等于静默回滚别人的编辑。
+      expect(uploads[1]!.baseVersion).toBe(2);
+      expect(uploads[1]!.txId).not.toBe(uploads[0]!.txId);
+      expect(pathsOf(uploads[1]!)).not.toContain("renderSettings.fixedFps");
+      expect(pathsOf(uploads[1]!)).toContain("project.students");
+      await vi.waitFor(() => expect(collaborationStatus(container)?.getAttribute("data-collaboration-status")).toBe("connected"));
+      expect(container.textContent).not.toContain("请重新加入房间");
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreStream();
+    }
+  });
+
+  it("bounds conflict recovery to a single retry instead of resubmitting forever", async () => {
+    const container = renderApp();
+    const roomId = "CONF02";
+    const restoreStream = stubStream();
+    const originalFetch = globalThis.fetch;
+    const uploads: UploadedTransaction[] = [];
+    const backfills: string[] = [];
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+      if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+        const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+        if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        uploads.push(body);
+        return json({ error: { code: "VERSION_CONFLICT", message: "版本冲突", currentVersion: uploads.length + 1 } }, 409);
+      }
+      if (url.includes(`/api/rooms/${roomId}/operations`)) {
+        backfills.push(url);
+        return json({ id: roomId, version: 2, afterVersion: 1, operations: [{ type: "set", path: ["renderSettings", "fixedFps"], value: 45 }] });
+      }
+      if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+      return json({});
+    });
+    globalThis.fetch = request as unknown as typeof fetch;
+    try {
+      await createRoomFromMenu(container);
+      renameStudent(container, "林舟", "顽固冲突林舟");
+
+      await vi.waitFor(() => expect(uploads).toHaveLength(2), { timeout: 5_000 });
+      await vi.waitFor(() => expect(collaborationStatus(container)?.getAttribute("data-collaboration-status")).toBe("conflict"));
+      await new Promise((resolve) => setTimeout(resolve, COLLABORATION_SEND_DELAY_MS * 3));
+      expect(uploads).toHaveLength(2);
+      expect(backfills).toHaveLength(1);
+      expect(container.textContent).not.toContain("请重新加入房间");
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreStream();
+    }
+  });
+
+  it("skips its own echoed operations instead of folding them into the baseline twice", async () => {
+    const container = renderApp();
+    const roomId = "ECHO01";
+    const restoreStream = stubStream();
+    const originalFetch = globalThis.fetch;
+    const uploads: UploadedTransaction[] = [];
+    let releaseFirstUpload: (() => void) | null = null;
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+      if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+        const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+        if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        uploads.push(body);
+        if (uploads.length > 1) return json({ id: roomId, version: 5, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        // 回执压在流后面:自己的 ops 事件先回来,再叠一次远端修改。
+        return new Promise<Response>((resolve) => {
+          releaseFirstUpload = () => resolve(json({ id: roomId, version: 2, ready: true, updatedBy: body.clientId, lastTxId: body.txId }));
+        });
+      }
+      if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+      return json({});
+    });
+    globalThis.fetch = request as unknown as typeof fetch;
+    try {
+      await createRoomFromMenu(container);
+      renameStudent(container, "林舟", "回声林舟");
+      await vi.waitFor(() => expect(uploads).toHaveLength(1), { timeout: 5_000 });
+
+      const own = uploads[0]!;
+      const stream = ScriptedEventSource.instances[0]!;
+      // 服务端把本客户端的事务广播回来(updatedBy/lastTxId 就是本次事务)。
+      stream.emit("snapshot", { id: roomId, version: 2, updatedBy: own.clientId, lastTxId: own.txId, operations: own.operations });
+      // 紧接着另一位成员删掉了同一名学生。
+      stream.emit("snapshot", {
+        id: roomId,
+        version: 3,
+        updatedBy: "c-remote",
+        lastTxId: "tx-remote",
+        operations: [{ type: "array-remove", path: ["project", "students"], itemId: "student-1" }],
+      });
+      releaseFirstUpload!();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      renameStudent(container, sampleStudents[1]!.name, "回声林二");
+      await vi.waitFor(() => expect(uploads).toHaveLength(2), { timeout: 5_000 });
+
+      // 回声已经把这批 ops 并进基线;回执再叠一次会让被删掉的学生在基线里复活,
+      // 下一次 diff 就会替远端补一条删除,等于把别人的删除重放回去。
+      expect(uploads[1]!.operations.filter((operation) => operation.type === "array-remove")).toHaveLength(0);
+      expect(uploads[1]!.baseVersion).toBe(3);
+      expect(container.textContent).not.toContain("回声林舟");
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreStream();
+    }
+  });
+
+  it("ignores an in-flight acknowledgement once the room has been left", async () => {
+    const container = renderApp();
+    const roomId = "LEAVE1";
+    const restoreStream = stubStream();
+    const originalFetch = globalThis.fetch;
+    const uploads: UploadedTransaction[] = [];
+    let releaseUpload: (() => void) | null = null;
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/rooms")) return ownedRoom(roomId);
+      if (url.endsWith(`/api/rooms/${roomId}/transactions`)) {
+        const body = JSON.parse(String(init?.body)) as UploadedTransaction;
+        if (body.snapshot) return json({ id: roomId, version: 1, ready: true, updatedBy: body.clientId, lastTxId: body.txId });
+        uploads.push(body);
+        return new Promise<Response>((resolve) => {
+          releaseUpload = () => resolve(json({ id: roomId, version: 2, ready: true, updatedBy: body.clientId, lastTxId: body.txId }));
+        });
+      }
+      if (url.endsWith("/events-ticket")) return json({ ticket: `ticket-${ScriptedEventSource.instances.length}` }, 201);
+      return json({});
+    });
+    globalThis.fetch = request as unknown as typeof fetch;
+    try {
+      await createRoomFromMenu(container);
+      renameStudent(container, "林舟", "离场林舟");
+      await vi.waitFor(() => expect(uploads).toHaveLength(1), { timeout: 5_000 });
+
+      click(container.querySelector<HTMLButtonElement>("button.collaboration-leave")!);
+      expect(collaborationStatus(container)?.textContent).toContain("已断开");
+      releaseUpload!();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // 房间已经退出:在途回执既不能把面板改回「已连接」,也不该再写任何协作状态。
+      expect(collaborationStatus(container)?.getAttribute("data-collaboration-status")).toBe("idle");
+      expect(collaborationStatus(container)?.textContent).toContain("已断开");
+      expect(container.textContent).not.toContain("增量同步已完成");
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreStream();
+    }
   });
 });
