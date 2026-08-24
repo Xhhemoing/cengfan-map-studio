@@ -931,6 +931,8 @@ export function createAiServer(options: AiServerOptions = {}) {
         }, roomHeartbeatIntervalMs);
         request.on("close", teardownStream);
         response.on("close", teardownStream);
+        // 连接可能在处理函数排队期间就已断开，此时 close 事件不会再次触发。
+        if (request.destroyed || response.destroyed || response.writableEnded) teardownStream();
         return;
       }
 
