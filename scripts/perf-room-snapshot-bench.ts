@@ -1,0 +1,105 @@
+/**
+ * Collaboration room-store snapshot/serialization micro-benchmark.
+ *
+ * Run with: npx tsx scripts/perf-room-snapshot-bench.ts
+ *
+ * Measures the synchronous `createRoomStore().flush()` snapshot construction
+ * and the persist callback's `JSON.stringify` separately for 1-3 rooms whose
+ * test-only project packages contain 5, 20, or 40 MiB payload strings. Each
+ * result is the median of five runs after one warmup.
+ *
+ * Limits: package inflation is synthetic, setup/allocation and persistence I/O
+ * are excluded, and timings are machine/GC dependent. This measures event-loop
+ * occupancy during snapshot construction and JSON serialization, not peak
+ * memory or storage latency.
+ */
+import { performance } from "node:perf_hooks";
+import { createRoomStore, type RoomStoreSnapshot } from "../server/collaboration";
+
+const RUNS = 5;
+const ROOM_COUNTS = [1, 2, 3] as const;
+const PACK_MIB = [5, 20, 40] as const;
+const BYTES_PER_MIB = 1024 * 1024;
+
+interface Sample {
+  snapshotMs: number;
+  stringifyMs: number;
+  outputBytes: number;
+}
+
+function median(values: number[]): number {
+  return [...values].sort((left, right) => left - right)[Math.floor(values.length / 2)]!;
+}
+
+function makeTestPackage(packMiB: number, roomIndex: number) {
+  return {
+    kind: "cengfan-project-package",
+    version: 2,
+    exportedAt: "2026-08-24T00:00:00.000Z",
+    project: {
+      id: `snapshot-bench-${roomIndex}`,
+      title: "snapshot benchmark",
+    },
+    // Test-only inflation field: production package types and schemas remain unchanged.
+    benchmarkPayload: "x".repeat(packMiB * BYTES_PER_MIB),
+  };
+}
+
+async function measureCell(roomCount: number, packMiB: number): Promise<Sample> {
+  let stringifyMs = Number.NaN;
+  let outputBytes = 0;
+  let nextId = 1;
+  const store = createRoomStore({
+    maxRooms: ROOM_COUNTS.at(-1),
+    generateId: () => `BENCH${nextId++}`,
+    generateSecret: () => `snapshot-bench-secret-${nextId}`,
+    persist: (snapshot: RoomStoreSnapshot) => {
+      const startedAt = performance.now();
+      const serialized = JSON.stringify(snapshot);
+      stringifyMs = performance.now() - startedAt;
+      outputBytes = Buffer.byteLength(serialized);
+    },
+  });
+
+  for (let roomIndex = 0; roomIndex < roomCount; roomIndex += 1) {
+    store.create(makeTestPackage(packMiB, roomIndex), {
+      clientId: `owner-${roomIndex}`,
+      displayName: `Owner ${roomIndex}`,
+    });
+  }
+
+  // Warm up structured cloning, promise scheduling, and JSON serialization.
+  await store.flush();
+
+  const snapshotSamples: number[] = [];
+  const stringifySamples: number[] = [];
+  for (let run = 0; run < RUNS; run += 1) {
+    stringifyMs = Number.NaN;
+    const startedAt = performance.now();
+    const pendingFlush = store.flush();
+    const snapshotMs = performance.now() - startedAt;
+    await pendingFlush;
+    if (!Number.isFinite(stringifyMs)) {
+      throw new Error("Persist callback did not record JSON.stringify timing");
+    }
+    snapshotSamples.push(snapshotMs);
+    stringifySamples.push(stringifyMs);
+  }
+
+  return {
+    snapshotMs: median(snapshotSamples),
+    stringifyMs: median(stringifySamples),
+    outputBytes,
+  };
+}
+
+console.log("| rooms | pack MiB/room | payload MiB | snapshot median ms | stringify median ms | occupancy ms | output bytes |");
+console.log("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+for (const roomCount of ROOM_COUNTS) {
+  for (const packMiB of PACK_MIB) {
+    const result = await measureCell(roomCount, packMiB);
+    console.log(
+      `| ${roomCount} | ${packMiB} | ${roomCount * packMiB} | ${result.snapshotMs.toFixed(2)} | ${result.stringifyMs.toFixed(2)} | ${(result.snapshotMs + result.stringifyMs).toFixed(2)} | ${result.outputBytes} |`,
+    );
+  }
+}
