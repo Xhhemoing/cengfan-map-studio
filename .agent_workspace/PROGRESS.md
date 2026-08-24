@@ -19,7 +19,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | --- | --- | --- | --- | --- |
 | 1 | CLOSED | T1–T10 + R2-0 | — | Hotfix-after full suite 1391 pass / 1 skip |
 | 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
-| 3 | MERGED_PENDING_FULL_SUITE | R3-1–R3-10 | — | All 10 merged; R3-2+R3-3 coupled 174 pass; full suite + fable next |
+| 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
+| 4 | IN_PROGRESS | — | — | R4-1 type hotfix merges first; then R4-2–R4-10 |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -46,6 +47,13 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - Fable: 10/10 ACCEPT, no merge blocker. Review `.agent_workspace/round-2-review.md`.
 - Lint: 1 unused-assign in `server/collaboration.test.ts` fixed; 5 pre-existing react-refresh warnings remain.
 - Round 3 briefing: `.agent_workspace/round-2-briefing.md`.
+
+## Round 3 closeout
+
+- Vitest on merged tree: **169 files, 1497 passed / 2 skipped**. Lint not re-run this closeout (orchestrator serializes via `run-heavy.mjs`).
+- **Compile blocker:** `tsc -p tsconfig.node.json --noEmit` fails (TS2430/TS2345) because R3-5 redeclared `restore?: unknown` against R3-4's `RoomStoreSnapshot`. Vitest/eslint cannot see it. Do not revert R3-5; R4-1 is the type-seam hotfix and merges first.
+- Fable: `.agent_workspace/round-3-review.md`. Briefing: `.agent_workspace/round-3-briefing.md`.
+- PR #14 stays **draft** until R4-1 + `tsc -b` green, then full suite + lint + description updates (rooms survive restart; refused landing no version bump; `collaboration-rooms.json`; R3-9 bench unverified).
 
 ## Round Briefings
 
