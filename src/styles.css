@@ -3501,6 +3501,65 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   border-radius: 5px;
   white-space: nowrap;
 }
+/* 存储降级提示是状态播报,不是可点卡片:不复用 .workbench-resume 的 hover 高亮与按压缩放。 */
+.workbench-storage-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto 16px;
+  padding: 14px 16px;
+  color: var(--editor-ink);
+  text-align: left;
+  background: color-mix(in srgb, var(--editor-warning, #b8791f) 10%, var(--editor-surface-raised, #ffffff));
+  border: 1px solid color-mix(in srgb, var(--editor-warning, #b8791f) 38%, var(--editor-line, #d3dce2));
+  border-radius: 8px;
+  cursor: default;
+}
+.workbench-storage-notice-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  color: var(--editor-warning, #b8791f);
+  background: color-mix(in srgb, var(--editor-warning, #b8791f) 16%, var(--editor-surface-raised, #ffffff));
+  border: 1px solid color-mix(in srgb, var(--editor-warning, #b8791f) 30%, var(--editor-line, #d3dce2));
+  border-radius: 5px;
+  place-items: center;
+}
+.workbench-storage-notice-body { display: grid; flex: 1; min-width: 0; gap: 3px; }
+.workbench-storage-notice-body strong { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.workbench-storage-notice-body small { font-size: 12px; color: var(--editor-ink-muted); line-height: 1.5; }
+.workbench-storage-notice-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+/* 每个按钮只导出一个工程:一次用户手势一次下载,见 ProjectWorkbench 中的说明。 */
+.workbench-storage-notice-export {
+  max-width: 100%;
+  padding: 6px 11px;
+  overflow: hidden;
+  color: var(--editor-ink);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--editor-surface-raised, #ffffff);
+  border: 1px solid color-mix(in srgb, var(--editor-warning, #b8791f) 34%, var(--editor-line, #d3dce2));
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 140ms ease-out, border-color 140ms ease-out;
+}
+.workbench-storage-notice-export:hover {
+  background: color-mix(in srgb, var(--editor-warning, #b8791f) 14%, var(--editor-surface-raised, #ffffff));
+  border-color: var(--editor-warning, #b8791f);
+}
+.workbench-storage-notice-export:focus-visible { outline: 2px solid var(--editor-focus, #d6b56d); outline-offset: 2px; }
 .workbench-error--recover { display: grid; justify-items: center; gap: 10px; padding: 48px 24px; color: var(--editor-ink); text-align: center; background: var(--editor-surface-raised, #ffffff); border: 1px solid var(--editor-line, #d3dce2); border-radius: 8px; }
 .workbench-error--recover .workbench-brand-mark { width: 48px; height: 48px; margin-bottom: 4px; }
 .workbench-error--recover strong { font-size: 16px; }
