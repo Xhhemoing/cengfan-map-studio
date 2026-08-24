@@ -51,6 +51,30 @@ describe("card layout cache", () => {
     })).not.toBe(base);
   });
 
+  it("does not reuse a key for equal-size polygon geometry with different coordinates", () => {
+    const firstGeometry = [{
+      rings: [[{ x: 0, y: 0 }, { x: 2, y: 2 }, { x: 4, y: 0 }]],
+      bounds: { x: 0, y: 0, width: 4, height: 2 },
+    }];
+    const sameGeometry = firstGeometry.map((polygon) => ({
+      ...polygon,
+      rings: polygon.rings.map((ring) => ring.map((point) => ({ ...point }))),
+      bounds: { ...polygon.bounds },
+    }));
+    const differentGeometry = [{
+      rings: [[{ x: 0, y: 0 }, { x: 3, y: 1 }, { x: 3, y: 1 }]],
+      bounds: { x: 0, y: 0, width: 4, height: 2 },
+    }];
+    const keyFor = (occupiedPolygons: CardLayoutBounds["occupiedPolygons"]) => createCardLayoutCacheKey({
+      cards,
+      bounds: { ...bounds, occupiedPolygons },
+      options,
+    });
+
+    expect(keyFor(sameGeometry)).toBe(keyFor(firstGeometry));
+    expect(keyFor(differentGeometry)).not.toBe(keyFor(firstGeometry));
+  });
+
   it("evicts the least recently used result after reaching its capacity", () => {
     const cache = new CardLayoutCache(2);
     cache.set("a", result);
