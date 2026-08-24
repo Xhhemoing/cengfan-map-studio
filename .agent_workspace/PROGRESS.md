@@ -17,7 +17,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | AUDIT_IN_PROGRESS | — | — | gpt-sol baselines ready; fable 10-task audit still in flight |
+| 1 | IMPLEMENTING | — | — | 10 disjoint tasks dispatched after fable audit + gpt-sol baselines |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -33,4 +33,11 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 ## Round Briefings
 
-(Injected into the next round's agents.)
+### Round 1 briefing (for implementers)
+
+- Audit: `.agent_workspace/round-1-audit.md`
+- Baseline: `.agent_workspace/round-1-baseline.md`
+- Tasks T1–T10 have exclusive writable files; do not edit shared read-only modules (`scene-document.ts`, `import-data.ts`, `project-package.ts`, `app-constants.ts`, `ids.ts`).
+- Wire format frozen: SSE `event: snapshot|members|closed`, one-shot ticket param.
+- Gate layout on 400-card median 95.2ms and a new obstacle-aware bench; never gate on 36-card.
+- Full `npm test` is orchestrator-only after merge.
