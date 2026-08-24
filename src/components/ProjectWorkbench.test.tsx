@@ -48,6 +48,16 @@ describe("ProjectWorkbench", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("示例：2026届毕业去向"));
   });
 
+  it("renders card counts from the list metadata without fetching packs", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const getSpy = vi.spyOn(store, "get");
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector(".workbench-card-count")).not.toBeNull());
+    expect(container.querySelector(".workbench-card-count")?.textContent).toBe("12");
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+
   it("navigates to the editor when a card is opened", async () => {
     const store = createMemoryProjectStore();
     const sample = createSampleProject();

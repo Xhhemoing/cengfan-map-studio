@@ -1,8 +1,9 @@
 import { Copy, FolderOpen, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
-import type { StoredProject } from "../../lib/project-store";
+import type { ProjectListItem } from "../../lib/project-store";
 
 export function ProjectCard({ project, updatedAtLabel, menuOpen, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete }: {
-  project: StoredProject;
+  /** 元数据视图即可渲染卡片;`StoredProject` 也满足这个形状。 */
+  project: Pick<ProjectListItem, "name" | "pack">;
   updatedAtLabel: string;
   menuOpen: boolean;
   onOpen: () => void;

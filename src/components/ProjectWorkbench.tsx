@@ -212,7 +212,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       {localEntry && <ContinueEditingCard entry={localEntry} onResume={() => void continueEditing()} />}
 
       <ProjectGrid
-        projects={sorted as unknown as StoredProject[]}
+        projects={sorted}
         loading={loading}
         hasError={Boolean(error)}
         openMenuId={openMenuId}
