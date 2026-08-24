@@ -185,6 +185,23 @@ function roomHeaders(accessToken: string, headers: Record<string, string> = {}):
   return { "X-Cengfan-Room-Token": accessToken, ...headers };
 }
 
+/** 事务 ack：正在编辑的成员在稳态下唯一会反复收到的响应。 */
+async function postRoomTransaction(
+  origin: string,
+  roomId: string,
+  accessToken: string,
+  body: { txId: string; clientId: string; baseVersion: number; snapshot?: unknown },
+  minimal = false,
+): Promise<PersistenceEnvelope & { version: number; snapshot?: unknown }> {
+  const response = await fetch(`${origin}/api/rooms/${roomId}/transactions`, {
+    method: "POST",
+    headers: roomHeaders(accessToken, { "Content-Type": "application/json", ...(minimal ? { Prefer: "return=minimal" } : {}) }),
+    body: JSON.stringify(body),
+  });
+  expect(response.status).toBe(200);
+  return await response.json() as PersistenceEnvelope & { version: number; snapshot?: unknown };
+}
+
 async function createEventsTicket(origin: string, roomId: string, accessToken: string): Promise<string> {
   const response = await fetch(`${origin}/api/rooms/${roomId}/events-ticket`, {
     method: "POST",
@@ -2417,6 +2434,106 @@ describe("unified application server", () => {
     await server.flushRooms!();
     // 磁盘恢复后连击结束：再报失败就是把一个已经不成立的事故一直贴在响应上。
     expect((await readSnapshot()).persistence).toEqual({ outcome: "persisted", at: expect.any(Number) });
+  });
+
+  it("carries an active persist failure streak into the transaction acknowledgement", async () => {
+    const succeededAt = 1_700_000_003_000;
+    const failedAt = 1_700_000_004_000;
+    let outcome: RoomPersistOutcome = { skippedIds: [], trimmedIds: [], at: succeededAt };
+    const server = createAiServer({
+      roomStoreFactory: (storeOptions) => {
+        const store = createRoomStore({ ...storeOptions, generateId: () => "ACKROOM" });
+        return { ...store, lastPersistOutcome: () => outcome };
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const token = created.access.accessToken;
+
+    const healthy = await postRoomTransaction(origin, "ACKROOM", token, {
+      txId: "ack-healthy", clientId: "client-a", baseVersion: 0, snapshot: { title: "磁盘还好" },
+    });
+    expect(healthy.persistence).toBeUndefined();
+    expect(healthy.persistedAtLastFlush).toBeUndefined();
+
+    outcome = { ...outcome, lastFailure: { at: failedAt, message: "EROFS: read-only file system" } };
+
+    // 创建/加入/快照都会报连击，唯独这条 ack 不报：SSE 对落盘一言不发，
+    // 而正在编辑的成员稳态下只会反复收到 ack，中途开始的失败连击永远追不上他。
+    const full = await postRoomTransaction(origin, "ACKROOM", token, {
+      txId: "ack-full", clientId: "client-a", baseVersion: 1, snapshot: { title: "磁盘坏了" },
+    });
+    expect(full.persistence).toBeUndefined();
+    expect(full.persistedAtLastFlush).toBeUndefined();
+
+    const minimal = await postRoomTransaction(origin, "ACKROOM", token, {
+      txId: "ack-minimal", clientId: "client-a", baseVersion: 2, snapshot: { title: "还是坏的" },
+    }, true);
+    expect(minimal.snapshot).toBeUndefined();
+    expect(minimal.persistence).toBeUndefined();
+    expect(minimal.persistedAtLastFlush).toBeUndefined();
+  });
+
+  it("drops the failure trace from the transaction acknowledgement after the next successful flush", async () => {
+    let failing = false;
+    const server = createAiServer({
+      persistRooms: () => {
+        if (failing) throw new Error("EROFS: read-only file system");
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "真落一次盘" });
+    let baseVersion = 0;
+    const acknowledge = async (txId: string): Promise<PersistenceEnvelope> => (
+      await postRoomTransaction(origin, created.room.id, created.access.accessToken, {
+        txId, clientId: "client-a", baseVersion: baseVersion++, snapshot: { title: txId },
+      })
+    );
+
+    await server.flushRooms!();
+    expect((await acknowledge("ack-after-success")).persistence).toBeUndefined();
+
+    failing = true;
+    await expect(server.flushRooms!()).rejects.toThrow(/read-only file system/);
+    expect((await acknowledge("ack-during-streak")).persistence).toBeUndefined();
+
+    failing = false;
+    await server.flushRooms!();
+    expect((await acknowledge("ack-after-heal")).persistence).toBeUndefined();
+  });
+
+  it("reports no flush timestamp on /api/health before the first successful persist", async () => {
+    let failing = true;
+    const server = createAiServer({
+      persistRooms: () => {
+        if (failing) throw new Error("EROFS: read-only file system");
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const readLastFlush = async () => (
+      await fetch(`${origin}/api/health`).then((response) => response.json()) as {
+        rooms: { lastFlush: { skippedIds: string[]; trimmedIds: string[]; at: number | null; lastFailure?: { at: number; message: string } } | null };
+      }
+    ).rooms.lastFlush;
+
+    await createCollaborationRoom(origin, { title: "从未落盘" });
+    await expect(server.flushRooms!()).rejects.toThrow(/read-only file system/);
+
+    // at: 0 是「从未成功落过盘」，原样发出去在朴素解析器眼里就是 1970 年的假事实。
+    expect(await readLastFlush()).toEqual({
+      skippedIds: [],
+      trimmedIds: [],
+      at: 0,
+      lastFailure: { at: expect.any(Number), message: "EROFS: read-only file system" },
+    });
+
+    failing = false;
+    await server.flushRooms!();
+    // 只有 0 会被改写：真成功过的时刻必须原样发出去。
+    expect(await readLastFlush()).toEqual({ skippedIds: [], trimmedIds: [], at: expect.any(Number) });
   });
 
   it("quarantines a snapshot that parses but carries an unusable envelope", async () => {
