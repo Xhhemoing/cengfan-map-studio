@@ -1,8 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { AssetPanel } from "./AssetPanel";
 import { ProvinceInspector } from "./inspector/ProvinceInspector";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function createTrackedRoot(container: HTMLElement): Root {
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return root;
+}
+
+// An assertion throwing before an inline unmount leaves the root mounted for the rest of
+// the run, so React's scheduler can wake up against a torn-down jsdom.
+afterEach(() => {
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 function typeValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -14,7 +33,7 @@ describe("province texture size controls", () => {
   it("commits uniform number and slider edits on blur", () => {
     const onPatch = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(
       <AssetPanel
         onApplyBackground={vi.fn()}
@@ -38,13 +57,12 @@ describe("province texture size controls", () => {
     expect(onPatch).not.toHaveBeenCalled();
     flushSync(() => slider.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ enabled: true, width: 145, height: 80 });
-    root.unmount();
   });
 
   it("defers inspector scale input until blur", () => {
     const onPatch = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(
       <ProvinceInspector
         province="浙江省"
@@ -58,6 +76,5 @@ describe("province texture size controls", () => {
     expect(onPatch).not.toHaveBeenCalled();
     flushSync(() => number.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ appearance: expect.objectContaining({ scale: 1.35 }) });
-    root.unmount();
   });
 });

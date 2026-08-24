@@ -1,14 +1,33 @@
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Palette, Users } from "lucide-react";
 import { ActionButton, PanelHeader, PanelSection, SegmentedNav, ToolbarGroup, WorkspaceNav } from "./StudioUi";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function createTrackedRoot(container: HTMLElement): Root {
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return root;
+}
+
+// An assertion throwing before an inline unmount leaves the root mounted for the rest of
+// the run, so React's scheduler can wake up against a torn-down jsdom.
+afterEach(() => {
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 describe("StudioUi primitives", () => {
   it("renders reusable editor chrome with stable classes and accessible labels", () => {
     const onClick = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
 
     flushSync(() => root.render(
       <>
@@ -44,7 +63,5 @@ describe("StudioUi primitives", () => {
     const action = container.querySelector<HTMLButtonElement>(".wide-button")!;
     flushSync(() => action.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onClick).toHaveBeenCalledOnce();
-
-    flushSync(() => root.unmount());
   });
 });

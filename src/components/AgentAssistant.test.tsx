@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { AgentAssistant, AssistantConversationProvider } from "./AgentAssistant";
 import { AgentSession } from "../lib/agent-session";
@@ -8,10 +8,18 @@ import { createProjectDocument } from "../lib/project-document";
 import { loadAssistantConversationState } from "../lib/agent-conversation-store";
 import type { ProjectTransaction } from "../lib/project-document";
 
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function createTrackedRoot(container: HTMLElement): Root {
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return root;
+}
+
 function renderAssistant(project: ReturnType<typeof createProjectDocument>, onCommit = vi.fn(), clearStorage = true, strict = false) {
   if (clearStorage) window.localStorage.clear();
   const container = document.createElement("div");
-  const root = createRoot(container);
+  const root = createTrackedRoot(container);
   const assistant = <AssistantConversationProvider><AgentAssistant project={project} assets={[]} onCommit={onCommit} /></AssistantConversationProvider>;
   flushSync(() => root.render(strict ? <StrictMode>{assistant}</StrictMode> : assistant));
   return { container, root, onCommit };
@@ -42,6 +50,14 @@ function clickText(container: HTMLElement, text: string) {
 }
 
 afterEach(() => {
+  // Unmount before the globals go back: a case that dies on an assertion would otherwise
+  // leave a root with an in-flight request and a debounced write racing jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -50,7 +66,7 @@ describe("AgentAssistant", () => {
   it("renders the active AI workspace inline when docked", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(
       <AssistantConversationProvider>
         <AgentAssistant presentation="docked" project={project} assets={[]} onCommit={vi.fn()} />
@@ -61,14 +77,13 @@ describe("AgentAssistant", () => {
     expect(container.querySelector('.agent-assistant-launcher')).toBeNull();
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     await vi.waitFor(() => expect(container.querySelector('[aria-label="描述 AI 修改需求"]')).not.toBeNull());
-    root.unmount();
   });
 
   it("initializes the docked workspace under StrictMode without render-phase updates", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(
       <StrictMode>
         <AssistantConversationProvider>
@@ -79,31 +94,28 @@ describe("AgentAssistant", () => {
 
     await vi.waitFor(() => expect(container.querySelector('[aria-label="描述 AI 修改需求"]')).not.toBeNull());
     expect(consoleError.mock.calls.some(([message]) => String(message).includes("Cannot update a component"))).toBe(false);
-    root.unmount();
   });
 
   it("starts minimized and opens a dialog from the launcher", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
-    const { container, root } = renderAssistant(project);
+    const { container } = renderAssistant(project);
     expect(container.querySelector('[aria-label="打开 AI 助手"]')).not.toBeNull();
     expect(container.querySelector('[role="dialog"][aria-label="AI 助手"]')).toBeNull();
     openAssistant(container);
     expect(container.querySelector('[role="dialog"][aria-label="AI 助手"]')).not.toBeNull();
     expect((container.querySelector('input[type="radio"]') as HTMLInputElement).checked).toBe(true);
-    root.unmount();
   });
 
   it("keeps hydration and fetch behavior alive under StrictMode", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(response({ kind: "finish", summary: "StrictMode 完成" })));
-    const { container, root } = renderAssistant(project, vi.fn(), true, true);
+    const { container } = renderAssistant(project, vi.fn(), true, true);
     openAssistant(container);
     setMessage(container, "StrictMode 运行");
     clickText(container, "开始规划");
     await vi.waitFor(() => expect(container.textContent).toContain("StrictMode 完成"));
     expect(fetch).toHaveBeenCalledTimes(1);
-    root.unmount();
   });
 
   it("renders a summary and selected write proposals, then applies only selected steps", async () => {
@@ -114,7 +126,7 @@ describe("AgentAssistant", () => {
         { id: "call-cards", name: "update_cards", arguments: { patch: { fontSize: project.cards.fontSize + 4 } } },
       ], assistantMessage: { role: "assistant", content: null } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "地图和卡片已完成" })));
-    const { container, root, onCommit } = renderAssistant(project);
+    const { container, onCommit } = renderAssistant(project);
     openAssistant(container);
     setMessage(container, "调整地图和卡片");
     clickText(container, "开始规划");
@@ -129,7 +141,6 @@ describe("AgentAssistant", () => {
     checkboxes[1]!.click();
     clickText(container, "确认应用");
     expect(onCommit).toHaveBeenCalledTimes(1);
-    root.unmount();
   });
 
   it("persists only minimized replay data while preserving matching-project manual apply after reload", async () => {
@@ -172,7 +183,6 @@ describe("AgentAssistant", () => {
     clickText(restored.container, "确认应用");
     expect(onCommit).toHaveBeenCalledTimes(1);
     expect(onCommit.mock.calls[0]?.[0].apply(project).cards.showCount).toBe(false);
-    restored.root.unmount();
   });
 
   it("hydrates a saved proposal after remount without auto-committing it", async () => {
@@ -201,7 +211,6 @@ describe("AgentAssistant", () => {
     openAssistant(restored.container);
     expect(restored.container.textContent).toContain("AI 对话");
     expect(onCommit).not.toHaveBeenCalled();
-    restored.root.unmount();
   });
 
   it("discards a late response after a same-provider project change", async () => {
@@ -213,7 +222,7 @@ describe("AgentAssistant", () => {
     const onCommit = vi.fn();
     const onPreview = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(<AssistantConversationProvider><AgentAssistant project={original} assets={[]} onCommit={onCommit} onPreview={onPreview} /></AssistantConversationProvider>));
     openAssistant(container);
     setMessage(container, "旧项目请求");
@@ -227,7 +236,6 @@ describe("AgentAssistant", () => {
     expect(container.textContent).not.toContain("过期模型文本");
     expect(onPreview).not.toHaveBeenCalledWith(expect.objectContaining({ map: expect.objectContaining({ scale: 0.9 }) }));
     expect(onCommit).not.toHaveBeenCalled();
-    root.unmount();
   });
 
   it("debounced persistence does not write after unmount", async () => {
@@ -251,7 +259,7 @@ describe("AgentAssistant", () => {
       .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "stale-step", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: "旧文本历史" } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "已保存" })));
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(<AssistantConversationProvider><AgentAssistant project={original} assets={[]} onCommit={vi.fn()} /></AssistantConversationProvider>));
     openAssistant(container);
     setMessage(container, "保存提案");
@@ -265,7 +273,6 @@ describe("AgentAssistant", () => {
     await vi.waitFor(() => expect(container.querySelectorAll('.agent-assistant-window input[type="checkbox"]')).toHaveLength(0));
     expect(container.querySelector('[aria-label="确认应用"]')).toBeNull();
     expect(container.textContent).not.toContain("继续对话");
-    root.unmount();
   });
 
   it("clears visible and persisted proposals when a snapshot export fails", async () => {
@@ -284,7 +291,6 @@ describe("AgentAssistant", () => {
     const saved = JSON.parse(window.localStorage.getItem("cengfan-map-studio:ai-conversations:v1")!);
     expect(saved.conversations[0]).toMatchObject({ status: "failed", steps: [], selectedStepIds: [], snapshot: null });
     exportSnapshot.mockRestore();
-    rendered.root.unmount();
   });
 
   it("clears persisted executable state when the project changes before a provider remount", async () => {
@@ -313,7 +319,6 @@ describe("AgentAssistant", () => {
     expect(saved.snapshot.steps).toEqual([]);
     expect(saved.snapshot.taskId).toBeUndefined();
     expect(saved.snapshot.budgetReceipt).toBeUndefined();
-    restored.root.unmount();
   });
 
   it("does not auto-commit a low-risk continuation of a restored smart conversation", async () => {
@@ -348,7 +353,6 @@ describe("AgentAssistant", () => {
     await vi.waitFor(() => expect(restored.container.textContent).toContain("继续完成"));
     expect(onCommit).not.toHaveBeenCalled();
     expect(restored.container.querySelector('[aria-label="确认应用"]')).not.toBeNull();
-    restored.root.unmount();
   });
 
   it("does not preview a conversation selected with a stale project digest", async () => {
@@ -359,7 +363,7 @@ describe("AgentAssistant", () => {
       .mockResolvedValueOnce(response({ kind: "finish", summary: "待选方案" })));
     const onPreview = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(<AssistantConversationProvider><AgentAssistant project={original} assets={[]} onCommit={vi.fn()} onPreview={onPreview} /></AssistantConversationProvider>));
     openAssistant(container);
     setMessage(container, "保存待选方案");
@@ -370,7 +374,6 @@ describe("AgentAssistant", () => {
     historyButtons[0]?.click();
     expect(onPreview).toHaveBeenLastCalledWith(null);
     expect(onPreview).not.toHaveBeenCalledWith(expect.objectContaining({ map: expect.objectContaining({ scale: 0.9 }) }));
-    root.unmount();
   });
 
   it("keeps only textual history for continuation after a digest mismatch", async () => {
@@ -400,7 +403,6 @@ describe("AgentAssistant", () => {
     expect(continuationBody.taskId).toBeUndefined();
     expect(continuationBody.budgetReceipt).toBeUndefined();
     expect(restored.container.querySelectorAll('.agent-assistant-window input[type="checkbox"]')).toHaveLength(0);
-    restored.root.unmount();
   });
 
   it("keeps completed conversations in history and shows one pending badge", async () => {
@@ -409,7 +411,7 @@ describe("AgentAssistant", () => {
       .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "call-one", name: "update_cards", arguments: { patch: { fontSize: project.cards.fontSize + 2 } } }], assistantMessage: { role: "assistant", content: null } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "第一段完成" }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "第二段完成" })));
-    const { container, root } = renderAssistant(project);
+    const { container } = renderAssistant(project);
     openAssistant(container);
     setMessage(container, "第一段");
     clickText(container, "开始规划");
@@ -423,7 +425,6 @@ describe("AgentAssistant", () => {
     expect(container.querySelector('button[aria-label="打开 AI 助手，1 个待应用对话"]')?.textContent).toContain("1");
     openAssistant(container);
     expect(container.querySelectorAll('.agent-assistant-history button')).toHaveLength(2);
-    root.unmount();
   });
 
   it("continues a completed conversation and appends new proposals", async () => {
@@ -434,7 +435,7 @@ describe("AgentAssistant", () => {
       .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "second", name: "update_cards", arguments: { patch: { fontSize: project.cards.fontSize + 2 } } }], assistantMessage: { role: "assistant", content: null } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "继续完成" }));
     vi.stubGlobal("fetch", fetchMock);
-    const { container, root } = renderAssistant(project);
+    const { container } = renderAssistant(project);
     openAssistant(container);
     setMessage(container, "第一轮");
     clickText(container, "开始规划");
@@ -446,7 +447,6 @@ describe("AgentAssistant", () => {
     expect(container.querySelectorAll('.agent-assistant-window input[type="checkbox"]')).toHaveLength(2);
     const continuationBody = JSON.parse(String((fetchMock.mock.calls[2] as unknown[])[1] && ((fetchMock.mock.calls[2] as unknown[])[1] as RequestInit).body));
     expect(continuationBody.messages.some((entry: { content?: string }) => entry.content === "第一轮")).toBe(true);
-    root.unmount();
   });
 
   it("keeps an applied conversation terminal and hides proposal controls", async () => {
@@ -454,7 +454,7 @@ describe("AgentAssistant", () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "first", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
-    const { container, root, onCommit } = renderAssistant(project);
+    const { container, onCommit } = renderAssistant(project);
     openAssistant(container);
     setMessage(container, "应用地图");
     clickText(container, "开始规划");
@@ -464,7 +464,6 @@ describe("AgentAssistant", () => {
     expect(container.querySelectorAll('.agent-assistant-window input[type="checkbox"]')).toHaveLength(0);
     expect(container.querySelector('[aria-label="确认应用"]')).toBeNull();
     expect(container.textContent).toContain("已应用");
-    root.unmount();
   });
 
   it("keeps an applied conversation terminal when onCommit updates the project prop", async () => {
@@ -476,7 +475,7 @@ describe("AgentAssistant", () => {
       .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "applied-project-update", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
       .mockResolvedValueOnce(response({ kind: "finish", summary: "已应用" })));
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     const render = () => flushSync(() => root.render(<AssistantConversationProvider><AgentAssistant project={project} assets={[]} onCommit={onCommit} /></AssistantConversationProvider>));
     render();
     openAssistant(container);
@@ -494,7 +493,6 @@ describe("AgentAssistant", () => {
     const runButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("开始规划") || button.textContent?.includes("继续对话"));
     expect(runButton).toBeDefined();
     expect(runButton?.disabled).toBe(true);
-    root.unmount();
   });
 
   it("uses each conversation mode as the source of truth and reports pending count", async () => {
@@ -513,19 +511,17 @@ describe("AgentAssistant", () => {
     clickText(container, "开始规划");
     await vi.waitFor(() => expect(container.textContent).toContain("已应用"));
     expect(pending).toHaveBeenLastCalledWith(0);
-    root.unmount();
   });
 
   it("keeps the launcher accessible name synchronized with pending conversations", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
-    const { container, root } = renderAssistant(project);
+    const { container } = renderAssistant(project);
     expect(container.querySelector('[aria-label="打开 AI 助手"]')).not.toBeNull();
-    root.unmount();
   });
 
   it("keeps a dragged panel within finite coordinates", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
-    const { container, root } = renderAssistant(project);
+    const { container } = renderAssistant(project);
     openAssistant(container);
     const header = container.querySelector<HTMLElement>(".agent-assistant-header")!;
     const setPointerCapture = vi.fn();
@@ -552,7 +548,6 @@ describe("AgentAssistant", () => {
     const beforeControlPointer = panel.style.left;
     flushSync(() => header.querySelector<HTMLButtonElement>('button[aria-label="重置窗口位置"]')?.click());
     expect(panel.style.left).not.toBe(beforeControlPointer);
-    root.unmount();
   });
 
   it("cancels a running session on unmount without committing", async () => {

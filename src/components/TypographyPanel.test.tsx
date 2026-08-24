@@ -1,8 +1,27 @@
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "../lib/project-document";
 import { TypographyPanel } from "./TypographyPanel";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function createTrackedRoot(container: HTMLElement): Root {
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return root;
+}
+
+// An assertion throwing before an inline unmount leaves the root mounted for the rest of
+// the run, so React's scheduler can wake up against a torn-down jsdom.
+afterEach(() => {
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 const userFont = {
   id: "font-user-1",
@@ -27,7 +46,7 @@ describe("TypographyPanel", () => {
     project.guests.people = [{ id: "guest-1", name: "张老师", title: "特邀嘉宾", visibility: true }];
     const onApplyFont = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
 
     flushSync(() => root.render(
       <TypographyPanel
@@ -61,7 +80,6 @@ describe("TypographyPanel", () => {
       true,
     );
 
-    flushSync(() => root.unmount());
   });
 
   it("can apply one guest font to all guests and one personnel font to all names", () => {
@@ -69,7 +87,7 @@ describe("TypographyPanel", () => {
     project.guests.people = [{ id: "guest-1", name: "张老师", title: "特邀嘉宾", visibility: true }];
     const onApplyFont = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(
       <TypographyPanel project={project} provinces={["陕西省"]} onApplyFont={onApplyFont} onPatch={vi.fn()} />,
     ));
@@ -89,14 +107,13 @@ describe("TypographyPanel", () => {
       true,
     );
 
-    flushSync(() => root.unmount());
   });
 
   it("writes independent province and personnel typography overrides", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(
       <TypographyPanel project={project} provinces={["陕西省"]} onApplyFont={vi.fn()} onPatch={onPatch} />,
     ));
@@ -117,14 +134,13 @@ describe("TypographyPanel", () => {
       rosterSize.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
     });
     expect(onPatch).toHaveBeenCalledWith({ type: "cards" }, { fieldTypography: { name: { fontSize: 18 } } });
-    flushSync(() => root.unmount());
   });
 
   it("writes the global line-height multiplier to canvas settings", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(
       <TypographyPanel project={project} provinces={["陕西省"]} onApplyFont={vi.fn()} onPatch={onPatch} />,
     ));
@@ -139,6 +155,5 @@ describe("TypographyPanel", () => {
       lineHeight.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
     });
     expect(onPatch).toHaveBeenCalledWith({ type: "canvas" }, { lineHeight: 1.5 });
-    flushSync(() => root.unmount());
   });
 });
