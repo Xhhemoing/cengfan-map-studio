@@ -23,6 +23,7 @@
 | Round 12 | complete | 2026-08-24 | 2026-08-24 | HTML 表解析拆分；引线穿卡；空单元格对齐；Host 校验 |
 | Round 13 | complete | 2026-08-24 | 2026-08-24 | matrixToText 空列；chips listitem；定位穿卡；导入重复折叠 |
 | Round 14 | complete | 2026-08-24 | 2026-08-24 | issue targets；海外 scope；isotonicPack 尾卡；撤销 live region |
+| Round 15 | complete | 2026-08-24 | 2026-08-24 | 定位传 targets；顶栏撤销播报；剩余卡 side；海外迁移别名；CI workflow |
 
 ## Round 1 结论摘要
 
@@ -102,15 +103,19 @@
 
 详见 [round14/BRIEF.md](round14/BRIEF.md)。集成：**tsc 绿、203×1781 tests 绿**。健康 issue 带 targets；海外 scope 不进中国地图；isotonicPack 末卡收进 span；地图样式撤销可播报。
 
-## 全局成果（十四轮合计）
+## Round 15 结论简报
 
-| 指标 | main 基线 | Round 14 结束 |
+详见 [round15/BRIEF.md](round15/BRIEF.md)。集成：**tsc 绿、206×1796 tests 绿**。导航传入 issue.targets；顶栏撤销 live region；剩余卡重算 side；迁移识别海外别名；GitHub Actions 跑 tsc+vitest。
+
+## 全局成果（十五轮合计）
+
+| 指标 | main 基线 | Round 15 结束 |
 | --- | ---: | ---: |
 | App.tsx 行数 | 2466 | **333** |
-| card-layout 门面 | 1297 | 模块化 + 手摆障碍 + isotonic 尾卡修复 |
+| card-layout 门面 | 1297 | 模块化 + 手摆障碍 + isotonic 尾卡 + leftover side |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **398** |
-| 测试 | （基线已有大量单测） | **1781 passed / 203 files** |
+| 测试 | （基线已有大量单测） | **1796 passed / 206 files** |
 
 ## 回滚
 
