@@ -13,7 +13,16 @@ import { buildProvinceSummary } from "./project-data";
 
 const MAX_TOOL_RESULT_BYTES = 16 * 1024;
 const MAX_CONVERSATION_MESSAGES = 24;
-const CLIENT_ROUND_TIMEOUT_MS = 70_000;
+/** Generous on purpose: a single model round with tool planning routinely runs tens of seconds. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 90_000;
+const REQUEST_TIMEOUT_MESSAGE = "AI 请求超时，请稍后重试。";
+const NETWORK_FAILURE_MESSAGE = "网络连接中断，AI 请求未完成，请检查网络后重试。";
+const HTTP_ERROR_MESSAGES: Record<string, string> = {
+  AI_RATE_LIMITED: "请求过于频繁，请稍后重试。",
+  AI_VALIDATION_ERROR: "请求内容未通过校验，请重新开始当前 AI 任务。",
+  AI_UPSTREAM_UNAVAILABLE: "AI 服务暂时不可用，请稍后重试。",
+  AI_TIMEOUT: REQUEST_TIMEOUT_MESSAGE,
+};
 const MAX_HEALTH_ISSUES = 20;
 const MAX_ASSET_RESULTS = 20;
 const MAX_LAYOUT_SAMPLES = 10;
@@ -169,8 +178,28 @@ export interface AgentSessionOptions {
   mode: "conservative" | "smart";
   assets?: StudioAsset[];
   endpoint?: string;
+  /** Per-request deadline in milliseconds; non-positive or non-finite values fall back to the default. */
+  requestTimeoutMs?: number;
   onProgress?: (progress: { round: number; name: string; status: "running" | "done" | "rejected" }) => void;
 }
+
+/** Transport-level failures the caller can retry as-is, unlike a model refusal or a user cancel. */
+export type AgentTransportFailure = "timeout" | "network";
+
+export interface AgentRunOutcome {
+  kind: "finish" | "tool-rejected" | "failed" | "cancelled";
+  summary?: string;
+  error?: string;
+  reason?: AgentTransportFailure;
+  retriable?: boolean;
+}
+
+type AgentApiPayload = AgentApiOutcome & { taskId?: string; budgetReceipt?: string };
+
+type RoundResponse =
+  | { kind: "ok"; outcome: AgentApiPayload }
+  | { kind: "http-error"; error: string }
+  | { kind: "transport-failure"; reason: AgentTransportFailure };
 
 interface AgentApiOutcome {
   kind: "tool-call" | "tool-rejected" | "finish" | "failed";
@@ -352,8 +381,9 @@ export class AgentSession {
   private readonly conversation: Array<Record<string, unknown>> = [];
   private _steps: AgentStep[] = [];
   private activeController: AbortController | null = null;
-  private activeRun: Promise<{ kind: "finish" | "tool-rejected" | "failed" | "cancelled"; summary?: string; error?: string }> | null = null;
+  private activeRun: Promise<AgentRunOutcome> | null = null;
   private completed = false;
+  private retriableFailure = false;
   private budget = { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: 20 };
   private taskId: string | undefined;
   private budgetReceipt: string | undefined;
@@ -419,8 +449,9 @@ export class AgentSession {
     return this._lastReplayFailure ? { ...this._lastReplayFailure } : null;
   }
 
+  /** A transport failure leaves the conversation intact, so the user can resume it instead of restarting. */
   get canContinue(): boolean {
-    return this.completed && !this.activeRun;
+    return (this.completed || this.retriableFailure) && !this.activeRun;
   }
 
   cancel(): void {
@@ -446,6 +477,70 @@ export class AgentSession {
 
   private compactToolResult(callName: string, content: string): string {
     return compactAgentToolResult(callName, content);
+  }
+
+  private get requestTimeoutMs(): number {
+    const configured = this.options.requestTimeoutMs;
+    return typeof configured === "number" && Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+
+  private failTransport(reason: AgentTransportFailure): AgentRunOutcome {
+    this.retriableFailure = true;
+    return { kind: "failed", error: reason === "timeout" ? REQUEST_TIMEOUT_MESSAGE : NETWORK_FAILURE_MESSAGE, reason, retriable: true };
+  }
+
+  /**
+   * One round trip under a deadline that covers the body read as well: a partition can deliver headers
+   * and then stall forever. The deadline settles the race on its own rather than relying on `signal`,
+   * because a wedged transport may never react to the abort at all.
+   */
+  private async requestRound(message: string, cancelSignal: AbortSignal): Promise<RoundResponse> {
+    const roundController = new AbortController();
+    const abortRound = () => roundController.abort();
+    cancelSignal.addEventListener("abort", abortRound, { once: true });
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<RoundResponse>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        roundController.abort();
+        resolve({ kind: "transport-failure", reason: "timeout" });
+      }, this.requestTimeoutMs);
+    });
+    const attempt = (async (): Promise<RoundResponse> => {
+      let response: Response;
+      try {
+        response = await fetch(this.options.endpoint ?? "/api/ai/agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation, budget: this.budget, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
+          signal: roundController.signal,
+        });
+      } catch (cause) {
+        if (timedOut) return { kind: "transport-failure", reason: "timeout" };
+        // A user cancel must stay a cancel; fetch rejects for nothing else but transport trouble.
+        if (cancelSignal.aborted) throw cause;
+        return { kind: "transport-failure", reason: "network" };
+      }
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+        return { kind: "http-error", error: HTTP_ERROR_MESSAGES[data?.error?.code ?? ""] ?? data?.error?.message ?? `Agent 接口错误：${response.status}` };
+      }
+      try {
+        return { kind: "ok", outcome: await response.json() as AgentApiPayload };
+      } catch (cause) {
+        if (timedOut) return { kind: "transport-failure", reason: "timeout" };
+        throw cause;
+      }
+    })();
+    // When the deadline wins the race nobody awaits the attempt any more; its later rejection is expected.
+    attempt.catch(() => {});
+    try {
+      return await Promise.race([attempt, deadline]);
+    } finally {
+      clearTimeout(timer);
+      cancelSignal.removeEventListener("abort", abortRound);
+    }
   }
 
   private compactConversation(): void {
@@ -555,9 +650,10 @@ export class AgentSession {
     }
   }
 
-  async run(message: string, options: { signal?: AbortSignal; continue?: boolean } = {}): Promise<{ kind: "finish" | "tool-rejected" | "failed" | "cancelled"; summary?: string; error?: string }> {
+  async run(message: string, options: { signal?: AbortSignal; continue?: boolean } = {}): Promise<AgentRunOutcome> {
     if (this.activeRun) throw new Error("Agent 会话正在进行中");
     if (options.signal?.aborted) return { kind: "cancelled" };
+    this.retriableFailure = false;
     if (!options.continue) {
       this.conversation.length = 0;
       this.completed = false;
@@ -575,41 +671,14 @@ export class AgentSession {
         for (let round = 0; round < MAX_ROUNDS; round += 1) {
           if (controller.signal.aborted) return { kind: "cancelled" as const };
           this.compactConversation();
-          const roundController = new AbortController();
-          let timedOut = false;
-          const abortRound = () => roundController.abort();
-          controller.signal.addEventListener("abort", abortRound, { once: true });
-          const timeout = setTimeout(() => {
-            timedOut = true;
-            roundController.abort();
-          }, CLIENT_ROUND_TIMEOUT_MS);
-          let response: Response;
-          try {
-            response = await fetch(this.options.endpoint ?? "/api/ai/agent", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation, budget: this.budget, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
-              signal: roundController.signal,
-            });
-          } catch (cause) {
-            if (timedOut) return { kind: "failed" as const, error: "AI 请求超时，请稍后重试。" };
-            throw cause;
-          } finally {
-            clearTimeout(timeout);
-            controller.signal.removeEventListener("abort", abortRound);
+          const roundResponse = await this.requestRound(message, controller.signal);
+          if (roundResponse.kind === "transport-failure") {
+            // A cancel that raced the deadline still reads as a cancel; budget and metrics stay untouched.
+            if (controller.signal.aborted) return { kind: "cancelled" as const };
+            return this.failTransport(roundResponse.reason);
           }
-          if (!response.ok) {
-            const data = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
-            const code = data?.error?.code;
-            const messageByCode: Record<string, string> = {
-              AI_RATE_LIMITED: "请求过于频繁，请稍后重试。",
-              AI_VALIDATION_ERROR: "请求内容未通过校验，请重新开始当前 AI 任务。",
-              AI_UPSTREAM_UNAVAILABLE: "AI 服务暂时不可用，请稍后重试。",
-              AI_TIMEOUT: "AI 请求超时，请稍后重试。",
-            };
-            return { kind: "failed" as const, error: messageByCode[code ?? ""] ?? data?.error?.message ?? `Agent 接口错误：${response.status}` };
-          }
-          const outcome = await response.json() as AgentApiOutcome & { taskId?: string; budgetReceipt?: string };
+          if (roundResponse.kind === "http-error") return { kind: "failed" as const, error: roundResponse.error };
+          const outcome = roundResponse.outcome;
           this.taskId = outcome.taskId ?? this.taskId;
           this.budgetReceipt = outcome.budgetReceipt ?? this.budgetReceipt;
           if (outcome.meta) {
