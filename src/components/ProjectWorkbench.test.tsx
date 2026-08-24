@@ -297,12 +297,18 @@ const QUOTA_MESSAGE = "本机存储空间不足，请清理浏览器数据或删
 
 let restoreDownloads: (() => void) | null = null;
 
-/** jsdom 没有 object URL，补一层记录用的实现;下载用的 <a> 也要拦掉,真正点击会触发未实现的导航。 */
-function stubDownloads() {
+/**
+ * jsdom 没有 object URL，补一层记录用的实现;下载用的 <a> 也要拦掉,真正点击会触发未实现的导航。
+ * 传入 `failure` 可模拟下载本身失败(磁盘满、被扩展拦截),把 `failure.message` 清空即恢复成功。
+ */
+function stubDownloads(failure?: { message: string }) {
   const target = URL as unknown as Record<string, unknown>;
   const original = { create: target.createObjectURL, revoke: target.revokeObjectURL };
   const files: string[] = [];
-  target.createObjectURL = () => "blob:mock";
+  target.createObjectURL = () => {
+    if (failure?.message) throw new Error(failure.message);
+    return "blob:mock";
+  };
   target.revokeObjectURL = () => undefined;
   const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
   link.click = () => { files.push(link.download); };
@@ -486,6 +492,58 @@ describe("ProjectWorkbench degraded storage", () => {
     Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("复制"))?.click();
 
     await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe(QUOTA_MESSAGE));
+  });
+
+  it("keeps a failed notice export inside the notice the user just clicked", async () => {
+    const store = createMemoryProjectStore();
+    await store.put({ ...createSampleProject(), name: "备份项目", updatedAt: "2026-08-24T02:00:00.000Z" });
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(storageNotice(container)?.querySelector("button[data-export-project-id]")).not.toBeNull());
+    stubDownloads({ message: "磁盘已满" });
+
+    storageNotice(container)!.querySelector<HTMLButtonElement>("button[data-export-project-id]")!.click();
+
+    // 降级期唯一的备份出口就是这条横幅,失败落在别处等于按钮点了没反应。
+    await vi.waitFor(() => expect(storageNotice(container)?.querySelector('[role="alert"]')).not.toBeNull());
+    const alert = storageNotice(container)!.querySelector('[role="alert"]')!;
+    expect(alert.textContent).toContain("导出项目失败");
+    expect(alert.textContent).toContain("磁盘已满");
+    expect(container.querySelector(".workbench-error")).toBeNull();
+  });
+
+  it("clears the notice export failure once the next export succeeds", async () => {
+    const store = createMemoryProjectStore();
+    await store.put({ ...createSampleProject(), name: "备份项目", updatedAt: "2026-08-24T02:00:00.000Z" });
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(storageNotice(container)?.querySelector("button[data-export-project-id]")).not.toBeNull());
+    const failure = { message: "磁盘已满" };
+    const files = stubDownloads(failure);
+    const exportButton = () => storageNotice(container)!.querySelector<HTMLButtonElement>("button[data-export-project-id]")!;
+
+    exportButton().click();
+    await vi.waitFor(() => expect(storageNotice(container)?.querySelector('[role="alert"]')).not.toBeNull());
+
+    failure.message = "";
+    exportButton().click();
+
+    // 一次手势一份文件,重试成功后横幅不能继续挂着上一次的失败。
+    await vi.waitFor(() => expect(files).toEqual(["备份项目-2026-08-24.json"]));
+    expect(storageNotice(container)?.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("keeps a failed card-menu export in the generic error section", async () => {
+    const store = createMemoryProjectStore();
+    await store.put({ ...createSampleProject(), name: "备份项目", updatedAt: "2026-08-24T02:00:00.000Z" });
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
+    await vi.waitFor(() => expect(container.textContent).toContain("导出工程包"));
+    stubDownloads({ message: "磁盘已满" });
+
+    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("导出工程包"))?.click();
+
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("导出项目失败"));
+    expect(storageNotice(container)?.querySelector('[role="alert"]')).toBeNull();
   });
 
   it("shows the typed store message when importing a package fails", async () => {
