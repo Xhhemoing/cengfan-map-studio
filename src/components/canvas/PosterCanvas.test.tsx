@@ -828,6 +828,39 @@ describe("PosterCanvas", () => {
     container.remove();
   });
 
+  it("only rewrites connector paths while dragging an emblem-list card", () => {
+    vi.useFakeTimers();
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.cards = { ...project.cards, presentation: "emblem-list", connectorDash: "rail" };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onMoveCard={vi.fn()} renderIntervalMs={100} />));
+
+    const card = container.querySelector<SVGGElement>("[data-destination-card]")!;
+    const visual = card.querySelector<SVGGElement>('[data-card-visual="emblem-list"]')!;
+    const decorations = Array.from(visual.querySelectorAll<SVGPathElement>("path"));
+    const connectors = Array.from(
+      card.parentElement!.querySelectorAll<SVGPathElement>("path[data-destination-connector-underlay], path[data-connector-style]"),
+    );
+    expect(decorations.length).toBeGreaterThan(0);
+    expect(connectors.length).toBeGreaterThan(0);
+    const decorationsBefore = decorations.map((path) => path.getAttribute("d"));
+    const connectorsBefore = connectors.map((path) => path.getAttribute("d"));
+
+    Object.assign(card, { setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn() });
+    flushSync(() => card.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 120, clientY: 120, pointerId: 1 })));
+    flushSync(() => card.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 220, clientY: 190, pointerId: 1 })));
+    flushSync(() => vi.advanceTimersByTime(100));
+
+    expect(decorations.map((path) => path.getAttribute("d"))).toEqual(decorationsBefore);
+    expect(connectors.map((path) => path.getAttribute("d"))).not.toEqual(connectorsBefore);
+    expect(new Set(connectors.map((path) => path.getAttribute("d"))).size).toBe(1);
+
+    flushSync(() => root.unmount());
+    container.remove();
+    vi.useRealTimers();
+  });
+
   it("treats a zero-distance card click as selection only, without recording a manual position", () => {
     const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
     const onMoveCard = vi.fn();

@@ -313,7 +313,11 @@ export function PosterCanvas({
         : connector.pathData
       : null;
     if (pathData) {
-      drag.connectorGroup.querySelectorAll<SVGPathElement>("path").forEach((path) => path.setAttribute("d", pathData));
+      // 只写连线本身：卡片视觉(如 emblem-list)内部也有 <path>，被写入 d 后 React 不会回写，
+      // 损坏会持续到组件重挂载。
+      drag.connectorGroup
+        .querySelectorAll<SVGPathElement>("path[data-destination-connector-underlay], path[data-connector-style]")
+        .forEach((path) => path.setAttribute("d", pathData));
     }
   };
 

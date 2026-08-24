@@ -112,7 +112,8 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
       };
     }
 
-    setState({ key: currentRequest.key, result: null, pending: true });
+    // 求解期间保留上一帧布局：置空会让画布上的卡片整体消失一帧再跳回来。
+    setState((previous) => ({ key: currentRequest.key, result: previous.result, pending: true }));
     const message: CardLayoutWorkerMessage = {
       type: "solve",
       requestId,
@@ -128,5 +129,5 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
 
   if (!request) return { result: null, pending: false };
   if (state.key === request.key) return state;
-  return { result: resolved.result, pending: !resolved.cached && !forceSync };
+  return { result: resolved.result ?? state.result, pending: !resolved.cached && !forceSync };
 }
