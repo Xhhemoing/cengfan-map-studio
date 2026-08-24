@@ -1,5 +1,5 @@
 import { geoMercator, geoPath } from "d3-geo";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { DataViewId } from "../../lib/project-data";
 import { findProvinceFeature, type MapFeature } from "../../lib/map-data";
 import type { MapSettings, SceneSelection } from "../../lib/scene-document";
@@ -299,25 +299,66 @@ function MapImageResizeHandles({
   );
 }
 
-export function MapLayer({
+interface MapLayerContentProps {
+  /** Read everything except `x`/`y`: this subtree draws in the map's own coordinate space,
+   *  and the memo below skips re-rendering it when only those two moved. */
+  settings: MapSettings;
+  features: readonly MapFeature[];
+  counts: ReadonlyMap<string, number>;
+  dataView: DataViewId;
+  pins: readonly StudentPin[];
+  selectedStudentId: string | null;
+  onSelectStudent?: (id: string) => void;
+  theme?: MapLayerThemeColors;
+  exportMode: boolean;
+  /** The map is clickable, so the dashed editor overlay belongs on top of it. */
+  mapSelectable: boolean;
+  onSelectProvince?: (province: string) => void;
+  selectedProvince: string | null;
+  onMoveProvinceTexture?: (province: string, offsetX: number, offsetY: number) => void;
+  selected: boolean;
+  renderIntervalMs: number;
+  onResizeMapImage?: (alignment: { x: number; y: number; width: number; height: number; rotation: number }) => void;
+  userFonts: UserFont[];
+}
+
+function settingsEqualIgnoringOrigin(previous: MapSettings, next: MapSettings): boolean {
+  if (previous === next) return true;
+  const keys = Object.keys(previous) as Array<keyof MapSettings>;
+  if (keys.length !== Object.keys(next).length) return false;
+  return keys.every((key) => key === "x" || key === "y" || Object.is(previous[key], next[key]));
+}
+
+/** A pan replaces `map` wholesale, so plain memo never bails out even though the pan is entirely
+ *  carried by the wrapper's translate. Comparing settings without `x`/`y` keeps every province
+ *  node, label and hit target off the drag path. */
+function contentPropsEqual(previous: MapLayerContentProps, next: MapLayerContentProps): boolean {
+  const keys = Object.keys(previous) as Array<keyof MapLayerContentProps>;
+  if (keys.length !== Object.keys(next).length) return false;
+  return keys.every((key) => key === "settings"
+    ? settingsEqualIgnoringOrigin(previous.settings, next.settings)
+    : Object.is(previous[key], next[key]));
+}
+
+const MapLayerContent = memo(function MapLayerContent({
   settings,
   features,
   counts,
-  dataView = "province",
-  pins = [],
-  selectedStudentId = null,
+  dataView,
+  pins,
+  selectedStudentId,
   onSelectStudent,
   theme,
-  exportMode = false,
-  onSelectMap,
+  exportMode,
+  mapSelectable,
   onSelectProvince,
-  selectedProvince = null,
+  selectedProvince,
   onMoveProvinceTexture,
-  selected = false,
-  renderIntervalMs = 0,
+  selected,
+  renderIntervalMs,
   onResizeMapImage,
-  userFonts = [],
-}: MapLayerProps) {
+  userFonts,
+}: MapLayerContentProps) {
   const collapse = settings.collapseSouthChinaSea === true;
   const { mainlandFeatures, insetFeatures } = getFeatureSplit(features, collapse);
   const geometry = useMemo(
@@ -325,10 +366,6 @@ export function MapLayer({
     [mainlandFeatures, settings.height, settings.width],
   );
   const { projection, path } = geometry;
-  const interactive = !exportMode && Boolean(onSelectMap);
-  const selectMap = () => onSelectMap?.({ type: "map" });
-  const centerX = settings.width / 2;
-  const centerY = settings.height / 2;
 
   const imageSource = settings.renderSource?.kind === "image" ? settings.renderSource : null;
   const composition = imageSource?.composition === "overlay" ? "overlay" : "replace";
@@ -341,25 +378,8 @@ export function MapLayer({
   const interactiveFeatures = mainlandFeatures;
 
   return (
-    <g
-      data-map-layer
-      data-width={settings.width}
-      data-height={settings.height}
-      data-scale={settings.scale}
-      data-collapse-south-sea={collapse || undefined}
-      transform={`translate(${settings.x} ${settings.y}) translate(${centerX} ${centerY}) scale(${settings.scale}) translate(${-centerX} ${-centerY})`}
-      role={interactive ? "button" : undefined}
-      tabIndex={interactive ? 0 : undefined}
-      aria-label={interactive ? "选择地图" : undefined}
-      onClick={interactive ? () => selectMap() : undefined}
-      onKeyDown={interactive ? (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          selectMap();
-        }
-      } : undefined}
-    >
-      {!exportMode && onSelectMap && (
+    <>
+      {!exportMode && mapSelectable && (
         <rect
           data-map-selection-overlay
           width={settings.width}
@@ -511,6 +531,76 @@ export function MapLayer({
       {imageSource && selected && !exportMode && onResizeMapImage && imageSource.alignment && (
         <MapImageResizeHandles alignment={imageSource.alignment} renderIntervalMs={renderIntervalMs} onCommit={onResizeMapImage} />
       )}
+    </>
+  );
+}, contentPropsEqual);
+
+const NO_PINS: readonly StudentPin[] = [];
+const NO_USER_FONTS: UserFont[] = [];
+
+export function MapLayer({
+  settings,
+  features,
+  counts,
+  dataView = "province",
+  pins = NO_PINS,
+  selectedStudentId = null,
+  onSelectStudent,
+  theme,
+  exportMode = false,
+  onSelectMap,
+  onSelectProvince,
+  selectedProvince = null,
+  onMoveProvinceTexture,
+  selected = false,
+  renderIntervalMs = 0,
+  onResizeMapImage,
+  userFonts = NO_USER_FONTS,
+}: MapLayerProps) {
+  const collapse = settings.collapseSouthChinaSea === true;
+  const interactive = !exportMode && Boolean(onSelectMap);
+  const selectMap = () => onSelectMap?.({ type: "map" });
+  const centerX = settings.width / 2;
+  const centerY = settings.height / 2;
+
+  return (
+    <g
+      data-map-layer
+      data-width={settings.width}
+      data-height={settings.height}
+      data-scale={settings.scale}
+      data-collapse-south-sea={collapse || undefined}
+      transform={`translate(${settings.x} ${settings.y}) translate(${centerX} ${centerY}) scale(${settings.scale}) translate(${-centerX} ${-centerY})`}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={interactive ? "选择地图" : undefined}
+      onClick={interactive ? () => selectMap() : undefined}
+      onKeyDown={interactive ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectMap();
+        }
+      } : undefined}
+    >
+      <MapLayerContent
+        settings={settings}
+        features={features}
+        counts={counts}
+        dataView={dataView}
+        pins={pins}
+        selectedStudentId={selectedStudentId}
+        onSelectStudent={onSelectStudent}
+        theme={theme}
+        exportMode={exportMode}
+        mapSelectable={Boolean(onSelectMap)}
+        onSelectProvince={onSelectProvince}
+        selectedProvince={selectedProvince}
+        onMoveProvinceTexture={onMoveProvinceTexture}
+        selected={selected}
+        renderIntervalMs={renderIntervalMs}
+        onResizeMapImage={onResizeMapImage}
+        userFonts={userFonts}
+      />
     </g>
   );
 }
