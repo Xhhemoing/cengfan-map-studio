@@ -210,6 +210,17 @@ function readSkippedRoomCount(snapshot: unknown): number {
   return typeof skipped === "number" && Number.isFinite(skipped) && skipped > 0 ? Math.floor(skipped) : 0;
 }
 
+/**
+ * 上一次关停被跳过的房间 id。同样是磁盘信封上的可选字段（R5-1 之前落盘的快照只有计数），
+ * 所以按 unknown 读；排序后返回，日志与 /api/health 才能跨重启稳定比对。
+ */
+function readSkippedRoomIds(snapshot: unknown): string[] {
+  if (!isRecord(snapshot)) return [];
+  const ids = snapshot.skippedRoomIds;
+  if (!Array.isArray(ids)) return [];
+  return [...new Set(ids.filter((id): id is string => typeof id === "string" && id.length > 0))].sort();
+}
+
 function isWorkspaceSnapshot(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value)) return false;
   const record = value as Record<string, unknown>;
@@ -487,13 +498,36 @@ export function createAiServer(options: AiServerOptions = {}) {
     ...(options.persistRooms ? { persist: options.persistRooms } : {}),
   };
   const roomStore: PersistableRoomStore = (options.roomStoreFactory ?? createRoomStore)(roomStoreOptions);
+  // 启动时的持久化事实，留给 /api/health 复述：日志滚走之后它就是唯一能被外部观测到的证据。
+  // 三个读取器都把「没有快照」当成 0/空，所以冷启动在健康检查里是 restoredAtBoot 0。
+  const restoredAtBoot = countRestorableRooms(options.roomSnapshot);
+  const skippedRoomIds = readSkippedRoomIds(options.roomSnapshot);
+  // 旧信封只写了计数，新信封两者都有；取较大值也兼容只写了 id 的信封。
+  const skippedRoomCount = Math.max(readSkippedRoomCount(options.roomSnapshot), skippedRoomIds.length);
   // 只有真拿到一份快照才谈得上「恢复」：冷启动报 restored 0 会让日志读者以为读到过一份空快照。
   if (options.roomSnapshot !== undefined) {
-    console.info(`restored ${countRestorableRooms(options.roomSnapshot)} collaboration room(s) from snapshot`);
-    const skippedRoomCount = readSkippedRoomCount(options.roomSnapshot);
-    // 这些房间在上一次关停时就丢了，只有本次启动把它说出来，运维才知道少了什么。
-    if (skippedRoomCount > 0) console.warn(`上次关停有 ${skippedRoomCount} 个房间超过持久化上限，未恢复`);
+    console.info(`restored ${restoredAtBoot} collaboration room(s) from snapshot`);
+    // 这些房间在上一次关停时就丢了，只有本次启动把它说出来，运维才知道少了什么——
+    // 少了几个是量，少了哪几个才是能拿去补救的信息。
+    if (skippedRoomCount > 0) {
+      console.warn(
+        `上次关停有 ${skippedRoomCount} 个房间超过持久化上限，未恢复`
+        + (skippedRoomIds.length > 0 ? `：${skippedRoomIds.join("、")}` : ""),
+      );
+    }
   }
+  /**
+   * 房间是否在上一次成功落盘里被完整写下。落盘按固定间隔进行，因此这个判断最多滞后一个
+   * 持久化周期：还没落过盘的新房间一律报 true，被跳过或被裁掉历史的房间报 false。
+   */
+  const persistedAtLastFlush = (roomId: string): boolean => {
+    const outcome = roomStore.lastPersistOutcome?.();
+    if (!outcome) return true;
+    // 房间存储把 id 统一成大写，外部传进来的路径参数不一定是。
+    const target = roomId.toUpperCase();
+    const degraded = (ids: readonly string[] | undefined) => (ids ?? []).some((id) => id.toUpperCase() === target);
+    return !degraded(outcome.skippedIds) && !degraded(outcome.trimmedIds);
+  };
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
   const maxRoomEventBytes = positiveBytes(
@@ -659,6 +693,12 @@ export function createAiServer(options: AiServerOptions = {}) {
               stateRecovered: stateStore.recovered,
             },
           },
+          // 房间持久化的死亡率：控制台之外唯一能观测到它的地方。
+          rooms: {
+            restoredAtBoot,
+            skippedAtLastShutdown: { count: skippedRoomCount, ids: skippedRoomIds },
+            lastFlush: roomStore.lastPersistOutcome?.() ?? null,
+          },
         });
         return;
       }
@@ -721,7 +761,12 @@ export function createAiServer(options: AiServerOptions = {}) {
       const roomProjection = (room: ReturnType<typeof roomStore.get>, accessToken: string) => {
         if (!room) return null;
         const participant = roomStore.authorize(room.id, accessToken, "read");
-        return { ...room, role: participant.role, participants: roomStore.listParticipants(room.id, accessToken) };
+        return {
+          ...room,
+          role: participant.role,
+          participants: roomStore.listParticipants(room.id, accessToken),
+          persistedAtLastFlush: persistedAtLastFlush(room.id),
+        };
       };
 
       if (request.method === "POST" && pathname === "/api/rooms") {
@@ -736,7 +781,8 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         try {
-          send(201, roomStore.create(body.snapshot, { clientId: body.clientId, displayName: body.displayName.trim() }));
+          const created = roomStore.create(body.snapshot, { clientId: body.clientId, displayName: body.displayName.trim() });
+          send(201, { ...created, persistedAtLastFlush: persistedAtLastFlush(created.room.id) });
         } catch (error) {
           if (error instanceof CollaborationError) {
             sendRoomError(error);
@@ -801,7 +847,8 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         try {
-          send(200, roomStore.join(joinMatch[1]!, { inviteToken: body.inviteToken, clientId: body.clientId, displayName: body.displayName }));
+          const joined = roomStore.join(joinMatch[1]!, { inviteToken: body.inviteToken, clientId: body.clientId, displayName: body.displayName });
+          send(200, { ...joined, persistedAtLastFlush: persistedAtLastFlush(joined.room.id) });
         } catch (error) {
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;

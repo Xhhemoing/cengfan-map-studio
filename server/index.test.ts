@@ -10,8 +10,8 @@ import type { AddressInfo } from "node:net";
 import type http from "node:http";
 import { createAiLogger } from "./ai/ai-observability";
 import { createRateLimiter } from "./ai/rate-limit";
-import { attachServerLifecycle, createAiServer, createReadyAiServer, DEFAULT_PORT, resolvePort } from "./index";
-import { createRoomStore } from "./collaboration";
+import { attachServerLifecycle, createAiServer, createReadyAiServer, DEFAULT_PORT, resolvePort, type PersistableRoomStore } from "./index";
+import { createRoomStore, type RoomPersistOutcome } from "./collaboration";
 
 const fsHooks = vi.hoisted(() => ({ createReadStream: null as null | ((filePath: string) => unknown) }));
 
@@ -160,7 +160,11 @@ async function createCollaborationRoom(origin: string, snapshot: unknown, client
     body: JSON.stringify({ clientId, displayName: clientId, ...(snapshot === undefined ? {} : { snapshot }) }),
   });
   expect(response.status).toBe(201);
-  return response.json() as Promise<{ room: { id: string; version: number; ready: boolean }; access: { accessToken: string } }>;
+  return response.json() as Promise<{
+    room: { id: string; version: number; ready: boolean };
+    access: { accessToken: string };
+    persistedAtLastFlush?: boolean;
+  }>;
 }
 
 function roomHeaders(accessToken: string, headers: Record<string, string> = {}): Record<string, string> {
@@ -1965,12 +1969,193 @@ describe("unified application server", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
+    // 旧信封只有计数（R5-1 之前落盘的快照），此时只能报计数。
     const server = createAiServer({ roomSnapshot: { version: 1, rooms: [], skippedRoomCount: 3 } });
     servers.push(server);
 
     expect(info).toHaveBeenCalledWith(expect.stringContaining("restored 0 collaboration room(s)"));
     // 上一次关停丢掉的房间只在那一刻的日志里出现过，重启后没人再提就等于没发生。
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("上次关停有 3 个房间超过持久化上限，未恢复"));
+  });
+
+  it("names the rooms the previous shutdown dropped, not just how many", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const server = createAiServer({
+      roomSnapshot: { version: 1, rooms: [], skippedRoomCount: 2, skippedRoomIds: ["ROOMB", "ROOMA"] },
+    });
+    servers.push(server);
+
+    const message = warn.mock.calls.map((call) => String(call[0])).find((line) => line.includes("未恢复"));
+    expect(message).toBeDefined();
+    expect(message).toContain("2 个房间");
+    // 只报数量的话，运维知道「丢了两个」却不知道该去补哪两个房间。
+    expect(message).toContain("ROOMA");
+    expect(message).toContain("ROOMB");
+    // 排序稳定，便于跨重启比对日志。
+    expect(message!.indexOf("ROOMA")).toBeLessThan(message!.indexOf("ROOMB"));
+  });
+
+  it("reports boot restore facts and skipped room ids on /api/health", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let snapshot: unknown;
+    const first = createAiServer({ persistRooms: (value) => { snapshot = value; } });
+    servers.push(first);
+    const firstOrigin = await startServer(first);
+    await createCollaborationRoom(firstOrigin, { title: "健康检查" });
+    await attachServerLifecycle(first, { timeoutMs: 2_000 }).shutdown("SIGTERM");
+
+    const restored = createAiServer({
+      roomSnapshot: { ...(snapshot as Record<string, unknown>), skippedRoomCount: 2, skippedRoomIds: ["ROOMB", "ROOMA"] },
+    });
+    servers.push(restored);
+    const origin = await startServer(restored);
+
+    const health = await fetch(`${origin}/api/health`).then((response) => response.json()) as {
+      ok: boolean;
+      rooms: unknown;
+      ai: unknown;
+    };
+    // 既有载荷保持不变，rooms 是新增块。
+    expect(health.ok).toBe(true);
+    expect(health.ai).toBeDefined();
+    expect(health.rooms).toEqual({
+      restoredAtBoot: 1,
+      skippedAtLastShutdown: { count: 2, ids: ["ROOMA", "ROOMB"] },
+      lastFlush: null,
+    });
+  });
+
+  it("reports a cold boot and the live flush outcome on /api/health", async () => {
+    const server = createAiServer({ persistRooms: () => undefined });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const cold = await fetch(`${origin}/api/health`).then((response) => response.json()) as { rooms: unknown };
+    // 冷启动没有快照可谈，恢复数按 0 报，且还没有落过盘。
+    expect(cold.rooms).toEqual({
+      restoredAtBoot: 0,
+      skippedAtLastShutdown: { count: 0, ids: [] },
+      lastFlush: null,
+    });
+
+    await createCollaborationRoom(origin, { title: "落盘一次" });
+    await server.flushRooms!();
+
+    const flushed = await fetch(`${origin}/api/health`).then((response) => response.json()) as {
+      rooms: { lastFlush: { skippedIds: string[]; trimmedIds: string[]; at: number } | null };
+    };
+    expect(flushed.rooms.lastFlush).toEqual({ skippedIds: [], trimmedIds: [], at: expect.any(Number) });
+  });
+
+  it("keeps /api/health answering when the injected room store has no persist outcome", async () => {
+    const server = createAiServer({
+      roomStoreFactory: (storeOptions) => {
+        const { lastPersistOutcome: _omitted, ...withoutOutcome } = createRoomStore(storeOptions);
+        return withoutOutcome as PersistableRoomStore;
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const health = await fetch(`${origin}/api/health`).then((response) => response.json()) as {
+      rooms: { lastFlush: unknown };
+    };
+    expect(health.rooms.lastFlush).toBeNull();
+    const created = await createCollaborationRoom(origin, { title: "无落盘结论" });
+    expect(created.persistedAtLastFlush).toBe(true);
+  });
+
+  it("marks a freshly created room as persisted at the last flush", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+
+    // 还没落过盘的小房间不该被说成「上次落盘丢了」：滞后最多一个持久化周期。
+    const created = await createCollaborationRoom(origin, { title: "小房间" });
+    expect(created.persistedAtLastFlush).toBe(true);
+
+    const snapshot = await fetch(`${origin}/api/rooms/${created.room.id}`, {
+      headers: roomHeaders(created.access.accessToken),
+    }).then((response) => response.json()) as { id: string; persistedAtLastFlush?: boolean };
+    expect(snapshot.id).toBe(created.room.id);
+    expect(snapshot.persistedAtLastFlush).toBe(true);
+
+    const invitation = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ role: "editor" }),
+    }).then((response) => response.json()) as { token: string };
+    const joined = await fetch(`${origin}/api/rooms/${created.room.id}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken: invitation.token, clientId: "client-b", displayName: "client-b" }),
+    });
+    expect(joined.status).toBe(200);
+    await expect(joined.json()).resolves.toMatchObject({ persistedAtLastFlush: true });
+  });
+
+  it("marks rooms the last flush skipped or trimmed as not persisted", async () => {
+    let outcome: RoomPersistOutcome | undefined;
+    const roomIds = ["SKIPPEDA", "SKIPPEDB"];
+    let nextRoomId = 0;
+    const server = createAiServer({
+      // 真实房间存储 + 可控的落盘结论：不用造 8 MiB 房间就能观察降级路径。
+      roomStoreFactory: (storeOptions) => {
+        const store = createRoomStore({ ...storeOptions, generateId: () => roomIds[nextRoomId++] ?? "EXTRA" });
+        return { ...store, lastPersistOutcome: () => outcome };
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const created = await createCollaborationRoom(origin, { title: "会被跳过" });
+    expect(created.room.id).toBe("SKIPPEDA");
+    expect(created.persistedAtLastFlush).toBe(true);
+
+    // 房间 id 是大写的，落盘结论里的大小写不该改变判断。
+    outcome = { skippedIds: ["skippeda", "skippedb"], trimmedIds: [], at: 1_700_000_000_000 };
+
+    const snapshot = await fetch(`${origin}/api/rooms/SKIPPEDA`, {
+      headers: roomHeaders(created.access.accessToken),
+    }).then((response) => response.json()) as { persistedAtLastFlush?: boolean };
+    expect(snapshot.persistedAtLastFlush).toBe(false);
+
+    const invitation = await fetch(`${origin}/api/rooms/SKIPPEDA/invitations`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ role: "editor" }),
+    }).then((response) => response.json()) as { token: string };
+    const joined = await fetch(`${origin}/api/rooms/SKIPPEDA/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken: invitation.token, clientId: "client-b", displayName: "client-b" }),
+    });
+    expect(joined.status).toBe(200);
+    await expect(joined.json()).resolves.toMatchObject({ persistedAtLastFlush: false });
+
+    const second = await createCollaborationRoom(origin, { title: "也会被跳过" }, "client-c");
+    expect(second.room.id).toBe("SKIPPEDB");
+    expect(second.persistedAtLastFlush).toBe(false);
+
+    // 被裁掉历史的房间同样不算「上次落盘完整写下」。
+    outcome = { skippedIds: [], trimmedIds: ["SKIPPEDA"], at: 1_700_000_000_001 };
+    const trimmed = await fetch(`${origin}/api/rooms/SKIPPEDA`, {
+      headers: roomHeaders(created.access.accessToken),
+    }).then((response) => response.json()) as { persistedAtLastFlush?: boolean };
+    expect(trimmed.persistedAtLastFlush).toBe(false);
+
+    const untouched = await fetch(`${origin}/api/rooms/SKIPPEDB`, {
+      headers: roomHeaders(second.access.accessToken),
+    }).then((response) => response.json()) as { persistedAtLastFlush?: boolean };
+    expect(untouched.persistedAtLastFlush).toBe(true);
+
+    const health = await fetch(`${origin}/api/health`).then((response) => response.json()) as {
+      rooms: { lastFlush: RoomPersistOutcome | null };
+    };
+    expect(health.rooms.lastFlush).toEqual({ skippedIds: [], trimmedIds: ["SKIPPEDA"], at: 1_700_000_000_001 });
   });
 
   it("quarantines a snapshot that parses but carries an unusable envelope", async () => {
