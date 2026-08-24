@@ -4,11 +4,23 @@
  * Pure presentation — all state and callbacks flow in through props.
  */
 import { Copy, Download, FolderOpen, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
-import type { CollaborationRole, RoomAccessAction, RoomMember } from "../lib/collaboration-client";
+import type { CollaborationRole, RoomAccessAction, RoomMember, RoomPersistenceOutcome } from "../lib/collaboration-client";
 import type { LocalOverwriteStatus } from "../lib/incremental-workspace-sync";
 import { PROJECT_PACKAGE_FILE_ACCEPT } from "../lib/project-package";
 
 export type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error" | "closed";
+
+/**
+ * 落盘降级的两种后果要给两种交代。跳过的房间重启后不会回来,"及时导出备份"是唯一的出路;
+ * 裁剪的房间连快照带版本都还在,只是最近的增量历史没了——对它说"重启后将无法恢复"是假话,
+ * 而假话会让房里的人做出多余的决定,或者干脆不再相信这条提示。
+ *
+ * 只认布尔位的旧服务端说不出是哪一种,沿用跳过那句:宁可把裁剪说重,不能把死亡说轻。
+ */
+const PERSISTENCE_NOTE_COPY: Record<"skipped" | "trimmed", string> = {
+  skipped: "该房间体量超过服务器持久化上限，服务器重启后将无法恢复，请及时导出备份",
+  trimmed: "该房间体量超过服务器持久化上限，重启后房间会恢复，但最近的增量历史会丢失，长时间离线的成员需要重新加载完整快照，建议导出备份",
+};
 
 export interface ProjectMenuProps {
   roomId: string | null;
@@ -28,10 +40,15 @@ export interface ProjectMenuProps {
   /** 传输层不可达:重试仍在继续,本地修改不会丢。 */
   collaborationOffline?: boolean;
   /**
-   * 服务端上一次落盘没能完整写下这个房间:同步一切正常,但服务端一重启房间就没了。
-   * 可选是为了让接线方按自己的节奏传入,缺省视为服务端没有给出说法。
+   * 服务端上一次落盘没能完整写下这个房间:同步一切正常,但落盘不完整。跳过与裁剪都会置位,
+   * 它只决定要不要出提示。可选是为了让接线方按自己的节奏传入,缺省视为服务端没有给出说法。
    */
   roomPersistenceDegraded?: boolean;
+  /**
+   * 上一次落盘对这个房间的处置(R7-2 的 `persistence.outcome`),决定提示说什么。缺省(只认
+   * 布尔位的旧服务端)沿用跳过那句。
+   */
+  roomPersistenceKind?: RoomPersistenceOutcome | null;
   invitationToken: string | null;
   hasStoredRoomAccess: boolean;
   collaborationStatus: CollaborationStatus;
@@ -71,6 +88,7 @@ export function ProjectMenu({
   roomExpired = false,
   collaborationOffline = false,
   roomPersistenceDegraded = false,
+  roomPersistenceKind = null,
   invitationToken,
   hasStoredRoomAccess,
   collaborationStatus,
@@ -102,6 +120,8 @@ export function ProjectMenu({
   // 持久化降级排在最后:房间已经死了的时候"及时导出备份"无从执行,断线的时候连接本身更急。
   // 只有一间正在正常同步的房间才需要被告知它活不过服务端重启。
   const showPersistenceNote = roomPersistenceDegraded && Boolean(roomId) && terminalKind === undefined && !isOffline;
+  // 服务端说得出处置就按处置挑文案;说不出(或说的是 persisted 这种和降级矛盾的组合)沿用跳过那句。
+  const persistenceNoteKind = roomPersistenceKind === "trimmed" || roomPersistenceKind === "skipped" ? roomPersistenceKind : undefined;
   return (
     <details className="project-menu">
       <summary className="secondary-button" aria-label="打开项目菜单">
@@ -186,8 +206,13 @@ export function ProjectMenu({
                       </p>
                     )}
                     {showPersistenceNote && (
-                      <p className="collaboration-persist-degraded" role="status" data-collaboration-persist="degraded">
-                        该房间体量超过服务器持久化上限，服务器重启后将无法恢复，请及时导出备份
+                      <p
+                        className="collaboration-persist-degraded"
+                        role="status"
+                        data-collaboration-persist="degraded"
+                        data-collaboration-persist-kind={persistenceNoteKind}
+                      >
+                        {PERSISTENCE_NOTE_COPY[persistenceNoteKind ?? "skipped"]}
                       </p>
                     )}
                     <small data-collaboration-status={collaborationStatus} data-collaboration-terminal={terminalKind}>{collaborationMessage}</small>

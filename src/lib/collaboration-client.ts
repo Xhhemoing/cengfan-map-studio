@@ -33,6 +33,20 @@ export interface RoomInvitation {
   expiresAt: string;
 }
 
+/**
+ * 服务端上一次落盘对这个房间的处置(R7-2)。三态而非布尔,是因为两种降级的后果不同:
+ * `skipped` 的房间重启后不会被恢复,`trimmed` 的房间连快照带版本都还在,只是历史被裁掉。
+ */
+export type RoomPersistenceOutcome = "persisted" | "trimmed" | "skipped";
+
+export interface RoomPersistence {
+  outcome: RoomPersistenceOutcome;
+  /** 最近一次**成功**落盘的时刻;从未成功落过盘或服务端没给出时刻时为 `null`。 */
+  at: number | null;
+}
+
+const ROOM_PERSISTENCE_OUTCOMES: readonly string[] = ["persisted", "trimmed", "skipped"];
+
 export interface CollaborationRoom<T = unknown> {
   id: string;
   version: number;
@@ -49,10 +63,15 @@ export interface CollaborationRoom<T = unknown> {
   members?: RoomMember[];
   /**
    * 上一次成功落盘是否完整写下了这个房间(R6-2 附加字段,在房间快照上与 `role`/`participants` 同级)。
-   * `false` 表示房间被跳过或被裁掉历史,服务端重启后不会回来;字段缺失表示服务端没有给出说法
-   * (旧版本服务端),不能当成降级。
+   * `false` 表示房间被跳过或被裁掉历史;字段缺失表示服务端没有给出说法(旧版本服务端),
+   * 不能当成降级。它说不出是哪一种降级,后果要看同级的 `persistence`。
    */
   persistedAtLastFlush?: boolean;
+  /**
+   * 上一次落盘对这个房间的处置(R7-2 附加字段,与 `persistedAtLastFlush` 同级)。只认服务端
+   * 给出的三个已知处置,其余一律视为没有说法。
+   */
+  persistence?: RoomPersistence;
 }
 
 export interface CreatedRoom<T = unknown> {
@@ -60,6 +79,8 @@ export interface CreatedRoom<T = unknown> {
   access: RoomAccess;
   /** 同上,但在 create/join 的响应里它是 `room`/`access` 的兄弟字段,不在 `room` 里面。 */
   persistedAtLastFlush?: boolean;
+  /** 同上。 */
+  persistence?: RoomPersistence;
 }
 
 export interface CollaborationTransaction<T = unknown> {
@@ -309,21 +330,50 @@ function persistenceFlagOf(value: unknown): { persistedAtLastFlush?: boolean } {
   return typeof value === "boolean" ? { persistedAtLastFlush: value } : {};
 }
 
-/** 快照响应把标志位放在房间对象上,与 `role`/`participants` 同级。 */
-function parseRoomSnapshot<T>(room: CollaborationRoom<T>): CollaborationRoom<T> {
-  if (!room || typeof room !== "object") return room;
-  const { persistedAtLastFlush, ...rest } = room as CollaborationRoom<T> & { persistedAtLastFlush?: unknown };
-  return { ...(rest as CollaborationRoom<T>), ...persistenceFlagOf(persistedAtLastFlush) };
+/**
+ * 处置三态用的是同一把尺子:只有三个已知字面量算数。多一种处置(服务端将来新增的、网关改过
+ * 大小写的、被压成字符串的对象)就是"没有说法",调用方据此沿用只认布尔位时的说法,而不是
+ * 凭一个自己不认识的词去挑文案。`at` 只是落盘时刻的装饰位,读不出数字就报 `null`——结论本身
+ * 不跟着一起丢。
+ */
+function persistenceOutcomeOf(value: unknown): { persistence?: RoomPersistence } {
+  if (!value || typeof value !== "object") return {};
+  const { outcome, at } = value as { outcome?: unknown; at?: unknown };
+  if (typeof outcome !== "string" || !ROOM_PERSISTENCE_OUTCOMES.includes(outcome)) return {};
+  return {
+    persistence: {
+      outcome: outcome as RoomPersistenceOutcome,
+      at: typeof at === "number" && Number.isFinite(at) ? at : null,
+    },
+  };
 }
 
-/** create/join 把标志位放在 `room`/`access` 的兄弟位置;房间对象上的同名字段用同一把尺子量。 */
+/** 快照响应把落盘字段放在房间对象上,与 `role`/`participants` 同级。 */
+function parseRoomSnapshot<T>(room: CollaborationRoom<T>): CollaborationRoom<T> {
+  if (!room || typeof room !== "object") return room;
+  const { persistedAtLastFlush, persistence, ...rest } = room as CollaborationRoom<T> & {
+    persistedAtLastFlush?: unknown;
+    persistence?: unknown;
+  };
+  return {
+    ...(rest as CollaborationRoom<T>),
+    ...persistenceFlagOf(persistedAtLastFlush),
+    ...persistenceOutcomeOf(persistence),
+  };
+}
+
+/** create/join 把落盘字段放在 `room`/`access` 的兄弟位置;房间对象上的同名字段用同一把尺子量。 */
 function parseCreatedRoom<T>(created: CreatedRoom<T>): CreatedRoom<T> {
-  const { persistedAtLastFlush, ...rest } = created as CreatedRoom<T> & { persistedAtLastFlush?: unknown };
+  const { persistedAtLastFlush, persistence, ...rest } = created as CreatedRoom<T> & {
+    persistedAtLastFlush?: unknown;
+    persistence?: unknown;
+  };
   const base = rest as CreatedRoom<T>;
   return {
     ...base,
     ...(base.room ? { room: parseRoomSnapshot(base.room) } : {}),
     ...persistenceFlagOf(persistedAtLastFlush),
+    ...persistenceOutcomeOf(persistence),
   };
 }
 

@@ -32,6 +32,8 @@ import {
   type RoomAccessAction,
   type RoomMember,
   type RoomParticipant,
+  type RoomPersistence,
+  type RoomPersistenceOutcome,
   type SubscribeTerminalReason,
 } from "./collaboration-client";
 import { rebaseRemoteCollaborationOperations, type CollaborationOperation } from "./collaboration-operations";
@@ -121,10 +123,17 @@ export interface UseCollaborationRoomResult {
   collaborationOffline: boolean;
   /**
    * 服务端上一次落盘没能完整写下这个房间(R6-2 的 `persistedAtLastFlush` 为 `false`):房间还在
-   * 正常同步,但服务端一重启就没了。纯展示态——不参与重连、补齐、离线或终局的任何判据,
-   * 服务端没有给出说法时一律为 `false`,不替它宣布死亡。
+   * 正常同步,但落盘不完整。跳过与裁剪都会置位——它只回答"要不要提示",提示说什么看
+   * `roomPersistenceKind`。纯展示态——不参与重连、补齐、离线或终局的任何判据,服务端没有
+   * 给出说法时一律为 `false`,不替它宣布降级。
    */
   roomPersistenceDegraded: boolean;
+  /**
+   * 上一次落盘对这个房间的处置(R7-2 的 `persistence.outcome`)。`skipped` 的房间重启后不会
+   * 回来,`trimmed` 的房间会回来但最近的增量历史没了,两者要给出不同的交代。只认布尔位的
+   * 旧服务端没有说法,为 `null`;同样是纯展示态。
+   */
+  roomPersistenceKind: RoomPersistenceOutcome | null;
   /**
    * 每完成一次"离线 → 在线"的恢复就 +1。调用方可以拿它当 effect 依赖,在连接痊愈的那一刻
    * 重发分区期间没能上传的修改(每次恢复只触发一次)。
@@ -206,6 +215,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   const [collaborationStatus, setCollaborationStatus] = useState<RoomCollaborationStatus>("idle");
   const [collaborationOffline, setCollaborationOfflineState] = useState(false);
   const [roomPersistenceDegraded, setRoomPersistenceDegraded] = useState(false);
+  const [roomPersistenceKind, setRoomPersistenceKind] = useState<RoomPersistenceOutcome | null>(null);
   const [connectionHealCount, setConnectionHealCount] = useState(0);
   /** 网络恢复时自增,作为订阅 effect 的依赖:重挂一条流即为"立刻重连",退避序列不受影响。 */
   const [reconnectNonce, setReconnectNonce] = useState(0);
@@ -306,13 +316,21 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   };
 
   /**
-   * 记下服务端对"这个房间能不能挺过一次重启"的最新说法。只有明确的 `false` 才是降级:`true`
+   * 记下服务端对"上一次落盘怎么处置了这个房间"的最新说法。只有明确的 `false` 才是降级:`true`
    * 是明确的健康,`undefined` 是服务端没说(旧服务端),两者都不该让面板开口。没说时保留上一个
    * 说法而不是清零——握手报了降级、随后的快照没带这个字段,不代表房间忽然又安全了。
+   *
+   * 三态处置与布尔位各自遵守这条规则:只带布尔位的响应不会把上一次读到的处置抹掉(那个服务端
+   * 只是在这条响应里没提),而带了处置的响应两者一起更新——降级与否可以从处置直接读出来。
    */
-  const notePersistedAtLastFlush = (persistedAtLastFlush: boolean | undefined) => {
-    if (persistedAtLastFlush === undefined) return;
-    setRoomPersistenceDegraded(persistedAtLastFlush === false);
+  const notePersistence = (source: { persistedAtLastFlush?: boolean; persistence?: RoomPersistence }) => {
+    if (source.persistence) {
+      setRoomPersistenceKind(source.persistence.outcome);
+      setRoomPersistenceDegraded(source.persistence.outcome !== "persisted");
+      return;
+    }
+    if (source.persistedAtLastFlush === undefined) return;
+    setRoomPersistenceDegraded(source.persistedAtLastFlush === false);
   };
 
   const applyRemoteInterval = (operations: CollaborationOperation[], version: number) => {
@@ -381,7 +399,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
           const room = await fetchRoom<ProjectPackage>(activeRoomId, activeToken, { signal });
           if (isTerminal()) return;
           markOnline();
-          notePersistedAtLastFlush(room.persistedAtLastFlush);
+          notePersistence(room);
           if (room.closed) {
             markRoomClosed();
             return;
@@ -520,6 +538,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setRoomClosed(false);
     // 上一间房的持久化处境和下一间房无关:握手还没回话之前不能挂着旧房间的警告。
     setRoomPersistenceDegraded(false);
+    setRoomPersistenceKind(null);
   };
 
   const startCollaborationRoom = async () => {
@@ -531,7 +550,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     try {
       const allocated = await createRoom<ProjectPackage>({ clientId, displayName: COLLABORATION_DISPLAY_NAME, signal });
       const { room, access } = allocated;
-      notePersistedAtLastFlush(allocated.persistedAtLastFlush);
+      notePersistence(allocated);
       roomClosedRef.current = room.closed ?? false;
       persistRoomAccess(room.id, access.accessToken);
       setRoomId(room.id);
@@ -580,7 +599,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setCollaborationMessage(persistedToken ? "正在恢复房间访问" : "正在验证邀请凭证");
     try {
       // 握手先说一次,快照可能更新:两处都记下来,后到的说法覆盖先到的。
-      let joinedPersistedAtLastFlush: boolean | undefined;
+      let joinedPersistence: { persistedAtLastFlush?: boolean; persistence?: RoomPersistence } = {};
       const access = persistedToken
         ? { accessToken: persistedToken, role: null }
         : await joinRoom<ProjectPackage>({
@@ -590,14 +609,14 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
           displayName: COLLABORATION_DISPLAY_NAME,
           signal,
         }).then((joined) => {
-          joinedPersistedAtLastFlush = joined.persistedAtLastFlush;
+          joinedPersistence = { persistedAtLastFlush: joined.persistedAtLastFlush, persistence: joined.persistence };
           return joined.access;
         });
       const room = await retryInitializingRoom(() => fetchRoom<ProjectPackage>(normalizedRoomId, access.accessToken, { signal }));
       if (!room.snapshot) throw new Error("房间工程数据不完整");
       markOnline();
-      notePersistedAtLastFlush(joinedPersistedAtLastFlush);
-      notePersistedAtLastFlush(room.persistedAtLastFlush);
+      notePersistence(joinedPersistence);
+      notePersistence(room);
       roomClosedRef.current = room.closed ?? false;
       persistRoomAccess(normalizedRoomId, access.accessToken);
       setRoomId(normalizedRoomId);
@@ -674,6 +693,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setRoomClosed(false);
     setRoomExpired(false);
     setRoomPersistenceDegraded(false);
+    setRoomPersistenceKind(null);
     roomClosedRef.current = false;
     roomExpiredRef.current = false;
     setInvitationToken(null);
@@ -765,6 +785,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     collaborationStatus,
     collaborationOffline,
     roomPersistenceDegraded,
+    roomPersistenceKind,
     connectionHealCount,
     collaborationMessage,
     collaborationOpen,
