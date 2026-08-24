@@ -134,6 +134,46 @@ describe("DataWorkspace", () => {
     expect(container.querySelector(".import-recognition")?.textContent).toContain("未使用");
   });
 
+  it("surfaces out-of-enum 去向类型 warnings on the review panel after an Excel drop", async () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+    const xlsx = await import("xlsx");
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(
+      workbook,
+      xlsx.utils.aoa_to_sheet([
+        ["学生姓名", "录取院校", "城市", "去向类型"],
+        ["苏禾", "浙江大学", "杭州市", "未知类型"],
+      ]),
+      "学生数据",
+    );
+    const workbookBytes = xlsx.write(workbook, { type: "array", bookType: "xlsx" });
+    const file = new File([], "students.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => workbookBytes });
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+    const dropEvent = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEvent, "dataTransfer", { value: { files: [file] } });
+    flushSync(() => dropzone.dispatchEvent(dropEvent));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    // 枚举外取值必须在确认面板给出可读提示，且该行仍可导入（不进未识别行）。
+    const review = container.querySelector(".import-review")!;
+    expect(review.textContent).toContain("去向类型「未知类型」未识别，已按中国去向导入");
+    expect(review.textContent).toContain("提示 1");
+    expect(review.textContent).toContain("苏禾");
+    expect(container.querySelector(".import-unparsed")).toBeNull();
+  });
+
   it("clears stale Excel recognition after one-click text import", async () => {
     const requestAiParse = vi.fn(async (): Promise<ParseDataResult> => ({
       provider: "local-fallback",

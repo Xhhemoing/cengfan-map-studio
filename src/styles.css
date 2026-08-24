@@ -455,6 +455,8 @@ button { font: inherit; }
 .data-workspace .review-row strong,
 .data-workspace .review-row small { display: block; }
 .data-workspace .review-row small { margin-top: 2px; color: #8795a2; }
+/* 枚举外去向类型等需用户知晓的行内提示：确认面板要说清楚，不允许静默导入。 */
+.data-workspace .review-row .review-row__warning { color: #98503e; }
 .data-workspace .review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .data-workspace .wide-button.secondary { color: #6a4d3c; background: #f8efe6; border-color: #d2ad8d; }
 .data-table-wrap { overflow: auto; border: 1px solid #d7e0e4; border-radius: 6px; background: #fff; }

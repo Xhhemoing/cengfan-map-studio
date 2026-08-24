@@ -195,11 +195,26 @@ function createMetadata(
   };
 }
 
-function parseLocationScope(value: string | undefined): "international" | undefined {
-  const normalized = value?.trim().toLocaleLowerCase("zh-CN") ?? "";
-  return normalized.includes("海外") || normalized.includes("international") || normalized.includes("overseas")
-    ? "international"
-    : undefined;
+const INTERNATIONAL_SCOPE_PATTERN = /海外|international|overseas/;
+const CHINA_SCOPE_PATTERN = /中国|国内|china|domestic/;
+
+interface LocationScopeParse {
+  scope?: "international";
+  warning?: string;
+}
+
+/**
+ * 去向类型枚举：中国去向 / 海外去向。留空按中国去向处理；
+ * 非空且不在枚举内的取值仍按中国去向导入，但必须带可读提示
+ * 回显到确认面板，不允许静默当成中国去向。
+ */
+function parseLocationScope(value: string | undefined): LocationScopeParse {
+  const raw = value?.trim() ?? "";
+  if (!raw) return {};
+  const normalized = raw.toLocaleLowerCase("zh-CN");
+  if (INTERNATIONAL_SCOPE_PATTERN.test(normalized)) return { scope: "international" };
+  if (CHINA_SCOPE_PATTERN.test(normalized)) return {};
+  return { warning: `去向类型「${raw}」未识别，已按中国去向导入` };
 }
 
 export function parseExcelArrayBuffer(input: ArrayBuffer | string[][]): ExcelImportResult {
@@ -244,12 +259,15 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
       unparsed.push({ sourceLine, rawLine, reason: `缺少必填字段：${missing.join("、")}` });
       return;
     }
-    const locationScope = parseLocationScope(header.indexes.locationScope === undefined ? undefined : row[header.indexes.locationScope]);
+    const { scope: locationScope, warning: scopeWarning } = parseLocationScope(
+      header.indexes.locationScope === undefined ? undefined : row[header.indexes.locationScope],
+    );
     candidates.push({
       name,
       university,
       city,
       ...(locationScope ? { locationScope } : {}),
+      ...(scopeWarning ? { warnings: [scopeWarning] } : {}),
       sourceLine,
       rawLine,
     });

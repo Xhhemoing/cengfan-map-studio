@@ -139,6 +139,7 @@ export function DataWorkspace({
       valid: valid.length,
       missing: reviewRows.length - valid.length,
       duplicate: reviewRows.filter((_, index) => duplicateIds.has(`${reviewRows[index]!.sourceLine}-${index}`)).length,
+      warning: reviewRows.filter((row) => (row.warnings?.length ?? 0) > 0).length,
     };
   }, [reviewRows]);
 
@@ -152,6 +153,7 @@ export function DataWorkspace({
       university: string;
       city: string;
       locationScope?: "china" | "international";
+      warnings?: string[];
       sourceLine: number;
       rawLine: string;
     }>,
@@ -558,7 +560,7 @@ export function DataWorkspace({
 
       {reviewRows.length > 0 && (
         <div className="import-review">
-          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedLines.length} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}`} />
+          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedLines.length} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}${candidateSummary.warning > 0 ? ` · 提示 ${candidateSummary.warning}` : ""}`} />
           <div className="review-list">
             {reviewRows.map((row, index) => (
               <label key={`${row.sourceLine}-${index}`} className="review-row">
@@ -580,6 +582,9 @@ export function DataWorkspace({
                   <small>
                     {row.university} · {row.city}
                   </small>
+                  {(row.warnings?.length ?? 0) > 0 && (
+                    <small className="review-row__warning">{row.warnings!.join("；")}</small>
+                  )}
                 </span>
               </label>
             ))}

@@ -3,6 +3,8 @@ export interface ImportCandidate {
   university: string;
   city: string;
   locationScope?: "china" | "international";
+  /** 该行可导入但需要用户确认的提示（如去向类型取值不在枚举内）。 */
+  warnings?: string[];
   sourceLine: number;
   rawLine: string;
 }

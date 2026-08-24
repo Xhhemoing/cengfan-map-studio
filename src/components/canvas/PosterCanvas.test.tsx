@@ -1167,6 +1167,51 @@ describe("PosterCanvas", () => {
     container.remove();
   });
 
+  it("omits the whole empty guest panel (frame, title, divider) from exports", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.guests = { ...project.guests, people: [] };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
+
+    // 零可见嘉宾且无自定义文本：框体、标题、分隔线整组都不进导出。
+    expect(container.querySelector("[data-guests-layer]")).toBeNull();
+    expect(container.querySelector("[data-guest-title]")).toBeNull();
+    expect(container.textContent).not.toContain("特邀嘉宾");
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("keeps the empty guest panel visible in the editor to guide adding people", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.guests = { ...project.guests, people: [] };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} />));
+
+    expect(container.querySelector("[data-guests-layer]")).not.toBeNull();
+    expect(container.querySelector("[data-guest-title]")?.textContent).toContain("特邀嘉宾");
+    expect(container.textContent).toContain("在右侧添加老师");
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("keeps the guest panel in exports when only custom text fills it", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.guests = { ...project.guests, customText: "感谢师恩", people: [] };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
+
+    expect(container.querySelector("[data-guests-layer]")).not.toBeNull();
+    expect(container.querySelector("[data-guest-custom-text]")?.textContent).toBe("感谢师恩");
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("hides the empty-list hint when custom text fills the panel", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     project.guests = { ...project.guests, customText: "仅自定义文本", people: [] };

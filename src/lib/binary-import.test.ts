@@ -158,6 +158,26 @@ describe("binary import adapters", () => {
     expect(result.candidates[1]).toMatchObject({ locationScope: "international" });
   });
 
+  it("flags out-of-enum 去向类型 values with a readable warning instead of silently treating them as china", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "录取院校", "城市", "去向类型"],
+      ["林舟", "北京大学", "北京市", "中国去向"],
+      ["周晴", "哈佛大学", "美国·波士顿", "海外去向"],
+      ["苏禾", "浙江大学", "杭州市", "未知类型"],
+    ]);
+
+    expect(result.candidates).toHaveLength(3);
+    // 枚举内取值不产生提示。
+    expect(result.candidates[0]!.warnings).toBeUndefined();
+    expect(result.candidates[1]).toMatchObject({ locationScope: "international" });
+    expect(result.candidates[1]!.warnings).toBeUndefined();
+    // 枚举外取值仍按中国去向导入，但必须带可读提示，不允许静默。
+    expect(result.candidates[2]!.locationScope).toBeUndefined();
+    expect(result.candidates[2]!.warnings).toEqual(["去向类型「未知类型」未识别，已按中国去向导入"]);
+    // 该行是可导入数据，不进「未识别行」。
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("surfaces rows missing required fields as unparsed instead of dropping them silently", () => {
     const result = parseExcelWorkbookRows([
       ["学生姓名", "录取院校", "城市"],
