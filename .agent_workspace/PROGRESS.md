@@ -17,7 +17,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | IMPLEMENTING | T2–T10 | — | T10 agent landing 92 tests; remaining T1 layout solver |
+| 1 | MERGED_PENDING_FULL_SUITE | T1–T10 | — | All 10 tasks merged; full vitest + fable review next |
 
 ## Round 0 Baseline (pre-optimization)
 
