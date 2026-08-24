@@ -22,7 +22,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 3 | CLOSED | R3-1–R3-10 | — | Vitest 1497 pass / 2 skip; **tsc node broken** (R3-5 restore?: unknown vs RoomStoreSnapshot). PR stays draft. |
 | 4 | CLOSED | R4-1–R4-10 | — | Full suite 1534 pass / 2 skip; lint 0 err; fable 5 ACCEPT + 5 NITS; no blocker. 5 MiB cap calibrate in R5-1. |
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
-| 6 | IN_PROGRESS | R6-1, R6-2, R6-4, R6-6, R6-7, R6-8 | — | Persist mortality visible to ops and (once App threads) members. Awaiting R6-5. |
+| 6 | IN_PROGRESS | R6-1, R6-2, R6-4, R6-5, R6-6, R6-7, R6-8 | — | Code tasks merged except App persist-prop thread. Proofs R6-3/R6-9 next. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -94,6 +94,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R6-4 (`4d7e3a2` / `af002ab`): shared `StorageNotice`; editor banner drops `workbench-resume`. Rollback = revert the merge. Owned tests 41/41; tsc app+node 0.
 - R6-2 (`be82abb` / `e0c7857`): boot warn lists skipped ids; `/api/health.rooms`; create/join/snapshot `persistedAtLastFlush`. Rollback = revert the merge. `server/index.test.ts` 75/75; tsc 0.
 - R6-6 (`9f93022` / `b09ed7b`): client parse + `roomPersistenceDegraded` + ProjectMenu note (optional prop; App not wired until R6-5). Rollback = revert the merge. Owned tests 71/71; tsc 0.
+- R6-5 (`937337d` / `1e0eecf`): honest missing-project copy; App.tsx 2651→2321. Rollback = revert the merge. Owned tests 182/182; tsc 0. App still must pass `roomPersistenceDegraded` to ProjectMenu.
 
 ## Round Briefings
 
