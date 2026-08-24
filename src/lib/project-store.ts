@@ -470,7 +470,8 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
         tx.objectStore(STORE_NAME).put(structuredClone(project), project.id);
         tx.objectStore(METADATA_STORE_NAME).put(projectMetadata(project), project.id);
         tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 写入失败"));
+        // request error 会先于事务的 terminal abort 触发；由 onabort 统一报告，避免多 store 写入误报为已完成。
+        tx.onerror = () => undefined;
         tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 写入中止"));
       }));
     },
@@ -479,7 +480,7 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
         tx.objectStore(STORE_NAME).delete(id);
         tx.objectStore(METADATA_STORE_NAME).delete(id);
         tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error ?? new Error("IndexedDB 删除失败"));
+        tx.onerror = () => undefined;
         tx.onabort = () => reject(tx.error ?? new Error("IndexedDB 删除中止"));
       }));
     },
