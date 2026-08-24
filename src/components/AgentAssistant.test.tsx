@@ -523,6 +523,49 @@ describe("AgentAssistant", () => {
     root.unmount();
   });
 
+  it("gives every button and form field an accessible name in the richest proposal state", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "audit-step", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "审计完成" })));
+    const { container, root } = renderAssistant(project);
+    expect(container.querySelector('.agent-assistant-launcher')?.getAttribute("aria-label")).toBeTruthy();
+    openAssistant(container);
+    setMessage(container, "审计控件");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("审计完成"));
+    expect(container.querySelector('.agent-assistant-window input[type="checkbox"]')).not.toBeNull();
+    for (const button of container.querySelectorAll("button")) {
+      const name = (button.getAttribute("aria-label") ?? button.textContent ?? "").trim();
+      expect(name, `unnamed button: ${button.outerHTML}`).not.toBe("");
+    }
+    for (const field of container.querySelectorAll("input, textarea")) {
+      const name = field.getAttribute("aria-label")?.trim() || field.closest("label")?.textContent?.trim();
+      expect(name, `unnamed field: ${field.outerHTML}`).toBeTruthy();
+    }
+    root.unmount();
+  });
+
+  it("exposes the conversation history as a named group and marks the active conversation as current", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response({ kind: "finish", summary: "第一段完成" })));
+    const { container, root } = renderAssistant(project);
+    openAssistant(container);
+    // aria-label 需要挂在有角色的元素上才会暴露给辅助技术。
+    expect(container.querySelector('[role="group"][aria-label="对话历史"]')).not.toBeNull();
+    setMessage(container, "第一段");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("第一段完成"));
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="新建对话"]')?.click());
+    const drafted = [...container.querySelectorAll<HTMLButtonElement>('.agent-assistant-history button')];
+    expect(drafted).toHaveLength(2);
+    expect(drafted.map((button) => button.getAttribute("aria-current"))).toEqual([null, "true"]);
+    flushSync(() => drafted[0]!.click());
+    const reselected = [...container.querySelectorAll<HTMLButtonElement>('.agent-assistant-history button')];
+    expect(reselected.map((button) => button.getAttribute("aria-current"))).toEqual(["true", null]);
+    root.unmount();
+  });
+
   it("keeps a dragged panel within finite coordinates", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const { container, root } = renderAssistant(project);

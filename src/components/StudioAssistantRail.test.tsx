@@ -217,6 +217,25 @@ describe("StudioAssistantRail", () => {
     expect(document.activeElement).toBe(options[0]); // clamps at the start, no wrap
   });
 
+  it("hosts element options on named native buttons inside the labelled listbox", () => {
+    const { container } = renderRail();
+    click(container.querySelector('[role="tab"]:last-child')!);
+    click(container.querySelector('button[aria-label="打开元素查看"]')!);
+
+    expect(container.querySelector('[role="listbox"]')?.getAttribute("aria-label")).toBe("内容对象列表");
+    const options = [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(options.length).toBeGreaterThanOrEqual(4);
+    for (const option of options) {
+      // 契约：option 有意由原生 <button type="button"> 承载——ARIA in HTML 允许该组合，
+      // 可聚焦性与 Enter/Space 激活来自原生按钮；styles.css 也按 button 选择器钉样式。
+      // 若要换宿主元素，必须同步补键盘激活处理并调整样式所有权。
+      expect(option.tagName).toBe("BUTTON");
+      expect(option.type).toBe("button");
+      expect(option.textContent?.trim(), `unnamed option: ${option.outerHTML}`).toBeTruthy();
+      expect(option.getAttribute("aria-selected")).toMatch(/^(true|false)$/);
+    }
+  });
+
   it("opens the element view straight from the stage overview elements card", () => {
     const onStageOverviewAction = vi.fn();
     const { container } = renderRail({

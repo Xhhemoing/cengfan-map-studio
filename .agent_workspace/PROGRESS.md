@@ -14,6 +14,7 @@
 | Round 3 | complete | 2026-08-24 | 2026-08-24 | 协作 hook 化；搜索短路；筛选深链；grid p95 −43%；API 405/路径 |
 | Round 4 | complete | 2026-08-24 | 2026-08-24 | App 331 行；布局模块全 ≤400；ThemeToggle a11y；HTML 粘贴表 |
 | Round 5 | complete | 2026-08-24 | 2026-08-24 | PosterCanvas 563；scene/migration 拆分；可选房间快照；jsdom 旅程 |
+| Round 6 | complete | 2026-08-24 | 2026-08-24 | 核心实现文件压到 ≤400；AgentAssistant a11y；协作 hook/store 再拆 |
 
 ## Round 1 结论摘要
 
@@ -57,7 +58,11 @@
 
 详见 [round5/BRIEF.md](round5/BRIEF.md)。集成：**tsc 绿、179×1563 tests 绿**。
 
-## 全局成果（五轮合计）
+## Round 6 结论简报
+
+详见 [round6/BRIEF.md](round6/BRIEF.md)。集成：**tsc 绿、181×1572 tests 绿**。核心 UI/布局/协作实现文件均 ≤400，仅 `agent-session.ts` 与静态数据目录仍超限。
+
+## 全局成果（六轮合计）
 
 | 指标 | main 基线 | Round 3 结束 |
 | --- | ---: | ---: |
@@ -65,7 +70,7 @@
 | card-layout 门面 | 1297 | 模块化 + 搜索短路 |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **400** |
-| 测试 | （基线已有大量单测） | **1563 passed / 179 files** |
+| 测试 | （基线已有大量单测） | **1572 passed / 181 files** |
 
 ## 回滚
 

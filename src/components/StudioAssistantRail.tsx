@@ -227,7 +227,11 @@ export function StudioAssistantRail({
                 </div>
                 <section className="studio-advanced__group" aria-label="画布元素">
                   <div className="studio-advanced__section-heading"><h3>画布元素</h3><small>{outline.length} 个</small></div>
-                  {/* 规范 listbox：单一 Tab 停靠点（roving tabindex），方向键在选项间移动焦点。 */}
+                  {/* 规范 listbox：单一 Tab 停靠点（roving tabindex），方向键在选项间移动焦点。
+                      option 有意落在原生 <button> 上（而非无语义 div）：ARIA in HTML 允许 button
+                      承载 option 角色，可聚焦性与 Enter/Space 激活来自浏览器原生实现；且 styles.css
+                      以 `.studio-advanced__element-list button` 选择器钉住样式。该契约由
+                      StudioAssistantRail.test.tsx 的宿主元素用例钉死，改宿主元素前先改测试与样式。 */}
                   <div className="studio-advanced__element-list" role="listbox" aria-label="内容对象列表">
                     {outline.map(({ selection: itemSelection, label }, index) => (
                       <button

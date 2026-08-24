@@ -86,6 +86,7 @@ describe("browserless studio journey", () => {
 
     expect(restored.project.students.map(({ id }) => id)).toEqual(sourceProject.students.map(({ id }) => id));
     expect(restored.project.students.map(({ name }) => name)).toEqual(["林舟", "陈宁", "苏禾"]);
+    expect(restored.project.cards.positions).toEqual(positions);
     const restoredPositions = restored.project.cards.positions ?? {};
     expect(Object.keys(restoredPositions)).toEqual(expect.arrayContaining(groups.map(({ key }) => key)));
     for (const position of Object.values(restoredPositions)) {
