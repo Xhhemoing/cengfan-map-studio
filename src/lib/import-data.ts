@@ -30,14 +30,20 @@ export interface UnparsedLine {
 export interface TextImportResult {
   candidates: ImportCandidate[];
   unparsed: UnparsedLine[];
+  /** 被升为表头而消费掉的行号(1 基);除此之外每一行都会落在 candidates 或 unparsed 里。 */
+  headerLine?: number;
 }
+
+/** 疑似表头但没认全必填列时的落点理由:宁可报出来,也不静默丢行。 */
+export const HEADER_LIKE_REASON = "疑似表头行";
 
 /** 行首制表符代表空列位置,清理缩进时必须保留,否则整行列位会左移。 */
 function trimLineEdges(line: string): string {
   return line.replace(/^[^\S\t]+/, "").replace(/\s+$/, "");
 }
 
-function splitLines(text: string): string[] {
+/** 与解析共用同一套切行规则:OCR 归一化要按行号对齐,不能各写一份。 */
+export function splitTextLines(text: string): string[] {
   return text
     .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
@@ -149,41 +155,51 @@ function parseLabeledCandidate(
 }
 
 export function parseStudentText(text: string): TextImportResult {
-  const lines = splitLines(text);
+  const lines = splitTextLines(text);
   const candidates: ImportCandidate[] = [];
   const unparsed: UnparsedLine[] = [];
-  // 首行是表头时记下列映射,后续行按列名取值;没有表头则保持旧的列位解析。
+  // 表头可以出现在任意一行(常见「标题 + 表头 + 数据」),认到后续行就按列名取值;没有表头则保持旧的列位解析。
   let headerIndexes: ColumnIndexes | null = null;
+  let headerLine: number | undefined;
 
   lines.forEach((line, index) => {
-    const labeledCandidate = parseLabeledCandidate(line, index + 1);
+    const sourceLine = index + 1;
+    const labeledCandidate = parseLabeledCandidate(line, sourceLine);
     if (labeledCandidate) {
       candidates.push(labeledCandidate);
       return;
     }
     const delimiter = detectDelimiter(line);
     const parts = splitParts(line, delimiter);
-    if (index === 0 && looksLikeHeaderRow(parts) && parts.length >= 3) {
-      const indexes = findColumnIndexes(parts);
-      // 三个必填列没认全就不用映射:漏认一列会把整批数据判成无效,不如退回列位解析。
-      headerIndexes = REQUIRED_COLUMNS.every((field) => indexes[field] !== undefined) ? indexes : null;
+    if (looksLikeHeaderRow(parts)) {
+      // 命中两个以上必填别名的行一定不是学生记录:认全必填列就升为表头,
+      // 否则记成疑似表头行,绝不让「姓名=姓名」这种假学生进候选。
+      if (headerIndexes === null && parts.length >= 3) {
+        const indexes = findColumnIndexes(parts);
+        if (REQUIRED_COLUMNS.every((field) => indexes[field] !== undefined)) {
+          headerIndexes = indexes;
+          headerLine = sourceLine;
+          return;
+        }
+      }
+      unparsed.push({ sourceLine, rawLine: line, reason: HEADER_LIKE_REASON });
       return;
     }
 
     const candidate = headerIndexes
-      ? toMappedCandidate(parts, headerIndexes, index + 1, line)
-      : toCandidate(parts, index + 1, line);
+      ? toMappedCandidate(parts, headerIndexes, sourceLine, line)
+      : toCandidate(parts, sourceLine, line);
     if (candidate) {
       candidates.push(candidate);
       return;
     }
 
     unparsed.push({
-      sourceLine: index + 1,
+      sourceLine,
       rawLine: line,
       reason: "无法识别学生名称、录取院校和城市",
     });
   });
 
-  return { candidates, unparsed };
+  return { candidates, unparsed, ...(headerLine === undefined ? {} : { headerLine }) };
 }

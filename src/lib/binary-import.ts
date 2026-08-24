@@ -6,7 +6,14 @@ import {
   type RequiredStudentColumn,
   type StudentColumn,
 } from "./import-aliases";
-import { parseStudentText, type TextImportResult, type UnparsedLine } from "./import-data";
+import {
+  HEADER_LIKE_REASON,
+  parseStudentText,
+  splitTextLines,
+  type ImportCandidate,
+  type TextImportResult,
+  type UnparsedLine,
+} from "./import-data";
 
 /**
  * 对外导出完整的列类型(含省份):识别面板要为省份渲染映射行,消费方的标签表也要覆盖省份。
@@ -214,11 +221,82 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
   return { candidates, unparsed, ...metadata };
 }
 
-export function parseOcrLikeText(text: string): TextImportResult {
-  const normalized = text
+/** 归一化后整行被吃空时的兜底理由:行数不守恒必须报出来,不能当作解析成功。 */
+const OCR_LOST_LINE_REASON = "OCR 归一化后未产生解析结果";
+
+/** 截图文本的噪声:不断行的空格、竖线分隔、冒号标签、连续空格。 */
+function normalizeOcrLine(line: string): string {
+  return line
     .replace(/\u00a0/g, " ")
     .replace(/[|｜]/g, " ")
     .replace(/[：:]/g, " ")
-    .replace(/\s{2,}/g, " ");
-  return parseStudentText(normalized);
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function indexBySourceLine<T extends { sourceLine: number }>(rows: readonly T[]): Map<number, T> {
+  return new Map(rows.map((row) => [row.sourceLine, row]));
+}
+
+/**
+ * OCR 文本解析:先按原文解析,原文能全解析就不做归一化。
+ * 剥掉冒号会把「姓名：张三 院校：北京大学」压成一串表头别名,归一化后整行被当成表头,
+ * candidates 和 unparsed 会同时为空。因此归一化只用来补原文解析不了的行,
+ * 并逐行核对行数守恒:每一行要么是候选,要么进 unparsed,要么是被消费的表头行(headerLine)。
+ */
+export function parseOcrLikeText(text: string): TextImportResult {
+  const direct = parseStudentText(text);
+  if (direct.unparsed.length === 0) return direct;
+
+  const lines = splitTextLines(text);
+  // 只把原文读不出的行送去归一化:已解析的带标签行留在原地,免得它们归一化后混进表头识别。
+  const pending = direct.unparsed
+    .map((row) => ({ sourceLine: row.sourceLine, rawLine: lines[row.sourceLine - 1] ?? row.rawLine }))
+    .filter((row) => row.rawLine.length > 0);
+  const rescued = parseStudentText(
+    pending.map((row) => normalizeOcrLine(row.rawLine) || row.rawLine).join("\n"),
+  );
+  const rescuedCandidates = indexBySourceLine(rescued.candidates);
+  const rescuedUnparsed = indexBySourceLine(rescued.unparsed);
+  // 归一化文本里的行号是 pending 内的序号,回填成原文行号;对不上的行按丢失处理。
+  const rescuedByLine = new Map(pending.map((row, offset) => [row.sourceLine, {
+    candidate: rescuedCandidates.get(offset + 1),
+    reason: rescuedUnparsed.get(offset + 1)?.reason,
+    isHeader: rescued.headerLine === offset + 1,
+  }]));
+
+  const directCandidates = indexBySourceLine(direct.candidates);
+  const directUnparsed = indexBySourceLine(direct.unparsed);
+  const candidates: ImportCandidate[] = [];
+  const unparsed: UnparsedLine[] = [];
+  let headerLine = direct.headerLine;
+
+  lines.forEach((rawLine, index) => {
+    const sourceLine = index + 1;
+    const parsed = directCandidates.get(sourceLine);
+    if (parsed) {
+      candidates.push(parsed);
+      return;
+    }
+    if (sourceLine === direct.headerLine) return;
+    const fallback = rescuedByLine.get(sourceLine);
+    if (fallback?.candidate) {
+      // rawLine 回填原文:面板要展示用户真正粘进来的那一行,而不是归一化中间态。
+      candidates.push({ ...fallback.candidate, rawLine });
+      return;
+    }
+    if (fallback?.isHeader && headerLine === undefined) {
+      headerLine = sourceLine;
+      return;
+    }
+    unparsed.push({
+      sourceLine,
+      rawLine,
+      reason: fallback?.isHeader
+        ? HEADER_LIKE_REASON
+        : fallback?.reason ?? directUnparsed.get(sourceLine)?.reason ?? OCR_LOST_LINE_REASON,
+    });
+  });
+
+  return { candidates, unparsed, ...(headerLine === undefined ? {} : { headerLine }) };
 }

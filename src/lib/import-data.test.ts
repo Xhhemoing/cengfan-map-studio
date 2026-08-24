@@ -233,6 +233,113 @@ describe("import data", () => {
     }]);
   });
 
+  it("promotes a standard header row that follows a title line instead of importing it as a student", () => {
+    const result = parseStudentText([
+      "2026届毕业去向名单",
+      "学生姓名,录取院校,城市,去向类型,省份",
+      "林舟,北京大学,北京市,中国去向,北京市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([{
+      name: "林舟",
+      university: "北京大学",
+      city: "北京市",
+      province: "北京市",
+      sourceLine: 3,
+      rawLine: "林舟,北京大学,北京市,中国去向,北京市",
+    }]);
+    expect(result.candidates.map((candidate) => candidate.name)).not.toContain("学生姓名");
+    expect(result.headerLine).toBe(2);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 1, rawLine: "2026届毕业去向名单", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+
+  it("recognizes a reordered alias header row that is not the first line", () => {
+    const result = parseStudentText([
+      "说明,本表由教务处汇总",
+      "所在城市,录取学校,学生姓名,去向类型",
+      "杭州市,浙江大学,苏禾,中国去向",
+    ].join("\n"));
+
+    expect(result.headerLine).toBe(2);
+    expect(result.candidates).toEqual([{
+      name: "苏禾",
+      university: "浙江大学",
+      city: "杭州市",
+      sourceLine: 3,
+      rawLine: "杭州市,浙江大学,苏禾,中国去向",
+    }]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 1, rawLine: "说明,本表由教务处汇总", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+
+  it("reports a header-like row that misses a required column instead of importing it", () => {
+    const result = parseStudentText([
+      "班级名单",
+      "姓名,录取学校,备注",
+      "苏禾,浙江大学,杭州市",
+    ].join("\n"));
+
+    expect(result.headerLine).toBeUndefined();
+    expect(result.candidates).toEqual([{
+      name: "苏禾",
+      university: "浙江大学",
+      city: "杭州市",
+      sourceLine: 3,
+      rawLine: "苏禾,浙江大学,杭州市",
+    }]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 1, rawLine: "班级名单", reason: "无法识别学生名称、录取院校和城市" },
+      { sourceLine: 2, rawLine: "姓名,录取学校,备注", reason: "疑似表头行" },
+    ]);
+  });
+
+  it("never lets a repeated header row become a student record", () => {
+    const result = parseStudentText([
+      "姓名,院校,城市",
+      "林舟,北京大学,北京市",
+      "姓名,院校,城市",
+      "苏禾,浙江大学,杭州市",
+    ].join("\n"));
+
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["林舟", "苏禾"]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "姓名,院校,城市", reason: "疑似表头行" },
+    ]);
+  });
+
+  it("keeps extra unknown columns from shifting mapped values", () => {
+    const result = parseStudentText([
+      "班级,学生姓名,录取学校,城市,备注",
+      "三班,苏禾,浙江大学,杭州市,保研",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([{
+      name: "苏禾",
+      university: "浙江大学",
+      city: "杭州市",
+      sourceLine: 2,
+      rawLine: "三班,苏禾,浙江大学,杭州市,保研",
+    }]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("accounts for every line as a candidate, the header, or an unparsed row", () => {
+    const lines = [
+      "2026届毕业去向名单",
+      "姓名,院校,城市",
+      "林舟,北京大学,北京市",
+      "姓名,院校,城市",
+      "无效行",
+    ];
+    const result = parseStudentText(lines.join("\n"));
+
+    const accounted = result.candidates.length + result.unparsed.length + (result.headerLine === undefined ? 0 : 1);
+    expect(accounted).toBe(lines.length);
+  });
+
   it("recognizes labeled records that use alias labels", () => {
     const result = parseStudentText("学生姓名：苏禾；录取学校：浙江大学；所在城市：杭州市");
 

@@ -81,6 +81,71 @@ describe("binary import adapters", () => {
     expect(result.unparsed).toEqual([]);
   });
 
+  it("parses labeled ocr lines instead of flattening them into a header row", () => {
+    const result = parseOcrLikeText("姓名：张三 院校：北京大学 城市：北京");
+
+    expect(result.candidates).toEqual([{
+      name: "张三",
+      university: "北京大学",
+      city: "北京",
+      sourceLine: 1,
+      rawLine: "姓名：张三 院校：北京大学 城市：北京",
+    }]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("normalizes colon separated ocr lines that the raw pass cannot read", () => {
+    const result = parseOcrLikeText("张三:北京大学:北京");
+
+    expect(result.candidates).toEqual([{
+      name: "张三",
+      university: "北京大学",
+      city: "北京",
+      sourceLine: 1,
+      rawLine: "张三:北京大学:北京",
+    }]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("keeps labeled and colon separated ocr lines in one pass", () => {
+    const result = parseOcrLikeText([
+      "姓名：张三 院校：北京大学 城市：北京",
+      "李四:清华大学:北京",
+    ].join("\n"));
+
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["张三", "李四"]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("treats a colon separated ocr header as a header row and reports the rest", () => {
+    const result = parseOcrLikeText([
+      "姓名:院校:城市",
+      "张三:北京大学:北京",
+      "看不懂的一行",
+    ].join("\n"));
+
+    expect(result.headerLine).toBe(1);
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["张三"]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "看不懂的一行", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+
+  it("accounts for every ocr line as a candidate, the header, or an unparsed row", () => {
+    const lines = [
+      "2026 届去向",
+      "姓名:院校:城市",
+      "张三:北京大学:北京",
+      "姓名：李四 院校：清华大学 城市：北京",
+      "???",
+    ];
+    const result = parseOcrLikeText(lines.join("\n"));
+
+    const accounted = result.candidates.length + result.unparsed.length + (result.headerLine === undefined ? 0 : 1);
+    expect(accounted).toBe(lines.length);
+    expect(result.candidates.map((candidate) => candidate.name)).toEqual(["张三", "李四"]);
+  });
+
   it("finds a shuffled header row after leading notes and exposes representative samples", () => {
     const result = parseExcelWorkbookRows([
       ["这是填写说明"],
