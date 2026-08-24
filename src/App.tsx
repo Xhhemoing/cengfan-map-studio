@@ -57,7 +57,13 @@ import { ConfirmDialog } from "./components/workbench/ConfirmDialog";
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
 import "./components/workflow-workspaces.css";
-import { GlobalSettingsScreen, type GlobalSettingsSection } from "./components/GlobalSettingsScreen";
+import {
+  GlobalSettingsScreen,
+  describeSettingsFocusAnchor,
+  findSettingsFocusAnchor,
+  type GlobalSettingsSection,
+  type SettingsFocusAnchor,
+} from "./components/GlobalSettingsScreen";
 import { DataUploadRail, DataUploadWorkspace } from "./components/workspaces/DataUploadWorkspace";
 import { MapStyleRail, MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
 import { ReferenceCardStyleWorkspace } from "./components/workspaces/ReferenceCardStyleWorkspace";
@@ -364,6 +370,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
+  // 进出全局设置会整树替换编辑器：打开时记下触发控件的定位信息（不持节点），离开时按它找回等价落点。
+  const settingsFocusAnchorRef = useRef<SettingsFocusAnchor | null>(null);
+  const settingsFocusPendingRef = useRef(false);
   const [saveTemplateDialogOpen, setSaveTemplateDialogOpen] = useState(false);
   /** 破坏性动作的自绘确认框；沙箱化 iframe 会抑制 `window.confirm`，用户点不到「确定」。 */
   const [pendingConfirm, setPendingConfirm] = useState<{
@@ -375,6 +384,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
   } | null>(null);
 
   const resolvedRenderInterval = renderIntervalMs(renderSettings);
+  // 设置屏卸载后编辑器才重挂，落点这时候才存在；只在焦点确实掉到 body 时接管。
+  useEffect(() => {
+    if (globalSettingsSection !== null || !settingsFocusPendingRef.current) return;
+    settingsFocusPendingRef.current = false;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    findSettingsFocusAnchor(settingsFocusAnchorRef.current)?.focus();
+  }, [globalSettingsSection]);
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1486,9 +1503,19 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setActiveWorkflowStep(workflowId);
   };
 
+  const openGlobalSettings = (section: GlobalSettingsSection) => {
+    settingsFocusAnchorRef.current = describeSettingsFocusAnchor(document.activeElement);
+    setGlobalSettingsSection(section);
+  };
+
+  const closeGlobalSettings = () => {
+    settingsFocusPendingRef.current = true;
+    setGlobalSettingsSection(null);
+  };
+
   const openStudioSettings = () => {
     setActiveWorkflowStep("layout");
-    setGlobalSettingsSection("canvas");
+    openGlobalSettings("canvas");
   };
   const openTopbarProjectMenu = () => {
     const menu = document.querySelector<HTMLDetailsElement>(".topbar .project-menu");
@@ -1499,10 +1526,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
     collaboration.setCollaborationOpen(true);
   };
   const openDataDiagnostics = () => {
-    setGlobalSettingsSection("cards");
+    openGlobalSettings("cards");
   };
   const openRenderSettings = () => {
-    setGlobalSettingsSection("advanced");
+    openGlobalSettings("advanced");
   };
   const projectExportActions = (
     <ToolbarGroup label="导出与工程">
@@ -1701,7 +1728,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         canRedo={canRedo}
         undoLabel={undoLabel}
         redoLabel={redoLabel}
-        onClose={() => setGlobalSettingsSection(null)}
+        onClose={closeGlobalSettings}
         onUndo={handleUndo}
         onRedo={handleRedo}
         onPatch={patchScene}
@@ -2482,7 +2509,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             onLayerChange={changeAssetLayer}
             onAddUserAsset={addUserAsset}
             provinces={provinceNames}
-            onOpenGlobalSettings={setGlobalSettingsSection}
+            onOpenGlobalSettings={openGlobalSettings}
             onApplyFont={applyFont}
             onUploadFont={(font) => {
               setUserFonts((current) => [...current, font]);

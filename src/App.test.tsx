@@ -1520,6 +1520,22 @@ describe("App student editing", () => {
     expect(container.querySelector("#canvas-width")).toBeNull();
   });
 
+  it("keeps keyboard focus on a real control across entering and leaving global settings", () => {
+    const container = renderLegacyApp();
+    openRailAdvancedTab(container);
+    const entry = container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!;
+    entry.focus();
+    click(entry);
+
+    // 触发按钮随编辑器整树卸载，设置屏自己接住焦点。
+    expect(document.activeElement?.getAttribute("aria-controls")).toBe("global-settings-canvas");
+
+    closeGlobalSettings(container);
+
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("打开全局设置");
+  });
+
   it("edits every global settings section through the current project history", () => {
     const container = renderApp();
     openRailAdvancedTab(container);

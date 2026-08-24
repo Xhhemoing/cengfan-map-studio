@@ -1,5 +1,5 @@
 import { Database, LayoutPanelTop, Map, Redo2, RectangleHorizontal, Settings2, Type, Undo2, Wallpaper } from "lucide-react";
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ProjectDocument } from "../lib/project-document";
 import type { UserFont } from "../lib/fonts";
 import type { SceneSelection } from "../lib/scene-document";
@@ -93,6 +93,54 @@ const workflowStepLabels: Record<WorkflowStepId, string> = {
   export: "检查导出",
 };
 
+/** 进入设置前那个控件的定位信息。只记 id / aria-label：整树替换后原节点已经卸载，持有它没有意义。 */
+export interface SettingsFocusAnchor {
+  id: string | null;
+  label: string | null;
+}
+
+// 编辑器里常驻的设置入口，用作找不到原控件时的等价落点。
+const settingsEntryLabels = ["打开全局设置", "打开全局视觉设置"] as const;
+
+function focusableOrNull(node: Element | null): HTMLElement | null {
+  if (!(node instanceof HTMLElement) || node === document.body || !node.isConnected) return null;
+  if (node.hasAttribute("disabled") || node.getAttribute("aria-hidden") === "true" || node.tabIndex < 0) return null;
+  return node;
+}
+
+function findByLabel(label: string | null): HTMLElement | null {
+  if (!label) return null;
+  for (const node of document.querySelectorAll<HTMLElement>("[aria-label]")) {
+    if (node.getAttribute("aria-label") !== label) continue;
+    const focusable = focusableOrNull(node);
+    if (focusable) return focusable;
+  }
+  return null;
+}
+
+/** 打开全局设置时调用，记录当前焦点的定位信息。 */
+export function describeSettingsFocusAnchor(node: Element | null): SettingsFocusAnchor | null {
+  const element = focusableOrNull(node);
+  if (!element) return null;
+  const id = element.id || null;
+  const label = element.getAttribute("aria-label");
+  return id || label ? { id, label } : null;
+}
+
+/** 离开全局设置、编辑器重挂之后调用，按记录找回落点。 */
+export function findSettingsFocusAnchor(anchor: SettingsFocusAnchor | null): HTMLElement | null {
+  const byId = anchor?.id ? focusableOrNull(document.getElementById(anchor.id)) : null;
+  if (byId) return byId;
+  const byLabel = findByLabel(anchor?.label ?? null);
+  if (byLabel) return byLabel;
+  // 触发按钮所在面板未必跟着回来（助手栏会重置到默认页），退回编辑器里常驻的设置入口。
+  for (const label of settingsEntryLabels) {
+    const fallback = findByLabel(label);
+    if (fallback) return fallback;
+  }
+  return null;
+}
+
 export function GlobalSettingsScreen({
   project,
   userFonts = [],
@@ -172,6 +220,15 @@ export function GlobalSettingsScreen({
 }) {
   const [activeSection, setActiveSection] = useState<GlobalSettingsSection>(initialSection);
   const [dataView, setDataView] = useState<"people" | "cards">("people");
+  const screenRef = useRef<HTMLElement | null>(null);
+
+  // 这块屏是整树替换上来的，触发按钮随编辑器一起卸载、焦点掉到 body：
+  // 只有焦点确实无处可去时才接管，放到当前分区标签上，键盘用户可以直接方向键换分区。
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    screenRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+  }, []);
 
   const handleSectionClick = (section: GlobalSettingsSection) => {
     setActiveSection(section);
@@ -189,7 +246,7 @@ export function GlobalSettingsScreen({
   };
 
   return (
-    <main className="global-settings-screen" aria-label="全局设置">
+    <main className="global-settings-screen" aria-label="全局设置" ref={screenRef}>
       <header className="global-settings-header">
         <ActionGroup label="全局设置历史" className="global-settings-history">
           <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />

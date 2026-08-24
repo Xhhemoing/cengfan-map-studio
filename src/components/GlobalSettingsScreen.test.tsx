@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { GlobalSettingsScreen, type GlobalSettingsSection } from "./GlobalSettingsScreen";
+import {
+  GlobalSettingsScreen,
+  describeSettingsFocusAnchor,
+  findSettingsFocusAnchor,
+  type GlobalSettingsSection,
+} from "./GlobalSettingsScreen";
 import { createProjectDocument } from "../lib/project-document";
 import { sampleStudents } from "../lib/project-data";
 import { computeWorkflowProgress } from "../lib/workflow-progress";
@@ -64,11 +69,24 @@ function renderSettings(initialSection: GlobalSettingsSection = "canvas") {
   return { container, tabs };
 }
 
+const strays: HTMLElement[] = [];
+
+/** 模拟编辑器里的触发按钮：进入设置时它会随整棵树一起卸载。 */
+function mountTrigger(attributes: Record<string, string>): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  Object.entries(attributes).forEach(([name, value]) => button.setAttribute(name, value));
+  document.body.append(button);
+  strays.push(button);
+  return button;
+}
+
 afterEach(() => {
   mounted.splice(0).forEach(({ root, container }) => {
     flushSync(() => root.unmount());
     container.remove();
   });
+  strays.splice(0).forEach((node) => node.remove());
   vi.restoreAllMocks();
 });
 
@@ -150,6 +168,24 @@ describe("GlobalSettingsScreen tablist keyboard navigation", () => {
     expect(selectedSection(container)).toBe("canvas");
   });
 
+  it("takes the stranded focus onto the current section tab when the screen mounts", () => {
+    // 触发按钮跟着编辑器一起卸载，焦点落在 body 上；设置屏得自己接住。
+    document.body.focus();
+    const { tabs } = renderSettings("guests");
+
+    expect(document.activeElement).toBe(tabs[3]);
+    expect(tabs[3]?.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("leaves an already focused control alone", () => {
+    const survivor = mountTrigger({ "aria-label": "打开全局设置" });
+    survivor.focus();
+
+    renderSettings();
+
+    expect(document.activeElement).toBe(survivor);
+  });
+
   it("keeps the selected tab wired to a rendered panel", () => {
     const { container, tabs } = renderSettings();
 
@@ -158,5 +194,51 @@ describe("GlobalSettingsScreen tablist keyboard navigation", () => {
     const panel = document.getElementById(active.getAttribute("aria-controls")!);
     expect(panel?.getAttribute("role")).toBe("tabpanel");
     expect(panel?.getAttribute("aria-labelledby")).toBe(active.id);
+  });
+});
+
+describe("global settings focus anchor", () => {
+  it("records id and aria-label instead of the node itself", () => {
+    const trigger = mountTrigger({ id: "rail-settings", "aria-label": "打开全局设置" });
+
+    expect(describeSettingsFocusAnchor(trigger)).toEqual({ id: "rail-settings", label: "打开全局设置" });
+    expect(describeSettingsFocusAnchor(document.body)).toBeNull();
+    expect(describeSettingsFocusAnchor(null)).toBeNull();
+    expect(describeSettingsFocusAnchor(mountTrigger({}))).toBeNull();
+  });
+
+  it("finds the remounted control by id even though the recorded node is gone", () => {
+    const before = mountTrigger({ id: "rail-settings", "aria-label": "打开全局设置" });
+    const anchor = describeSettingsFocusAnchor(before);
+    before.remove();
+    const after = mountTrigger({ id: "rail-settings", "aria-label": "打开全局设置" });
+
+    expect(findSettingsFocusAnchor(anchor)).toBe(after);
+  });
+
+  it("falls back to aria-label when the remounted control has no id", () => {
+    const anchor = describeSettingsFocusAnchor(mountTrigger({ "aria-label": "打开数据诊断" }));
+    strays.splice(0).forEach((node) => node.remove());
+    const after = mountTrigger({ "aria-label": "打开数据诊断" });
+
+    expect(findSettingsFocusAnchor(anchor)).toBe(after);
+  });
+
+  it("falls back to a settings entry when the recorded control did not come back", () => {
+    const anchor = describeSettingsFocusAnchor(mountTrigger({ id: "rail-settings", "aria-label": "打开渲染设置" }));
+    strays.splice(0).forEach((node) => node.remove());
+    const entry = mountTrigger({ "aria-label": "打开全局视觉设置" });
+
+    expect(findSettingsFocusAnchor(anchor)).toBe(entry);
+  });
+
+  it("skips disabled or detached candidates rather than focusing nothing", () => {
+    const anchor = describeSettingsFocusAnchor(mountTrigger({ id: "rail-settings", "aria-label": "打开全局设置" }));
+    strays.splice(0).forEach((node) => node.remove());
+    mountTrigger({ id: "rail-settings", "aria-label": "打开全局设置", disabled: "" });
+    const usable = mountTrigger({ "aria-label": "打开全局设置" });
+
+    expect(findSettingsFocusAnchor(anchor)).toBe(usable);
+    expect(findSettingsFocusAnchor(null)).toBe(usable);
   });
 });
