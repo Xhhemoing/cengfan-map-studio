@@ -108,7 +108,26 @@ describe("resource-pack", () => {
 
     expect(parsed.fontCount).toBe(1);
     expect(parsed.skippedFontCount).toBe(1);
+    expect(parsed.duplicateFontCount).toBe(1);
     expect(parsed.pack.fonts.map((font) => font.id)).toEqual(["font-user-ok"]);
+    expect(parsed.fontIdRemap).toEqual({ "font-user-copy": "font-user-ok" });
+    expect(parsed.fontIdRemap["font-user-huge"]).toBeUndefined();
+  });
+
+  it("maps the family of a deduped font to the kept id so legacy references follow", () => {
+    const raw = JSON.stringify({
+      kind: "cengfan-resource-pack",
+      assets: [],
+      fonts: [
+        { id: "font-user-ok", label: "手写体", family: "Hand", src: "data:font/ttf;base64,QUJD", format: "truetype" },
+        { id: "font-user-copy", label: "手写体副本", family: "HandCopy", src: "data:font/ttf;base64,QUJD", format: "truetype" },
+      ],
+    });
+
+    const parsed = parseResourcePack(raw);
+
+    expect(parsed.pack.fonts.map((font) => font.id)).toEqual(["font-user-ok"]);
+    expect(parsed.fontIdRemap).toEqual({ "font-user-copy": "font-user-ok", HandCopy: "font-user-ok" });
   });
 
   it("explains why a pack of only oversized fonts imports nothing", () => {
@@ -142,6 +161,8 @@ describe("resource-pack", () => {
 
     expect(merged.addedFonts).toBe(0);
     expect(merged.skippedFonts).toBe(1);
+    expect(merged.duplicateFonts).toBe(1);
     expect(merged.fonts).toEqual(existingFonts);
+    expect(merged.fontIdRemap).toEqual({ "font-user-renamed": "font-user-1" });
   });
 });

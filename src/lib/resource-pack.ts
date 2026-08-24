@@ -23,6 +23,20 @@ export interface ParsedResourcePack {
   fontCount: number;
   /** Fonts dropped because they exceed the collaboration-safe size ceiling. */
   skippedFontCount: number;
+  /** Fonts dropped because another copy with identical bytes was kept. */
+  duplicateFontCount: number;
+  /**
+   * Id and family of every deduped font mapped to the id that survived. Without it a scene that
+   * points at the dropped copy resolves to nothing and its text silently falls back to the
+   * default font.
+   */
+  fontIdRemap: Record<string, string>;
+}
+
+/** Record both keys a scene can reference a dropped font by, so either one lands on the kept copy. */
+function recordFontRemap(remap: Record<string, string>, dropped: UserFont, kept: UserFont): void {
+  remap[dropped.id] = kept.id;
+  if (dropped.family && dropped.family !== dropped.id) remap[dropped.family] = kept.id;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,7 +141,9 @@ export function parseResourcePack(raw: string, options: { allowEmpty?: boolean }
   }
   const fontIds = new Set<string>();
   const fonts: UserFont[] = [];
+  const fontIdRemap: Record<string, string> = {};
   let skippedFontCount = 0;
+  let duplicateFontCount = 0;
   for (const font of normalizedFonts) {
     if (fontIds.has(font.id)) continue;
     fontIds.add(font.id);
@@ -136,7 +152,12 @@ export function parseResourcePack(raw: string, options: { allowEmpty?: boolean }
       continue;
     }
     // Same bytes under a different id would ship the payload twice through collaboration.
-    if (findExistingFont(fonts, font.src)) continue;
+    const duplicateOf = findExistingFont(fonts, font.src);
+    if (duplicateOf) {
+      duplicateFontCount += 1;
+      recordFontRemap(fontIdRemap, font, duplicateOf);
+      continue;
+    }
     fonts.push(font);
   }
   if (!options.allowEmpty && assets.length === 0 && fonts.length === 0) {
@@ -150,7 +171,14 @@ export function parseResourcePack(raw: string, options: { allowEmpty?: boolean }
     now: validDate(parsed.exportedAt),
   });
   if (validDate(parsed.exportedAt)) pack.exportedAt = parsed.exportedAt as string;
-  return { pack, assetCount: assets.length, fontCount: fonts.length, skippedFontCount };
+  return {
+    pack,
+    assetCount: assets.length,
+    fontCount: fonts.length,
+    skippedFontCount,
+    duplicateFontCount,
+    fontIdRemap,
+  };
 }
 
 export function mergeResourcePack(input: {
@@ -164,14 +192,20 @@ export function mergeResourcePack(input: {
   addedFonts: number;
   /** Incoming fonts rejected by the size ceiling; duplicates are not counted here. */
   skippedFonts: number;
+  /** Incoming fonts dropped because a stored font already carries the same bytes. */
+  duplicateFonts: number;
+  /** Id and family of every deduped incoming font mapped to the stored id that replaces it. */
+  fontIdRemap: Record<string, string>;
 } {
   const assetIds = new Set(input.existingAssets.map((asset) => asset.id));
   const fontIds = new Set(input.existingFonts.map((font) => font.id));
   const nextAssets = [...input.existingAssets];
   const nextFonts = [...input.existingFonts];
+  const fontIdRemap: Record<string, string> = {};
   let addedAssets = 0;
   let addedFonts = 0;
   let skippedFonts = 0;
+  let duplicateFonts = 0;
 
   for (const asset of input.incoming.assets) {
     if (assetIds.has(asset.id)) continue;
@@ -186,13 +220,18 @@ export function mergeResourcePack(input: {
       continue;
     }
     // A font already stored under another id keeps that id, so references stay on one copy.
-    if (findExistingFont(nextFonts, font.src)) continue;
+    const duplicateOf = findExistingFont(nextFonts, font.src);
+    if (duplicateOf) {
+      duplicateFonts += 1;
+      recordFontRemap(fontIdRemap, font, duplicateOf);
+      continue;
+    }
     nextFonts.push(font);
     fontIds.add(font.id);
     addedFonts += 1;
   }
 
-  return { assets: nextAssets, fonts: nextFonts, addedAssets, addedFonts, skippedFonts };
+  return { assets: nextAssets, fonts: nextFonts, addedAssets, addedFonts, skippedFonts, duplicateFonts, fontIdRemap };
 }
 
 export function downloadResourcePack(pack: ResourcePack, filename = `cengfan-resource-pack-${pack.exportedAt.slice(0, 10)}.json`): void {

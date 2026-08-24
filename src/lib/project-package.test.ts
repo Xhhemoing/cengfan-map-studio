@@ -289,6 +289,44 @@ describe("project package", () => {
     expect(parsed.warnings).toEqual([expect.stringContaining("字体超过 5MB 上限")]);
   });
 
+  it("keeps text on the surviving copy when two fonts carry the same bytes under different ids", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.cards.fieldFonts = { title: "font-copy", name: "手写体副本" };
+    project.textElements = project.textElements.map((text) => ({ ...text, fontId: "font-copy" }));
+    project.map = {
+      ...project.map,
+      provinceLabelFontId: "font-copy",
+      provinceStyles: { 浙江省: { labelFontId: "手写体副本" } },
+    };
+    project.guests = {
+      ...project.guests,
+      titleFontId: "font-copy",
+      peopleFontId: "font-1",
+      people: [{ id: "guest-1", name: "林老师", visibility: true, fontId: "手写体副本" }],
+    };
+
+    const parsed = restoreProjectPackage({
+      kind: "cengfan-project-package",
+      version: 2,
+      exportedAt: "2026-07-27T00:00:00.000Z",
+      project,
+      assets: [],
+      fonts: [
+        font,
+        { ...font, id: "font-copy", label: "手写体副本", family: "手写体副本", src: "data:application/octet-stream;base64,AA==" },
+      ],
+    });
+
+    expect(parsed.fonts).toEqual([font]);
+    expect(parsed.project.cards.fieldFonts).toEqual({ title: "font-1", name: "font-1" });
+    expect(parsed.project.textElements.every((text) => text.fontId === "font-1")).toBe(true);
+    expect(parsed.project.map.provinceLabelFontId).toBe("font-1");
+    expect(parsed.project.map.provinceStyles?.浙江省?.labelFontId).toBe("font-1");
+    expect(parsed.project.guests.titleFontId).toBe("font-1");
+    expect(parsed.project.guests.people[0]?.fontId).toBe("font-1");
+    expect(parsed.warnings).toEqual([expect.stringContaining("字体与包内其他字体内容相同")]);
+  });
+
   it("drops oversized assets together with the scene references that inline their bytes", () => {
     const hugeSrc = dataUrlOfBytes("image/png", MAX_PACKAGE_ASSET_BYTES + 3, "C");
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });

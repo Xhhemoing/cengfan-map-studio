@@ -97,13 +97,28 @@ function repairProjectAssetReferences(project: ProjectDocument, assets: UserAsse
   };
 }
 
-function repairProjectFontReferences(project: ProjectDocument, fonts: UserFont[]): ProjectDocument {
+function repairProjectFontReferences(
+  project: ProjectDocument,
+  fonts: UserFont[],
+  fontIdRemap: Record<string, string>,
+): ProjectDocument {
   const availableFontIds = new Set([...BUILT_IN_FONTS.map((font) => font.id), ...fonts.map((font) => font.id)]);
   const fontIdByFamily = new Map(fonts.map((font) => [font.family, font.id]));
+  /** Deduped fonts can chain when several copies collapse in successive passes, so follow the links. */
+  const followRemap = (fontId: string): string | undefined => {
+    const seen = new Set<string>([fontId]);
+    let current: string | undefined = fontIdRemap[fontId];
+    while (current && !seen.has(current)) {
+      if (availableFontIds.has(current)) return current;
+      seen.add(current);
+      current = fontIdRemap[current];
+    }
+    return undefined;
+  };
   const resolveFontId = (fontId: string | undefined): string | undefined => {
     if (!fontId) return undefined;
     if (availableFontIds.has(fontId)) return fontId;
-    return fontIdByFamily.get(fontId);
+    return fontIdByFamily.get(fontId) ?? followRemap(fontId);
   };
   const fieldFonts = Object.fromEntries(Object.entries(project.cards.fieldFonts ?? {}).flatMap(([field, fontId]) => {
     const resolved = resolveFontId(fontId);
@@ -136,18 +151,31 @@ function repairProjectFontReferences(project: ProjectDocument, fonts: UserFont[]
  * Package hydration is the last stop before fonts reach editor state and collaboration, so the
  * upload ceiling is enforced here too instead of trusting whichever layer produced the package.
  */
-function limitImportedFonts(fonts: UserFont[]): { fonts: UserFont[]; oversized: number } {
+function limitImportedFonts(fonts: UserFont[]): {
+  fonts: UserFont[];
+  oversized: number;
+  duplicates: number;
+  fontIdRemap: Record<string, string>;
+} {
   const kept: UserFont[] = [];
+  const fontIdRemap: Record<string, string> = {};
   let oversized = 0;
+  let duplicates = 0;
   for (const font of fonts) {
     if (estimateFontBytes(font.src) > MAX_USER_FONT_BYTES) {
       oversized += 1;
       continue;
     }
-    if (findExistingFont(kept, font.src)) continue;
+    const duplicateOf = findExistingFont(kept, font.src);
+    if (duplicateOf) {
+      duplicates += 1;
+      fontIdRemap[font.id] = duplicateOf.id;
+      if (font.family && font.family !== font.id) fontIdRemap[font.family] = duplicateOf.id;
+      continue;
+    }
     kept.push(font);
   }
-  return { fonts: kept, oversized };
+  return { fonts: kept, oversized, duplicates, fontIdRemap };
 }
 
 function limitImportedAssets(assets: UserAsset[]): { assets: UserAsset[]; droppedIds: Set<string> } {
@@ -296,7 +324,7 @@ export function restoreProjectPackage(value: unknown): ProjectPackage {
     assets: record.assets,
     fonts: record.fonts,
   }), { allowEmpty: true });
-  const { fonts, oversized } = limitImportedFonts(resourcePack.pack.fonts);
+  const { fonts, oversized, duplicates, fontIdRemap } = limitImportedFonts(resourcePack.pack.fonts);
   const { assets, droppedIds } = limitImportedAssets(resourcePack.pack.assets);
   const cleaned = dropOversizedImagePayloads(
     repairProjectAssetReferences(
@@ -305,12 +333,19 @@ export function restoreProjectPackage(value: unknown): ProjectPackage {
     ),
     droppedIds,
   );
-  const project = repairProjectFontReferences(cleaned.project, fonts);
+  const project = repairProjectFontReferences(cleaned.project, fonts, {
+    ...resourcePack.fontIdRemap,
+    ...fontIdRemap,
+  });
   const oversizedFonts = resourcePack.skippedFontCount + oversized;
+  const duplicateFonts = resourcePack.duplicateFontCount + duplicates;
   const assetLimit = formatByteSize(MAX_PACKAGE_ASSET_BYTES);
   const warnings = [
     ...(oversizedFonts > 0
       ? [`${oversizedFonts} 个字体超过 ${formatFontBytes(MAX_USER_FONT_BYTES)} 上限，未导入，相关文字已回落到默认字体`]
+      : []),
+    ...(duplicateFonts > 0
+      ? [`${duplicateFonts} 个字体与包内其他字体内容相同，已合并为一份，相关文字改用保留的那份`]
       : []),
     ...(droppedIds.size > 0
       ? [`${droppedIds.size} 张素材超过 ${assetLimit} 上限，未导入，画面中的引用已移除`]
