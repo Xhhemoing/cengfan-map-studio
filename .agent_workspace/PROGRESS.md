@@ -24,7 +24,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 5 | CLOSED | R5-1–R5-9 | — | Full suite 1568/2; lint 0 err; fable 7 ACCEPT + 2 NITS; no blocker. PR ready after this closeout. |
 | 6 | CLOSED | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn; fable 6 ACCEPT + 4 NITS; no blocker. |
 | 7 | CLOSED | R7-1–R7-9 + R7-3b + R7-10 | — | 189/1757/2; lint 0/6; CI `362c318`; fable 8 ACCEPT + 2 NITS; no blocker. |
-| 8 | IN_PROGRESS | R8-1–R8-4, R8-6, R8-8, R8-9 | — | Awaiting R8-5/7, then R8-3b App wiring. |
+| 8 | IN_PROGRESS | R8-1–R8-4, R8-6–R8-9 | — | Awaiting R8-5 and R8-3b App wiring. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -144,6 +144,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R8-8 (`30aef52` / `adf948c`+`edab090`): durability split + real-disk flush-failure journey. R9: snapshot `.<pid>.tmp` not reclaimed if rename fails. Rollback = revert the merge. 3 journeys; tsc node 0.
 - R8-6 (`a27c5db` / `32103f3`): afterEach unmount in 14 component tests (AgentAssistant/AssetPanel/etc). Rollback = revert the merge. 72/72; tsc app 0.
 - R8-3 (`4f1b13c` / `4bd7dcb`+`d1625fa`): client/hook/menu surface `lastFailureAt`. App wiring is R8-3b after R8-7. Rollback = revert the merge. 97/97; tsc app 0.
+- R8-7 (`56c2d7b`): App.tsx 1989→1728; WorkbenchBackButton + four action seams. Rollback = revert the merge. Owned tests 197/197; tsc app 0.
 
 ## Round Briefings
 
