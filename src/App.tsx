@@ -855,8 +855,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
     if (!projectId) return;
     const handlePageLeave = () => {
       if (!projectIdRef.current || projectLifecycleRef.current.loading || projectLifecycleRef.current.missing || backNavigatingRef.current) return;
-      const state = workspaceSync.getState();
-      if (state.status === "pending" || hasLocalWorkspaceEditsRef.current) {
+      const { status } = workspaceSync.getState();
+      // 仅在确有未落盘内容（pending/保存在途/保存失败）时写镜像；
+      // saved/idle 时写会让下次加载误报“恢复了未保存的修改”。
+      if (status === "pending" || status === "saving" || status === "failed") {
         // 异步 overwrite 已有保存在途时不会同步执行；镜像必须在这里同步落盘。
         writeProjectDraftMirror(window.localStorage, projectIdRef.current, latestWorkspaceRef.current.project);
         void saveWorkspaceNowRef.current();
