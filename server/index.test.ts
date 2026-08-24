@@ -157,6 +157,8 @@ function createBackpressuredEventStream(path: string, options: { drain?: boolean
 interface RoomPersistenceField {
   outcome: "persisted" | "trimmed" | "skipped";
   at: number | null;
+  /** 最近一次落盘失败的时刻；当前没有失败连击时这个键不出现。 */
+  lastFailureAt?: number;
 }
 
 interface PersistenceEnvelope {
@@ -2241,7 +2243,8 @@ describe("unified application server", () => {
     const origin = await startServer(server);
 
     const created = await createCollaborationRoom(origin, { title: "从未落盘" });
-    expect(created.persistence).toEqual({ outcome: "trimmed", at: null });
+    // 从未成功落过盘、且当前正在失败连击中：没有时刻可报，但失败本身要报。
+    expect(created.persistence).toEqual({ outcome: "trimmed", at: null, lastFailureAt: 1_700_000_000_900 });
     expect(created.persistedAtLastFlush).toBe(false);
   });
 
@@ -2298,6 +2301,94 @@ describe("unified application server", () => {
       at: succeededAt,
       lastFailure: { at: expect.any(Number), message: "EROFS: read-only file system" },
     });
+  });
+
+  it("carries an active persist failure streak into create, join and snapshot", async () => {
+    const succeededAt = 1_700_000_001_000;
+    const failedAt = 1_700_000_002_000;
+    const roomIds = ["GOODROOM", "STREAKRM"];
+    let nextRoomId = 0;
+    let outcome: RoomPersistOutcome = { skippedIds: [], trimmedIds: [], at: succeededAt };
+    const server = createAiServer({
+      roomStoreFactory: (storeOptions) => {
+        const store = createRoomStore({ ...storeOptions, generateId: () => roomIds[nextRoomId++] ?? "EXTRA" });
+        return { ...store, lastPersistOutcome: () => outcome };
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    // 没有失败连击时不写这个键：只认 outcome/at 的客户端看到的响应形状一个字都不变。
+    const healthy = await createCollaborationRoom(origin, { title: "磁盘还好" });
+    expect(healthy.room.id).toBe("GOODROOM");
+    expect(healthy.persistence).toEqual({ outcome: "persisted", at: succeededAt });
+
+    outcome = { ...outcome, lastFailure: { at: failedAt, message: "EROFS: read-only file system" } };
+    // 连击期间三态与时刻照旧——最近一次**成功**落盘确实还是那一次——但只报这两项就是
+    // 把正在丢数据的一段时间说成正常，房间的成员看不到任何异样。
+    const streaking: RoomPersistenceField = { outcome: "persisted", at: succeededAt, lastFailureAt: failedAt };
+
+    const created = await createCollaborationRoom(origin, { title: "磁盘坏了" }, "client-b");
+    expect(created.room.id).toBe("STREAKRM");
+    expect(created.persistence).toEqual(streaking);
+    // 布尔兼容位看的是上一次成功落盘的处置，不因失败连击翻面。
+    expect(created.persistedAtLastFlush).toBe(true);
+
+    const snapshot = await fetch(`${origin}/api/rooms/GOODROOM`, {
+      headers: roomHeaders(healthy.access.accessToken),
+    }).then((response) => response.json()) as PersistenceEnvelope;
+    expect(snapshot.persistence).toEqual(streaking);
+    expect(snapshot.persistedAtLastFlush).toBe(true);
+
+    const invitation = await fetch(`${origin}/api/rooms/GOODROOM/invitations`, {
+      method: "POST",
+      headers: roomHeaders(healthy.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ role: "editor" }),
+    }).then((response) => response.json()) as { token: string };
+    const joined = await fetch(`${origin}/api/rooms/GOODROOM/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken: invitation.token, clientId: "guest-a", displayName: "guest-a" }),
+    });
+    expect(joined.status).toBe(200);
+    await expect(joined.json()).resolves.toMatchObject({ persistence: streaking, persistedAtLastFlush: true });
+  });
+
+  it("drops the failure trace from room responses after the next successful flush", async () => {
+    let failing = false;
+    const server = createAiServer({
+      persistRooms: () => {
+        if (failing) throw new Error("EROFS: read-only file system");
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const created = await createCollaborationRoom(origin, { title: "真落一次盘" });
+    const readSnapshot = async (): Promise<PersistenceEnvelope> => {
+      const response = await fetch(`${origin}/api/rooms/${created.room.id}`, {
+        headers: roomHeaders(created.access.accessToken),
+      });
+      return await response.json() as PersistenceEnvelope;
+    };
+
+    await server.flushRooms!();
+    expect((await readSnapshot()).persistence).toEqual({ outcome: "persisted", at: expect.any(Number) });
+
+    failing = true;
+    await expect(server.flushRooms!()).rejects.toThrow(/read-only file system/);
+    const degraded = await readSnapshot();
+    expect(degraded.persistence).toEqual({
+      outcome: "persisted",
+      at: expect.any(Number),
+      lastFailureAt: expect.any(Number),
+    });
+    expect(degraded.persistence!.lastFailureAt!).toBeGreaterThanOrEqual(degraded.persistence!.at!);
+
+    failing = false;
+    await server.flushRooms!();
+    // 磁盘恢复后连击结束：再报失败就是把一个已经不成立的事故一直贴在响应上。
+    expect((await readSnapshot()).persistence).toEqual({ outcome: "persisted", at: expect.any(Number) });
   });
 
   it("quarantines a snapshot that parses but carries an unusable envelope", async () => {
