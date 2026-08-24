@@ -6,7 +6,11 @@ import {
   type SyncWorkspaceStore,
 } from "../lib/browser-workspace-store";
 import { downloadProjectPackage, type ProjectPackage } from "../lib/project-package";
-import { createIndexedDbProjectStore, type ProjectStore } from "../lib/project-store";
+import {
+  createIndexedDbProjectStore,
+  type ProjectStore,
+  type ProjectStoreHealth,
+} from "../lib/project-store";
 
 type BackupOutcome =
   | "exported"
@@ -21,6 +25,12 @@ type BackupOutcome =
   | "project-missing";
 
 const OK_OUTCOMES = new Set<BackupOutcome>(["exported", "store-listed"]);
+
+/**
+ * `health === "memory"` 的唯一含义是本机数据库打不开、读到的是本次会话的内存副本。
+ * 磁盘上还有没有工程，降级状态下无从得知，文案不能替用户下这个结论。
+ */
+const DEGRADED_PREFIX = "无法打开本机项目数据库，已降级为内存模式";
 
 export interface AppErrorBoundaryProps {
   children: ReactNode;
@@ -82,6 +92,9 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
   private crash: CrashDetail | null = null;
 
   private ownStore: ProjectStore | null = null;
+
+  /** 列举当时的持久化状态：导出读不到工程时，用它区分“中途掉线”与“真的没了”。 */
+  private listedHealth: ProjectStoreHealth | null = null;
 
   private mounted = true;
 
@@ -195,11 +208,15 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     }
     // health 是打开失败之后才翻转的快照值，必须在 list() 之后再读。
     const health = store.health;
+    this.listedHealth = health;
     if (items.length === 0) {
       if (health === "memory") {
-        this.finishBackup("store-degraded", "本机项目库已降级为内存模式，磁盘上没有可导出的工程内容。", {
-          storeHealth: health,
-        }, true);
+        this.finishBackup(
+          "store-degraded",
+          `${DEGRADED_PREFIX}：本次会话的内存副本里没有工程，磁盘上是否还有内容此刻无法确认，请不要清理浏览器数据。`,
+          { storeHealth: health, diskContentsKnown: false },
+          true,
+        );
       } else {
         this.finishBackup("store-empty", "本机项目库里也没有已保存的工程。", { storeHealth: health }, true);
       }
@@ -213,13 +230,37 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     }));
     if (this.mounted) this.setState({ projects });
     const message = health === "memory"
-      ? `本机项目库已降级为内存模式（磁盘上没有持久副本），本次会话里还能读到 ${projects.length} 个工程，请立刻逐个导出。`
+      ? `${DEGRADED_PREFIX}：下面 ${projects.length} 个工程仅存在于本次会话内存中，请立刻导出，刷新或关闭页面后就会丢失。`
       : `本机项目库里还有 ${projects.length} 个工程，可逐个导出。`;
-    this.finishBackup("store-listed", message, { storeHealth: health, projects: projects.length }, true);
+    this.finishBackup(
+      "store-listed",
+      message,
+      { storeHealth: health, diskContentsKnown: health === "persistent", projects: projects.length },
+      true,
+    );
   }
 
   private exportStoredProject(item: RecoverableProject): void {
     void this.runStoredProjectExport(item);
+  }
+
+  /**
+   * get() 返回 null 有两种成因：磁盘上真的没有这一行，或者数据库已降级、读到的是空内存副本。
+   * 降级状态下不能说工程“已经不在本机项目库里”——它很可能还躺在打不开的库里。
+   */
+  private reportMissingProject(item: RecoverableProject, health: ProjectStoreHealth): void {
+    const degradedDuringRead = health === "memory" && this.listedHealth === "persistent";
+    const message = health === "persistent"
+      ? `「${item.name}」已经不在本机项目库里了。`
+      : degradedDuringRead
+        ? `列出「${item.name}」之后本机项目数据库掉线并降级为内存模式，现在读不到它；这不等于它被删除了，请不要清理浏览器数据。`
+        : `「${item.name}」不在本次会话的内存副本里；本机项目数据库仍处于降级状态，无法确认它是否还在磁盘上。`;
+    this.finishBackup("project-missing", message, {
+      projectId: item.id,
+      storeHealth: health,
+      listedHealth: this.listedHealth,
+      degradedDuringRead,
+    });
   }
 
   private async runStoredProjectExport(item: RecoverableProject): Promise<void> {
@@ -236,7 +277,7 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
       return;
     }
     if (!stored) {
-      this.finishBackup("project-missing", `「${item.name}」已经不在本机项目库里了。`, { projectId: item.id });
+      this.reportMissingProject(item, store.health);
       return;
     }
     const detail = {
