@@ -192,14 +192,15 @@ export interface ConnectorSearchTrace {
 }
 
 function repairPlacement(card: CardLayoutInput, space: LayoutSpace, placed: PlacementIndex): CardPlacement {
+  // `side` is the placeholder every containFree caller passes: the repair
+  // re-derives it from wherever the card actually lands.
   const probe: CardPlacement = {
     ...card,
     x: space.clampX(card.anchorX - card.width / 2, card.width),
     y: space.clampY(card.anchorY - card.height / 2, card.height),
     side: "right",
   };
-  const repaired = containFree({ ...probe, side: space.sideOf(probe) }, space, placed);
-  return { ...repaired, side: space.sideOf(repaired) };
+  return containFree(probe, space, placed);
 }
 
 /** Run one insertion order; `null` when it had to give up. */

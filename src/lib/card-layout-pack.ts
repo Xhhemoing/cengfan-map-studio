@@ -112,6 +112,11 @@ export function containFree(
  * card stays visible and inside the canvas; any overlap here means the canvas
  * is saturated, which the caller reports as `fallback`.
  *
+ * The column is walked top down rather than in insertion order. The cursor only
+ * ever moves down, so on a sorted column every card it skips as "below" stays
+ * below — whereas in insertion order a later card could push the cursor onto
+ * one already skipped and seat the two exactly on top of each other.
+ *
  * Like {@link containFree}, this is reached with a placeholder `side`, so the
  * seat it picks decides the side rather than whatever the caller passed in.
  */
@@ -120,9 +125,12 @@ export function stackAtMargin(
   space: LayoutSpace,
   placed: PlacementIndex,
 ): CardPlacement {
+  const column = placed.items
+    .filter((other) => other.x < space.margin + placement.width)
+    .sort((left, right) => left.y - right.y);
   let y = space.margin;
-  for (const other of placed.items) {
-    if (other.x < space.margin + placement.width && other.y < y + placement.height && other.y + other.height > y) {
+  for (const other of column) {
+    if (other.y < y + placement.height && other.y + other.height > y) {
       y = other.y + other.height + space.gap;
     }
   }

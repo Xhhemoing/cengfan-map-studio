@@ -108,6 +108,13 @@ export function LegacyEditorChrome({
   const [zoomPercent, setZoomPercent] = useState(100);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
 
+  // 与聚焦阶段顶栏 HistoryActionsGroup 相同的读屏反馈（WCAG 4.1.3 状态消息）：
+  // 点击时用点击前的标签播报「已撤销：xx / 已重做：xx」；tick 的隐形空格后缀在
+  // 两次播报间切换，连续撤销同名步骤时 DOM 文本仍有变化（aria-live 不复读相同文本）。
+  const [historyAnnouncement, setHistoryAnnouncement] = useState({ text: "", tick: 0 });
+  const announceHistory = (label: string) =>
+    setHistoryAnnouncement((prev) => ({ text: `已${label}`, tick: prev.tick + 1 }));
+
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia?.("(max-width: 1120px)").matches) return;
     const timer = window.setTimeout(() => {
@@ -205,13 +212,13 @@ export function LegacyEditorChrome({
               label={ctx.undoLabel}
               icon={<Undo2 size={18} />}
               disabled={!ctx.canUndo}
-              onClick={ctx.onUndo}
+              onClick={() => { announceHistory(ctx.undoLabel); ctx.onUndo(); }}
             />
             <ToolbarButton
               label={ctx.redoLabel}
               icon={<Redo2 size={18} />}
               disabled={!ctx.canRedo}
-              onClick={ctx.onRedo}
+              onClick={() => { announceHistory(ctx.redoLabel); ctx.onRedo(); }}
             />
             <ZoomControls
               zoomPercent={zoomPercent}
@@ -219,6 +226,12 @@ export function LegacyEditorChrome({
               onZoomIn={() => setZoomPercent((v) => Math.min(300, v + 10))}
             />
           </ToolbarGroup>
+          {/* 持久存在的播报区：必须先于变更就在 DOM 里，读屏才能可靠播报；
+              放在组外，窄屏 CSS 隐藏整个「历史与缩放」组时播报不受影响。 */}
+          <span className="sr-only" role="status" aria-live="polite" data-topbar-history-announcement>
+            {historyAnnouncement.text}
+            {historyAnnouncement.tick % 2 === 1 ? "\u00A0" : ""}
+          </span>
 
           <ToolbarGroup label="属性面板" className="inspector-toggle-group">
             <ToolbarButton

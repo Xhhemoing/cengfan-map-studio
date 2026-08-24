@@ -45,7 +45,14 @@ function cacheControlFor(filePath: string): string {
 function acceptsGzip(request: http.IncomingMessage): boolean {
   const header = request.headers["accept-encoding"];
   const value = Array.isArray(header) ? header.join(",") : header ?? "";
-  return /\bgzip\b/i.test(value);
+  return value.split(",").some((entry) => {
+    const [encoding, ...parameters] = entry.split(";").map((part) => part.trim());
+    if (encoding?.toLowerCase() !== "gzip") return false;
+    const quality = parameters.find((parameter) => parameter.toLowerCase().startsWith("q="));
+    if (!quality) return true;
+    const parsed = Number(quality.slice(2).trim());
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1;
+  });
 }
 
 function isWithinRoot(root: string, candidate: string): boolean {

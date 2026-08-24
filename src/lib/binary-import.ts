@@ -84,13 +84,18 @@ export function expandMergedCells(rows: string[][], merges: readonly SheetMergeR
 }
 
 /**
- * Tab-joins the matrix for the free-text fallback. Blank cells are kept — dropping them would pull
- * every later cell a column left, so `林舟,,北京市` would read 北京市 as the 院校 — matching the
- * alignment rule splitParts follows in import-data. Only trailing tabs are trimmed, so an all-blank
- * row reads as an empty line and is dropped.
+ * Renders one matrix row the way a spreadsheet paste carries it. Blank cells are kept — dropping
+ * them would pull every later cell a column left, so `林舟,,北京市` would read 北京市 as the 院校 —
+ * matching the alignment rule splitParts follows in import-data. Only trailing tabs are trimmed,
+ * so an all-blank row reads as an empty line.
  */
+function rowToTabLine(row: string[]): string {
+  return row.join("\t").replace(/\t+$/, "");
+}
+
+/** Tab-joins the matrix for the free-text fallback, dropping rows that hold nothing. */
 function matrixToText(rows: string[][]): string {
-  return rows.map((row) => row.join("\t").replace(/\t+$/, "")).filter((line) => line.length > 0).join("\n");
+  return rows.map(rowToTabLine).filter((line) => line.length > 0).join("\n");
 }
 
 function emptyMetadata(): Pick<ExcelImportResult, "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {
@@ -165,7 +170,10 @@ export function parseExcelWorkbookRows(input: unknown[][], options: ExcelParseOp
   const unparsed: UnparsedLine[] = [];
   rows.slice(header.rowIndex + 1).forEach((row, rowIndex) => {
     const sourceLine = header.rowIndex + rowIndex + 2;
-    const rawLine = row.filter(Boolean).join("\t");
+    // candidateFromColumns reads the row by index, but rawLine is the line quoted back to the
+    // user, so it keeps its blank cells: squeezing a row with an empty 院校 shut would quote
+    // 林舟\t\t北京市 as 林舟\t北京市, hiding the gap by reading 北京市 as the 院校.
+    const rawLine = rowToTabLine(row);
     // Sheets built by stacking two exports repeat the header mid-table; that row is a header, not
     // a student called 姓名.
     if (rowRestatesHeader(row, header.mapping, header.headers)) return;
@@ -204,7 +212,7 @@ export function parseHtmlTable(html: string): ExcelImportResult {
  * shift every later column.
  */
 export function rowsToTabText(rows: string[][]): string {
-  const lines = rows.map((row) => row.join("\t").replace(/\t+$/, ""));
+  const lines = rows.map(rowToTabLine);
   while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
   return lines.join("\n");
 }

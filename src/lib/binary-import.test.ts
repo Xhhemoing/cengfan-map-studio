@@ -178,10 +178,44 @@ describe("binary import adapters", () => {
     ]);
 
     expect(result.candidates).toEqual([expect.objectContaining({ name: "苏禾", sourceLine: 2 })]);
-    // A trailing blank sheet row is normal; the two partial rows are reported.
+    // A trailing blank sheet row is normal; the two partial rows are reported. The blank 姓名 cell
+    // stays as a leading gap so the quoted line still lines up with the sheet's columns; only
+    // trailing blanks are trimmed, which is why 缺城市's line stops after 浙江大学.
     expect(result.unparsed).toEqual([
-      { sourceLine: 3, rawLine: "浙江大学\t杭州市", reason: "缺少姓名" },
+      { sourceLine: 3, rawLine: "\t浙江大学\t杭州市", reason: "缺少姓名" },
       { sourceLine: 4, rawLine: "缺城市\t浙江大学", reason: "缺少城市" },
+    ]);
+  });
+
+  it("keeps an empty middle cell in the reported line while reading columns by index", () => {
+    // 录取院校 is blank, so this row cannot be imported. Squeezing the gap shut would quote it as
+    // 林舟\t北京市 — a line that re-reads as 林舟 attending 北京市 — hiding the missing 院校 the
+    // 未识别 panel is there to point at.
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "录取院校", "城市", "备注"],
+      ["苏禾", "浙江大学", "杭州市", ""],
+      ["林舟", "", "北京市", ""],
+    ]);
+
+    // The blank cell never shifts the mapping: 城市 is still read from index 2.
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市", sourceLine: 2 }),
+    ]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 3, rawLine: "林舟\t\t北京市", reason: "缺少院校" },
+    ]);
+    // Re-splitting the quoted line by tab recovers the original column positions.
+    expect(result.unparsed[0]!.rawLine.split("\t")).toEqual(["林舟", "", "北京市"]);
+  });
+
+  it("keeps interior gaps in an imported row's rawLine so it still maps back to the sheet", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "省份", "城市", "录取院校"],
+      ["苏禾", "", "杭州市", "浙江大学"],
+    ]);
+
+    expect(result.candidates).toEqual([
+      { name: "苏禾", university: "浙江大学", city: "杭州市", sourceLine: 2, rawLine: "苏禾\t\t杭州市\t浙江大学" },
     ]);
   });
 
