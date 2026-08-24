@@ -360,20 +360,62 @@ describe("ProjectWorkbench degraded storage", () => {
     expect(container.textContent).not.toContain("本次编辑不会保存到本机");
   });
 
-  it("exports a backup of the listed projects from the notice", async () => {
+  it("re-reads the project list once storage recovers from memory mode", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const { container, rerender } = renderWorkbench(store, vi.fn(), "memory");
+    await vi.waitFor(() => expect(storageNotice(container)).not.toBeNull());
+    // 内存期之后落到持久层的内容:界面此时还看不到它。
+    const recovered = createSampleProject();
+    await store.put({ ...recovered, name: "恢复后的项目", updatedAt: "2026-08-24T09:00:00.000Z" });
+    const listSpy = vi.spyOn(store, "list");
+
+    rerender("persistent");
+
+    await vi.waitFor(() => expect(listSpy).toHaveBeenCalled());
+    // 不能等到用户下一次增删改才纠正:恢复本身就要重新读一次列表。
+    await vi.waitFor(() => expect(container.textContent).toContain("恢复后的项目"));
+  });
+
+  it("exports one project per click from the notice instead of a batch of downloads", async () => {
     const store = createMemoryProjectStore();
     const sample = createSampleProject();
     await store.put({ ...sample, name: "备份项目", updatedAt: "2026-08-24T02:00:00.000Z" });
+    await store.put({ ...createSampleProject(), name: "第二个项目", updatedAt: "2026-08-23T02:00:00.000Z" });
     const { container } = renderWorkbench(store);
-    // 列表加载完成前没有可导出的内容,备份按钮此时是禁用态。
-    await vi.waitFor(() => expect(container.textContent).toContain("备份项目"));
+    await vi.waitFor(() => expect(container.textContent).toContain("第二个项目"));
     const files = stubDownloads();
+    const notice = storageNotice(container)!;
 
-    const exportButton = storageNotice(container)?.querySelector<HTMLButtonElement>('button[aria-label="导出工程备份"]');
-    expect(exportButton?.disabled).toBe(false);
-    exportButton?.click();
+    const exportButtons = notice.querySelectorAll<HTMLButtonElement>("button[data-export-project-id]");
+    expect(exportButtons).toHaveLength(2);
+    // 批量下载会被 Chromium 拦掉第 2 份起的文件,提示里不应再有"一键导出全部"。
+    expect(notice.querySelector('button[aria-label="导出工程备份"]')).toBeNull();
+    expect(exportButtons[0].getAttribute("aria-label")).toBe("导出「备份项目」");
+    exportButtons[0].click();
 
     await vi.waitFor(() => expect(files).toEqual(["备份项目-2026-08-24.json"]));
+    // 一次手势只落一个文件。
+    await Promise.resolve();
+    expect(files).toEqual(["备份项目-2026-08-24.json"]);
+
+    notice.querySelector<HTMLButtonElement>('button[aria-label="导出「第二个项目」"]')?.click();
+    await vi.waitFor(() => expect(files).toEqual(["备份项目-2026-08-24.json", "第二个项目-2026-08-23.json"]));
+  });
+
+  it("keeps the notice inert: no clickable-card classes on a status banner", async () => {
+    const store = createMemoryProjectStore();
+    await store.put(createSampleProject());
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(storageNotice(container)).not.toBeNull());
+
+    const notice = storageNotice(container)!;
+    expect(notice.classList.contains("workbench-storage-notice")).toBe(true);
+    // .workbench-resume 带 hover 高亮与 :active { transform: scale(.985) },警告横幅不该有按钮动效。
+    expect(notice.classList.contains("workbench-resume")).toBe(false);
+    expect(notice.querySelector(".workbench-resume-icon")).toBeNull();
+    expect(notice.querySelector(".workbench-resume-body")).toBeNull();
+    expect(notice.querySelector(".workbench-resume-cta")).toBeNull();
   });
 
   it("shows the typed quota message instead of a generic creation wrapper", async () => {

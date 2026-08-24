@@ -63,6 +63,7 @@ export function ProjectWorkbench({ store, health, navigate }: ProjectWorkbenchPr
     && window.matchMedia?.("(prefers-color-scheme: dark)").matches === true);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const seededRef = useRef(false);
+  const lastHealthRef = useRef<ProjectStoreHealth>(health ?? store.health);
   const resolvedTheme = resolveTheme(themeMode, prefersDark);
   // 路由层的订阅值优先:它跟着 onHealthChange 走,内存→持久的恢复也能立刻反映出来。
   const storeHealth = health ?? observedHealth;
@@ -115,6 +116,14 @@ export function ProjectWorkbench({ store, health, navigate }: ProjectWorkbenchPr
     })();
     return () => { cancelled = true; };
   }, [refresh, reportFailure, store]);
+
+  // 内存→持久的恢复换掉了读写通道:内存期读到的列表是另一份数据,
+  // 不重读的话要等到用户下一次增删改才纠正,中间一直展示已经失效的视图。
+  useEffect(() => {
+    const previous = lastHealthRef.current;
+    lastHealthRef.current = storeHealth;
+    if (previous === "memory" && storeHealth === "persistent") void refresh();
+  }, [storeHealth, refresh]);
 
   const sorted = useMemo(() => [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [projects]);
 
@@ -206,20 +215,6 @@ export function ProjectWorkbench({ store, health, navigate }: ProjectWorkbenchPr
     }
   };
 
-  /** 降级模式下的兜底备份：列表里的每个项目各导出一份工程包，沿用现有工程包格式。 */
-  const exportBackup = async () => {
-    try {
-      for (const project of sorted) {
-        const stored = await store.get(project.id);
-        if (!stored) continue;
-        downloadProjectPackage(stored.pack, packageFileName(project));
-      }
-      setError("");
-    } catch (reason) {
-      reportFailure(reason, "导出工程备份失败");
-    }
-  };
-
   const importProject = async (file: File | null) => {
     if (!file) return;
     try {
@@ -250,23 +245,34 @@ export function ProjectWorkbench({ store, health, navigate }: ProjectWorkbenchPr
     >
       <WorkbenchHeader importInputRef={importInputRef} onCreateProject={() => void createProject()} onImportProject={(file) => void importProject(file)} />
 
-      {/* 降级提示不可关闭:内存模式持续期间用户随时可能关闭标签页,提示消失就等于数据静默丢失。 */}
+      {/* 降级提示不可关闭:内存模式持续期间用户随时可能关闭标签页,提示消失就等于数据静默丢失。
+        * 这里刻意不提供"一键导出全部":Chromium 每个用户手势只放行一次程序化下载,
+        * 循环里第 2 份起会被静默拦截,用户以为备份完整、实际只拿到第一个文件。
+        * 因此沿用崩溃屏的做法,逐个项目各给一个按钮 —— 一次点击一份工程包。 */}
       {storeHealth === "memory" && (
-        <section className="workbench-resume workbench-storage-notice" role="status" data-store-health="memory">
-          <span className="workbench-resume-icon" aria-hidden="true"><AlertTriangle size={22} /></span>
-          <span className="workbench-resume-body">
+        <section className="workbench-storage-notice" role="status" data-store-health="memory">
+          <span className="workbench-storage-notice-icon" aria-hidden="true"><AlertTriangle size={22} /></span>
+          <div className="workbench-storage-notice-body">
             <strong>{MEMORY_MODE_NOTICE}</strong>
             <small>浏览器本机存储不可用，项目只保留在当前标签页内存中。</small>
-          </span>
-          <button
-            type="button"
-            className="workbench-resume-cta"
-            aria-label="导出工程备份"
-            disabled={sorted.length === 0}
-            onClick={() => void exportBackup()}
-          >
-            导出工程备份
-          </button>
+            {sorted.length > 0 && (
+              <ul className="workbench-storage-notice-list" aria-label="逐个导出工程备份">
+                {sorted.map((project) => (
+                  <li key={project.id}>
+                    <button
+                      type="button"
+                      className="workbench-storage-notice-export"
+                      data-export-project-id={project.id}
+                      aria-label={`导出「${project.name}」`}
+                      onClick={() => void exportProject(project)}
+                    >
+                      {project.name}（{project.studentCount} 人）
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </section>
       )}
 
