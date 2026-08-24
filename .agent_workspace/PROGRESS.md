@@ -18,7 +18,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
 | 1 | CLOSED | T1–T10 + R2-0 | — | Hotfix-after full suite 1391 pass / 1 skip |
-| 2 | MERGED_PENDING_FULL_SUITE | R2-1–R2-10 | — | All 10 merged; R2-3+R2-8 coupled tests 157 pass; full suite + fable next |
+| 2 | CLOSED | R2-0–R2-10 | — | Full suite 1436 pass / 2 skip; fable 10/10 ACCEPT; lint 1 unused-assign fixed |
+| 3 | DISPATCHING | — | — | Deep-chain: partition holes, room durability, disaster recovery |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -38,6 +39,13 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - After R2-0 hotfix: **1391 passed / 1 skipped** (59.7s).
 - Fable review: `.agent_workspace/round-1-review.md`. PR stays draft until R2-0 DataCloneError hotfix.
 - Round 2 briefing: `.agent_workspace/round-1-briefing.md`.
+
+## Round 2 closeout
+
+- Full suite: **167 files, 1436 passed / 2 skipped** (62.7s).
+- Fable: 10/10 ACCEPT, no merge blocker. Review `.agent_workspace/round-2-review.md`.
+- Lint: 1 unused-assign in `server/collaboration.test.ts` fixed; 5 pre-existing react-refresh warnings remain.
+- Round 3 briefing: `.agent_workspace/round-2-briefing.md`.
 
 ## Round Briefings
 

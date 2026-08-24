@@ -28,7 +28,7 @@ authorizeBench("benchmarks authorize with 50 participants", () => {
 
   let operations = 0;
   const startedAt = process.hrtime.bigint();
-  let elapsedNs = 0n;
+  let elapsedNs: bigint;
   do {
     for (let index = 0; index < 100; index += 1) {
       store.authorize("BENCH1", targetToken, "read");
