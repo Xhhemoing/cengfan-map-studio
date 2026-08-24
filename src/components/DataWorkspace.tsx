@@ -1,5 +1,5 @@
 import { Check, Download, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   applyUniversityAutoLocation,
   confirmImportCandidates,
@@ -11,13 +11,12 @@ import {
 import { parseStudentText, type ImportCandidate, type UnparsedLine } from "../lib/import-data";
 import {
   createImportTemplateSheets,
-  decodeCsvBytes,
   isCsvFile,
-  parseExcelWorkbook,
   parseOcrLikeText,
   STUDENT_COLUMN_LABELS,
   type ExcelImportResult,
 } from "../lib/binary-import";
+import type { WorkbookImportRequest, WorkbookImportResponse } from "../workers/workbook-import.worker";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
@@ -55,6 +54,19 @@ function provinceOptions(query: string): SearchComboboxOption[] {
 const UNPARSED_PREVIEW_LIMIT = 20;
 /** 提示里最多点名几张未读取的工作表，其余用「等」收尾。 */
 const SKIPPED_SHEET_PREVIEW = 3;
+/** 压缩工作簿解包后的体积可能远大于文件本身，先挡住异常大的输入再读取到内存。 */
+const MAX_WORKBOOK_FILE_BYTES = 25 * 1024 * 1024;
+const WORKBOOK_IMPORT_CANCELLED = Symbol("workbook-import-cancelled");
+
+interface ActiveWorkbookImport {
+  worker: Worker;
+  reject: (reason: unknown) => void;
+}
+
+function createWorkbookImportWorker(): Worker {
+  if (typeof Worker === "undefined") throw new Error("当前浏览器不支持后台解析 Excel / CSV");
+  return new Worker(new URL("../workers/workbook-import.worker.ts", import.meta.url), { type: "module" });
+}
 
 function describeSkippedSheets(names: readonly string[]): string {
   if (names.length === 0) return "";
@@ -117,11 +129,77 @@ export function DataWorkspace({
    * 连点两次文件选择时，先发出的那次可能后返回，没有这道闸就会用旧文件覆盖新文件。
    */
   const importGenerationRef = useRef(0);
+  const workbookWorkerRef = useRef<ActiveWorkbookImport | null>(null);
+  const cancelWorkbookImport = () => {
+    const active = workbookWorkerRef.current;
+    if (!active) return;
+    workbookWorkerRef.current = null;
+    active.worker.terminate();
+    active.reject(WORKBOOK_IMPORT_CANCELLED);
+  };
   const beginImport = (): number => {
     importGenerationRef.current += 1;
+    cancelWorkbookImport();
     return importGenerationRef.current;
   };
   const isCurrentImport = (generation: number): boolean => importGenerationRef.current === generation;
+
+  const parseWorkbookInWorker = async (
+    buffer: ArrayBuffer,
+    isCsv: boolean,
+    requestId: number,
+  ): Promise<Extract<WorkbookImportResponse, { type: "result" }>> => {
+    const worker = createWorkbookImportWorker();
+    try {
+      return await new Promise((resolve, reject) => {
+        let settled = false;
+        const rejectOnce = (reason: unknown) => {
+          if (settled) return;
+          settled = true;
+          reject(reason);
+        };
+        const resolveOnce = (response: Extract<WorkbookImportResponse, { type: "result" }>) => {
+          if (settled) return;
+          settled = true;
+          resolve(response);
+        };
+        workbookWorkerRef.current = { worker, reject: rejectOnce };
+        worker.onmessage = (event: MessageEvent<WorkbookImportResponse>) => {
+          const response = event.data;
+          if (response.requestId !== requestId) return;
+          if (response.type === "error") {
+            rejectOnce(new Error(response.message));
+            return;
+          }
+          resolveOnce(response);
+        };
+        worker.onerror = (event) => {
+          event.preventDefault();
+          rejectOnce(new Error(event.message || "工作簿后台解析失败"));
+        };
+        worker.onmessageerror = () => rejectOnce(new Error("工作簿后台解析结果无法读取"));
+        const request: WorkbookImportRequest = {
+          type: "parse-workbook",
+          requestId,
+          buffer,
+          isCsv,
+        };
+        try {
+          worker.postMessage(request, [buffer]);
+        } catch (error) {
+          rejectOnce(error);
+        }
+      });
+    } finally {
+      if (workbookWorkerRef.current?.worker === worker) workbookWorkerRef.current = null;
+      worker.terminate();
+    }
+  };
+
+  useEffect(() => () => {
+    importGenerationRef.current += 1;
+    cancelWorkbookImport();
+  }, []);
 
   const filteredStudents = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
@@ -290,31 +368,24 @@ export function DataWorkspace({
     const generation = beginImport();
     setExcelRecognition(null);
     const csv = isCsvFile(file);
+    if (file.size > MAX_WORKBOOK_FILE_BYTES) {
+      setMessage("文件过大，Excel / CSV 最大支持 25 MB");
+      return;
+    }
     try {
-      const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
-      // CSV 是纯文本，编码得自己定：把 GBK 字节直接丢给 xlsx，表头会读成乱码，
-      // 而乱码列看上去仍是「合法但认不出的表头」，整份名单会带着乱码进候选。
-      const decoded = csv ? decodeCsvBytes(buffer) : null;
-      const workbook = decoded ? XLSX.read(decoded.text, { type: "string" }) : XLSX.read(buffer, { type: "array" });
-      // 整本工作簿都读进来交给选表逻辑：教务导出常把封面/汇总排在第一张，只读第一张会丢掉真名单。
-      const sheets = workbook.SheetNames.flatMap((name) => {
-        const sheet = workbook.Sheets[name];
-        if (!sheet) return [];
-        const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, { header: 1, defval: "" });
-        return [{
-          name,
-          rows: rows.map((row) => (Array.isArray(row) ? row : []).map((cell) => String(cell ?? "").trim())),
-        }];
-      });
-      const parsed = parseExcelWorkbook(sheets);
       if (!isCurrentImport(generation)) return;
+      // 二进制解码、逐表 sheet_to_json 与 T8 的选表逻辑都在 worker 内完成；
+      // ArrayBuffer 直接转移所有权，避免主线程再复制一份大文件。
+      const response = await parseWorkbookInWorker(buffer, csv, generation);
+      if (!isCurrentImport(generation)) return;
+      const { parsed } = response;
       if (!parsed) {
         setMessage(csv ? "CSV 中没有数据" : "Excel 中没有工作表");
         return;
       }
       // 点名 GB18030：真遇到编码猜错时，用户能从提示里看出该换个编码另存。
-      const encodingNote = decoded?.encoding === "gb18030" ? " · 按 GB18030 解码" : "";
+      const encodingNote = response.encoding === "gb18030" ? " · 按 GB18030 解码" : "";
       setCandidates(
         parsed.candidates,
         parsed.unparsed,
@@ -531,7 +602,7 @@ export function DataWorkspace({
               <FileDropzone
                 id="data-excel-upload"
                 label="导入 Excel"
-                hint="XLSX / CSV · 点击或拖拽"
+                hint="XLSX / CSV · 最大 25 MB"
                 accept=".xlsx,.xls,.csv"
                 variant="secondary"
                 icon={<FileUp size={16} aria-hidden />}
