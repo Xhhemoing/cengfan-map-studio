@@ -6,6 +6,7 @@ import {
   createSampleProject,
   createEmptyProject,
   duplicateStoredProject,
+  isCorruptedProject,
   ProjectStoreConflictError,
   type ProjectStore,
   type StoredProject,
@@ -87,12 +88,135 @@ describe("project store", () => {
     expect((await store.get(sample.id))?.name).toBe("其他标签页保存的名字");
   });
 
+  it("count() 数的是库里的记录条数", async () => {
+    const store = createMemoryProjectStore();
+    expect(await store.count()).toBe(0);
+    const sample = createSampleProject();
+    await store.put(sample);
+    expect(await store.count()).toBe(1);
+    await store.remove(sample.id);
+    expect(await store.count()).toBe(0);
+  });
+
   it("throws when the IndexedDB factory is unavailable", async () => {
     const store = createIndexedDbProjectStore(null as unknown as IDBFactory);
     await expect(store.put(createSampleProject())).rejects.toThrow("当前浏览器不支持 IndexedDB");
     await expect(store.remove("any-id")).rejects.toThrow("当前浏览器不支持 IndexedDB");
     expect(await store.list()).toEqual([]);
+    expect(await store.count()).toBe(0);
     expect(await store.get("any-id")).toBeNull();
+  });
+});
+
+/** 直接往库里塞一条原始值，模拟旧版本写坏、或人为改过的记录。 */
+async function putRawProjectRecord(factory: IDBFactory, key: string, value: unknown): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = factory.open("cengfan-map-studio");
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains("projects")) request.result.createObjectStore("projects");
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("projects", "readwrite");
+    tx.objectStore("projects").put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+describe("解析失败的记录", () => {
+  const brokenRecord = {
+    id: "proj-broken",
+    name: "去年名单",
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-02T00:00:00.000Z",
+    pack: { kind: "不认识的格式", project: { students: [] } },
+  };
+
+  it("list() 把解析失败的记录降级保留，而不是悄悄滤掉", async () => {
+    const factory = new IDBFactory();
+    await putRawProjectRecord(factory, "proj-ok", projectAt("proj-ok", "正常项目", "2026-01-01T00:00:00.000Z"));
+    await putRawProjectRecord(factory, "proj-broken", brokenRecord);
+    const store = createIndexedDbProjectStore(factory);
+
+    const listed = await store.list();
+
+    expect(listed.map((project) => project.id)).toEqual(["proj-broken", "proj-ok"]);
+    const broken = listed[0]!;
+    expect(isCorruptedProject(broken)).toBe(true);
+    // 名字与时间沿用原记录，用户才认得出坏掉的是哪一份。
+    expect(broken.name).toBe("去年名单（无法读取）");
+    expect(broken.updatedAt).toBe("2026-03-02T00:00:00.000Z");
+    expect(broken.corrupted?.raw).toEqual(brokenRecord);
+    expect(broken.corrupted?.reason).toBe("不是蹭饭图工程包");
+    expect(isCorruptedProject(listed[1]!)).toBe(false);
+  });
+
+  it("完全不是对象的记录也保留成降级条目，身份用库里的键", async () => {
+    const factory = new IDBFactory();
+    await putRawProjectRecord(factory, "proj-garbage", "这不是一条项目记录");
+    const store = createIndexedDbProjectStore(factory);
+
+    const [entry] = await store.list();
+
+    expect(entry!.id).toBe("proj-garbage");
+    expect(entry!.name).toBe("未命名项目（无法读取）");
+    expect(entry!.corrupted?.raw).toBe("这不是一条项目记录");
+    expect(entry!.corrupted?.reason).toBe("记录不是对象");
+    // 占位工程只为让卡片能渲染，本身不带任何内容。
+    expect(entry!.pack.project.students).toEqual([]);
+  });
+
+  it("count() 把解析失败的记录算进去，空库判断不会被损坏数据骗过", async () => {
+    const factory = new IDBFactory();
+    await putRawProjectRecord(factory, "proj-broken", brokenRecord);
+    await putRawProjectRecord(factory, "proj-garbage", 42);
+    const store = createIndexedDbProjectStore(factory);
+
+    expect(await store.count()).toBe(2);
+    expect(await store.list()).toHaveLength(2);
+  });
+
+  it("拒绝把降级条目写回，原始值不被占位工程覆盖", async () => {
+    const factory = new IDBFactory();
+    await putRawProjectRecord(factory, "proj-broken", brokenRecord);
+    const store = createIndexedDbProjectStore(factory);
+    const [broken] = await store.list();
+
+    await expect(store.put({ ...broken!, name: "顺手改个名字" })).rejects.toThrow("不能覆盖写回");
+
+    expect((await store.list())[0]!.corrupted?.raw).toEqual(brokenRecord);
+  });
+
+  it("降级条目可以按库里的键删掉", async () => {
+    const factory = new IDBFactory();
+    await putRawProjectRecord(factory, "proj-broken", brokenRecord);
+    const store = createIndexedDbProjectStore(factory);
+    const [broken] = await store.list();
+
+    await store.remove(broken!.id);
+
+    expect(await store.count()).toBe(0);
+    expect(await store.list()).toEqual([]);
+  });
+
+  it("get() 对损坏记录仍返回 null，编辑器不会拿占位工程覆盖它", async () => {
+    const factory = new IDBFactory();
+    await putRawProjectRecord(factory, "proj-broken", brokenRecord);
+    const store = createIndexedDbProjectStore(factory);
+
+    expect(await store.get("proj-broken")).toBeNull();
+  });
+
+  it("内存 store 同样拒绝写入降级条目", async () => {
+    const store = createMemoryProjectStore();
+    const entry: StoredProject = { ...createEmptyProject(), corrupted: { raw: { 坏: true }, reason: "不是蹭饭图工程包" } };
+
+    await expect(store.put(entry)).rejects.toThrow("不能覆盖写回");
+    expect(await store.count()).toBe(0);
   });
 });
 

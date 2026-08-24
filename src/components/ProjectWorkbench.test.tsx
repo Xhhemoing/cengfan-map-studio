@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { ProjectWorkbench } from "./ProjectWorkbench";
-import { createMemoryProjectStore, createSampleProject } from "../lib/project-store";
+import { createEmptyProject, createMemoryProjectStore, createSampleProject, type ProjectStore, type StoredProject } from "../lib/project-store";
 import { serializeProjectPackage, type ProjectPackage } from "../lib/project-package";
 import { MAX_PROJECT_PACKAGE_BYTES } from "../lib/import-file-limits";
 import { loadLocalWorkspaceEntry } from "../lib/local-workspace-entry";
@@ -12,7 +12,7 @@ vi.mock("../lib/local-workspace-entry", () => ({
 }));
 
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
-function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, navigate = vi.fn()) {
+function renderWorkbench(store: ProjectStore, navigate = vi.fn()) {
   const container = document.createElement("div");
   // 菜单的外点关闭与焦点管理依赖真实文档树，容器必须挂到 body 上。
   document.body.appendChild(container);
@@ -548,6 +548,123 @@ describe("ProjectWorkbench", () => {
       expect(container.querySelector('[role="dialog"]')).toBeNull();
       expect(document.activeElement).toBe(trigger);
       expect(await store.list()).toHaveLength(1);
+    });
+  });
+
+  describe("解析失败的项目记录", () => {
+    const rawRecord = { id: "proj-broken", name: "去年名单", pack: { kind: "不认识的格式" } };
+
+    function corruptedProject(): StoredProject {
+      return {
+        ...createEmptyProject(),
+        id: "proj-broken",
+        name: "去年名单（无法读取）",
+        updatedAt: "2026-03-02T00:00:00.000Z",
+        corrupted: { raw: rawRecord, reason: "不是蹭饭图工程包" },
+      };
+    }
+
+    /** 降级条目只会从 `list()` 出来，`put()` 会拒绝它，所以这里直接铺好列表内容。 */
+    function storeWith(entries: StoredProject[], recordCount = entries.length) {
+      const base = createMemoryProjectStore();
+      return {
+        ...base,
+        list: vi.fn(async () => entries),
+        count: vi.fn(async () => recordCount),
+        put: vi.fn(base.put),
+        remove: vi.fn(base.remove),
+      };
+    }
+
+    async function renderWithCorrupted(navigate = vi.fn()) {
+      const store = storeWith([corruptedProject()]);
+      const { container } = renderWorkbench(store, navigate);
+      await vi.waitFor(() => expect(container.textContent).toContain("去年名单（无法读取）"));
+      return { container, store, navigate };
+    }
+
+    it("库里只剩损坏记录时不重播示例项目", async () => {
+      const { container, store } = await renderWithCorrupted();
+      await vi.waitFor(() => expect(store.count).toHaveBeenCalled());
+
+      expect(store.put).not.toHaveBeenCalled();
+      expect(container.textContent).not.toContain("示例：2026届毕业去向");
+    });
+
+    it("列表读不出内容但库里有记录时也不播种", async () => {
+      const store = storeWith([], 1);
+      const { container } = renderWorkbench(store);
+      await vi.waitFor(() => expect(store.count).toHaveBeenCalled());
+
+      expect(store.put).not.toHaveBeenCalled();
+      expect(container.textContent).not.toContain("示例：2026届毕业去向");
+    });
+
+    it("损坏条目照常显示，并挂出可导出可删除的提示", async () => {
+      const { container } = await renderWithCorrupted();
+      const banner = container.querySelector(".workbench-error--corrupted")!;
+
+      expect(banner.getAttribute("role")).toBe("alert");
+      expect(banner.textContent).toContain("有 1 个项目记录读不出来");
+      expect(banner.textContent).toContain("导出工程包");
+      expect(container.querySelector('[aria-label="打开项目 去年名单（无法读取）"]')).not.toBeNull();
+    });
+
+    it("打开损坏条目不会进编辑器，只给出处置说明", async () => {
+      const { container, navigate } = await renderWithCorrupted();
+
+      click(container.querySelector('[aria-label^="打开项目"]')!);
+
+      expect(navigate).not.toHaveBeenCalled();
+      expect(container.querySelector('.workbench-error[role="alert"]')?.textContent).toContain("记录已损坏");
+    });
+
+    it("重命名与复制都被拦下，不会把占位工程写回库里", async () => {
+      const { container, store } = await renderWithCorrupted();
+
+      click(container.querySelector('[aria-label="项目菜单"]')!);
+      click(buttonByLabel(container.querySelector('[role="menu"]')!, "重命名"));
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(container.querySelector('.workbench-error[role="alert"]')?.textContent).toContain("记录已损坏");
+
+      click(container.querySelector('[aria-label="项目菜单"]')!);
+      click(buttonByLabel(container.querySelector('[role="menu"]')!, "复制"));
+      expect(store.put).not.toHaveBeenCalled();
+    });
+
+    it("导出损坏条目写出的是库里的原始值", async () => {
+      const blobs: Blob[] = [];
+      vi.stubGlobal("URL", {
+        createObjectURL: vi.fn((blob: Blob) => { blobs.push(blob); return "blob:raw-record"; }),
+        revokeObjectURL: vi.fn(),
+      });
+      const { container } = await renderWithCorrupted();
+      click(container.querySelector('[aria-label="项目菜单"]')!);
+
+      // 真去点一个 <a> 会让 jsdom 尝试导航，这里换成受控的锚点。
+      const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
+      vi.spyOn(link, "click").mockImplementation(() => {});
+      const createElement = vi.spyOn(document, "createElement").mockImplementation((tag: string) =>
+        tag === "a" ? link : (document.createElementNS("http://www.w3.org/1999/xhtml", tag) as HTMLElement));
+      try {
+        click(buttonByLabel(container.querySelector('[role="menu"]')!, "导出工程包"));
+      } finally {
+        createElement.mockRestore();
+      }
+
+      expect(link.download).toBe("去年名单（无法读取）-原始记录.json");
+      expect(blobs).toHaveLength(1);
+      expect(JSON.parse(await blobs[0]!.text())).toEqual(rawRecord);
+    });
+
+    it("删除损坏条目按库里的键走", async () => {
+      const { container, store } = await renderWithCorrupted();
+      click(container.querySelector('[aria-label="项目菜单"]')!);
+      click(buttonByLabel(container.querySelector('[role="menu"]')!, "删除"));
+
+      click(buttonByLabel(container.querySelector('[role="dialog"]')!, "删除"));
+
+      await vi.waitFor(() => expect(store.remove).toHaveBeenCalledWith("proj-broken"));
     });
   });
 

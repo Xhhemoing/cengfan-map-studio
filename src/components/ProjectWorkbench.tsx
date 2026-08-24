@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createEmptyProject, createSampleProject, duplicateStoredProject, type ProjectStore, type StoredProject } from "../lib/project-store";
+import { createEmptyProject, createSampleProject, duplicateStoredProject, isCorruptedProject, type ProjectStore, type StoredProject } from "../lib/project-store";
 import { downloadProjectPackage, parseProjectPackage, projectPackageDisplayName, type ProjectPackage } from "../lib/project-package";
+import { downloadText } from "../lib/export-poster";
 import { createId } from "../lib/ids";
 import { PROJECT_PACKAGE_IMPORT_LIMIT, checkImportFileSize } from "../lib/import-file-limits";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
@@ -30,6 +31,9 @@ function withoutImportWarnings(pack: ProjectPackage): ProjectPackage {
   const { warnings: _warnings, ...stored } = pack;
   return stored;
 }
+
+/** 损坏记录只允许「导出原始数据」和「删除」，其余入口都会拿占位工程去覆盖它。 */
+const CORRUPTED_ACTION_HINT = "这个项目的记录已损坏，无法打开或修改。请先从卡片菜单「导出工程包」保存原始数据，再决定是否删除。";
 
 function formatUpdatedAt(value: string): string {
   const time = Date.parse(value);
@@ -86,8 +90,9 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       try {
         await refresh();
         if (cancelled || seededRef.current) return;
-        const list = await store.list();
-        if (list.length === 0) {
+        // 只有库里一条记录都没有才播种。拿列表长度当依据的话，读取失败或记录损坏
+        // 都会被当成新用户，示例项目播下去正好把出问题的数据盖在后面。
+        if (await store.count() === 0) {
           await store.put(createSampleProject());
           await refresh();
         }
@@ -121,12 +126,20 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
     };
   }, [openMenuId]);
 
-  const openProject = (id: string) => go(`#/project/${encodeURIComponent(id)}`);
+  const openProject = (id: string) => {
+    const target = projects.find((project) => project.id === id);
+    if (target && isCorruptedProject(target)) {
+      setError(CORRUPTED_ACTION_HINT);
+      return;
+    }
+    go(`#/project/${encodeURIComponent(id)}`);
+  };
 
   const continueEditing = async () => {
     if (!localEntry) return;
     try {
-      const existing = projects.find((project) => project.pack.exportedAt === localEntry.pack.exportedAt);
+      // 降级条目的 pack 是占位工程，拿它去比对会把本地内容错认成已入库的项目。
+      const existing = projects.find((project) => !isCorruptedProject(project) && project.pack.exportedAt === localEntry.pack.exportedAt);
       if (existing) {
         openProject(existing.id);
         return;
@@ -163,6 +176,11 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   // 菜单项只负责开对话框：对话框挂载后菜单收起，避免两层浮层争焦点。
   const requestRename = (project: StoredProject, restoreFocus: () => void) => {
     setOpenMenuId(null);
+    if (isCorruptedProject(project)) {
+      setError(CORRUPTED_ACTION_HINT);
+      restoreFocus();
+      return;
+    }
     setRenameRequest({ project, restoreFocus });
   };
 
@@ -184,6 +202,11 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   };
 
   const duplicateProject = async (project: StoredProject) => {
+    if (isCorruptedProject(project)) {
+      setOpenMenuId(null);
+      setError(CORRUPTED_ACTION_HINT);
+      return;
+    }
     try {
       const copy = duplicateStoredProject(project);
       await store.put(copy);
@@ -219,8 +242,20 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   };
 
   const exportProject = (project: StoredProject) => {
-    downloadProjectPackage(project.pack, `${project.name}-${project.updatedAt.slice(0, 10)}.json`);
     setOpenMenuId(null);
+    const corrupted = project.corrupted;
+    if (corrupted) {
+      // 损坏记录导出的是库里的原始值而不是占位工程：用户手里可能只剩这一份，
+      // 留着 JSON 才有机会人工修好或者找我们排查。
+      try {
+        downloadText(`${JSON.stringify(corrupted.raw, null, 2)}\n`, `${project.name}-原始记录.json`, "application/json;charset=utf-8");
+        setError("");
+      } catch (reason) {
+        setError(reason instanceof Error ? `导出原始记录失败：${reason.message}` : "导出原始记录失败");
+      }
+      return;
+    }
+    downloadProjectPackage(project.pack, `${project.name}-${project.updatedAt.slice(0, 10)}.json`);
   };
 
   const importProject = async (file: File | null) => {
@@ -253,6 +288,7 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
   };
 
   const sorted = useMemo(() => [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [projects]);
+  const corruptedCount = useMemo(() => projects.filter(isCorruptedProject).length, [projects]);
 
   return (
     <main
@@ -263,6 +299,13 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       <WorkbenchHeader importInputRef={importInputRef} onCreateProject={() => void createProject()} onImportProject={(file) => void importProject(file)} />
 
       {error && <section className="workbench-error" role="alert">{error}</section>}
+
+      {corruptedCount > 0 && (
+        <section className="workbench-error workbench-error--corrupted" role="alert">
+          有 {corruptedCount} 个项目记录读不出来，已按「（无法读取）」保留在列表里。
+          它们不能打开或修改，请先用卡片菜单里的「导出工程包」把原始数据存下来，再决定是否删除。
+        </section>
+      )}
 
       {importWarnings.length > 0 && (
         <section className="workbench-error workbench-error--notice" role="status">

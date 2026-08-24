@@ -3,12 +3,25 @@ import { createProjectPackage, restoreProjectPackage, type ProjectPackage } from
 import { sampleStudents } from "./project-data";
 import { createId } from "./ids";
 
+/** 解析失败的记录降级后挂上的原始值：卡片照常显示，原样导出后再由用户决定删不删。 */
+export interface CorruptedProjectRecord {
+  /** 库里存的原始值，导出时原样写出——它可能是这份数据仅剩的一份。 */
+  raw: unknown;
+  reason: string;
+}
+
 export interface StoredProject {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
   pack: ProjectPackage;
+  /** 有值表示这条记录解析失败，pack 只是占位，不能编辑也不能写回。 */
+  corrupted?: CorruptedProjectRecord;
+}
+
+export function isCorruptedProject(project: StoredProject): boolean {
+  return project.corrupted !== undefined;
 }
 
 export interface ProjectPutOptions {
@@ -33,15 +46,24 @@ export class ProjectStoreConflictError extends Error {
 
 export interface ProjectStore {
   list(): Promise<StoredProject[]>;
+  /** 库里的记录条数，包含解析失败的那些：判断“空库”只能看它，不能看 list().length。 */
+  count(): Promise<number>;
   get(id: string): Promise<StoredProject | null>;
   put(project: StoredProject, options?: ProjectPutOptions): Promise<void>;
   remove(id: string): Promise<void>;
 }
 
 function readUpdatedAt(value: unknown): string | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const updatedAt = (value as Record<string, unknown>).updatedAt;
+  const updatedAt = asRecord(value)?.updatedAt;
   return typeof updatedAt === "string" ? updatedAt : null;
+}
+
+/**
+ * 降级条目的 pack 是占位空工程，写回等于用空工程盖掉唯一一份原始数据，
+ * 因此在存储层就拦下来，UI 漏判也不会造成静默丢数据。
+ */
+function assertWritable(project: StoredProject): void {
+  if (project.corrupted) throw new Error("项目记录已损坏，请先导出原始数据再删除，不能覆盖写回");
 }
 
 /** 记录不存在（首存）视为通过；只有已存在且时间戳不同才算冲突。 */
@@ -102,11 +124,15 @@ export function createMemoryProjectStore(): ProjectStore {
         .map((record) => structuredClone(record))
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     },
+    async count() {
+      return records.size;
+    },
     async get(id) {
       const record = records.get(id);
       return record ? structuredClone(record) : null;
     },
     async put(project, options) {
+      assertWritable(project);
       const conflict = conflictFor(project, options?.expectedUpdatedAt, records.get(project.id));
       if (conflict) throw conflict;
       records.set(project.id, structuredClone(project));
@@ -117,21 +143,61 @@ export function createMemoryProjectStore(): ProjectStore {
   };
 }
 
-function parseStoredProject(value: unknown): StoredProject | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (typeof record.id !== "string" || typeof record.name !== "string") return null;
+const EPOCH = new Date(0).toISOString();
+
+type StoredProjectParse =
+  | { ok: true; project: StoredProject }
+  | { ok: false; reason: string };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function parseStoredProjectResult(value: unknown): StoredProjectParse {
+  const record = asRecord(value);
+  if (!record) return { ok: false, reason: "记录不是对象" };
+  if (typeof record.id !== "string" || typeof record.name !== "string") return { ok: false, reason: "记录缺少 id 或名称" };
   try {
     return {
-      id: record.id,
-      name: record.name,
-      createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date(0).toISOString(),
-      updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date(0).toISOString(),
-      pack: restoreProjectPackage(record.pack),
+      ok: true,
+      project: {
+        id: record.id,
+        name: record.name,
+        createdAt: typeof record.createdAt === "string" ? record.createdAt : EPOCH,
+        updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : EPOCH,
+        pack: restoreProjectPackage(record.pack),
+      },
     };
-  } catch {
-    return null;
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : "工程包无法还原" };
   }
+}
+
+/** `get()` 对损坏记录仍返回 null：编辑器拿到占位工程会在下一次自动保存时盖掉原始数据。 */
+function parseStoredProject(value: unknown): StoredProject | null {
+  const parsed = parseStoredProjectResult(value);
+  return parsed.ok ? parsed.project : null;
+}
+
+/**
+ * 解析失败的记录降级成一张只读卡片，而不是从列表里消失：
+ * 名称与时间尽量沿用原记录，pack 用空工程占位，原始值挂在 corrupted 上供导出。
+ * 身份用库里的键而不是记录里的 id——删除要按键走，损坏记录的 id 本身可能就是坏的。
+ */
+function corruptedStoredProject(key: IDBValidKey, value: unknown, reason: string): StoredProject {
+  const record = asRecord(value) ?? {};
+  const name = typeof record.name === "string" && record.name.trim() !== "" ? record.name : "未命名项目";
+  const createdAt = typeof record.createdAt === "string" ? record.createdAt : EPOCH;
+  const updatedAt = typeof record.updatedAt === "string" ? record.updatedAt : createdAt;
+  const placeholder = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+  return {
+    id: String(key),
+    name: `${name}（无法读取）`,
+    createdAt,
+    updatedAt,
+    pack: projectToPack(placeholder, Number.isFinite(Date.parse(updatedAt)) ? new Date(updatedAt) : new Date(0)),
+    corrupted: { raw: value, reason },
+  };
 }
 
 const DATABASE_NAME = "cengfan-map-studio";
@@ -229,6 +295,7 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
   if (!factory) {
     return {
       async list() { return []; },
+      async count() { return 0; },
       async get() { return null; },
       async put() { throw new Error("当前浏览器不支持 IndexedDB"); },
       async remove() { throw new Error("当前浏览器不支持 IndexedDB"); },
@@ -250,13 +317,30 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
   return {
     async list() {
       const db = await ensure();
-      return new Promise((resolve) => {
-        const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).getAll();
+      // 用游标而不是 getAll：解析失败的记录要降级保留，降级条目的身份得用它在库里的键。
+      return new Promise<StoredProject[]>((resolve, reject) => {
+        const items: StoredProject[] = [];
+        const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).openCursor();
         request.onsuccess = () => {
-          const items = (request.result ?? []).map(parseStoredProject).filter((item): item is StoredProject => item !== null);
-          resolve(items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+          const cursor = request.result;
+          if (!cursor) {
+            resolve(items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+            return;
+          }
+          const parsed = parseStoredProjectResult(cursor.value);
+          items.push(parsed.ok ? parsed.project : corruptedStoredProject(cursor.key, cursor.value, parsed.reason));
+          cursor.continue();
         };
-        request.onerror = () => resolve([]);
+        // 读失败时不能装作空库：调用方会据此播种示例项目，把真实数据挡在后面。
+        request.onerror = () => reject(request.error ?? new Error("读取项目列表失败"));
+      });
+    },
+    async count() {
+      const db = await ensure();
+      return new Promise<number>((resolve, reject) => {
+        const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).count();
+        request.onsuccess = () => resolve(request.result ?? 0);
+        request.onerror = () => reject(request.error ?? new Error("读取项目数量失败"));
       });
     },
     async get(id) {
@@ -268,6 +352,7 @@ export function createIndexedDbProjectStore(factory: IDBFactory = globalThis.ind
       });
     },
     async put(project, options) {
+      assertWritable(project);
       const db = await ensure();
       const expectedUpdatedAt = options?.expectedUpdatedAt;
       await new Promise<void>((resolve, reject) => {
