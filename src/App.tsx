@@ -49,6 +49,7 @@ import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioLayoutTemplate, type StageSlots } from "./components/StudioLayoutTemplate";
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
 import { StatusBar } from "./components/StatusBar";
+import { SaveTemplateDialog } from "./components/SaveTemplateDialog";
 
 import { AssetPanel } from "./components/AssetPanel";
 import { DataWorkspace } from "./components/DataWorkspace";
@@ -105,6 +106,7 @@ import {
   createCustomTemplateFromProject,
   loadCustomTemplates,
   type CustomTemplateRecord,
+  type TemplateSaveScope,
 } from "./lib/template-store";
 import {
   createDecorationElement,
@@ -301,6 +303,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<WorkflowStepId>("roster");
   const [globalSettingsSection, setGlobalSettingsSection] = useState<GlobalSettingsSection | null>(null);
+  const [saveTemplateDialogOpen, setSaveTemplateDialogOpen] = useState(false);
 
   const resolvedRenderInterval = renderIntervalMs(renderSettings);
   const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
@@ -1081,14 +1084,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
     );
   };
 
-  const saveCurrentTemplate = () => {
-    const name = window.prompt("自定义模板名称", "我的地图版式");
-    if (!name?.trim()) return;
-    const scope = window.confirm("点击“确定”保存视觉样式；点击“取消”保存布局倾向（含卡片分组）")
-      ? "visual"
-      : "layout";
+  const saveCurrentTemplate = () => setSaveTemplateDialogOpen(true);
+
+  const confirmSaveTemplate = ({ name, scope }: { name: string; scope: TemplateSaveScope }) => {
     const record = createCustomTemplateFromProject({
-      name: name.trim(),
+      name,
       baseTemplateId: project.templateId,
       scope,
       overrides: {
@@ -1137,8 +1137,13 @@ function StudioApp({ projectId }: { projectId?: string }) {
     });
     const next = [record, ...customTemplates].slice(0, 20);
     setCustomTemplates(next);
+    setSaveTemplateDialogOpen(false);
     setStatusMessage(`已保存模板：${record.name}`);
   };
+
+  const saveTemplateDialog = saveTemplateDialogOpen ? (
+    <SaveTemplateDialog onCancel={() => setSaveTemplateDialogOpen(false)} onSave={confirmSaveTemplate} />
+  ) : null;
 
   const createNewProject = () => {
     if (!window.confirm("新建项目会清空当前未保存修改，是否继续？")) return;
@@ -1602,6 +1607,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
           resolvedTheme={resolvedTheme}
           onThemeChange={setThemeMode}
           />
+        {saveTemplateDialog}
+        <StatusBar message={statusMessage} syncStatus={syncState.status} savedAt={syncState.savedAt} />
       </div>
     );
   }
@@ -1879,7 +1886,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
         drawerOpen={assistantDrawerOpen}
         onDrawerClose={() => setAssistantDrawerOpen(false)}
         drawerReturnFocusTo={assistantEntryRef}
-        status={<StatusBar message={statusMessage} syncStatus={syncState.status} savedAt={syncState.savedAt} />}
+        status={
+          <>
+            {saveTemplateDialog}
+            <StatusBar message={statusMessage} syncStatus={syncState.status} savedAt={syncState.savedAt} />
+          </>
+        }
       >
         {slots.workspace}
       </StudioLayoutTemplate>
@@ -2420,6 +2432,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onResizeEnd={() => setResizingPanel(null)}
         />
       </section>
+      {saveTemplateDialog}
     </main>
   );
 }

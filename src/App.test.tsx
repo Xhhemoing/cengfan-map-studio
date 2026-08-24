@@ -1880,6 +1880,61 @@ describe("Studio status bar", () => {
     expect(container.querySelector('.studio-status-bar[role="status"]')).toBe(status);
     expect(status?.textContent).toContain("已刷新展示框位置");
   });
+
+  it("keeps the status bar mounted in the global settings branch", () => {
+    const container = renderLegacyApp();
+    openGlobalSettingsSection(container, "cards");
+
+    expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).not.toBeNull();
+    const status = container.querySelector('.studio-status-bar[role="status"]');
+    expect(status).not.toBeNull();
+    expect(status?.getAttribute("aria-live")).toBe("polite");
+  });
+});
+
+describe("Save custom template dialog", () => {
+  function openSaveTemplateDialog(container: HTMLElement): HTMLElement {
+    openGlobalSettingsSection(container, "cards");
+    click(container.querySelector<HTMLButtonElement>("button.workflow-save-template")!);
+    return container.querySelector<HTMLElement>(".save-template-dialog")!;
+  }
+
+  function dialogButton(dialog: HTMLElement, label: string): HTMLButtonElement {
+    return Array.from(dialog.querySelectorAll("button")).find((button) => button.textContent?.trim() === label)!;
+  }
+
+  it("drops the save when the dialog is cancelled", () => {
+    const prompt = vi.spyOn(window, "prompt");
+    const confirm = vi.spyOn(window, "confirm");
+    const container = renderLegacyApp();
+
+    const dialog = openSaveTemplateDialog(container);
+    expect(dialog).not.toBeNull();
+    // 取消不再被 confirm 当成「布局倾向」这第二种保存范围。
+    expect(prompt).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+
+    click(dialogButton(dialog, "取消"));
+
+    expect(container.querySelector(".save-template-dialog")).toBeNull();
+    expect(container.querySelector('[role="group"][aria-label="我的模板"]')).toBeNull();
+    expect(container.querySelector('.studio-status-bar[role="status"]')?.textContent).not.toContain("已保存模板");
+  });
+
+  it("saves the named template with the picked scope and reports it in the status bar", () => {
+    const container = renderLegacyApp();
+
+    const dialog = openSaveTemplateDialog(container);
+    changeInput(dialog.querySelector<HTMLInputElement>('input[aria-label="模板名称"]')!, "毕业季版式");
+    click(dialog.querySelector<HTMLInputElement>('input[type="radio"][value="layout"]')!);
+    click(dialogButton(dialog, "保存"));
+
+    expect(container.querySelector(".save-template-dialog")).toBeNull();
+    const saved = container.querySelector('[role="group"][aria-label="我的模板"]');
+    expect(saved?.textContent).toContain("毕业季版式");
+    expect(saved?.textContent).toContain("布局倾向");
+    expect(container.querySelector('.studio-status-bar[role="status"]')?.textContent).toContain("已保存模板：毕业季版式");
+  });
 });
 
 describe("Docked AI assistant integration", () => {
