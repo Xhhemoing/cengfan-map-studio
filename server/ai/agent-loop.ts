@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AiConfig } from "./llm-client";
 import { chatWithTools } from "./llm-client";
 import type { AgentBudgetState, AiCallMeta, ChatMessage } from "./agent-types";
@@ -17,6 +18,8 @@ export interface AgentLoopRequest {
   digest: Record<string, unknown>;
   messages: ChatMessage[];
   budget?: AgentBudgetState;
+  /** 续聊时由路由层给出：当前 digest 指纹与上一轮回执里的一致，本轮只发短声明而不重发整包投影。 */
+  digestUnchanged?: boolean;
   requestId?: string;
   signal?: AbortSignal;
   route?: "primary" | "fallback";
@@ -61,6 +64,11 @@ function canonicalValue(value: unknown): unknown {
     );
   }
   return value;
+}
+
+/** digest 的稳定指纹：先按 key 排序规范化再 sha256，键序抖动不会被误判成工程变化。 */
+export function digestFingerprint(digest: Record<string, unknown> | undefined): string {
+  return createHash("sha256").update(JSON.stringify(canonicalValue(digest ?? {})), "utf8").digest("hex");
 }
 
 /** 只读回合的指纹：工具名加规范化后的参数，用来区分“原地重复”和“翻页/换路径继续读”。 */
@@ -266,9 +274,12 @@ export async function runAgentTurn(
     return { kind: "finish", summary: "工具参数多次校验失败，已停止继续尝试。" };
   }
 
+  // digest 与上一轮完全一致时只发一句短声明：整包 JSON 上一轮已经进过 prompt，重发是纯重复付费。
   const digestMessage: ChatMessage = {
     role: "user",
-    content: `当前工程精简投影（只读；不要把它当作可直接写回的完整工程）：${JSON.stringify(request.digest)}`,
+    content: request.digestUnchanged
+      ? "当前工程精简投影与上一轮相同，继续使用已给出的工程投影（只读；不要把它当作可直接写回的完整工程）。"
+      : `当前工程精简投影（只读；不要把它当作可直接写回的完整工程）：${JSON.stringify(request.digest)}`,
   };
   const history = request.messages.filter((message) => message.role !== "system");
   const lastHistoryMessage = history.at(-1);

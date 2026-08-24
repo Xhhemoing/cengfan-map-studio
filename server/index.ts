@@ -17,6 +17,7 @@ import {
 } from "./ai/llm-client";
 import { createAgentLoopBackend, normalizeAgentRuntimeConfig, resolveAgentConfig, resolveAgentRuntimeConfig, type AgentRuntimeConfig } from "./ai/agent-routing";
 import { parseAgentRequest } from "./ai/agent-request";
+import { digestFingerprint } from "./ai/agent-loop";
 import { createRateLimiter } from "./ai/rate-limit";
 import { createAiLogger } from "./ai/ai-observability";
 import {
@@ -843,6 +844,10 @@ export function createAiServer(options: AiServerOptions = {}) {
         parsed.value.budget = receipt
           ? { usedTokens: receipt.usedTokens, maxTokens: receipt.maxTokens, rounds: receipt.rounds, maxRounds: receipt.maxRounds, lastPromptTokens: receipt.lastPromptTokens }
           : { usedTokens: 0, maxTokens: agentRuntime.tokenBudget, rounds: 0, maxRounds: agentRuntime.maxRounds };
+        // 回执里带上 digest 指纹：续聊时指纹一致说明工程没变，本轮不必再把整包投影塞进 prompt。
+        // 回滚：issue 时不写 historyHash 即可，旧回执没有该字段，指纹永远对不上，会退回每轮全量 digest。
+        const digestHash = digestFingerprint(parsed.value.digest);
+        const digestUnchanged = Boolean(receipt && receipt.historyHash === digestHash);
         aiLogger.log("ai.request.started", { requestId, taskId, roundIndex: parsed.value.budget.rounds, route: "primary", messageCount: parsed.value.messages.length, promptBytes: Buffer.byteLength(parsed.value.userMessage, "utf8") });
         const requestController = new AbortController();
         const abortRequest = () => requestController.abort();
@@ -852,6 +857,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         try {
           const outcome = await agent.runTurn({
             ...parsed.value,
+            digestUnchanged,
             requestId,
             signal: requestController.signal,
             retryMaxAttempts: agentRuntime.retryMaxAttempts,
@@ -875,7 +881,7 @@ export function createAiServer(options: AiServerOptions = {}) {
           const responseBudget = { usedTokens: outcomeBudget.usedTokens, maxTokens: outcomeBudget.maxTokens, rounds: outcomeBudget.rounds, maxRounds: outcomeBudget.maxRounds };
           aiLogger.log("ai.agent.finished", { requestId, taskId, roundIndex: responseBudget.rounds, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage, budgetUsedTokens: responseBudget.usedTokens, toolNames: agentToolNames(outcome), fallbackReason: meta?.fallbackReason });
           aiLogger.log("ai.request.completed", { requestId, taskId, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage });
-          const budgetReceipt = budgetReceipts.issue({ taskId, ...responseBudget, sequence: (receipt?.sequence ?? 0) + 1, issuedAt: Date.now(), lastPromptTokens: outcomeBudget.lastPromptTokens });
+          const budgetReceipt = budgetReceipts.issue({ taskId, ...responseBudget, sequence: (receipt?.sequence ?? 0) + 1, issuedAt: Date.now(), historyHash: digestHash, lastPromptTokens: outcomeBudget.lastPromptTokens });
           const budgetPayload = budgetReceipts.verify(budgetReceipt, taskId);
           if (!budgetPayload || !claim) throw new Error("预算回执签发失败");
           let committed = false;

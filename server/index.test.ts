@@ -455,6 +455,52 @@ describe("unified application server", () => {
     }));
   });
 
+  it("resends the whole digest only when it changed since the receipt was issued", async () => {
+    const server = createAiServer({
+      budgetReceiptSecret: "receipt-digest-secret",
+      agentConfig: {
+        primary: { apiKey: "primary-key", baseUrl: "https://primary.example/v1", model: "primary-model", timeoutMs: 1000, maxTokens: 4000, retryMaxAttempts: 1 },
+        maxRounds: 20,
+        tokenBudget: 60000,
+        retryMaxAttempts: 1,
+        retryBaseDelayMs: 0,
+      },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const assistantMessage = { role: "assistant", content: null, tool_calls: [{ id: "call-digest", type: "function", function: { name: "check_health", arguments: "{}" } }] };
+    const history = [assistantMessage, { role: "tool", tool_call_id: "call-digest", content: JSON.stringify({ ok: true }) }];
+    const prompts: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      prompts.push(String(init.body));
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        text: async () => "",
+        json: async () => ({ choices: [{ message: { role: "assistant", content: "完成" } }], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } }),
+      } as Response;
+    }) as typeof fetch;
+    try {
+      const first = await rawPost(origin, "/api/ai/agent", { userMessage: "检查一下画布", taskId: "task-digest", digest: { map: { scale: 1 } }, messages: [] });
+      const firstBody = JSON.parse(first.body) as { budgetReceipt: string };
+      expect(prompts[0]).toContain("\\\"scale\\\":1");
+
+      const unchanged = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-digest", budgetReceipt: firstBody.budgetReceipt, digest: { map: { scale: 1 } }, messages: history });
+      expect(unchanged.status).toBe(200);
+      expect(prompts[1]).not.toContain("\\\"scale\\\":1");
+      expect(prompts[1]).toContain("与上一轮相同");
+
+      const changed = await rawPost(origin, "/api/ai/agent", { userMessage: "继续", taskId: "task-digest", budgetReceipt: (JSON.parse(unchanged.body) as { budgetReceipt: string }).budgetReceipt, digest: { map: { scale: 0.85 } }, messages: history });
+      expect(changed.status).toBe(200);
+      expect(prompts[2]).toContain("\\\"scale\\\":0.85");
+      expect(prompts[2]).not.toContain("与上一轮相同");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("does not reset a signed budget when history is reduced to user messages", async () => {
     const server = createAiServer({ budgetReceiptSecret: "receipt-test-secret", agentConfig: { apiKey: undefined, baseUrl: "https://llm.example/v1", model: "test-model", timeoutMs: 1000, maxTokens: 4000 } });
     servers.push(server);

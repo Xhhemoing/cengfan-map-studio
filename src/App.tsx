@@ -159,8 +159,7 @@ import {
   type EditorPanelLayout,
   type PanelSide,
 } from "./lib/editor-layout";
-import { checkLayoutHealth } from "./lib/layout-health";
-import { buildHealthInput } from "./lib/render-health";
+import { layoutHealthIssues } from "./lib/layout-health-cache";
 import { listResourceHealthIssues } from "./lib/resource-health";
 
 import {
@@ -983,8 +982,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
   // 与画布同一份排版求解结果），而不是估算的 180px 卡高与左上角 width*scale 地图框。
   // buildHealthInput 会同步跑一次排版求解，直接挂在 project 上会让名单/地图的每次编辑
   // 都先付这份开销；改用延后快照后，紧急渲染先提交，健康检查落后一帧且连续编辑只结算最后一次。
+  // 事务提交会深拷贝出新的 project 引用（version/history 都在变），所以再按几何输入签名过一次
+  // 缓存：签名没变就复用上一份 issues，跳过求解与两两比对（见 lib/layout-health-cache.ts）。
   const healthProject = useDeferredValue(project);
-  const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildHealthInput(healthProject)), [healthProject]);
+  const contentLayoutIssues = useMemo(() => layoutHealthIssues(healthProject), [healthProject]);
 
   const handleLegacySceneSelect = (next: SceneSelection) => {
     handleSceneSelect(next);

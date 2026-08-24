@@ -30,6 +30,11 @@ function selectStudents(students: Student[], options: RosterExportOptions): Stud
   return options.visibleOnly ? students.filter((student) => student.visibility !== false) : students;
 }
 
+/**
+ * 破坏性变更:导出的 xlsx 比旧版多一列省份(第 5 列,与导入模板列序一致)。
+ * 回滚:删掉下面这行省份单元格,并把 `createImportTemplateSheets` 的省份列去掉即可,
+ * 表头本身来自模板,不需要在这里再改。
+ */
 export function buildRosterExportRows(students: Student[], options: RosterExportOptions = {}): string[][] {
   return [
     rosterExportHeader(),
@@ -38,6 +43,8 @@ export function buildRosterExportRows(students: Student[], options: RosterExport
       student.university.trim(),
       student.city.trim(),
       rosterScopeLabel(student.locationScope),
+      // 只导出用户手填的省份;没填就留空单元格,推断是导入侧的事,导出不该把推断值写死成手填值。
+      student.province?.trim() ?? "",
     ]),
   ];
 }

@@ -9,6 +9,23 @@ export const DIGEST_TEXT_LIMIT = 40;
 /** 每类画布元素默认最多投影多少条；总数另用 *Count 字段告知模型。 */
 export const DIGEST_ELEMENT_LIMIT = 30;
 
+/**
+ * digest 分层。
+ * - `"full"`：历史行为，明细（卡片方位、文本/素材样本）全部投影，首轮建立上下文用。
+ * - `"core"`：只留统计与关键几何（canvas/map/cards、students 计数与 topProvinces、
+ *   layout.mapContentBounds、guests 计数、text/asset 的 *Count），明细整段截断，
+ *   续聊时工程未变可用它替代整包投影。
+ *
+ * 回滚：删掉 `BuildProjectDigestOptions`、`toCoreLayer` 与 `buildProjectDigest` 的第二个参数，
+ * 只保留 full 分支即可；调用方不传参时行为与分层前完全一致，无需同步改动。
+ */
+export type ProjectDigestLayer = "full" | "core";
+
+export interface BuildProjectDigestOptions {
+  /** 缺省 `"full"`，保持分层前的字段与行为。 */
+  layer?: ProjectDigestLayer;
+}
+
 export interface ProjectDigest {
   canvas: {
     width: number;
@@ -153,15 +170,33 @@ function buildLayoutSection(
 }
 
 /**
+ * core 层裁剪：字段形状与 full 完全一致，只把明细清空，
+ * 消费者仍可按 `textElements.length` / `layout.cardBlocks` 读取而不必判空。
+ * 计数字段（textElementCount / assetElementCount / students.total）不受影响。
+ */
+function toCoreLayer(digest: ProjectDigest): ProjectDigest {
+  return {
+    ...digest,
+    layout: { mapContentBounds: digest.layout.mapContentBounds, cardBlocks: [] },
+    textElements: [],
+    assetElements: [],
+  };
+}
+
+/**
  * Build the only project representation sent to the model. Binary/data URLs
  * are replaced by stable references and student rows are reduced to counts.
+ *
+ * `options.layer` 选择投影分层，缺省 `"full"`；无论哪一层都仍走 `shrinkToBudget`，
+ * 因此 `DIGEST_MAX_BYTES` 上限对两层同时生效。
  */
-export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
+export function buildProjectDigest(project: ProjectDocument, options: BuildProjectDigestOptions = {}): ProjectDigest {
+  const layer = options.layer ?? "full";
   const provinceSummary = buildProvinceSummary(project.students);
   const topProvinces = provinceSummary.slice(0, 10).map(({ province, count }) => ({ province, count }));
   const duplicateGroups = findDuplicateStudentGroups(project.students);
   const duplicateStudentCount = duplicateStudentIds(project.students).size;
-  return shrinkToBudget({
+  const full: ProjectDigest = {
     canvas: {
       width: project.canvas.width,
       height: project.canvas.height,
@@ -225,7 +260,8 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
       duplicateGroups: duplicateGroups.length,
       duplicateStudentCount,
     },
-  });
+  };
+  return shrinkToBudget(layer === "core" ? toCoreLayer(full) : full);
 }
 
 /**
@@ -310,6 +346,15 @@ export function fingerprintProject(project: ProjectDocument): string {
 }
 
 export const buildProjectFingerprint = fingerprintProject;
+
+/**
+ * digest 的短哈希：先做稳定规范化（对象键排序后序列化，长 data URL 折叠成长度+哈希），
+ * 再取 FNV-1a。纯函数——同内容必然同指纹，键序不同不影响结果，任一字段（如 map.scale）
+ * 变化都会改变指纹。服务端切片可据此判断“工程未变，可跳过整包投影”。
+ */
+export function digestFingerprint(digest: ProjectDigest): string {
+  return fingerprintHash(stableSerialize(digest));
+}
 
 export function digestByteLength(digest: ProjectDigest): number {
   return new TextEncoder().encode(JSON.stringify(digest)).byteLength;

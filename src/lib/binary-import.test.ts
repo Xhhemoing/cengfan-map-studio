@@ -207,12 +207,69 @@ describe("binary import adapters", () => {
   it("builds a canonical import template with a separate guide sheet", () => {
     const template = createImportTemplateSheets();
 
-    expect(template.data[0]).toEqual(["学生姓名", "录取院校", "城市", "去向类型"]);
-    expect(template.data[1]).toEqual(["", "", "", ""]);
+    expect(template.data[0]).toEqual(["学生姓名", "录取院校", "城市", "去向类型", "省份"]);
+    expect(template.data[1]).toEqual(["", "", "", "", ""]);
     expect(template.guide).toEqual(expect.arrayContaining([
       ["字段", "必填", "示例"],
       ["学生姓名", "是", "林舟"],
       ["去向类型", "否", "中国去向 / 海外去向"],
+      ["省份", "否", "浙江省"],
     ]));
+  });
+
+  it("explains in the guide that 省份 is optional and overrides city inference", () => {
+    const note = createImportTemplateSheets().guide.find((row) => row[0] === "省份说明")?.[2] ?? "";
+
+    expect(note).toContain("选填");
+    expect(note).toContain("覆盖");
+    expect(note).toContain("留空");
+  });
+
+  it("keeps 省份 as the fifth template column so the legacy four columns stay in place", () => {
+    const [header] = createImportTemplateSheets().data;
+
+    expect(header?.slice(0, 4)).toEqual(["学生姓名", "录取院校", "城市", "去向类型"]);
+    expect(header?.[4]).toBe("省份");
+  });
+
+  it("reads an explicit province column without treating it as a required field", () => {
+    const result = parseExcelWorkbookRows([
+      ["学生姓名", "录取院校", "城市", "去向类型", "省份"],
+      ["苏禾", "浙江大学", "杭州市", "中国去向", "浙江省"],
+      ["林舟", "北京大学", "北京市", "中国去向", ""],
+    ]);
+
+    expect(result.missingRequiredFields).toEqual([]);
+    expect(result.unparsed).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({ name: "苏禾", province: "浙江省" });
+    expect(result.candidates[1]).not.toHaveProperty("province");
+  });
+
+  it("maps province aliases anywhere in the header without reporting them as unused", () => {
+    const result = parseExcelWorkbookRows([
+      ["所在省份", "学生姓名", "录取学校", "所在城市", "备注"],
+      ["江苏省", "顾言", "南京大学", "南京市", "保研"],
+    ]);
+
+    expect(result.candidates[0]).toMatchObject({ city: "南京市", province: "江苏省" });
+    expect(result.unmappedHeaders).toEqual(["备注"]);
+    // 省份只做解析,不出现在识别面板的列映射里。
+    expect(result.columnMappings.map((mapping) => mapping.field)).toEqual(["name", "university", "city"]);
+  });
+
+  it("ignores a fifth column on the headerless fallback path instead of reading it as province", () => {
+    const result = parseExcelWorkbookRows([
+      ["周晴", "哈佛大学", "美国·波士顿", "海外去向", "马萨诸塞州"],
+    ]);
+
+    expect(result.headerRowIndex).toBeUndefined();
+    expect(result.candidates).toEqual([{
+      name: "周晴",
+      university: "哈佛大学",
+      city: "美国·波士顿",
+      locationScope: "international",
+      sourceLine: 1,
+      rawLine: "周晴\t哈佛大学\t美国·波士顿\t海外去向\t马萨诸塞州",
+    }]);
   });
 });

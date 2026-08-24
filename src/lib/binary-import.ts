@@ -1,18 +1,23 @@
 import {
   COLUMN_LABELS,
+  findColumnIndexes,
   HEADER_ALIASES,
-  matchStudentColumn,
   parseLocationScope,
   REQUIRED_COLUMNS,
+  type MappedStudentColumn,
   type RequiredStudentColumn,
   type StudentColumn,
 } from "./import-aliases";
 import { parseStudentText, type TextImportResult, type UnparsedLine } from "./import-data";
 
-export type { StudentColumn } from "./import-aliases";
+/**
+ * 对外导出的是不含省份的核心列:省份只参与解析取值,不进入识别面板的列映射展示。
+ * 回滚省份列时改回 `export type { StudentColumn } from "./import-aliases";`。
+ */
+export type { MappedStudentColumn as StudentColumn } from "./import-aliases";
 
 export interface ExcelColumnMapping {
-  field: StudentColumn;
+  field: MappedStudentColumn;
   sourceHeader: string;
   columnIndex: number;
   samples: string[];
@@ -30,11 +35,17 @@ export interface ImportTemplateSheets {
   guide: string[][];
 }
 
+/**
+ * 省份固定排在第 5 列(去向类型之后):前 4 列列位与旧模板一致,
+ * 无表头回退路径才能继续按「姓名/院校/城市/去向」读老数据。
+ * 破坏性变更:导出的 xlsx 比旧版多一列省份。回滚办法是删掉 data 行尾的 "省份"、
+ * 补齐空行长度并删除 guide 里的两条省份说明,导出侧(roster-export)会自动跟随模板收缩。
+ */
 export function createImportTemplateSheets(): ImportTemplateSheets {
   return {
     data: [
-      ["学生姓名", "录取院校", "城市", "去向类型"],
-      ["", "", "", ""],
+      ["学生姓名", "录取院校", "城市", "去向类型", "省份"],
+      ["", "", "", "", ""],
     ],
     guide: [
       ["字段", "必填", "示例"],
@@ -42,19 +53,15 @@ export function createImportTemplateSheets(): ImportTemplateSheets {
       ["录取院校", "是", "北京大学"],
       ["城市", "是", "北京市"],
       ["去向类型", "否", "中国去向 / 海外去向"],
+      ["省份", "否", "浙江省"],
       ["填写说明", "", "去向类型留空时按中国去向处理"],
+      ["省份说明", "", "省份选填;填了就覆盖按城市推断的省份,留空则仍按城市解析"],
     ],
   };
 }
 
-function findColumnIndexes(header: string[]): Partial<Record<StudentColumn, number>> {
-  const indexes: Partial<Record<StudentColumn, number>> = {};
-  header.forEach((cell, index) => {
-    const column = matchStudentColumn(cell);
-    if (column && indexes[column] === undefined) indexes[column] = index;
-  });
-  return indexes;
-}
+/** 识别面板展示的列;省份不在其中,只在解析时取值。 */
+const MAPPED_COLUMNS: readonly MappedStudentColumn[] = ["name", "university", "city", "locationScope"];
 
 function toRowCells(row: string[] | undefined): string[] {
   return (row ?? []).map((cell) => String(cell ?? "").trim());
@@ -108,11 +115,15 @@ function createMetadata(
   rows: string[][],
   header: { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>> },
 ): Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {
-  const mappedIndexes = new Set<number>();
-  const columnMappings = (Object.keys(HEADER_ALIASES) as StudentColumn[]).flatMap((field) => {
+  // 省份也算「已识别」列位,否则识别面板会把模板自带的省份列报成「未使用」。
+  const recognizedIndexes = new Set(
+    (Object.keys(HEADER_ALIASES) as StudentColumn[])
+      .map((field) => header.indexes[field])
+      .filter((columnIndex): columnIndex is number => columnIndex !== undefined),
+  );
+  const columnMappings = MAPPED_COLUMNS.flatMap((field) => {
     const columnIndex = header.indexes[field];
     if (columnIndex === undefined) return [];
-    mappedIndexes.add(columnIndex);
     const samples = rows
       .slice(header.rowIndex + 1)
       .map((row) => row[columnIndex]?.trim() ?? "")
@@ -125,7 +136,7 @@ function createMetadata(
       samples,
     }];
   });
-  const unmappedHeaders = header.headers.filter((value, index) => value && !mappedIndexes.has(index));
+  const unmappedHeaders = header.headers.filter((value, index) => value && !recognizedIndexes.has(index));
   const missingRequiredFields = REQUIRED_COLUMNS.filter((field) => header.indexes[field] === undefined);
   return {
     headerRowIndex: header.rowIndex,
@@ -191,9 +202,13 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
     }
     const scopeIndex = header.indexes.locationScope;
     const locationScope = scopeIndex === undefined ? undefined : parseLocationScope(cells[scopeIndex]);
+    const provinceIndex = header.indexes.province;
+    // 省份空着就不写字段:留给下游按城市推断,而不是塞一个空字符串覆盖推断结果。
+    const province = provinceIndex === undefined ? "" : cells[provinceIndex] ?? "";
     candidates.push({
       ...values,
       ...(locationScope ? { locationScope } : {}),
+      ...(province ? { province } : {}),
       sourceLine,
       rawLine,
     });

@@ -20,7 +20,7 @@ describe("roster-export", () => {
     const [header] = buildRosterExportRows(roster);
 
     expect(header).toEqual(createImportTemplateSheets().data[0]);
-    expect(header).toEqual(["学生姓名", "录取院校", "城市", "去向类型"]);
+    expect(header).toEqual(["学生姓名", "录取院校", "城市", "去向类型", "省份"]);
   });
 
   it("returns a fresh header array so callers cannot mutate the template", () => {
@@ -34,19 +34,30 @@ describe("roster-export", () => {
   it("writes the destination scope as 中国去向 / 海外去向", () => {
     const [, implicitChina, , international, explicitChina] = buildRosterExportRows(roster);
 
-    expect(implicitChina).toEqual(["顾青禾", "浙江大学", "杭州市", "中国去向"]);
-    expect(international).toEqual(["周晚", "哈佛大学", "美国·波士顿", "海外去向"]);
-    expect(explicitChina).toEqual(["陆见川", "四川大学", "成都市", "中国去向"]);
+    expect(implicitChina).toEqual(["顾青禾", "浙江大学", "杭州市", "中国去向", ""]);
+    expect(international).toEqual(["周晚", "哈佛大学", "美国·波士顿", "海外去向", ""]);
+    expect(explicitChina).toEqual(["陆见川", "四川大学", "成都市", "中国去向", ""]);
+  });
+
+  it("exports a manually set province and leaves the cell empty when it is unset", () => {
+    const [, withoutProvince, withProvince] = buildRosterExportRows(roster);
+
+    // 空省份导出空单元格:导出侧不写城市推断出来的省份。
+    expect(withoutProvince?.[4]).toBe("");
+    expect(withProvince).toEqual(["沈砚", "北京大学", "北京市", "中国去向", "北京市"]);
   });
 
   it("trims stored values and can limit the export to visible records", () => {
     const rows = buildRosterExportRows(
-      [{ id: "student-9", name: " 温言 ", university: " 南京大学 ", city: " 南京市 ", visibility: true }, roster[2]!],
+      [
+        { id: "student-9", name: " 温言 ", university: " 南京大学 ", city: " 南京市 ", province: " 江苏省 ", visibility: true },
+        roster[2]!,
+      ],
       { visibleOnly: true },
     );
 
     expect(rows).toHaveLength(2);
-    expect(rows[1]).toEqual(["温言", "南京大学", "南京市", "中国去向"]);
+    expect(rows[1]).toEqual(["温言", "南京大学", "南京市", "中国去向", "江苏省"]);
   });
 
   it("round-trips exported rows back through parseExcelWorkbookRows", () => {
@@ -68,6 +79,17 @@ describe("roster-export", () => {
       city: student.city,
       locationScope: student.locationScope ?? "china",
     })));
+  });
+
+  it("round-trips a manually set province instead of dropping it on re-import", () => {
+    const parsed = parseExcelWorkbookRows(buildRosterExportRows(roster));
+
+    expect(parsed.candidates.map((candidate) => candidate.province)).toEqual([
+      undefined,
+      "北京市",
+      undefined,
+      undefined,
+    ]);
   });
 
   it("keeps 1-based sheet row numbers when the export is re-imported", () => {

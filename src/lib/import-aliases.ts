@@ -1,5 +1,12 @@
-export type StudentColumn = "name" | "university" | "city" | "locationScope";
+export type StudentColumn = "name" | "university" | "city" | "locationScope" | "province";
 
+/**
+ * 省份是纯解析列:参与表头识别与取值,但不进入识别面板的列映射展示(展示层未接入)。
+ * 回滚省份列时,把 `StudentColumn` 去掉 `"province"`,本别名可一并删除。
+ */
+export type MappedStudentColumn = Exclude<StudentColumn, "province">;
+
+/** 省份选填,不进必填列:缺省份时仍按城市推断,不该把整行判为无效。 */
 export const REQUIRED_COLUMNS = ["name", "university", "city"] as const;
 
 export type RequiredStudentColumn = (typeof REQUIRED_COLUMNS)[number];
@@ -24,6 +31,7 @@ export const HEADER_ALIASES: Record<StudentColumn, readonly string[]> = {
   ],
   city: ["城市", "所在城市", "目的地城市", "city", "destination city", "location"],
   locationScope: ["去向类型", "去向", "地区类型", "destination type", "location scope", "scope"],
+  province: ["省份", "省", "所在省份", "所属省份", "省级行政区", "省/直辖市", "province", "state"],
 };
 
 export const COLUMN_LABELS: Record<StudentColumn, string> = {
@@ -31,6 +39,7 @@ export const COLUMN_LABELS: Record<StudentColumn, string> = {
   university: "录取院校",
   city: "城市",
   locationScope: "去向类型",
+  province: "省份",
 };
 
 export function normalizeHeader(value: string): string {
@@ -51,14 +60,30 @@ export function matchStudentColumn(value: string | undefined): StudentColumn | n
   return ALIAS_TO_COLUMN.get(normalizeHeader(value)) ?? null;
 }
 
-/** 至少命中两个不同的核心字段(姓名/院校/城市)才当作表头行,避免误吞学生记录。 */
+const REQUIRED_COLUMN_SET: ReadonlySet<string> = new Set(REQUIRED_COLUMNS);
+
+function isRequiredColumn(column: StudentColumn): column is RequiredStudentColumn {
+  return REQUIRED_COLUMN_SET.has(column);
+}
+
+/** 至少命中两个不同的核心字段(姓名/院校/城市)才当作表头行,避免误吞学生记录;去向类型与省份都不计数。 */
 export function looksLikeHeaderRow(parts: string[]): boolean {
   const matched = new Set<RequiredStudentColumn>();
   for (const part of parts) {
     const column = matchStudentColumn(part);
-    if (column && column !== "locationScope") matched.add(column);
+    if (column && isRequiredColumn(column)) matched.add(column);
   }
   return matched.size >= 2;
+}
+
+/** 表头单元格 → 列位;同名列取最左一个。Excel 与文本两条路径共用,避免两处各写一份识别规则。 */
+export function findColumnIndexes(header: readonly string[]): Partial<Record<StudentColumn, number>> {
+  const indexes: Partial<Record<StudentColumn, number>> = {};
+  header.forEach((cell, index) => {
+    const column = matchStudentColumn(cell);
+    if (column && indexes[column] === undefined) indexes[column] = index;
+  });
+  return indexes;
 }
 
 function escapeRegExp(value: string): string {

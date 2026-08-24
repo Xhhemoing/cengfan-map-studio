@@ -4,6 +4,7 @@ import {
   buildProjectDigest,
   buildProjectFingerprint,
   digestByteLength,
+  digestFingerprint,
   fingerprintProject,
   DIGEST_ELEMENT_LIMIT,
   DIGEST_MAX_BYTES,
@@ -269,5 +270,129 @@ describe("buildProjectDigest", () => {
     expect(digestByteLength(digest)).toBeLessThanOrEqual(DIGEST_MAX_BYTES);
     expect(digest.students.total).toBe(0);
     expect(digest.layout.cardBlocks).toEqual([]);
+  });
+});
+
+/** 一份两层都不会触发 shrink 的中等体量工程，用来对比 full / core 的字段差异。 */
+function busyProject() {
+  const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+  const provinces = ["北京市", "浙江省", "广东省", "江苏省", "四川省", "湖北省", "山东省", "河南省", "陕西省", "福建省", "湖南省", "辽宁省"];
+  return {
+    ...project,
+    students: provinces.flatMap((province, provinceIndex) => Array.from({ length: 12 - provinceIndex }, (_, index) => ({
+      id: `s-${province}-${index}`,
+      name: `同学${index}`,
+      university: `${province}大学第${index}分校`,
+      city: `${province}城市${index}`,
+      province,
+      visibility: true,
+    }))),
+    textElements: Array.from({ length: 60 }, (_, index) => ({
+      id: `text-${index}`,
+      role: "custom" as const,
+      content: `第 ${index} 段说明文字`,
+      x: index,
+      y: index,
+      fontSize: 16,
+      color: "#000000",
+      fontWeight: 400,
+      textAlign: "left" as const,
+      maxWidth: 320,
+      visibility: true,
+    })),
+    assetElements: Array.from({ length: 8 }, (_, index) => ({
+      id: `asset-element-${index}`,
+      assetId: `asset-${index}`,
+      label: `素材 ${index}`,
+      src: `data:image/png;base64,${"a".repeat(500)}`,
+      kind: "decoration" as const,
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      zIndex: 30,
+      visibility: true,
+    })),
+  };
+}
+
+describe("buildProjectDigest layers", () => {
+  it("defaults to the full layer", () => {
+    const project = busyProject();
+    expect(buildProjectDigest(project)).toEqual(buildProjectDigest(project, { layer: "full" }));
+  });
+
+  it("keeps statistics and key geometry on the core layer while dropping the detail lists", () => {
+    const project = busyProject();
+    const full = buildProjectDigest(project, { layer: "full" });
+    const core = buildProjectDigest(project, { layer: "core" });
+
+    expect(full.layout.cardBlocks.length).toBeGreaterThan(0);
+    expect(full.textElements.length).toBeGreaterThan(0);
+    expect(full.assetElements.length).toBeGreaterThan(0);
+
+    expect(core.canvas).toEqual(full.canvas);
+    expect(core.map).toEqual(full.map);
+    expect(core.cards).toEqual(full.cards);
+    expect(core.guests).toEqual(full.guests);
+    expect(core.students).toEqual(full.students);
+    expect(core.students.topProvinces).toHaveLength(10);
+    expect(core.layout.mapContentBounds).toEqual(full.layout.mapContentBounds);
+    expect(core.textElementCount).toBe(full.textElementCount);
+    expect(core.assetElementCount).toBe(full.assetElementCount);
+
+    expect(core.layout.cardBlocks).toEqual([]);
+    expect(core.textElements).toEqual([]);
+    expect(core.assetElements).toEqual([]);
+    expect(digestByteLength(core)).toBeLessThan(digestByteLength(full));
+  });
+
+  it("keeps both layers inside the byte budget for an oversized canvas", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const oversized = {
+      ...project,
+      students: Array.from({ length: 10 }, (_, index) => ({
+        id: `s${index}`,
+        name: `同学${index}`,
+        university: "某大学",
+        city: "某市",
+        province: `超长省名${index}${"啊".repeat(400)}`,
+        visibility: true,
+      })),
+    };
+
+    expect(digestByteLength(buildProjectDigest(oversized, { layer: "full" }))).toBeLessThanOrEqual(DIGEST_MAX_BYTES);
+    expect(digestByteLength(buildProjectDigest(oversized, { layer: "core" }))).toBeLessThanOrEqual(DIGEST_MAX_BYTES);
+  });
+});
+
+describe("digestFingerprint", () => {
+  it("returns the same short hash for equal digests regardless of key order", () => {
+    const project = busyProject();
+    const digest = buildProjectDigest(project);
+    const again = buildProjectDigest({ ...project });
+    const reordered = Object.fromEntries(Object.entries(digest).reverse()) as typeof digest;
+
+    expect(digestFingerprint(digest)).toMatch(/^fnv1a32:[0-9a-f]{8}$/);
+    expect(digestFingerprint(digest)).toBe(digestFingerprint(digest));
+    expect(digestFingerprint(again)).toBe(digestFingerprint(digest));
+    expect(digestFingerprint(reordered)).toBe(digestFingerprint(digest));
+  });
+
+  it("changes when map.scale changes", () => {
+    const project = busyProject();
+    const digest = buildProjectDigest(project);
+
+    expect(digestFingerprint({ ...digest, map: { ...digest.map, scale: digest.map.scale + 0.25 } })).not.toBe(digestFingerprint(digest));
+    expect(digestFingerprint(buildProjectDigest({ ...project, map: { ...project.map, scale: project.map.scale + 0.25 } }))).not.toBe(digestFingerprint(digest));
+  });
+
+  it("separates the core layer from the full layer", () => {
+    const project = busyProject();
+
+    expect(digestFingerprint(buildProjectDigest(project, { layer: "core" })))
+      .not.toBe(digestFingerprint(buildProjectDigest(project, { layer: "full" })));
   });
 });

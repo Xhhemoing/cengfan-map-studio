@@ -157,6 +157,82 @@ describe("import data", () => {
     expect(result.unparsed).toHaveLength(1);
   });
 
+  it("reads an explicit province column after an alias header row", () => {
+    const result = parseStudentText([
+      "学生姓名,录取院校,城市,去向类型,省份",
+      "苏禾,浙江大学,杭州市,中国去向,浙江省",
+      "林舟,北京大学,北京市,中国去向,",
+    ].join("\n"));
+
+    expect(result.candidates[0]).toEqual({
+      name: "苏禾",
+      university: "浙江大学",
+      city: "杭州市",
+      province: "浙江省",
+      sourceLine: 2,
+      rawLine: "苏禾,浙江大学,杭州市,中国去向,浙江省",
+    });
+    expect(result.candidates[1]).not.toHaveProperty("province");
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("follows the header order instead of column positions when a header row is present", () => {
+    const result = parseStudentText([
+      "所在省份,城市,录取学校,学生姓名",
+      "江苏省,南京市,南京大学,顾言",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([{
+      name: "顾言",
+      university: "南京大学",
+      city: "南京市",
+      province: "江苏省",
+      sourceLine: 2,
+      rawLine: "江苏省,南京市,南京大学,顾言",
+    }]);
+  });
+
+  it("keeps the legacy four-column order without a header row and never reads a fifth column as province", () => {
+    const result = parseStudentText("周晴,哈佛大学,美国·波士顿,海外去向,马萨诸塞州");
+
+    expect(result.candidates).toEqual([{
+      name: "周晴",
+      university: "哈佛大学",
+      city: "美国·波士顿",
+      locationScope: "international",
+      sourceLine: 1,
+      rawLine: "周晴,哈佛大学,美国·波士顿,海外去向,马萨诸塞州",
+    }]);
+  });
+
+  it("falls back to column positions when the header row misses a required column", () => {
+    const result = parseStudentText([
+      "姓名,录取学校,备注",
+      "苏禾,浙江大学,杭州市",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([{
+      name: "苏禾",
+      university: "浙江大学",
+      city: "杭州市",
+      sourceLine: 2,
+      rawLine: "苏禾,浙江大学,杭州市",
+    }]);
+  });
+
+  it("recognizes a labeled province in natural-language records", () => {
+    const result = parseStudentText("姓名：林舟，就读院校：北京大学，城市：北京市，省份：北京市");
+
+    expect(result.candidates).toEqual([{
+      name: "林舟",
+      university: "北京大学",
+      city: "北京市",
+      province: "北京市",
+      sourceLine: 1,
+      rawLine: "姓名：林舟，就读院校：北京大学，城市：北京市，省份：北京市",
+    }]);
+  });
+
   it("recognizes labeled records that use alias labels", () => {
     const result = parseStudentText("学生姓名：苏禾；录取学校：浙江大学；所在城市：杭州市");
 

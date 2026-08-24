@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildSystemMessage, runAgentTurn, runLocalAgentTurn, MAX_READ_ONLY_STREAK, MAX_TURNS } from "./agent-loop";
+import { buildSystemMessage, digestFingerprint, runAgentTurn, runLocalAgentTurn, MAX_READ_ONLY_STREAK, MAX_TURNS } from "./agent-loop";
 import type { AiConfig } from "./llm-client";
 import type { AgentBudgetState, ChatMessage } from "./agent-types";
 
@@ -176,6 +176,40 @@ describe("runAgentTurn", () => {
     expect(sent.filter((message) => message.role === "user" && message.content === "地图小一点")).toHaveLength(1);
   });
 
+  it("replaces the digest payload with a short notice when the caller says it did not change", async () => {
+    let sent: Array<{ role: string; content?: string | null }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      sent = (JSON.parse(String(init.body)) as { messages: Array<{ role: string; content?: string | null }> }).messages;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ choices: [{ message: { role: "assistant", content: "完成" } }] }) };
+    }));
+    const history: ChatMessage[] = [
+      { role: "user", content: "地图小一点" },
+      calls(["check_health", {}]),
+      { role: "tool", tool_call_id: "call-0", content: "{\"ok\":true}" },
+    ];
+    await runAgentTurn(CONFIG, { userMessage: "地图小一点", digest: { map: { scale: 1 } }, messages: history, digestUnchanged: true });
+
+    const noticeIndex = sent.findIndex((message) => message.content?.includes("与上一轮相同"));
+    expect(noticeIndex).toBeGreaterThan(-1);
+    expect(sent.some((message) => message.content?.includes("\"scale\":1"))).toBe(false);
+    // 前缀纪律不变：短声明仍夹在 history 与本轮用户消息之间。
+    expect(sent.findIndex((message) => message.content === "{\"ok\":true}")).toBeLessThan(noticeIndex);
+    expect(sent.at(-1)).toMatchObject({ role: "user", content: "地图小一点" });
+  });
+
+  it("still sends the whole digest on the first turn and whenever it changed", async () => {
+    let sent: Array<{ role: string; content?: string | null }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      sent = (JSON.parse(String(init.body)) as { messages: Array<{ role: string; content?: string | null }> }).messages;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ choices: [{ message: { role: "assistant", content: "完成" } }] }) };
+    }));
+    for (const digestUnchanged of [undefined, false]) {
+      await runAgentTurn(CONFIG, { userMessage: "x", digest: { map: { scale: 1 } }, messages: [], digestUnchanged });
+      expect(sent.some((message) => message.content?.includes("\"scale\":1"))).toBe(true);
+      expect(sent.some((message) => message.content?.includes("与上一轮相同"))).toBe(false);
+    }
+  });
+
   it("no longer forces an inspect-then-describe preamble in the system prompt", () => {
     const prompt = String(buildSystemMessage().content);
     expect(prompt).not.toContain("先 inspect_project 读取真实当前值，再 describe_capability");
@@ -302,6 +336,20 @@ describe("runAgentTurn", () => {
     const messages: ChatMessage[] = Array.from({ length: MAX_TURNS }, () => calls(["update_map", { patch: { width: 1 } }]));
     const outcome = await runAgentTurn(CONFIG, { userMessage: "x", digest: {}, messages });
     expect(outcome.kind).toBe("finish");
+  });
+});
+
+describe("digestFingerprint", () => {
+  it("ignores key order but reacts to any value change", () => {
+    const digest = { map: { scale: 1, width: 640 }, students: { total: 3 } };
+    const reordered = { students: { total: 3 }, map: { width: 640, scale: 1 } };
+    expect(digestFingerprint(digest)).toBe(digestFingerprint(reordered));
+    expect(digestFingerprint({ ...digest, map: { scale: 0.85, width: 640 } })).not.toBe(digestFingerprint(digest));
+    expect(digestFingerprint(undefined)).toBe(digestFingerprint({}));
+  });
+
+  it("keeps array order significant", () => {
+    expect(digestFingerprint({ topProvinces: ["粤", "浙"] })).not.toBe(digestFingerprint({ topProvinces: ["浙", "粤"] }));
   });
 });
 

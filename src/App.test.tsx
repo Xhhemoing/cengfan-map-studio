@@ -11,6 +11,7 @@ vi.mock("./lib/render-health", async (importOriginal) => {
 
 import { App } from "./App";
 import { checkLayoutHealth } from "./lib/layout-health";
+import { layoutHealthCache } from "./lib/layout-health-cache";
 import { buildHealthInput } from "./lib/render-health";
 import { resolveDeliveryIssueLocation } from "./lib/delivery-target";
 import { createProjectDocument, serializeProjectDocument } from "./lib/project-document";
@@ -1030,6 +1031,8 @@ describe("App student editing", () => {
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
     await act(async () => {});
 
+    // 排版健康检查带一份模块级签名缓存，清掉它才能让「算了几次」不受同文件其他用例的残留影响。
+    layoutHealthCache.clear();
     healthInput.mockClear();
     changeSelect(container.querySelector<HTMLSelectElement>("#canvas-size-preset")!, "square-1080");
     // 编辑的同步提交先落地，排版求解不挂在这一帧上。

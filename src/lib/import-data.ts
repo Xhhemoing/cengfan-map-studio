@@ -1,8 +1,10 @@
 import {
   createLabelPattern,
+  findColumnIndexes,
   looksLikeHeaderRow,
   matchStudentColumn,
   parseLocationScope,
+  REQUIRED_COLUMNS,
   type StudentColumn,
 } from "./import-aliases";
 
@@ -11,9 +13,13 @@ export interface ImportCandidate {
   university: string;
   city: string;
   locationScope?: "china" | "international";
+  /** 显式省份:选填,有值时覆盖按城市推断的省份;缺省不写该字段,交给下游按城市解析。 */
+  province?: string;
   sourceLine: number;
   rawLine: string;
 }
+
+type ColumnIndexes = Partial<Record<StudentColumn, number>>;
 
 export interface UnparsedLine {
   sourceLine: number;
@@ -60,6 +66,11 @@ function splitParts(line: string, delimiter: string | null): string[] {
     .filter(Boolean);
 }
 
+/**
+ * 无表头回退:仍按旧的 4 列列位「姓名/院校/城市/去向」。
+ * 省份只在识别到表头时才按映射读取,否则模板第 5 列的位置无从确认,
+ * 容易把「中国去向」这类值当成省份吃进来。
+ */
 function toCandidate(
   parts: string[],
   sourceLine: number,
@@ -74,6 +85,34 @@ function toCandidate(
     university,
     city,
     ...(locationScope ? { locationScope } : {}),
+    sourceLine,
+    rawLine,
+  };
+}
+
+function cellAt(parts: string[], columnIndex: number | undefined): string {
+  return columnIndex === undefined ? "" : (parts[columnIndex] ?? "").trim();
+}
+
+/** 识别到表头后按列名映射取值:支持乱序列与模板第 5 列的省份。 */
+function toMappedCandidate(
+  parts: string[],
+  indexes: ColumnIndexes,
+  sourceLine: number,
+  rawLine: string,
+): ImportCandidate | null {
+  const name = cellAt(parts, indexes.name);
+  const university = cellAt(parts, indexes.university);
+  const city = cellAt(parts, indexes.city);
+  if (!name || !university || !city) return null;
+  const locationScope = parseLocationScope(cellAt(parts, indexes.locationScope));
+  const province = cellAt(parts, indexes.province);
+  return {
+    name,
+    university,
+    city,
+    ...(locationScope ? { locationScope } : {}),
+    ...(province ? { province } : {}),
     sourceLine,
     rawLine,
   };
@@ -97,11 +136,13 @@ function parseLabeledCandidate(
   const city = fields.get("city");
   if (!name || !university || !city) return null;
   const locationScope = parseLocationScope(fields.get("locationScope"));
+  const province = fields.get("province");
   return {
     name,
     university,
     city,
     ...(locationScope ? { locationScope } : {}),
+    ...(province ? { province } : {}),
     sourceLine,
     rawLine: line,
   };
@@ -111,6 +152,8 @@ export function parseStudentText(text: string): TextImportResult {
   const lines = splitLines(text);
   const candidates: ImportCandidate[] = [];
   const unparsed: UnparsedLine[] = [];
+  // 首行是表头时记下列映射,后续行按列名取值;没有表头则保持旧的列位解析。
+  let headerIndexes: ColumnIndexes | null = null;
 
   lines.forEach((line, index) => {
     const labeledCandidate = parseLabeledCandidate(line, index + 1);
@@ -121,10 +164,15 @@ export function parseStudentText(text: string): TextImportResult {
     const delimiter = detectDelimiter(line);
     const parts = splitParts(line, delimiter);
     if (index === 0 && looksLikeHeaderRow(parts) && parts.length >= 3) {
+      const indexes = findColumnIndexes(parts);
+      // 三个必填列没认全就不用映射:漏认一列会把整批数据判成无效,不如退回列位解析。
+      headerIndexes = REQUIRED_COLUMNS.every((field) => indexes[field] !== undefined) ? indexes : null;
       return;
     }
 
-    const candidate = toCandidate(parts, index + 1, line);
+    const candidate = headerIndexes
+      ? toMappedCandidate(parts, headerIndexes, index + 1, line)
+      : toCandidate(parts, index + 1, line);
     if (candidate) {
       candidates.push(candidate);
       return;

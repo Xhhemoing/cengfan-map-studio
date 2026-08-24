@@ -27,7 +27,8 @@
 | 4 | 已完成 | opus ×5 | 复查 P0 与导入/兜底收紧 |
 | 5 | 已完成 | 混编 ×5 | 达标后继续 |
 | 6 | 已完成 | 混编 ×5 | 续聊闭环与死代码清理 |
-| 7 | 进行中 | 混编 ×5 | 导出补省份、digest 分层、续聊 HTTP 验收 |
+| 7 | 已完成 | 混编 ×5 | 导出补省份、digest 分层、续聊 digest 去重、健康检查缓存 |
+| 8 | 进行中 | 混编 ×5 | 省份写回、可写白名单、回执过期降级、工作台菜单、OCR |
 
 ### 第 1 轮工作流（只读）
 
@@ -69,6 +70,7 @@
 - 2026-08-24：第 1 轮 5 份审计齐；启动第 2 轮 5 个落地子代理。
 - 2026-08-24：第 2 轮落地完成并合入专属分支。目标测试 12 文件 164 + 续跑 19 文件 284 通过。启动第 3 轮。
 - 2026-08-24：第 6 轮落地完成并合入专属分支。启动第 7 轮。
+- 2026-08-24：第 7 轮落地完成并合入专属分支。启动第 8 轮。
 
 ## 第 2 轮已合入
 
@@ -113,4 +115,13 @@
 
 回滚：把 `AGENT_SNAPSHOT_SCHEMA_VERSION` 改回 2 并去掉回执字段；校验仍接受 2/3，已写入的 v3 退化为只读恢复。导入区改动是纯 UI。
 
-**第 7 轮候选：** 导出名单补省份列（round-trip 丢手动覆盖）；digest 分层/去重（P1）；恢复续聊的真 HTTP 集成测试；大名单健康检查仍在主线程求解；`/api/ai/propose-edits` 服务端仍保留。P2 视觉核对仍不做。
+## 第 7 轮已合入
+
+- 导入模板/导出增加可选「省份」列；无表头仍按旧 4 列，避免把去向类型吃成省份。
+- `buildProjectDigest(project, { layer: "full" | "core" })` + `digestFingerprint`；默认 full 行为不变。
+- 续聊回执写入 `historyHash`：digest 未变则 prompt 只发短声明，首轮与变更轮仍全量。
+- `layoutHealthIssues` 按几何签名缓存，事务提交不再全量重算健康检查。
+
+**已知缺口（第 8 轮）：** `confirmImportCandidates` / `buildStudentRecords` 尚未接收 `ImportCandidate.province`，解析到的省份列还写不进学生。识别面板的 `StudentColumn` 被收窄，省份不出现在映射行。
+
+**第 8 轮候选：** 省份写回确认导入；AI 可写白名单补 dataPalette/shadow/mapBoundaryMargin/presentation；回执过期独立错误码并降级「新开任务」；项目卡菜单 a11y；OCR 走智能识别且 `source:"ocr"`。`/api/ai/propose-edits` 仍是死端点，排在 `server/index.ts` 本轮回执改动之后再删。P2 视觉核对仍不做。
