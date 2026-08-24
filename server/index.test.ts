@@ -1449,6 +1449,66 @@ describe("unified application server", () => {
     }
   });
 
+  it("ends the SSE stream of a kicked member and stops delivering transactions", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const created = await createCollaborationRoom(origin, { title: "初始" });
+    const invitation = await fetch(`${origin}/api/rooms/${created.room.id}/invitations`, {
+      method: "POST",
+      headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ role: "editor" }),
+    }).then((response) => response.json()) as { token: string };
+    const editor = await fetch(`${origin}/api/rooms/${created.room.id}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteToken: invitation.token, clientId: "editor", displayName: "编辑同学" }),
+    }).then((response) => response.json()) as { access: { accessToken: string } };
+
+    const ownerTicket = await createEventsTicket(origin, created.room.id, created.access.accessToken);
+    const editorTicket = await createEventsTicket(origin, created.room.id, editor.access.accessToken);
+    const controller = new AbortController();
+    const ownerEvents = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(ownerTicket)}&version=0`, { signal: controller.signal });
+    const editorEvents = await fetch(`${origin}/api/rooms/${created.room.id}/events?ticket=${encodeURIComponent(editorTicket)}&version=0`, { signal: controller.signal });
+    const ownerReader = ownerEvents.body!.getReader();
+    const editorReader = editorEvents.body!.getReader();
+    const decoder = new TextDecoder();
+    try {
+      const kick = await fetch(`${origin}/api/rooms/${created.room.id}/leave`, {
+        method: "POST",
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ clientId: "editor" }),
+      });
+      expect(kick.status).toBe(200);
+
+      const kickedStream = decoder.decode((await editorReader.read()).value, { stream: true });
+      expect(kickedStream).toContain("event: kicked");
+      expect(kickedStream).toContain("\"clientId\":\"editor\"");
+      // 被踢者的流当场终止。
+      await expect(editorReader.read()).resolves.toMatchObject({ done: true });
+
+      // 房主那条连接照旧:踢人只播成员变更。先读掉它再提交事务,避免两条事件被合进同一个 chunk。
+      const ownerStream = decoder.decode((await ownerReader.read()).value, { stream: true });
+      expect(ownerStream).toContain("event: members");
+      expect(ownerStream).not.toContain("event: kicked");
+
+      const applied = await fetch(`${origin}/api/rooms/${created.room.id}/transactions`, {
+        method: "POST",
+        headers: roomHeaders(created.access.accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ txId: "after-kick", clientId: "client-a", baseVersion: 0, snapshot: { title: "踢人之后" } }),
+      });
+      expect(applied.status).toBe(200);
+      // 后续事务只送到还在房间里的连接。
+      const ownerNext = decoder.decode((await ownerReader.read()).value, { stream: true });
+      expect(ownerNext).toContain("after-kick");
+      await expect(editorReader.read()).resolves.toMatchObject({ done: true });
+    } finally {
+      controller.abort();
+      await ownerReader.cancel().catch(() => undefined);
+      await editorReader.cancel().catch(() => undefined);
+    }
+  });
+
   it("requires the workspace token for AI endpoints in locked-down production", async () => {
     const server = createAiServer({
       workspaceApiToken: "workspace-test-token",

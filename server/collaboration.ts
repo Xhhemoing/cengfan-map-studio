@@ -84,7 +84,7 @@ export class CollaborationError extends Error {
 }
 
 type Listener = (room: CollaborationRoom) => void;
-export type LifecycleEvent = { kind: "members"; room: CollaborationRoom; members: RoomMember[] } | { kind: "access"; room: CollaborationRoom; members: RoomMember[] } | { kind: "closed"; room: CollaborationRoom; members: RoomMember[] };
+export type LifecycleEvent = { kind: "members"; room: CollaborationRoom; members: RoomMember[] } | { kind: "access"; room: CollaborationRoom; members: RoomMember[] } | { kind: "closed"; room: CollaborationRoom; members: RoomMember[] } | { kind: "kicked"; room: CollaborationRoom; members: RoomMember[]; clientId: string };
 type LifecycleListener = (event: LifecycleEvent) => void;
 type InvitationRecord = { role: Exclude<CollaborationRole, "owner">; expiresAt: number };
 const MAX_TRACKED_TRANSACTIONS = 256;
@@ -165,9 +165,20 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
 
   const membersOf = (room: CollaborationRoom): RoomMember[] => room.members.map((member) => ({ ...member }));
 
-  const notifyLifecycle = (key: string, kind: "members" | "access" | "closed", room: CollaborationRoom) => {
-    const event: LifecycleEvent = { kind, room: copyRoom(room), members: membersOf(room) };
+  const emitLifecycle = (key: string, event: LifecycleEvent) => {
     lifecycleListeners.get(key)?.forEach((listener) => listener(event));
+  };
+
+  const notifyLifecycle = (key: string, kind: "members" | "access" | "closed", room: CollaborationRoom) => {
+    emitLifecycle(key, { kind, room: copyRoom(room), members: membersOf(room) });
+  };
+
+  /**
+   * 踢人事件带上被踢者的 clientId,订阅方(SSE handler)据此只掐断被踢者那条连接,
+   * 其余成员按普通成员变更处理。
+   */
+  const notifyKicked = (key: string, room: CollaborationRoom, clientId: string) => {
+    emitLifecycle(key, { kind: "kicked", room: copyRoom(room), members: membersOf(room), clientId });
   };
   const get = (id: string) => {
     purgeExpired();
@@ -453,7 +464,10 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
    * 房间关闭后成员名单已经冻结,自离与踢人都按 refreshMember 的同一口径拒绝。
    * 自离只能移除与凭证角色一致的名额:同 clientId 但角色更高的名额(如房主)必须留在名单里,
    * 否则冒用 createdBy 的 viewer 能靠“自离”把真正房主挤出去。房主踢人不受该限制。
+   * 踢人另外播 kind:"kicked" 生命周期事件(自离仍是 "members"),订阅方据此掐断被踢者的事件流;
+   * 撤了凭证但不断流的话,被踢者的 EventSource 仍会按房间广播继续收到全量快照。
    * 回滚:删除下面的 revokeParticipantAccess 调用即可恢复“只删成员、不撤凭证”的旧行为;
+   * 把 notifyKicked 换回 notifyLifecycle(key, "members", nextRoom) 即可恢复“踢人不断流”的旧行为;
    * 删除 room.closed 检查即可恢复“关闭房间仍可离开/踢人”的旧行为。
    */
   const leave = (id: string, accessToken: string, clientId: string): { id: string; version: number; members: RoomMember[] } => {
@@ -463,16 +477,18 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
     if (room.closed) throw new CollaborationError("ROOM_CLOSED", "共享房间已关闭");
     const leavingClientId = clientId || participant.id;
-    if (leavingClientId !== participant.id && participant.role !== "owner") {
+    const kicked = leavingClientId !== participant.id;
+    if (kicked && participant.role !== "owner") {
       throw new CollaborationError("ROOM_FORBIDDEN", "只有房间创建者可以移除其他成员");
     }
-    if (leavingClientId !== participant.id) revokeParticipantAccess(key, leavingClientId);
+    if (kicked) revokeParticipantAccess(key, leavingClientId);
     const removable = (member: RoomMember) => member.clientId === leavingClientId
       && (participant.role === "owner" || member.role === participant.role);
     const nextRoom = { ...room, members: room.members.filter((member) => !removable(member)) };
     rooms.set(key, nextRoom);
     touch(key);
-    notifyLifecycle(key, "members", nextRoom);
+    if (kicked) notifyKicked(key, nextRoom, leavingClientId);
+    else notifyLifecycle(key, "members", nextRoom);
     return { id: room.id, version: nextRoom.version, members: membersOf(nextRoom) };
   };
 

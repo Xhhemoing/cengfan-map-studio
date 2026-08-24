@@ -198,4 +198,50 @@ describe("collaboration client", () => {
       globalThis.EventSource = original;
     }
   });
+
+  it("closes the stream on a kicked event even without a kicked handler", async () => {
+    class FakeEventSource {
+      static instances: FakeEventSource[] = [];
+      listeners = new Map<string, (event: MessageEvent<string>) => void>();
+      onerror: (() => void) | null = null;
+      closed = false;
+      constructor(public readonly url: string) {
+        FakeEventSource.instances.push(this);
+      }
+      addEventListener(type: string, handler: (event: MessageEvent<string>) => void): void {
+        this.listeners.set(type, handler);
+      }
+      close(): void {
+        this.closed = true;
+      }
+      emit(type: string, data: unknown): void {
+        this.listeners.get(type)?.({ data: JSON.stringify(data) } as MessageEvent<string>);
+      }
+    }
+    const original = globalThis.EventSource;
+    vi.stubGlobal("EventSource", FakeEventSource);
+    try {
+      const onSnapshot = vi.fn();
+      const onKicked = vi.fn();
+      subscribeRoom("ABC123", "editor-token", onSnapshot, () => {}, {
+        createTicket: () => Promise.resolve("ticket-kick"),
+        onKicked,
+      });
+      await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+      const kicked = FakeEventSource.instances[0]!;
+      kicked.emit("kicked", { id: "ABC123", version: 4, clientId: "editor" });
+      expect(onKicked).toHaveBeenCalledWith(expect.objectContaining({ clientId: "editor" }));
+      expect(kicked.closed).toBe(true);
+
+      // 没传回调也要断流:服务端已经 end,留着 EventSource 只会拿失效 ticket 反复重连。
+      subscribeRoom("ABC123", "editor-token", onSnapshot, () => {}, { createTicket: () => Promise.resolve("ticket-kick-2") });
+      await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(2));
+      const silent = FakeEventSource.instances[1]!;
+      silent.emit("closed", { id: "ABC123", version: 5, readonly: false, closed: true });
+      expect(silent.closed).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      globalThis.EventSource = original;
+    }
+  });
 });

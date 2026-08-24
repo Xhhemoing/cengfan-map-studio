@@ -100,6 +100,28 @@ describe("collaboration room store", () => {
       .toEqual(["owner", "viewer"]);
   });
 
+  it("broadcasts a kicked lifecycle event naming the removed member", () => {
+    const secrets = ["owner-access", "editor-invite", "editor-access"];
+    const store = createRoomStore({ generateId: () => "MEM008", generateSecret: () => secrets.shift()! });
+    const owner = store.create({ title: "初始" }, { clientId: "owner", displayName: "创建者" });
+    const editorInvite = store.createInvitation("MEM008", owner.access.accessToken, "editor");
+    const editor = store.join("MEM008", { inviteToken: editorInvite.token, clientId: "editor", displayName: "编辑同学" });
+    const listener = vi.fn();
+    store.subscribeLifecycle("MEM008", owner.access.accessToken, listener);
+
+    // 自离不是踢人,仍按普通成员变更广播,被踢语义不能扩散到自离。
+    store.leave("MEM008", editor.access.accessToken, "editor");
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "members" }));
+
+    store.refreshMember("MEM008", editor.access.accessToken, "editor");
+    store.leave("MEM008", owner.access.accessToken, "editor");
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({
+      kind: "kicked",
+      clientId: "editor",
+      members: [expect.objectContaining({ clientId: "owner" })],
+    }));
+  });
+
   it("keeps a self-leaving member's token usable so they can come back", () => {
     const secrets = ["owner-access", "editor-invite", "editor-access"];
     const store = createRoomStore({ generateId: () => "MEM007", generateSecret: () => secrets.shift()! });

@@ -767,20 +767,56 @@ export function createAiServer(options: AiServerOptions = {}) {
         roomEventsTickets.delete(ticket!);
         const knownVersionParam = eventUrl.searchParams.get("version");
         const knownVersion = knownVersionParam === null ? Number.NaN : Number(knownVersionParam);
-        let unsubscribe: () => void;
-        let unsubscribeLifecycle: () => void;
+        let unsubscribe: (() => void) | undefined;
+        let unsubscribeLifecycle: (() => void) | undefined;
+        let heartbeat: NodeJS.Timeout | undefined;
+        // 断流必须同时退订并停心跳:留着监听器会在已 end 的响应上继续 write,
+        // Node 会抛 ERR_STREAM_WRITE_AFTER_END。
+        let streamEnded = false;
+        const endStream = () => {
+          if (streamEnded) return;
+          streamEnded = true;
+          if (heartbeat) clearInterval(heartbeat);
+          unsubscribe?.();
+          unsubscribeLifecycle?.();
+          response.end();
+        };
         try {
           const room = roomStore.get(eventsMatch[1]!);
           if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
           const participant = roomStore.authorize(eventsMatch[1]!, ticketRecord.accessToken, "read");
+          // 每次写出前复核读权限:凭证一旦被撤(踢人),这条连接立刻断掉,不再收到房间广播。
+          const stillAuthorized = () => {
+            try {
+              roomStore.authorize(eventsMatch[1]!, ticketRecord.accessToken, "read");
+              return true;
+            } catch {
+              return false;
+            }
+          };
           unsubscribe = roomStore.subscribe(eventsMatch[1]!, ticketRecord.accessToken, (next) => {
+            if (streamEnded) return;
+            if (!stillAuthorized()) {
+              endStream();
+              return;
+            }
             const payload = next.operations || next.updatedBy === participant.id ? { ...next, snapshot: undefined } : next;
             response.write(`event: snapshot\ndata: ${JSON.stringify(payload)}\n\n`);
           });
           unsubscribeLifecycle = roomStore.subscribeLifecycle(eventsMatch[1]!, ticketRecord.accessToken, (event) => {
+            if (streamEnded) return;
+            if (event.kind === "kicked") {
+              if (event.clientId !== participant.id) {
+                response.write(`event: members\ndata: ${JSON.stringify(event.members)}\n\n`);
+                return;
+              }
+              response.write(`event: kicked\ndata: ${JSON.stringify({ id: event.room.id, version: event.room.version, clientId: event.clientId })}\n\n`);
+              endStream();
+              return;
+            }
             if (event.kind === "closed") {
               response.write(`event: closed\ndata: ${JSON.stringify({ id: event.room.id, version: event.room.version, readonly: event.room.readonly === true, closed: true })}\n\n`);
-              response.end();
+              endStream();
               return;
             }
             if (event.kind === "access") {
@@ -800,18 +836,24 @@ export function createAiServer(options: AiServerOptions = {}) {
             response.write(`event: snapshot\ndata: ${JSON.stringify(room)}\n\n`);
           }
         } catch (error) {
+          // subscribe 成功后再抛错(例如 subscribeLifecycle 失败)会把监听器留在房间里，
+          // 白占 maxSubscribers 名额，所以退订后再回错误。
+          streamEnded = true;
+          unsubscribe?.();
+          unsubscribeLifecycle?.();
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;
           return;
         }
-        const heartbeat = setInterval(() => {
+        heartbeat = setInterval(() => {
           roomStore.get(eventsMatch[1]!);
           response.write(": heartbeat\n\n");
         }, 20_000);
         request.on("close", () => {
-          clearInterval(heartbeat);
-          unsubscribe();
-          unsubscribeLifecycle();
+          if (heartbeat) clearInterval(heartbeat);
+          streamEnded = true;
+          unsubscribe?.();
+          unsubscribeLifecycle?.();
         });
         return;
       }

@@ -22,6 +22,12 @@ export interface RoomClosedInfo {
   closed: true;
 }
 
+export interface RoomKickedInfo {
+  id: string;
+  version: number;
+  clientId: string;
+}
+
 export interface RoomAccess extends RoomParticipant {
   participantId: string;
   accessToken: string;
@@ -256,6 +262,7 @@ export interface SubscribeRoomOptions {
   createTicket?: (roomId: string, accessToken: string) => Promise<string>;
   onMembers?: (members: RoomMember[]) => void;
   onClosed?: (room: RoomClosedInfo) => void;
+  onKicked?: (info: RoomKickedInfo) => void;
 }
 
 export function subscribeRoom<T>(
@@ -289,16 +296,21 @@ export function subscribeRoom<T>(
         }
       });
     }
-    if (options.onClosed) {
-      source.addEventListener("closed", (event) => {
+    // closed/kicked 都是终局事件:服务端已经断流,浏览器会拿着一次性 ticket 反复重连,
+    // 所以无论调用方是否关心回调,都要主动关掉 EventSource。
+    const endStream = <E>(type: string, notify?: (payload: E) => void) => {
+      source?.addEventListener(type, (event) => {
+        closed = true;
         try {
-          options.onClosed?.(JSON.parse((event as MessageEvent<string>).data) as RoomClosedInfo);
+          notify?.(JSON.parse((event as MessageEvent<string>).data) as E);
         } catch {
           onError();
         }
         source?.close();
       });
-    }
+    };
+    endStream<RoomClosedInfo>("closed", options.onClosed);
+    endStream<RoomKickedInfo>("kicked", options.onKicked);
     source.onerror = onError;
   }).catch(onError);
   return () => {
