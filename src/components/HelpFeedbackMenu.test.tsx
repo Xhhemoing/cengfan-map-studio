@@ -2,7 +2,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HelpFeedbackMenu } from "./HelpFeedbackMenu";
-import { formatEnvironmentForIssue, type ClientEnvironment } from "../lib/feedback-links";
+import { APP_VERSION, formatEnvironmentForIssue, type ClientEnvironment } from "../lib/feedback-links";
 
 const environment: ClientEnvironment = { os: "Windows 10/11", browser: "Chrome 128", runtime: "本机 npm run dev" };
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -38,6 +38,30 @@ describe("HelpFeedbackMenu", () => {
     expect(labels).toContain("遇到问题");
     expect(labels).toContain("功能建议");
     expect(labels).toContain("用户指南");
+    expect(labels).toContain("更新日志");
+  });
+
+  it("links the changelog and shows which version the reader is running", () => {
+    const container = renderMenu();
+
+    const changelog = links(container).find((anchor) => anchor.textContent?.trim() === "更新日志")!;
+    expect(changelog.href).toContain("CHANGELOG.md");
+    expect(changelog.href).toBe("https://github.com/Xhhemoing/cengfan-map-studio/blob/main/CHANGELOG.md");
+    expect(new URL(changelog.href).search).toBe("");
+
+    const environmentSection = container.querySelector(".help-menu__environment")!;
+    expect(environmentSection.textContent).toContain(`版本 v${APP_VERSION}`);
+  });
+
+  it("keeps the changelog link and the version label free of roster data", () => {
+    const container = renderMenu();
+
+    const changelog = links(container).find((anchor) => anchor.textContent?.trim() === "更新日志")!;
+    const versionText = container.querySelector(".help-menu__environment")!.textContent ?? "";
+    for (const text of [changelog.href, changelog.getAttribute("aria-label") ?? "", versionText]) {
+      expect(text).not.toMatch(/林舟|北京大学|students|roster|roomId|room=|token|cengfan-project/i);
+      expect(text).not.toMatch(/%7B|%22|%5B/i);
+    }
   });
 
   it("opens every destination in a new tab without leaking the opener", () => {

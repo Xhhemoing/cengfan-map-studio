@@ -116,7 +116,11 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
         customTemplates,
         renderSettings,
       });
-      const fileName = `cengfan-project-${pack.exportedAt.slice(0, 10)}.json`;
+      const fileName = buildExportFileName({
+        projectName: getProjectName?.(),
+        kind: "project",
+        date: pack.exportedAt.slice(0, 10),
+      });
       downloadProjectPackage(pack, fileName);
       setShowProjectExportDialog(false);
       setLastExportFileName(fileName);

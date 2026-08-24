@@ -8,9 +8,20 @@
 
 | 轮次 | 主题 | 状态 |
 |------|------|------|
-| C3-R1 | 收口项初始落地 | in_progress |
-| C3-R2 | 靶向修复与测试 | pending |
+| C3-R1 | 收口项初始落地 | completed |
+| C3-R2 | 靶向修复与测试 | in_progress |
 | C3-R3 | SOTA 打磨与验收 | pending |
+
+## Cycle 3 Round 1 子代理
+
+| ID | 模型 | 主攻 |
+|----|------|------|
+| C3R1-F1 | claude-fable-5-thinking-xhigh | D3 导入失败 alert |
+| C3R1-F2 | claude-fable-5-thinking-xhigh | CHANGELOG 昵称 20 + 进行中记录 |
+| C3R1-O1 | claude-opus-5-thinking-high-fast | F3 工程包文件名 |
+| C3R1-O2 | claude-opus-5-thinking-high-fast | A3 帮助 Changelog/版本 |
+| C3R1-G1 | gpt-5.6-sol-xhigh-fast | 删除 `.template-workspace*` 死 CSS |
+| C3R1-G2 | gpt-5.6-sol-xhigh-fast | P3 PNG 任意导出禁用 |
 
 ## Cycle 2 状态
 

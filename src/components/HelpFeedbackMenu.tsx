@@ -4,6 +4,8 @@
  */
 import { CircleHelp, Copy } from "lucide-react";
 import {
+  APP_VERSION,
+  CHANGELOG_URL,
   ISSUE_CHOOSER_URL,
   USER_GUIDE_URL,
   buildIssueUrl,
@@ -64,6 +66,7 @@ export function HelpFeedbackMenu({
         <section>
           <strong>先自己看看</strong>
           <HelpLink href={USER_GUIDE_URL} label="用户指南" hint="GitHub" />
+          <HelpLink href={CHANGELOG_URL} label="更新日志" hint="GitHub" />
           <HelpLink href={ISSUE_CHOOSER_URL} label="全部反馈入口" hint="GitHub" />
         </section>
         <section className="help-menu__environment">
@@ -73,6 +76,7 @@ export function HelpFeedbackMenu({
               <Copy size={15} />
             </button>
           </div>
+          <small>版本 v{APP_VERSION}</small>
           <small>只会带上系统与浏览器版本，不会上传名单或工程内容。</small>
         </section>
       </div>

@@ -458,6 +458,7 @@ button { font: inherit; }
 .data-summary span { color: #7a8b9c; font-size: 10px; }
 .data-summary__warning strong { color: #c95c49; }
 .data-message { padding: 8px 10px; background: #edf6f4; border: 1px solid #9fc6be; border-radius: 4px; color: #2a6b5e; }
+.data-message--alert { color: #9c4a3c; background: #fdf3ef; border-color: #e9c9bd; }
 /* 常驻 live region：无消息时收成不可见的 1px，既不撑出空框也不离开无障碍树。 */
 .data-message:empty { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; background: none; border: 0; clip-path: inset(50%); }
 .data-message__line { display: block; }

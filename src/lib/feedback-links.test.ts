@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  APP_VERSION,
   BUG_RUNTIME_OPTIONS,
+  CHANGELOG_URL,
   ISSUE_CHOOSER_URL,
   ISSUE_URL_ALLOWED_PARAMS,
   MAX_ISSUE_URL_LENGTH,
@@ -107,6 +109,7 @@ describe("buildIssueUrl", () => {
       buildIssueUrl("feature"),
       ISSUE_CHOOSER_URL,
       USER_GUIDE_URL,
+      CHANGELOG_URL,
     ];
     for (const url of urls) {
       expect(url.startsWith(`${REPO_URL}/`)).toBe(true);
@@ -118,6 +121,32 @@ describe("buildIssueUrl", () => {
   it("refuses to build a URL that grew unexpected parameters", () => {
     const oversized: ClientEnvironment = { ...env, os: "系".repeat(600) };
     expect(() => buildIssueUrl("bug", oversized)).toThrow(/issue url/);
+  });
+});
+
+describe("CHANGELOG_URL", () => {
+  it("points at the changelog on the repository default branch", () => {
+    expect(CHANGELOG_URL).toBe(`${REPO_URL}/blob/main/CHANGELOG.md`);
+    const url = new URL(CHANGELOG_URL);
+    expect(url.search).toBe("");
+    expect(url.hash).toBe("");
+  });
+
+  it("links to a file that actually exists in the repository", () => {
+    const changelog = readFileSync(resolve(process.cwd(), "CHANGELOG.md"), "utf8");
+    expect(changelog).toContain("# 更新日志");
+  });
+});
+
+describe("APP_VERSION", () => {
+  it("stays in sync with the package version it is hand-copied from", () => {
+    const manifest = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8")) as { version: string };
+    expect(APP_VERSION).toBe(manifest.version);
+    expect(APP_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("is a bare version number, not a link or an identifier", () => {
+    expect(APP_VERSION).not.toMatch(/林舟|北京大学|http|[?=&/@]/i);
   });
 });
 

@@ -22,8 +22,33 @@ describe("buildExportFileName", () => {
       { projectName: "示例：2026届毕业去向", kind: "project", date: "2026-08-24" },
       "示例：2026届毕业去向-工程包-2026-08-24.json",
     ],
+    [
+      { projectName: "", kind: "project", date: "2026-08-24" },
+      "我的毕业去向图-工程包-2026-08-24.json",
+    ],
+    [
+      { projectName: "高三/3班*备份", kind: "project", date: "2026-01-02" },
+      "高三3班备份-工程包-2026-01-02.json",
+    ],
+    [
+      { projectName: "甲", kind: "project", scale: 2, date: "2026-01-02" },
+      "甲-工程包-2026-01-02.json",
+    ],
   ] satisfies Array<[ExportFileNameInput, string]>)("%o → %s", (input, expected) => {
     expect(buildExportFileName(input)).toBe(expected);
+  });
+
+  it("falls back to today for project packages without an explicit date", () => {
+    const today = new Date().toISOString().slice(0, 10);
+    expect(buildExportFileName({ projectName: "高三3班", kind: "project" }))
+      .toBe(`高三3班-工程包-${today}.json`);
+  });
+
+  it("keeps the .json suffix for project packages so import still accepts the file", () => {
+    for (const projectName of ["高三3班", "", null, "CON", "a/b:c", "🎓".repeat(60)]) {
+      expect(buildExportFileName({ projectName, kind: "project", date: "2026-08-24" }))
+        .toMatch(/^[^\\/]+-工程包-2026-08-24\.json$/u);
+    }
   });
 
   it("removes control characters and collapses whitespace", () => {

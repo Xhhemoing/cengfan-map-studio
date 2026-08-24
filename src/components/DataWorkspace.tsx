@@ -17,6 +17,7 @@ import {
   type StudentColumn,
 } from "../lib/binary-import";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
+import { isImportFailureMessage } from "../lib/import-message";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
 import { findDuplicateStudentGroups } from "../lib/data-duplicate";
@@ -574,9 +575,13 @@ export function DataWorkspace({
         </div>
       )}
 
+      {/* 两个 live region 都保持常驻：区域必须先于内容变化存在，读屏才会播报。 */}
       <div role="status" aria-live="polite" aria-atomic="true" className="panel-note data-message">
         {replaceConfirmation && <span className="data-message__line">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</span>}
-        {message && <span className="data-message__line">{message}</span>}
+        {message && !isImportFailureMessage(message) && <span className="data-message__line">{message}</span>}
+      </div>
+      <div role="alert" aria-live="assertive" aria-atomic="true" className="panel-note data-message data-message--alert">
+        {message && isImportFailureMessage(message) && <span className="data-message__line">{message}</span>}
       </div>
 
       <div className="student-actions">

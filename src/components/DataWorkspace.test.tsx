@@ -160,6 +160,63 @@ describe("DataWorkspace", () => {
     expect(container.querySelector('[role="status"].data-message')).toBe(region);
   });
 
+  it("routes failure messages to an always-mounted role=alert region", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    const alertRegion = container.querySelector('[role="alert"].data-message');
+    expect(alertRegion).not.toBeNull();
+    expect(alertRegion!.getAttribute("aria-live")).toBe("assertive");
+    expect(alertRegion!.getAttribute("aria-atomic")).toBe("true");
+    expect(alertRegion!.textContent).toBe("");
+    expect(container.querySelectorAll('[role="alert"]').length).toBe(1);
+
+    // 空名单直接点"一键识别并导入"：阻断消息进 alert，status 保持安静
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("一键识别并导入"))!);
+    expect(alertRegion!.textContent).toContain("请先粘贴名单");
+    expect(container.querySelector('[role="status"].data-message')!.textContent).toBe("");
+
+    // 同一个节点被复用，说明 alert region 没有随消息一起挂载/卸载
+    expect(container.querySelector('[role="alert"].data-message')).toBe(alertRegion);
+  });
+
+  it("empties the alert region when a later success message arrives", async () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+    const alertRegion = container.querySelector('[role="alert"].data-message')!;
+    const statusRegion = container.querySelector('[role="status"].data-message')!;
+
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("一键识别并导入"))!);
+    expect(alertRegion.textContent).toContain("请先粘贴名单");
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="下载学生数据 XLSX 模板"]')!);
+    await vi.waitFor(() => {
+      flushSync(() => {});
+      expect(statusRegion.textContent).toContain("已下载学生数据导入模板");
+    });
+
+    expect(alertRegion.textContent).toBe("");
+    expect(container.querySelector('[role="alert"].data-message')).toBe(alertRegion);
+  });
+
   it("shows Excel header mappings and representative values before review", async () => {
     const container = render(
       <DataWorkspace
