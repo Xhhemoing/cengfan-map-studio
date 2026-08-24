@@ -13,6 +13,7 @@ import {
   COLLABORATION_CLIENT_ID_KEY,
   COLLABORATION_DISPLAY_NAME,
   ROOM_ACCESS_STORAGE_PREFIX,
+  ROOM_LAST_ACTIVE_KEY,
 } from "./app-constants";
 import {
   CollaborationClientError,
@@ -111,10 +112,29 @@ export function loadCollaborationClientId(createClientId: () => string = () => c
   return created;
 }
 
+/**
+ * 刷新回连回填（I-13-02）：返回本机仍保有凭证的最近房间码。优先取最近一次
+ * 建房/加入时记下的房间；老数据没有该标记时退回扫描已存凭证。回填后用户
+ * 点「加入」即可回连，不必凭记忆重输 12 位房间码。
+ */
+export function loadRecentRoomId(): string {
+  return loadBrowserValue(() => {
+    const last = window.localStorage.getItem(ROOM_LAST_ACTIVE_KEY);
+    if (last && window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${last}`)) return last;
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (key && key.startsWith(ROOM_ACCESS_STORAGE_PREFIX) && window.localStorage.getItem(key)) {
+        return key.slice(ROOM_ACCESS_STORAGE_PREFIX.length);
+      }
+    }
+    return "";
+  }, "");
+}
+
 export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseCollaborationRoomResult {
   const { clientId, baselineRef, versionRef, roomRef, accessTokenRef, suppressSendRef, backfillInFlightRef } = options;
   const [collaborationOpen, setCollaborationOpen] = useState(false);
-  const [roomInput, setRoomInput] = useState("");
+  const [roomInput, setRoomInput] = useState(() => loadRecentRoomId());
   const [inviteTokenInput, setInviteTokenInput] = useState("");
   const [roomId, setRoomId] = useState<string | null>(null);
   const [roomAccessToken, setRoomAccessToken] = useState<string | null>(null);
@@ -250,6 +270,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   const persistRoomAccess = (id: string, accessToken: string) => {
     try {
       window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`, accessToken);
+      window.localStorage.setItem(ROOM_LAST_ACTIVE_KEY, id);
     } catch {
       // The active connection remains usable when browser storage is unavailable.
     }
@@ -258,6 +279,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   const forgetRoomAccess = (id: string) => {
     try {
       window.localStorage.removeItem(`${ROOM_ACCESS_STORAGE_PREFIX}${id}`);
+      if (window.localStorage.getItem(ROOM_LAST_ACTIVE_KEY) === id) window.localStorage.removeItem(ROOM_LAST_ACTIVE_KEY);
     } catch {
       // Local project data is intentionally untouched when credentials cannot be cleared.
     }

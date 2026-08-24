@@ -217,6 +217,8 @@ export function ProjectMenu({
                       <input aria-label="协作邀请凭证" value={inviteTokenInput} placeholder="输入邀请凭证" onChange={(event) => onInviteTokenInputChange(event.target.value)} />
                       <button type="button" disabled={!roomInput.trim() || (!inviteTokenInput.trim() && !hasStoredRoomAccess) || collaborationStatus === "connecting"} onClick={onJoinRoom}>加入</button>
                     </div>
+                    {/* 本机存有该房间凭证时（最近房间已自动回填），提示可直接回连（I-13-02）。 */}
+                    {hasStoredRoomAccess && !inviteTokenInput.trim() && <small>本机已保存该房间的凭证，点「加入」即可回连</small>}
                     <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
                   </>
                 )}

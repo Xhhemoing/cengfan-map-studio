@@ -8,6 +8,8 @@ import type { DataViewId } from "./project-data";
 
 export const DRAFT_KEY = "cengfan-map-studio:draft";
 export const ROOM_ACCESS_STORAGE_PREFIX = "cengfan-map-studio:room-access:";
+/** 最近一次建房/加入的房间码，刷新后回填协作浮层（I-13-02）。 */
+export const ROOM_LAST_ACTIVE_KEY = "cengfan-map-studio:room-last-active";
 export const COLLABORATION_CLIENT_ID_KEY = "cengfan-map-studio:collab-client-id";
 export const COLLABORATION_DISPLAY_NAME = "本机协作者";
 export const DRAFT_SAVED_AT_KEY = "cengfan-map-studio:draft-saved-at";

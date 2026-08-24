@@ -146,6 +146,11 @@ describe("AgentAssistant", () => {
     setMessage(container, "调整地图和卡片");
     clickText(container, "开始规划");
     await vi.waitFor(() => expect(container.textContent).toContain("地图和卡片已完成"));
+    // 修改预览用中文工具/字段标签，不再出现英文 update_*：字段名（I-13-04）。
+    expect(container.textContent).toContain("调整地图：缩放");
+    expect(container.textContent).toContain("调整数据卡片：字号");
+    expect(container.textContent).not.toContain("update_map");
+    expect(container.textContent).not.toContain("update_cards");
     const checkboxes = Array.from(container.querySelectorAll<HTMLInputElement>('.agent-assistant-window input[type="checkbox"]'));
     expect(checkboxes).toHaveLength(2);
     checkboxes[0]!.click();
@@ -521,6 +526,55 @@ describe("AgentAssistant", () => {
     const runButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.includes("开始规划") || button.textContent?.includes("继续对话"));
     expect(runButton).toBeDefined();
     expect(runButton?.disabled).toBe(true);
+    root.unmount();
+  });
+
+  it("does not persist a pristine empty draft created on mount (I-13-01)", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const first = renderAssistant(project);
+    await vi.waitFor(() => {
+      const raw = window.localStorage.getItem("cengfan-map-studio:ai-conversations:v1");
+      expect(raw).not.toBeNull();
+      expect(JSON.parse(raw!).conversations).toHaveLength(0);
+    });
+    first.root.unmount();
+
+    const restored = renderAssistant(project, vi.fn(), false);
+    await vi.waitFor(() => expect(restored.container.querySelector('.agent-assistant-launcher')).not.toBeNull());
+    openAssistant(restored.container);
+    expect(restored.container.textContent).not.toContain("已保存的 AI 对话");
+    expect(restored.container.textContent).toContain("新对话");
+    restored.root.unmount();
+  });
+
+  it("drops an applied conversation instead of carrying it into a different project (I-13-03)", async () => {
+    window.localStorage.clear();
+    let project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const onCommit = vi.fn((transaction: ProjectTransaction) => {
+      project = transaction.apply(project);
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "ghost-step", name: "update_map", arguments: { patch: { scale: 0.9 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "方案完成" })));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const render = (doc = project) => flushSync(() => root.render(<AssistantConversationProvider><AgentAssistant project={doc} assets={[]} onCommit={onCommit} /></AssistantConversationProvider>));
+    render();
+    openAssistant(container);
+    setMessage(container, "调整地图比例");
+    clickText(container, "开始规划");
+    await vi.waitFor(() => expect(container.textContent).toContain("方案完成"));
+    clickText(container, "确认应用");
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    // 应用会改变项目内容：刚应用的对话允许跟随这一次变化，仍显示「已应用」。
+    render();
+    await vi.waitFor(() => expect(container.textContent).toContain("已应用"));
+
+    // 切到另一个项目：来自旧项目的「已应用」幽灵不再跟随出现。
+    const fresh = createProjectDocument({ students: [], templateId: "original", dataView: "city" });
+    render(fresh);
+    await vi.waitFor(() => expect(container.textContent).not.toContain("已应用"));
+    expect(container.textContent).toContain("新对话");
     root.unmount();
   });
 

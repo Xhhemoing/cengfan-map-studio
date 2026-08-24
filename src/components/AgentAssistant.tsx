@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type D
 import { AlertTriangle, Check, LoaderCircle, Minus, Plus, ShieldCheck, Sparkles, X } from "lucide-react";
 import { AgentSession, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
 import type { UserAsset } from "../lib/assets";
+import { agentStepLabel } from "../lib/agent-step-labels";
 import { loadAssistantConversationState, saveAssistantConversationState, type AssistantConversationRecord } from "../lib/agent-conversation-store";
 import { fingerprintProject } from "../lib/project-digest";
 import type { ProjectDocument, ProjectTransaction } from "../lib/project-document";
@@ -99,14 +100,7 @@ function persistedConversation(conversation: AssistantConversation): AssistantCo
 }
 
 function stepLabel(step: AgentStep): string {
-  const patch = step.arguments.patch;
-  if (patch && typeof patch === "object" && !Array.isArray(patch)) {
-    const fields = Object.keys(patch as Record<string, unknown>);
-    if (fields.length > 0) return `${step.name}：${fields.join("、")}`;
-  }
-  if (step.name === "set_data_view") return `切换数据视图：${String(step.arguments.view ?? "")}`;
-  if (step.name === "auto_layout") return `自动排版：${String(step.arguments.mode ?? "quadrant")}`;
-  return step.name;
+  return agentStepLabel(step);
 }
 
 function riskLabel(risk: AgentStep["risk"]): string {
@@ -218,6 +212,11 @@ export function AgentAssistant({
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const activeRunRef = useRef<AgentSession | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
+  /**
+   * 刚提交应用的对话 id（I-13-03）：应用本身会改变项目内容，让下一次 digest
+   * 变化仅允许这条对话跟随重绑；其余已应用对话属于旧项目，不再带到新项目。
+   */
+  const appliedCommitRef = useRef<string | null>(null);
 
   const active = conversations.find((conversation) => conversation.id === activeId) ?? null;
   const currentProjectDigest = useMemo(() => digestFor(project), [project]);
@@ -253,28 +252,30 @@ export function AgentAssistant({
       projectGenerationRef.current += 1;
       activeRunRef.current?.cancel();
       projectDigestRef.current = currentDigest;
-      setConversations((current) => current.map((conversation) => {
-        if (conversation.projectDigest === currentDigest) return conversation;
-        return {
+      // 只有「刚提交应用」的对话允许跟随这次 digest 变化重绑（应用本身改变了
+      // 项目内容）；其余已应用对话属于旧项目，直接丢弃，不再让「已应用」
+      // 幽灵跟到每个新项目（I-13-03）。
+      const appliedFollowerId = appliedCommitRef.current;
+      appliedCommitRef.current = null;
+      const carried = conversations.flatMap((conversation): AssistantConversation[] => {
+        if (conversation.projectDigest === currentDigest) return [conversation];
+        if (conversation.status === "applied" && conversation.id !== appliedFollowerId) return [];
+        return [{
           ...conversation,
           session: rebaseTextSession(project, assets, conversation),
           status: conversation.status === "running" || conversation.status === "completed" ? "draft" : conversation.status,
           steps: [],
           selectedStepIds: [],
           projectDigest: currentDigest,
-        };
-      }));
-      onPreview?.(null);
-      const changedRecords = conversations.map((conversation) => conversation.projectDigest === currentDigest ? conversation : {
-        ...conversation,
-        status: conversation.status === "running" || conversation.status === "completed" ? "draft" as const : conversation.status,
-        steps: [],
-        selectedStepIds: [],
-        session: rebaseTextSession(project, assets, conversation),
-        projectDigest: currentDigest,
+        }];
       });
+      const nextConversations = carried.length > 0 ? carried : [createConversation(project, mode, assets)];
+      const nextActiveId = nextConversations.some((conversation) => conversation.id === activeId) ? activeId : nextConversations[nextConversations.length - 1]?.id ?? null;
+      setConversations(nextConversations);
+      if (nextActiveId !== activeId) setActiveId(nextActiveId);
+      onPreview?.(null);
       const changedStorage = browserStorage();
-      if (changedStorage) saveAssistantConversationState(changedStorage, project, { mode, activeId, conversations: changedRecords.map(persistedConversation) });
+      if (changedStorage) saveAssistantConversationState(changedStorage, project, { mode, activeId: nextActiveId, conversations: nextConversations.map(persistedConversation) });
       return;
     }
     const storage = browserStorage();
@@ -302,7 +303,7 @@ export function AgentAssistant({
         persistTimerRef.current = null;
       }
     };
-  }, [activeId, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, setConversations]);
+  }, [activeId, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, setActiveId, setConversations]);
 
   useEffect(() => () => {
     if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);
@@ -444,7 +445,10 @@ export function AgentAssistant({
       }));
       if (smartApply && isCurrentRun()) {
         const transaction = sessionWithProgress.transactionForSteps(new Set(selectedStepIds));
-        if (transaction) onCommit(transaction);
+        if (transaction) {
+          onCommit(transaction);
+          appliedCommitRef.current = active.id;
+        }
         onPreview?.(null);
       } else if (isCurrentRun()) {
         const transaction = sessionWithProgress.transactionForSteps(new Set(selectedStepIds));
@@ -475,6 +479,7 @@ export function AgentAssistant({
     const transaction = active.session.transactionForSteps(new Set(active.selectedStepIds));
     if (!transaction) return;
     onCommit(transaction);
+    appliedCommitRef.current = active.id;
     onPreview?.(null);
     updateConversation(active.id, (conversation) => ({ ...conversation, status: "applied", selectedStepIds: [] }));
   };

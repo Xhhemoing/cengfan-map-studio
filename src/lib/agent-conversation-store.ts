@@ -12,6 +12,7 @@ const GENERIC_REQUEST = "已保存的 AI 对话";
 const GENERIC_TITLE = "AI 对话";
 const GENERIC_SUMMARY = "已保存对话";
 const GENERIC_ERROR = "会话无法恢复，预览未应用";
+const PRISTINE_TITLE = "新对话";
 const PERSISTABLE_WRITE_TOOLS = new Set(["update_canvas", "update_map", "update_cards", "set_data_view", "auto_layout"]);
 const SAFE_PATCH_KEYS: Record<string, ReadonlySet<string>> = {
   update_canvas: new Set(["width", "height", "safeMargin", "backgroundColor", "backgroundFit", "backgroundOpacity", "lineHeight"]),
@@ -167,7 +168,18 @@ function sanitizedSnapshot(snapshot: AgentSessionSnapshot | null, steps: AgentSe
   };
 }
 
+/**
+ * 从未运行过的空草稿（面板挂载即自动创建）：没有请求、没有步骤、没有可恢复
+ * 内容（I-13-01）。这类记录不写入持久层，也绝不套用「已保存的 AI 对话」占位文案。
+ */
+function isPristineDraft(record: Pick<AssistantConversationRecord, "status" | "request" | "steps" | "selectedStepIds">): boolean {
+  return record.status === "draft" && record.request.trim() === "" && record.steps.length === 0 && record.selectedStepIds.length === 0;
+}
+
 function genericRecord(record: AssistantConversationRecord, project: ProjectDocument): AssistantConversationRecord {
+  if (isPristineDraft(record)) {
+    return { ...record, title: PRISTINE_TITLE, request: "", summary: "", error: "", steps: [], selectedStepIds: [], snapshot: null };
+  }
   const facts = studentFacts(project);
   const steps = record.steps.flatMap((step) => {
     const sanitized = sanitizedReplayStep(step, facts);
@@ -246,29 +258,35 @@ export function loadAssistantConversationState(storage: StorageLike, project: Pr
     if (!persisted) return null;
     const currentDigest = digestFor(project);
     const projectMatches = persisted.projectDigest === currentDigest;
-    const conversations = persisted.conversations.map((conversation) => {
+    const conversations = persisted.conversations.flatMap((conversation) => {
+      // 空草稿没有任何可恢复内容，直接不进入恢复列表（I-13-01）。
+      if (isPristineDraft(conversation)) return [];
+      const conversationMatches = (conversation.projectDigest ?? persisted.projectDigest) === currentDigest;
+      const matches = projectMatches && conversationMatches;
+      // 已应用会话只属于应用时的那个项目：跨项目不再标「已应用」，
+      // 也不改写 projectDigest 让幽灵会话跟到每个新项目（I-13-03）。
+      if (!matches && conversation.status === "applied") return [];
       const wasRunning = conversation.status === "running";
       const normalized = wasRunning
         ? conversation.snapshot === null
           ? genericRecord(conversation, project)
           : { ...conversation, status: "cancelled" as const, summary: "页面刷新，任务已中止，预览未应用", error: "", steps: [], selectedStepIds: [], snapshot: null }
         : genericRecord(conversation, project);
-      const conversationMatches = (conversation.projectDigest ?? persisted.projectDigest) === currentDigest;
-      if (projectMatches && conversationMatches) {
-        if (!normalized.snapshot) return normalized.status === "completed"
+      if (matches) {
+        if (!normalized.snapshot) return [normalized.status === "completed"
           ? { ...normalized, status: "failed" as const, summary: GENERIC_ERROR, error: GENERIC_ERROR, steps: [], selectedStepIds: [] }
-          : normalized;
+          : normalized];
         try {
           AgentSession.restore(project, normalized.snapshot, { mode: normalized.mode });
-          return normalized;
+          return [normalized];
         } catch {
-          return { ...normalized, status: "cancelled" as const, summary: "会话无法在当前项目上恢复，预览已取消", steps: [], selectedStepIds: [], snapshot: null };
+          return [{ ...normalized, status: "cancelled" as const, summary: "会话无法在当前项目上恢复，预览已取消", steps: [], selectedStepIds: [], snapshot: null }];
         }
       }
-      if (wasRunning) return { ...normalized, status: "cancelled" as const, steps: [], selectedStepIds: [], snapshot: null, projectDigest: currentDigest };
-      if (!normalized.snapshot) return { ...normalized, status: normalized.status === "completed" || normalized.status === "failed" ? "failed" as const : normalized.status === "applied" ? "applied" as const : "draft" as const, summary: normalized.status === "completed" || normalized.status === "failed" ? GENERIC_ERROR : normalized.summary, error: normalized.status === "completed" || normalized.status === "failed" ? GENERIC_ERROR : normalized.error, steps: [], selectedStepIds: [], projectDigest: currentDigest };
+      if (wasRunning) return [{ ...normalized, status: "cancelled" as const, steps: [], selectedStepIds: [], snapshot: null, projectDigest: currentDigest }];
+      if (!normalized.snapshot) return [{ ...normalized, status: normalized.status === "completed" || normalized.status === "failed" ? "failed" as const : "draft" as const, summary: normalized.status === "completed" || normalized.status === "failed" ? GENERIC_ERROR : normalized.summary, error: normalized.status === "completed" || normalized.status === "failed" ? GENERIC_ERROR : normalized.error, steps: [], selectedStepIds: [], projectDigest: currentDigest }];
       const textHistory = AgentSession.restoreTextHistory(project, normalized.snapshot, { mode: normalized.mode }).exportSnapshot();
-      return { ...normalized, status: normalized.status === "completed" ? "completed" as const : normalized.status === "applied" ? "applied" as const : "draft" as const, steps: [], selectedStepIds: [], snapshot: textHistory, projectDigest: currentDigest };
+      return [{ ...normalized, status: normalized.status === "completed" ? "completed" as const : "draft" as const, steps: [], selectedStepIds: [], snapshot: textHistory, projectDigest: currentDigest }];
     });
     return { mode: persisted.mode, activeId: conversations.some((item) => item.id === persisted.activeId) ? persisted.activeId : conversations[0]?.id ?? null, conversations };
   } catch {
@@ -278,7 +296,7 @@ export function loadAssistantConversationState(storage: StorageLike, project: Pr
 
 export function saveAssistantConversationState(storage: StorageLike, project: ProjectDocument, state: AssistantConversationState): void {
   try {
-    const conversations = state.conversations.slice(-MAX_CONVERSATIONS).map((conversation) => {
+    const conversations = state.conversations.filter((conversation) => !isPristineDraft(conversation)).slice(-MAX_CONVERSATIONS).map((conversation) => {
       if (conversation.title.length > MAX_STRING_LENGTH || conversation.request.length > MAX_STRING_LENGTH || conversation.summary.length > MAX_STRING_LENGTH || conversation.error.length > MAX_STRING_LENGTH) throw new Error("持久化字段过大");
       const normalized = genericRecord(conversation, project);
       return {

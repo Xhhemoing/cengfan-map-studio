@@ -41,6 +41,32 @@ function state(conversations: AssistantConversationRecord[]): AssistantConversat
 }
 
 describe("agent-conversation-store", () => {
+  it("does not persist pristine empty drafts and keeps them out of restored state (I-13-01)", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const target = storage();
+    const pristine = record(project, { id: "pristine-draft", title: "新对话", request: "", status: "draft", summary: "", error: "" });
+
+    saveAssistantConversationState(target, project, state([pristine]));
+
+    const serialized = target.value()!;
+    expect(serialized).not.toContain("已保存的 AI 对话");
+    expect(serialized).not.toContain("pristine-draft");
+    const loaded = loadAssistantConversationState(target, project);
+    expect(loaded?.conversations).toHaveLength(0);
+    expect(loaded?.activeId).toBeNull();
+  });
+
+  it("keeps applied conversations for the same project but drops them for a different project (I-13-03)", () => {
+    const original = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const current = { ...original, map: { ...original.map, width: original.map.width + 1 } };
+    const target = storage();
+    saveAssistantConversationState(target, original, state([record(original, { status: "applied", summary: "已应用" })]));
+
+    expect(loadAssistantConversationState(target, original)?.conversations[0]).toMatchObject({ status: "applied" });
+    // 换项目后不再出现「已应用」幽灵，也不改写 projectDigest 让它跟到新项目。
+    expect(loadAssistantConversationState(target, current)?.conversations).toHaveLength(0);
+  });
+
   it("round-trips bounded conversation state with a project binding", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const target = storage();
