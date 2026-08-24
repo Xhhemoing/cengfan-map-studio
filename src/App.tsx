@@ -2018,8 +2018,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
           {projectExportActions}
 
           <ToolbarGroup label="导出">
-            <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}>
-              <ImageDown size={16} /> {posterExport.exportingPng ? "导出中..." : "导出 PNG"}
+            <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportState === "exporting"}>
+              <ImageDown size={16} /> {posterExport.exportingPng || posterExport.exportState === "exporting" ? "导出中..." : "导出 PNG"}
             </button>
           </ToolbarGroup>
         </div>
@@ -2283,7 +2283,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               {exportWarnings.unresolvedStudents.length > 0 && <p className="panel-note">{exportWarnings.unresolvedStudents.length} 个城市未匹配，可返回「名单」修正。</p>}
               {exportWarnings.hiddenStudents.length > 0 && <p className="panel-note">{exportWarnings.hiddenStudents.length} 条记录已隐藏，不会出现在海报中。</p>}
               <ActionGroup label="交付操作" className="workflow-delivery-actions">
-                <button className="wide-button workflow-export-button" type="button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}><ImageDown size={16} />{posterExport.exportingPng ? "导出中..." : "导出 PNG"}</button>
+                <button className="wide-button workflow-export-button" type="button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportState === "exporting"}><ImageDown size={16} />{posterExport.exportingPng || posterExport.exportState === "exporting" ? "导出中..." : "导出 PNG"}</button>
                 <CompactButton icon={<Download size={14} aria-hidden />} onClick={posterExport.exportSvg}>导出 SVG</CompactButton>
                 <CompactButton icon={<Save size={14} aria-hidden />} onClick={() => void overwriteBrowserStorage()} disabled={syncState.status === "saving"}>保存到本机</CompactButton>
                 <CompactButton icon={<PackageOpen size={14} aria-hidden />} onClick={posterExport.openProjectExportDialog}>导出工程</CompactButton>
