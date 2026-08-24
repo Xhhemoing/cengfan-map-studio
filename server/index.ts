@@ -1,11 +1,11 @@
 import http from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, statSync, type Stats } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createBudgetReceiptLedger, createBudgetReceiptSigner, type BudgetReceiptLedger } from "./ai/budget-receipt";
 import { createFileAiStateStore, createMemoryAiStateStore, emptyAiRuntimeState, type AiRuntimeState, type AiStateStore } from "./ai/ai-state-store";
 import { createServerLifecycle, validateProductionConfig } from "./production";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGzip } from "node:zlib";
 
@@ -128,6 +128,8 @@ const DEFAULT_ROOM_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_ROOM_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ROOM_EVENTS_TICKET_TTL_MS = 60 * 1000;
 const DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS = 20 * 1000;
+/** 隔离出来的坏快照最多留几份。 */
+const MAX_ROOM_SNAPSHOT_SIDECARS = 5;
 // 单个 SSE 事件的负载上限：超过就不再往管道里塞，改由客户端断线重连后走 HTTP 重新拉取。
 const DEFAULT_MAX_ROOM_EVENT_BYTES = 1024 * 1024;
 // 单个订阅者允许积压的字节数上限：超过即判定为慢订阅者并断开，丢弃已排队数据。
@@ -185,13 +187,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/** 信封能不能用：version 或 rooms 形状不对时房间存储会整份丢弃，等同于没有快照。 */
+function isRestorableRoomSnapshot(snapshot: unknown): snapshot is Record<string, unknown> & { rooms: unknown[] } {
+  return isRecord(snapshot) && snapshot.version === 1 && Array.isArray(snapshot.rooms);
+}
+
 /**
  * 只数快照信封里的房间条数：房间存储不暴露房间清单，实际存活数由它按 TTL 与
  * 房间上限自行裁剪，这里给的是「交回去多少条」而不是活房间普查。
  */
 function countRestorableRooms(snapshot: unknown): number {
+  return isRestorableRoomSnapshot(snapshot) ? snapshot.rooms.length : 0;
+}
+
+/**
+ * 上一次关停有多少房间因超过持久化上限没落盘。这个字段在磁盘信封里是可选的，
+ * 所以在文件边界上按 unknown 读，不依赖房间存储的类型。
+ */
+function readSkippedRoomCount(snapshot: unknown): number {
   if (!isRecord(snapshot)) return 0;
-  return snapshot.version === 1 && Array.isArray(snapshot.rooms) ? snapshot.rooms.length : 0;
+  const skipped = snapshot.skippedRoomCount;
+  return typeof skipped === "number" && Number.isFinite(skipped) && skipped > 0 ? Math.floor(skipped) : 0;
 }
 
 function isWorkspaceSnapshot(value: unknown): value is Record<string, unknown> {
@@ -471,7 +487,13 @@ export function createAiServer(options: AiServerOptions = {}) {
     ...(options.persistRooms ? { persist: options.persistRooms } : {}),
   };
   const roomStore: PersistableRoomStore = (options.roomStoreFactory ?? createRoomStore)(roomStoreOptions);
-  console.info(`restored ${countRestorableRooms(options.roomSnapshot)} collaboration room(s) from snapshot`);
+  // 只有真拿到一份快照才谈得上「恢复」：冷启动报 restored 0 会让日志读者以为读到过一份空快照。
+  if (options.roomSnapshot !== undefined) {
+    console.info(`restored ${countRestorableRooms(options.roomSnapshot)} collaboration room(s) from snapshot`);
+    const skippedRoomCount = readSkippedRoomCount(options.roomSnapshot);
+    // 这些房间在上一次关停时就丢了，只有本次启动把它说出来，运维才知道少了什么。
+    if (skippedRoomCount > 0) console.warn(`上次关停有 ${skippedRoomCount} 个房间超过持久化上限，未恢复`);
+  }
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
   const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
   const maxRoomEventBytes = positiveBytes(
@@ -1390,6 +1412,55 @@ function roomSnapshotQuarantinePath(file: string): string {
   return candidate;
 }
 
+/** 隔离文件名里的时间戳序：没有时间戳的 `.bad` 是第一份被隔离的，因此排最旧。 */
+function roomSnapshotSidecarSequence(name: string, prefix: string): number {
+  const middle = name.slice(prefix.length, -".bad".length);
+  return middle ? Number(middle.split(".")[0]) || 0 : 0;
+}
+
+/** 坏启动会反复发生，`.bad` 不设上限就会一直堆在数据目录里，只留最近的几份现场。 */
+async function pruneRoomSnapshotSidecars(file: string, keep = MAX_ROOM_SNAPSHOT_SIDECARS): Promise<void> {
+  const directory = dirname(file);
+  const prefix = `${basename(file)}.`;
+  try {
+    const names = (await readdir(directory)).filter((name) => name.startsWith(prefix) && name.endsWith(".bad"));
+    if (names.length <= keep) return;
+    const sidecars = await Promise.all(names.map(async (name) => {
+      const path = join(directory, name);
+      return {
+        path,
+        modifiedAt: await stat(path).then((info) => info.mtimeMs, () => 0),
+        sequence: roomSnapshotSidecarSequence(name, prefix),
+      };
+    }));
+    sidecars.sort((a, b) => b.modifiedAt - a.modifiedAt || b.sequence - a.sequence);
+    for (const stale of sidecars.slice(keep)) {
+      await rm(stale.path, { force: true });
+    }
+  } catch {
+    // 清理不成功只是多留几份证据，不能反过来挡住启动。
+  }
+}
+
+/**
+ * 坏文件留在正常路径上会被下一次成功落盘直接覆盖，事故现场就此消失，
+ * 所以先把它挪到 .bad 旁路；挪不动也只是少一份证据，启动照常继续。
+ */
+async function quarantineRoomSnapshot(file: string, reason: string): Promise<void> {
+  const quarantine = roomSnapshotQuarantinePath(file);
+  try {
+    await rename(file, quarantine);
+  } catch (error) {
+    console.warn(
+      `房间快照${reason}且隔离失败（目标 ${quarantine}），本次启动不恢复房间: ${file}`,
+      error instanceof Error ? error.message : error,
+    );
+    return;
+  }
+  console.warn(`房间快照${reason}，已隔离到 ${quarantine}，本次启动不恢复房间: ${file}`);
+  await pruneRoomSnapshotSidecars(file);
+}
+
 /** 缺失或损坏的房间快照一律当作「没有房间」：启动不能被一份坏文件挡住。 */
 async function loadRoomSnapshot(file: string): Promise<unknown> {
   let raw: string;
@@ -1399,23 +1470,19 @@ async function loadRoomSnapshot(file: string): Promise<unknown> {
     // 首次启动、或上一次进程还没落过盘，都没有快照文件。
     return undefined;
   }
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as unknown;
+    parsed = JSON.parse(raw) as unknown;
   } catch {
-    // 坏文件留在正常路径上会被下一次成功落盘直接覆盖，事故现场就此消失，
-    // 所以先把它挪到 .bad 旁路；挪不动也只是少一份证据，启动照常继续。
-    const quarantine = roomSnapshotQuarantinePath(file);
-    try {
-      await rename(file, quarantine);
-      console.warn(`房间快照无法解析，已隔离到 ${quarantine}，本次启动不恢复房间: ${file}`);
-    } catch (error) {
-      console.warn(
-        `房间快照无法解析且隔离失败（目标 ${quarantine}），本次启动不恢复房间: ${file}`,
-        error instanceof Error ? error.message : error,
-      );
-    }
+    await quarantineRoomSnapshot(file, "无法解析");
     return undefined;
   }
+  // 能解析不等于能用：信封不对时房间存储会整份丢弃，文件却仍躺在正常路径上等着被覆盖。
+  if (!isRestorableRoomSnapshot(parsed)) {
+    await quarantineRoomSnapshot(file, "信封无法使用");
+    return undefined;
+  }
+  return parsed;
 }
 
 function createRoomSnapshotWriter(dataDir: string, file: string) {
