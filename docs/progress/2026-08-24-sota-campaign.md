@@ -46,7 +46,8 @@
 | 23 | 已完成 | opus ×5 | 续聊回滚影子、禁并发会话、被踢 UI、心跳不续命、嘉宾零位移 |
 | 24 | 已完成 | opus ×5 | SVG 延迟 revoke、工作台包体积、导出对话框、字体去重映射、同 z 重叠 |
 | 25 | 已完成 | 混编 ×5 | 任务段 lastIndex、设置焦点、删不安全镜像工厂、空白选画布、复查 |
-| 26 | 进行中 | 混编 ×5 | 包下载延迟 revoke、删字体确认、资源包体积、429 Retry-After、复查 |
+| 26 | 已完成 | 混编 ×5 | 包下载延迟 revoke、删字体确认、资源包体积、429 Retry-After、复查 |
+| 27 | 进行中 | 混编 ×5 | 协作版本 UI、对话持久化裁剪、嘉宾头像失败反馈、分区复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -84,6 +85,7 @@
 
 ## 进度日志
 
+- 2026-08-24：第 26 轮包下载 revoke、删字体确认、资源包体积、429 Retry-After 已合入；启动第 27 轮。
 - 2026-08-24：启动第 26 轮：包下载 revoke、删字体确认、资源包体积、429 Retry-After。
 - 2026-08-24：第 25 轮任务段边界、设置焦点、删不安全镜像、空白选画布已合入。
 - 2026-08-24：第 24 轮 SVG revoke、工作台包体积、导出对话框、字体映射、同层重叠已合入；启动第 25 轮。
@@ -365,6 +367,29 @@
 | 资源包体积上限 | `src/lib/import-file-limits.ts`、`src/components/AssetPanel.tsx` 及测试。新增 RESOURCE_PACK 上限，超限不 readAsText。不改 App.tsx。 |
 | AI 429 Retry-After | `src/lib/agent-session.ts`、`src/lib/ai-client.ts` 及测试。读取响应头秒数写入用户可见文案。不改 server/。 |
 | 剩余复查 | 只读。避开本轮落地文件与 `App.tsx`。 |
+
+## 第 26 轮已合入
+
+- 工程包/资源包下载走 `downloadBlob` 延迟 revoke。
+- 删除字体前确认并列出引用。
+- 资源包导入 24MB 上限。
+- 429 文案带 Retry-After 秒数。
+
+## 第 26 轮复查结论
+
+1. `useCollaborationRoom` 的 `roomVersion` 多数路径只写 ref 不写 state，查看者永远显示 v0。
+2. AI 对话持久化超 256KB 整体弃写且永久停摆。
+3. 嘉宾头像超预算/读失败无提示，input 不重置。
+
+## 第 27 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| 协作版本 UI | `src/lib/useCollaborationRoom.ts` 及测试。加入/增量/快照/补齐后同步 `setRoomVersion`。 |
+| 对话持久化裁剪 | `src/lib/agent-conversation-store.ts` 及测试。超 256KB 从最旧开始丢，保住当前会话。 |
+| 嘉宾头像失败反馈 | `src/components/inspector/GuestsInspector.tsx` 及测试。照搬 CanvasInspector 的 onError + 清空 input。 |
+| 剩余复查 A | 只读。AI/协作/存储，避开本轮落地文件与 App.tsx。 |
+| 剩余复查 B | 只读。画布/导入/工作台，避开本轮落地文件与 App.tsx。 |
 
 ## 第 2 轮已合入
 
