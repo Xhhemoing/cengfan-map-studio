@@ -1,24 +1,30 @@
-# Round 19 任务简报（进行中）
+# Round 19 结论简报
 
-- **前置**: Round 18 已验证：tsc 绿、eslint 0 error（5 条既有 react-refresh 警告）、210 files / 1846 tests
-- **分支**: `cursor/agent-sota-polish-cbcd`（禁止 commit/stash/新分支）
+- **时间**: 2026-08-24
+- **前置**: Round 18 BRIEF（210 files / 1846 tests）
 - **模型**: 2× claude-fable-5-thinking-xhigh · 2× claude-opus-5-thinking-high-fast · 2× gpt-5.6-sol-xhigh-fast
+- **集成**: `tsc` app+node 0 error；`npx eslint . --max-warnings 0` 0 warning；全量 vitest **211 files / 1853 tests passed**（74.33s）
 
-## 真实缺口
+## 相对 Round 18
 
-1. `npx eslint .` 仍有 5 条 `react-refresh/only-export-components` 警告：`StudioMuiProvider.tsx` 导出 `studioTheme`；`GlobalDataNavigation.tsx` 导出 `globalDataViewLabel`；`app-initialization.tsx` 导出 `createInitialProject` / `loadInitialProject` / `loadBrowserValue` 与组件 `WorkbenchBackButton` 同文件。抽文件，清掉警告。
-2. `orderResult` 的 `space` 仍可选，无 space 时回落 `(0,0)/right`。产品调用已全部传入 space。改为必填并删掉原点分支。
-3. 无表头空白分隔 `1 林舟 北京大学 北京市`：leading 纯数字 token 仍当姓名。只在 unlabeled 空白切分上丢掉「整段都是数字」的前导 token；不要动 tab/CSV 表头路径。
-4. `LegacyEditorChrome` / `StudioTopbarActions` 的 Undo2 图标没有 `aria-hidden`（按钮已有 label）。
-5. 禁止 Playwright、支付、CMYK、拆 china-universities。实现文件 ≤400。不要改 stackAtMargin clamp 堆底。
+| 代理 | Round 18 | Round 19 |
+| --- | --- | --- |
+| R19-fable-arch | 5 条 react-refresh 警告 | 拆 theme/标签/返回钮；eslint 零警告 |
+| R19-fable-sota | 设置 skip-link | 顶栏/经典皮装饰图标 `aria-hidden` |
+| R19-opus-layout | space 可选 + 原点回落 | `orderResult` space 必填 |
+| R19-opus-data | 有分隔符才丢序号列 | 空白粘贴前导数字 token 也丢 |
+| R19-gpt-perf | — | 诚实跳过 |
+| R19-gpt-server | gzip * | 可压缩静态资源始终 Vary；CI `--max-warnings 0`（主调度在拆分后加上） |
 
-## 路径隔离
+## 验证链
 
-| 代理 | 允许 |
-| --- | --- |
-| R19-fable-arch | `src/lib/app-initialization.tsx`、新建 sibling ts/tsx、`src/components/StudioMuiProvider.tsx`、`src/components/global-data/GlobalDataNavigation.tsx`、对应测试与 import 更新。清 react-refresh 警告。 |
-| R19-fable-sota | `src/components/studio-editor/LegacyEditorChrome.tsx`、`StudioTopbarActions.tsx`、测试。装饰图标 `aria-hidden`。禁止改 live region 逻辑。 |
-| R19-opus-layout | `src/lib/card-layout-pack.ts` + 测试 + 其它已有 `orderResult` 调用点若签名变必填。`space` 必填。禁止 cache。 |
-| R19-opus-data | `src/lib/import-data.ts`（保持 ≤400）+ 测试。leading 数字 token。禁止 html-table-parse。 |
-| R19-gpt-perf | bench。无 CI 时限。诚实跳过也可。 |
-| R19-gpt-server | CI 在警告清零后加 `--max-warnings 0`；若警告还在则不要加（会红）。或修一个真实 server 洞。index.ts ≤400。 |
+| failure | cause | fix | recheck |
+| --- | --- | --- | --- |
+| `1 林舟 北京大学 北京市` 姓名=1 | unlabeled 空白切分不走 Round 18 列过滤 | 前导 SERIAL_CELL 且剩余 ≥3 段则 slice | import 套件绿 |
+| eslint 5 警告 | 组件文件导出非组件 | 抽模块 | `--max-warnings 0` 0 |
+| `orderResult([], [])` 仍编译 | space 可选 | 改为必填 | tsc TS2554 探针后删除；tsc 绿 |
+
+## 仍未达印刷级 SOTA
+
+- 无真浏览器 E2E；协作 flock 只保证单机。
+- 饱和溢出仍堆在 `y = maxY`。浏览器 PNG 仍为 sRGB。
