@@ -92,6 +92,8 @@ export interface RoomStoreSnapshot {
   version: 1;
   /** Rooms omitted because their persistence record exceeded the safety cap. */
   skippedRoomCount?: number;
+  /** Optional for backward compatibility with snapshots written before skipped ids were recorded. */
+  skippedRoomIds?: string[];
   rooms: Array<{
     room: CollaborationRoom;
     accessRecords: Array<{ tokenHash: string; participant: RoomParticipant }>;
@@ -107,7 +109,9 @@ const MAX_OPERATION_HISTORY = 256;
 const DEFAULT_PERSIST_INTERVAL_MS = 30_000;
 // Oversized rooms stay live but are omitted from disk, so after a restart they
 // fall back to the same process-local lifetime rooms had before persistence.
-export const MAX_PERSISTED_ROOM_BYTES = 5 * 1024 * 1024;
+export const MAX_PERSISTED_ROOM_BYTES = 12 * 1024 * 1024;
+// Bound aggregate event-loop occupancy as well as individual room records.
+export const MAX_PERSISTED_SNAPSHOT_BYTES = 12 * 1024 * 1024;
 
 function defaultRoomId(): string {
   return randomBytes(9).toString("hex").slice(0, 12).toUpperCase();
@@ -162,7 +166,7 @@ function jsonStringBytesWithin(value: string, remainingBytes: number): number | 
   return bytes;
 }
 
-function jsonFitsWithinByteLimit(value: unknown, maxBytes: number): boolean {
+function jsonByteLengthWithin(value: unknown, maxBytes: number): number | undefined {
   let usedBytes = 0;
   const ancestors = new Set<object>();
   const reserve = (bytes: number) => {
@@ -213,7 +217,7 @@ function jsonFitsWithinByteLimit(value: unknown, maxBytes: number): boolean {
     }
   };
 
-  return visit(value);
+  return visit(value) ? usedBytes : undefined;
 }
 
 export interface RoomStoreOptions {
@@ -250,7 +254,12 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   const legacyRoomIds = new Set<string>();
   let mutationVersion = 0;
   let persistedVersion = 0;
-  let persistQueue = Promise.resolve();
+  let persistInFlight: Promise<void> | undefined;
+  let queuedPersist: {
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (reason?: unknown) => void;
+  } | undefined;
 
   const markDirty = () => {
     mutationVersion += 1;
@@ -676,7 +685,7 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
     return { id: room.id, version: nextRoom.version, members: membersOf(nextRoom) };
   };
 
-  const setAccess = (id: string, accessToken: string, clientId: string, action: "set-readonly" | "close"): { id: string; version: number; readonly: boolean; closed: boolean } => {
+  const setAccess = (id: string, accessToken: string, _clientId: string, action: "set-readonly" | "close"): { id: string; version: number; readonly: boolean; closed: boolean } => {
     const participant = authorize(id, accessToken, "read");
     const key = id.toUpperCase();
     const room = rooms.get(key);
@@ -732,10 +741,11 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
   };
 
   const snapshot = (): RoomStoreSnapshot => {
-    const persistedRooms: RoomStoreSnapshot["rooms"] = [];
-    let skippedRoomCount = 0;
+    type PersistedRoom = RoomStoreSnapshot["rooms"][number];
+    const candidates: Array<{ id: string; record: PersistedRoom; recordBytes: number }> = [];
+    const skippedRoomIds: string[] = [];
     for (const [id, room] of rooms) {
-      const record: RoomStoreSnapshot["rooms"][number] = {
+      const record: PersistedRoom = {
         room,
         accessRecords: Array.from(accessRecords.get(id) ?? [], ([tokenHash, participant]) => ({
           tokenHash,
@@ -750,43 +760,117 @@ export function createRoomStore(input: (() => string) | RoomStoreOptions = {}): 
         lastActivity: lastActivity.get(id) ?? now(),
         legacy: legacyRoomIds.has(id),
       };
-      if (!jsonFitsWithinByteLimit(record, MAX_PERSISTED_ROOM_BYTES)) {
-        skippedRoomCount += 1;
+      const recordBytes = jsonByteLengthWithin(record, MAX_PERSISTED_ROOM_BYTES);
+      if (recordBytes === undefined) {
+        skippedRoomIds.push(id);
         continue;
       }
-      persistedRooms.push({
+      candidates.push({ id, record, recordBytes });
+    }
+
+    const retainedIds = new Set(candidates.map(({ id }) => id));
+    const evictionOrder = [...candidates].sort((left, right) => {
+      if (left.recordBytes !== right.recordBytes) return right.recordBytes - left.recordBytes;
+      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+    });
+    const snapshotBytes = () => {
+      const retained = candidates.filter(({ id }) => retainedIds.has(id));
+      const sortedSkippedIds = [...skippedRoomIds].sort();
+      let bytes = Buffer.byteLength('{"version":1,"rooms":[', "utf8")
+        + retained.reduce((total, { recordBytes }) => total + recordBytes, 0)
+        + Math.max(0, retained.length - 1)
+        + 2;
+      if (sortedSkippedIds.length > 0) {
+        bytes += Buffer.byteLength(
+          `,"skippedRoomCount":${sortedSkippedIds.length},"skippedRoomIds":${JSON.stringify(sortedSkippedIds)}`,
+          "utf8",
+        );
+      }
+      return bytes;
+    };
+    let evictionIndex = 0;
+    while (snapshotBytes() > MAX_PERSISTED_SNAPSHOT_BYTES) {
+      const evicted = evictionOrder[evictionIndex++];
+      if (!evicted) break;
+      retainedIds.delete(evicted.id);
+      skippedRoomIds.push(evicted.id);
+    }
+
+    skippedRoomIds.sort();
+    const persistedRooms = candidates
+      .filter(({ id }) => retainedIds.has(id))
+      .map(({ record }) => ({
         ...record,
-        room: structuredClone(room),
+        room: structuredClone(record.room),
         operationHistory: record.operationHistory.map((entry) => ({
           version: entry.version,
           operations: structuredClone(entry.operations),
         })),
-      });
-    }
+      }));
     return {
       version: 1,
       rooms: persistedRooms,
-      ...(skippedRoomCount > 0 ? { skippedRoomCount } : {}),
+      ...(skippedRoomIds.length > 0
+        ? { skippedRoomCount: skippedRoomIds.length, skippedRoomIds }
+        : {}),
     };
   };
+
+  function warnSkippedRooms(persistedSnapshot: RoomStoreSnapshot) {
+    if (!persistedSnapshot.skippedRoomCount) return;
+    const skippedIds = persistedSnapshot.skippedRoomIds?.join(", ") ?? "unknown";
+    console.warn(
+      `[collaboration] skipped ${persistedSnapshot.skippedRoomCount} room(s) from persistence (${skippedIds}); `
+      + `per-room cap ${MAX_PERSISTED_ROOM_BYTES} bytes, total snapshot budget ${MAX_PERSISTED_SNAPSHOT_BYTES} bytes; `
+      + "they remain available in memory but will not be restored after restart",
+    );
+  }
+
+  function createQueuedPersist() {
+    let resolve!: () => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+  }
+
+  function settlePersist(operation: Promise<void>) {
+    if (persistInFlight !== operation) return;
+    persistInFlight = undefined;
+    const queued = queuedPersist;
+    queuedPersist = undefined;
+    if (!queued) return;
+    const next = startPersist();
+    void next.then(queued.resolve, queued.reject);
+  }
+
+  function startPersist(): Promise<void> {
+    const persistedMutationVersion = mutationVersion;
+    const persistedSnapshot = snapshot();
+    warnSkippedRooms(persistedSnapshot);
+    const operation = Promise.resolve().then(async () => {
+      await persist!(persistedSnapshot);
+      persistedVersion = Math.max(persistedVersion, persistedMutationVersion);
+    });
+    persistInFlight = operation;
+    void operation.then(
+      () => settlePersist(operation),
+      () => settlePersist(operation),
+    );
+    return operation;
+  }
 
   const flush = async (): Promise<void> => {
     purgeExpired();
     if (!persist) return;
-    const persistedMutationVersion = mutationVersion;
-    const persistedSnapshot = snapshot();
-    if (persistedSnapshot.skippedRoomCount) {
-      console.warn(
-        `[collaboration] skipped ${persistedSnapshot.skippedRoomCount} room(s) over the ${MAX_PERSISTED_ROOM_BYTES}-byte persistence cap; `
-        + "they remain available in memory but will not be restored after restart",
-      );
+    if (persistInFlight) {
+      queuedPersist ??= createQueuedPersist();
+      await queuedPersist.promise;
+      return;
     }
-    const operation = persistQueue.catch(() => undefined).then(async () => {
-      await persist(persistedSnapshot);
-      persistedVersion = Math.max(persistedVersion, persistedMutationVersion);
-    });
-    persistQueue = operation;
-    await operation;
+    await startPersist();
   };
 
   const persistIntervalMs = options.persistIntervalMs ?? DEFAULT_PERSIST_INTERVAL_MS;

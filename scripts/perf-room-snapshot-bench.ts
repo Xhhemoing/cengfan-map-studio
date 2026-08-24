@@ -4,9 +4,9 @@
  * Run with: npx tsx scripts/perf-room-snapshot-bench.ts
  *
  * Measures the synchronous `createRoomStore().flush()` snapshot construction
- * and the persist callback's `JSON.stringify` separately for 1-3 rooms whose
- * test-only project packages contain 5, 20, or 40 MiB payload strings. Each
- * result is the median of five runs after one warmup.
+ * and the persist callback's `JSON.stringify` separately for one room whose
+ * persisted record targets 6, 8, or 12 MiB. Each result is the median of five
+ * runs after one warmup.
  *
  * Limits: package inflation is synthetic, setup/allocation and persistence I/O
  * are excluded, and timings are machine/GC dependent. This measures event-loop
@@ -17,9 +17,11 @@ import { performance } from "node:perf_hooks";
 import { createRoomStore, type RoomStoreSnapshot } from "../server/collaboration";
 
 const RUNS = 5;
-const ROOM_COUNTS = [1, 2, 3] as const;
-const PACK_MIB = [5, 20, 40] as const;
+const ROOM_COUNTS = [1] as const;
+const PACK_MIB = [6, 8, 12] as const;
 const BYTES_PER_MIB = 1024 * 1024;
+// Leave space for room metadata so the target cell remains just below the cap.
+const RECORD_ENVELOPE_MARGIN_BYTES = 4 * 1024;
 
 interface Sample {
   snapshotMs: number;
@@ -41,7 +43,7 @@ function makeTestPackage(packMiB: number, roomIndex: number) {
       title: "snapshot benchmark",
     },
     // Test-only inflation field: production package types and schemas remain unchanged.
-    benchmarkPayload: "x".repeat(packMiB * BYTES_PER_MIB),
+    benchmarkPayload: "x".repeat(packMiB * BYTES_PER_MIB - RECORD_ENVELOPE_MARGIN_BYTES),
   };
 }
 
@@ -93,7 +95,7 @@ async function measureCell(roomCount: number, packMiB: number): Promise<Sample> 
   };
 }
 
-console.log("| rooms | pack MiB/room | payload MiB | snapshot median ms | stringify median ms | occupancy ms | output bytes |");
+console.log("| rooms | target record MiB/room | target MiB | snapshot median ms | stringify median ms | occupancy ms | output bytes |");
 console.log("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
 for (const roomCount of ROOM_COUNTS) {
   for (const packMiB of PACK_MIB) {
