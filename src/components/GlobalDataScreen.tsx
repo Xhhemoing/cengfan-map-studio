@@ -8,7 +8,8 @@ import { DataQualityPanel } from "./DataQualityPanel";
 import { DataWorkspace } from "./DataWorkspace";
 import type { CustomTemplateOption, TemplateOption } from "./TemplatePicker";
 import { PanelHeader } from "./StudioUi";
-import { GlobalDataNavigation, globalDataViewLabel } from "./global-data/GlobalDataNavigation";
+import { globalDataViewLabel } from "../lib/global-data-views";
+import { GlobalDataNavigation } from "./global-data/GlobalDataNavigation";
 import { GlobalDataStatus } from "./global-data/GlobalDataStatus";
 
 export type GlobalDataView = "overview" | "roster" | "quality" | "mapping" | "presentation";
