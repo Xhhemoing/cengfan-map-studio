@@ -4,7 +4,7 @@ import { MapPinned } from "lucide-react";
 export function StudioBrand() {
   return (
     <div className="brand">
-      <MapPinned size={24} />
+      <MapPinned size={24} aria-hidden />
       <span className="brand-label brand-label__full">蹭饭地图工作室</span>
       <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
       <em>Beta</em>
@@ -29,7 +29,7 @@ export function ProjectMissingScreen() {
   return (
     <main className="workbench-shell">
       <section className="workbench-error workbench-error--recover" role="alert">
-        <span className="workbench-brand-mark"><MapPinned size={22} /></span>
+        <span className="workbench-brand-mark"><MapPinned size={22} aria-hidden /></span>
         <strong>项目不存在或已删除</strong>
         <p>这个链接指向的项目已经不在本机项目列表中了。可以回到项目列表继续编辑其他项目。</p>
         <div className="workbench-error-actions">

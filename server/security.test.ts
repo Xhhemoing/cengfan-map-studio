@@ -487,6 +487,80 @@ describe("server request security", () => {
     expect(limited.status).toBe(429);
   });
 
+  it("uses X-Real-IP for room join rate limits without forwarded hops", async () => {
+    const server = createAiServer({
+      trustProxy: true,
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify({
+      inviteToken: "invalid-invite",
+      clientId: "attacker",
+      displayName: "attacker",
+    }));
+
+    const first = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Real-IP": "198.51.100.9",
+    });
+    const limited = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Real-IP": "198.51.100.9",
+    });
+
+    expect(first.status).toBe(404);
+    expect(limited.status).toBe(429);
+  });
+
+  it("separates X-Real-IP clients without forwarded hops", async () => {
+    const server = createAiServer({
+      trustProxy: true,
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify({
+      inviteToken: "invalid-invite",
+      clientId: "attacker",
+      displayName: "attacker",
+    }));
+
+    const first = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Real-IP": "198.51.100.9",
+    });
+    const second = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Real-IP": "198.51.100.10",
+    });
+
+    expect(first.status).toBe(404);
+    expect(second.status).toBe(404);
+  });
+
+  it("prefers forwarded hops over X-Real-IP for room join rate limits", async () => {
+    const server = createAiServer({
+      trustProxy: true,
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify({
+      inviteToken: "invalid-invite",
+      clientId: "attacker",
+      displayName: "attacker",
+    }));
+
+    const first = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Forwarded-For": "203.0.113.1, 198.51.100.9",
+      "X-Real-IP": "192.0.2.1",
+    });
+    const limited = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Forwarded-For": "203.0.113.2, 198.51.100.9",
+      "X-Real-IP": "192.0.2.2",
+    });
+
+    expect(first.status).toBe(404);
+    expect(limited.status).toBe(429);
+  });
+
   it("does not use the leftmost forwarded hop for room join rate limits", async () => {
     const server = createAiServer({
       trustProxy: true,
@@ -529,6 +603,30 @@ describe("server request security", () => {
     });
     const limited = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
       "X-Forwarded-For": "198.51.100.10",
+    });
+
+    expect(first.status).toBe(404);
+    expect(limited.status).toBe(429);
+  });
+
+  it("ignores X-Real-IP when proxy trust is disabled", async () => {
+    const server = createAiServer({
+      trustProxy: false,
+      rateLimiters: { rooms: createRateLimiter({ limit: 1, windowMs: 60_000 }) },
+    });
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify({
+      inviteToken: "invalid-invite",
+      clientId: "attacker",
+      displayName: "attacker",
+    }));
+
+    const first = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Real-IP": "198.51.100.9",
+    });
+    const limited = await rawRequest(origin, "/api/rooms/MISSING/join", "POST", body, {
+      "X-Real-IP": "198.51.100.10",
     });
 
     expect(first.status).toBe(404);

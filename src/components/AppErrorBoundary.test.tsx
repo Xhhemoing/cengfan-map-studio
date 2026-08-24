@@ -26,6 +26,9 @@ describe("AppErrorBoundary", () => {
     expect(container.textContent).toContain("界面加载出错");
     expect(container.querySelector('button[aria-label="重新加载界面"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="返回项目列表"]')).not.toBeNull();
+    const brandIcon = container.querySelector(".workbench-brand-mark svg");
+    expect(brandIcon).not.toBeNull();
+    expect(brandIcon?.getAttribute("aria-hidden")).toBe("true");
     consoleSpy.mockRestore();
   });
 

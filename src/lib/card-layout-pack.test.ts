@@ -451,6 +451,42 @@ describe("layoutGrid", () => {
     expect(seated!.side).toBe("top");
     expect(seated!.side).toBe(space.sideOf(seated!));
   });
+
+  it("stacks the leftovers down the margin column instead of piling them on one seat", () => {
+    // Nothing is placeable, so all five cards fall through to the fallback.
+    const space = makeSpace([{ x: 0, y: 0, width: 900, height: 700 }], wideMap);
+
+    const placements = layoutGrid(gridCards(5), space);
+
+    expect(placements.map((placement) => placement.id)).toEqual(["g0", "g1", "g2", "g3", "g4"]);
+    // A single shared margin seat stacked five cards into one pixel.
+    const seats = new Set(placements.map((placement) => `${placement.x},${placement.y}`));
+    expect(seats.size).toBe(5);
+    for (const placement of placements) {
+      expect(placement.x).toBe(space.margin);
+      expect(space.inside(placement)).toBe(true);
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+    // The column runs from the margin past the map, so the sides follow the seat.
+    const sides = placements.map((placement) => placement.side);
+    expect(sides[0]).toBe("top");
+    expect(sides).not.toContain("left");
+  });
+
+  it("keeps a full margin column in one column, piling the overflow at the bottom", () => {
+    const space = makeSpace([{ x: 0, y: 0, width: 900, height: 700 }], wideMap);
+    // Six 100px cards plus their gaps fill the column; the rest have nowhere left.
+    const bottom = space.maxY(100);
+
+    const placements = layoutGrid(gridCards(9), space);
+
+    for (const placement of placements) {
+      expect(placement.x).toBe(space.margin);
+      expect(placement.y).toBeLessThanOrEqual(bottom);
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+    expect(placements.slice(6).map((placement) => placement.y)).toEqual([bottom, bottom, bottom]);
+  });
 });
 
 describe("sweepPack", () => {

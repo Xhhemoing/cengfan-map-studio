@@ -377,8 +377,8 @@ export function layoutGrid(cards: readonly CardLayoutInput[], space: LayoutSpace
       done = true;
     }
     if (!done) {
-      // No cell survived: give up to the same seat every other exit here does.
-      const fallback = marginSeat(card, space);
+      // No cell survived: stack from the margin seat, or every leftover coincides.
+      const fallback = stackAtMargin(marginSeat(card, space), space, placed);
       placements.push(fallback);
       placed.add(fallback);
     }

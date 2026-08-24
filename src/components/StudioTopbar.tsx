@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { MapPinned } from "lucide-react";
+import { StudioBrand } from "./studio-editor/StudioStatusScreens";
 
 export type StudioTopbarProps = {
   /** Assistant / advanced-function entry (opens the assistant drawer). */
@@ -26,12 +26,7 @@ export function StudioTopbar({
 }: StudioTopbarProps) {
   return (
     <header className="topbar studio-topbar" aria-label="编辑器顶栏">
-      <div className="brand">
-        <MapPinned size={24} />
-        <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-        <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-        <em>Beta</em>
-      </div>
+      <StudioBrand />
       {workflowNav && <div className="topbar-workflow">{workflowNav}</div>}
       <div className="topbar-actions">
         {assistantEntry}

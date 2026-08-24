@@ -6,6 +6,7 @@ import {
   makeDensePolygonBenchmarkFixture,
   makeLayoutBenchmarkCards,
   runCardLayoutCacheKeyBenchmark,
+  runLayoutGridLeftoverShapeReport,
   runLayoutHealthBenchmark,
   runLayoutBenchmark,
   runStackAtMarginBenchmark,
@@ -258,6 +259,42 @@ describe("layout performance benchmark", () => {
         },
       ],
     });
+  });
+
+  it("reports whether layoutGrid leftovers stack or share one seat without timing them", () => {
+    const report = runLayoutGridLeftoverShapeReport({ cardCounts: [2, 4] });
+
+    expect(report).toMatchObject({
+      methodology: "shape-only layoutGrid on a canvas fully covered by one exact rectangular obstacle; placement counts distinguish distributed margin stacking from a single shared fallback seat; elapsed time excluded",
+      cardCounts: [2, 4],
+      cardWidth: 48,
+      cardHeight: 28,
+      results: [
+        {
+          cardCount: 2,
+          placementCount: 2,
+          blockedPlacementCount: 2,
+          distinctPositionCount: expect.any(Number),
+          maximumPileDepth: expect.any(Number),
+        },
+        {
+          cardCount: 4,
+          placementCount: 4,
+          blockedPlacementCount: 4,
+          distinctPositionCount: expect.any(Number),
+          maximumPileDepth: expect.any(Number),
+        },
+      ],
+    });
+    for (const result of report.results) {
+      expect(result.distinctPositionCount).toBeGreaterThanOrEqual(1);
+      expect(result.distinctPositionCount).toBeLessThanOrEqual(result.cardCount);
+      expect(result.maximumPileDepth).toBeGreaterThanOrEqual(1);
+      expect(result.maximumPileDepth).toBeLessThanOrEqual(result.cardCount);
+      if (result.distinctPositionCount === 1) {
+        expect(result.maximumPileDepth).toBe(result.cardCount);
+      }
+    }
   });
 
   it("reports worker transport beside the same-fixture main-thread solve without timing budgets", async () => {

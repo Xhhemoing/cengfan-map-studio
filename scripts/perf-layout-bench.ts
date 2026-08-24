@@ -18,7 +18,7 @@ import {
   type CardLayoutResult,
 } from "../src/lib/card-layout";
 import { createCardLayoutCacheKey } from "../src/lib/card-layout-cache";
-import { stackAtMargin, sweepPack } from "../src/lib/card-layout-pack";
+import { layoutGrid, stackAtMargin, sweepPack } from "../src/lib/card-layout-pack";
 import { LayoutSpace, PlacementIndex } from "../src/lib/card-layout-space";
 import { posterPngExportSize } from "../src/lib/export-poster";
 import {
@@ -47,6 +47,7 @@ export const LAYOUT_HEALTH_BENCH_SHAPES: readonly LayoutHealthBenchmarkShape[] =
 ];
 export const DEFAULT_MARGIN_STACK_BENCH_COLUMN_COUNTS = [16, 60, 120, 400] as const;
 export const DEFAULT_SWEEP_PACK_BENCH_CARD_COUNTS = [16, 60, 120, 400] as const;
+export const DEFAULT_GRID_LEFTOVER_SHAPE_CARD_COUNTS = [16, 60, 120, 400] as const;
 
 export interface LayoutBenchmarkConfig {
   counts?: readonly number[];
@@ -114,6 +115,7 @@ export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
   layoutHealth: LayoutHealthBenchmarkReport;
   stackAtMargin: StackAtMarginBenchmarkReport;
   sweepPackBranches: SweepPackBenchmarkReport;
+  layoutGridLeftovers: LayoutGridLeftoverShapeReport;
   printBleedExport: PrintBleedExportBenchmarkReport;
   printPreflight: PrintPreflightBenchmarkReport;
 }
@@ -225,6 +227,26 @@ export interface SweepPackBenchmarkReport {
   cardWidth: number;
   cardHeight: number;
   results: SweepPackBenchmarkResult[];
+}
+
+export interface LayoutGridLeftoverShapeConfig {
+  cardCounts?: readonly number[];
+}
+
+export interface LayoutGridLeftoverShapeResult {
+  cardCount: number;
+  placementCount: number;
+  blockedPlacementCount: number;
+  distinctPositionCount: number;
+  maximumPileDepth: number;
+}
+
+export interface LayoutGridLeftoverShapeReport {
+  methodology: "shape-only layoutGrid on a canvas fully covered by one exact rectangular obstacle; placement counts distinguish distributed margin stacking from a single shared fallback seat; elapsed time excluded";
+  cardCounts: number[];
+  cardWidth: number;
+  cardHeight: number;
+  results: LayoutGridLeftoverShapeResult[];
 }
 
 export interface PrintBleedExportBenchmarkResult {
@@ -881,6 +903,48 @@ export function runSweepPackBenchmark(
 }
 
 /**
+ * Reports the saturated layoutGrid fallback shape without treating elapsed
+ * time as a CI budget. A single piled seat has one distinct position and a
+ * maximum pile depth equal to the card count; margin stacking spreads those
+ * same leftovers across multiple positions.
+ */
+export function runLayoutGridLeftoverShapeReport(
+  config: LayoutGridLeftoverShapeConfig = {},
+): LayoutGridLeftoverShapeReport {
+  const cardCounts = [...(config.cardCounts ?? DEFAULT_GRID_LEFTOVER_SHAPE_CARD_COUNTS)]
+    .map((count) => positiveInteger(count, "layout grid leftover card count"));
+  if (cardCounts.length === 0) {
+    throw new Error("layout grid leftover cardCounts must not be empty");
+  }
+
+  const results = cardCounts.map((cardCount): LayoutGridLeftoverShapeResult => {
+    const fixture = makeSweepPackBenchmarkFixture(cardCount, "full-obstacle-leftovers");
+    const placements = layoutGrid(fixture.cards, fixture.space);
+    const pileDepths = new Map<string, number>();
+    for (const { x, y } of placements) {
+      const key = `${rounded(x)},${rounded(y)}`;
+      pileDepths.set(key, (pileDepths.get(key) ?? 0) + 1);
+    }
+    return {
+      cardCount,
+      placementCount: placements.length,
+      blockedPlacementCount: placements.filter((placement) =>
+        fixture.space.blocked(placement)).length,
+      distinctPositionCount: pileDepths.size,
+      maximumPileDepth: Math.max(0, ...pileDepths.values()),
+    };
+  });
+
+  return {
+    methodology: "shape-only layoutGrid on a canvas fully covered by one exact rectangular obstacle; placement counts distinguish distributed margin stacking from a single shared fallback seat; elapsed time excluded",
+    cardCounts,
+    cardWidth: 48,
+    cardHeight: 28,
+    results,
+  };
+}
+
+/**
  * Times the full layout-health pass against a scalable synthetic scene. The
  * production map and content-layout builders are intentionally absent: plain
  * rectangles and polylines are sufficient to exercise connector conflicts and
@@ -1226,6 +1290,7 @@ if (isDirectRun) {
     layoutHealth: runLayoutHealthBenchmark({ shapes: LAYOUT_HEALTH_BENCH_SHAPES }),
     stackAtMargin: runStackAtMarginBenchmark(),
     sweepPackBranches: runSweepPackBenchmark(),
+    layoutGridLeftovers: runLayoutGridLeftoverShapeReport(),
     printBleedExport: runPrintBleedExportBenchmark(),
     printPreflight: runPrintPreflightBenchmark(),
   };

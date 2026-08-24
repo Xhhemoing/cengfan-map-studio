@@ -663,6 +663,35 @@ describe("、 | ； separated pastes", () => {
     ]);
   });
 
+  it("reads a row separated by the fullwidth bar a Chinese keyboard types", () => {
+    // ｜ (U+FF5C) is what a Chinese IME produces, so a pasted roster never held
+    // the ASCII bar the splitter looked for and the whole line stayed one field.
+    const result = parseStudentText("林舟｜北京大学｜北京市");
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("keeps a fullwidth-bar roster aligned when one row states an overseas 去向", () => {
+    const result = parseStudentText([
+      "苏禾｜浙江大学｜杭州市",
+      "林舟｜北京大学｜北京市",
+      "周晴｜哈佛大学｜波士顿｜海外",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "周晴", university: "哈佛大学", city: "波士顿", locationScope: "international" }),
+    ]);
+    // The 去向 column only the last row fills must not pull anyone else's cells left.
+    expect(result.candidates[0]?.locationScope).toBeUndefined();
+    expect(result.candidates[1]?.locationScope).toBeUndefined();
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("names the missing 院校 of a 、-separated row instead of moving the city into it", () => {
     const result = parseStudentText([
       "姓名、院校、城市",
