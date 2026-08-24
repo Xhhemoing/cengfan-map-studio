@@ -456,6 +456,9 @@ export async function createRoomEventsTicket(
   return response.ticket;
 }
 
+/** 重试也不会好转的订阅终局:房间没了、凭证失效、房间已关闭。 */
+export type SubscribeTerminalReason = "ROOM_NOT_FOUND" | "ROOM_FORBIDDEN" | "ROOM_CLOSED";
+
 export interface SubscribeRoomOptions {
   /**
    * 已知版本。传函数时每次(重)连都会重新读取,断线补齐之后不会再从旧版本重放。
@@ -470,6 +473,11 @@ export interface SubscribeRoomOptions {
   idleReconnectDelayMs?: number;
   /** 调用方否决重连(例如已知房间关闭)。返回 false 后整条订阅终止。 */
   shouldReconnect?: () => boolean;
+  /**
+   * 订阅因终局原因放弃时上报一次。没有它,调用方只看到一次 `onError`,会继续显示"正在自动重连",
+   * 而这条订阅其实已经永久停了。
+   */
+  onTerminal?: (reason: SubscribeTerminalReason) => void;
   /** 注入定时器(返回取消函数),便于测试驱动退避并断言没有遗留定时器。 */
   schedule?: (handler: () => void, delayMs: number) => () => void;
   /** 调用方的取消信号(离开房间/卸载):触发后与 unsubscribe 等价,在途 ticket 请求一并中止。 */
@@ -621,11 +629,15 @@ export function subscribeRoom<T>(
     } catch (error) {
       // 取消是调用方发起的(离开房间/卸载):既不该上报错误,也不该拉起重连。
       if (stopped || isCollaborationAbortError(error)) return;
-      onError();
       if (error instanceof CollaborationClientError && TERMINAL_TICKET_ERROR_CODES.has(error.code)) {
+        // 终局原因先于断流上报:调用方据此进入终局态,随后 onError 触发的补齐才不会
+        // 再摆出"正在自动重连"。
+        options.onTerminal?.(error.code as SubscribeTerminalReason);
+        onError();
         stop();
         return;
       }
+      onError();
       scheduleReconnect();
     }
   };
