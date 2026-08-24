@@ -52,13 +52,7 @@ import {
 } from "./lib/editor-canvas-actions";
 import { createEditorLibraryActions } from "./lib/editor-library-actions";
 import { buildAssetUsageLabels } from "./lib/resource-library";
-import {
-  resolveDeliveryIssueNavigation,
-  resolveLayoutIssueSelection,
-  resolveWorkflowPanelNavigation,
-  resolveWorkflowStageNavigation,
-  styleLayerSelection,
-} from "./lib/editor-navigation";
+import { createEditorNavigationActions } from "./lib/editor-navigation-actions";
 import {
   loadStoredRenderSettings,
   mountUserFontFaces,
@@ -86,18 +80,18 @@ import { DataUploadRail, DataUploadWorkspace } from "./components/workspaces/Dat
 import { MapStyleRail, MapStyleWorkspace } from "./components/workspaces/MapStyleWorkspace";
 import { ReferenceCardStyleWorkspace } from "./components/workspaces/ReferenceCardStyleWorkspace";
 import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
-import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "./components/workspaces/DeliveryWorkspace";
+import { DeliveryRail, DeliveryWorkspace } from "./components/workspaces/DeliveryWorkspace";
 
 import { ActionGroup, CompactButton, SegmentedControl, ToolbarButton, ToolbarGroup } from "./components/StudioUi";
 import { CardsInspector } from "./components/inspector/CardsInspector";
 import { ZoomControls } from "./components/ZoomControls";
-import { WorkflowStepper, type WorkflowPanelId } from "./components/WorkflowStepper";
+import { WorkflowStepper } from "./components/WorkflowStepper";
 import {
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
   deriveWorkflowStageProgress,
   type WorkflowStageId,
 } from "./lib/workflow-stages";
-import { deriveStageOverviewModel, type StageOverviewAction } from "./lib/stage-overview";
+import { deriveStageOverviewModel } from "./lib/stage-overview";
 import { STAGE_METADATA } from "./lib/stage-metadata";
 import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace-session";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -724,36 +718,44 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const assetUsageById = useMemo(() => buildAssetUsageLabels(project, userAssets), [project, userAssets]);
 
-  const selectStyleLayer = (target: (typeof STYLE_LAYER_TARGETS)[number]) => {
-    setSelection(styleLayerSelection(target));
-  };
-
-  const handleSceneSelect = (next: SceneSelection) => {
-    setSelection(next);
-  };
-
-  const locateLayoutIssue = (issue: { id: string }) => {
-    const next = resolveLayoutIssueSelection(project, issue);
-    if (next) setSelection(next);
-  };
-
-  const locateDeliveryIssue = (item: DeliveryIssue) => {
-    const navigation = resolveDeliveryIssueNavigation(project, item);
-    if (!navigation) return;
-    if (navigation.studentId !== undefined) setSelectedStudentId(navigation.studentId);
-    if (navigation.selection) setSelection(navigation.selection);
-    setActiveStage(navigation.stage);
-    setActivePanel(navigation.panel);
-  };
+  // rememberStage 只在阶段切换的事件处理器里写 ref,渲染期不碰;react-hooks/refs 看不穿
+  // 工厂函数这层间接,与上面的画布动作同理按行豁免。
+  // eslint-disable-next-line react-hooks/refs
+  const navigationActions = createEditorNavigationActions({
+    project,
+    activeStage,
+    rememberStage: (stage: WorkflowStageId) => { lastNonTemplateStageRef.current = stage; },
+    setSelection,
+    setSelectedStudentId,
+    setActiveStage,
+    setActivePanel,
+    setActiveWorkflowStep,
+    setSettingsSection: setGlobalSettingsSection,
+    toggleProjectMenu: () => {
+      const menu = document.querySelector<HTMLDetailsElement>(".topbar .project-menu");
+      if (menu) menu.open = !menu.open;
+    },
+    setCollaborationOpen: collaboration.setCollaborationOpen,
+    exportPng: () => void posterExport.exportPng(),
+  });
+  const {
+    changeWorkflowPanel,
+    changeWorkflowStage,
+    locateDeliveryIssue,
+    locateLayoutIssue,
+    openCollaborationSettings,
+    openDataDiagnostics,
+    openGlobalData,
+    openRenderSettings,
+    openStudioSettings,
+    openTopbarProjectMenu,
+    runStageOverviewAction,
+    selectLegacyScene,
+    selectScene,
+    selectStyleLayer,
+  } = navigationActions;
 
   const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildProjectLayoutHealthInput(project)), [project]);
-
-  const handleLegacySceneSelect = (next: SceneSelection) => {
-    handleSceneSelect(next);
-    // Keep the legacy content editor's material context available without letting
-    // the dedicated map stage leave its own workflow context.
-    if (activeStage === "content" && next.type === "province") setActivePanel("assets");
-  };
 
   const saveCurrentTemplate = () => {
     const name = window.prompt("自定义模板名称", "我的地图版式");
@@ -788,28 +790,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setActiveWorkflowStep("roster");
     setActiveStage("data");
     setStatusMessage("已恢复本机最近项目");
-  };
-
-  const openGlobalData = () => {
-    if (activeStage !== "data") lastNonTemplateStageRef.current = activeStage;
-    setGlobalSettingsSection(null);
-    setActivePanel("roster");
-    setActiveWorkflowStep("roster");
-    setActiveStage("data");
-  };
-
-  const handleWorkflowStageChange = (stage: WorkflowStageId) => {
-    setGlobalSettingsSection(null);
-    if (stage !== "data") lastNonTemplateStageRef.current = stage;
-    setActiveStage(stage);
-    if (stage === "data") {
-      openGlobalData();
-      return;
-    }
-    const navigation = resolveWorkflowStageNavigation(stage);
-    if (!navigation) return;
-    setActivePanel(navigation.panel);
-    setActiveWorkflowStep(navigation.step);
   };
 
   const dataWorkspaceProps = {
@@ -859,35 +839,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     onImportResourcePack: importResourcePack,
   };
 
-  const handleWorkflowStepChange = (id: WorkflowPanelId) => {
-    const navigation = resolveWorkflowPanelNavigation(id);
-    setActiveStage(navigation.stage);
-    if (id === "roster") {
-      openGlobalData();
-      return;
-    }
-    setActivePanel(id);
-    setActiveWorkflowStep(navigation.step);
-  };
-
-  const openStudioSettings = () => {
-    setActiveWorkflowStep("layout");
-    setGlobalSettingsSection("canvas");
-  };
-  const openTopbarProjectMenu = () => {
-    const menu = document.querySelector<HTMLDetailsElement>(".topbar .project-menu");
-    if (menu) menu.open = !menu.open;
-  };
-  const openCollaborationSettings = () => {
-    openTopbarProjectMenu();
-    collaboration.setCollaborationOpen(true);
-  };
-  const openDataDiagnostics = () => {
-    setGlobalSettingsSection("cards");
-  };
-  const openRenderSettings = () => {
-    setGlobalSettingsSection("advanced");
-  };
   const projectExportActions = (
     <ToolbarGroup label="导出与工程">
       <ProjectMenu
@@ -946,29 +897,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     [activeStage, project, workflowProgress, dataHealth, dataIssues, contentLayoutIssues, resourceHealthIssues, dataView, posterExport.exportState],
   );
 
-  const handleStageOverviewAction = (action: StageOverviewAction) => {
-    if (action.kind === "data-diagnostics") {
-      openDataDiagnostics();
-      return;
-    }
-    if (action.kind === "locate-layout") {
-      locateLayoutIssue(action.issue);
-      return;
-    }
-    if (action.kind === "locate-delivery") {
-      locateDeliveryIssue(action.issue);
-      return;
-    }
-    if (action.kind === "stage") {
-      setActiveStage(action.stage);
-      return;
-    }
-    if (action.kind === "export-png") {
-      void posterExport.exportPng();
-      return;
-    }
-  };
-
   const studioAssistantRail = (
     <StudioAssistantRail
       project={project}
@@ -984,12 +912,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onOpenRenderSettings={openRenderSettings}
       selection={selection}
       layoutIssues={contentLayoutIssues}
-      onSelectElement={handleSceneSelect}
+      onSelectElement={selectScene}
       onLocateLayoutIssue={locateLayoutIssue}
       onPreview={setAgentPreview}
       onCommit={commitProjectTransaction}
       stageOverview={stageOverview}
-      onStageOverviewAction={handleStageOverviewAction}
+      onStageOverviewAction={runStageOverviewAction}
     />
   );
 
@@ -1028,7 +956,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       activeId={activeStage}
       project={project}
       progress={workflowProgress}
-      onChange={handleWorkflowStageChange}
+      onChange={changeWorkflowStage}
     />
   );
 
@@ -1081,7 +1009,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             <em>Beta</em>
           </div>
           <div className="topbar-workflow">
-            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+            <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={changeWorkflowStage} />
           </div>
           <div className="topbar-actions">
             {projectId && <WorkbenchBackButton onClick={() => void handleBackToWorkbench()} />}
@@ -1197,7 +1125,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             onResetMap={() => resetSceneTarget({ type: "map" })}
             onPatchProvince={(province, patch) => patchScene({ type: "province", province }, patch as Record<string, unknown>)}
             onCardPositionsResolved={captureCardPositions}
-            onSelect={handleSceneSelect}
+            onSelect={selectScene}
             onMoveProvinceTexture={moveProvinceTexture}
             onResizeMapImage={resizeMapImage}
             onAddUserAsset={addUserAsset}
@@ -1316,7 +1244,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             undoLabel={undoLabel}
             redoLabel={redoLabel}
             assetPanelProps={mapStyleAssetPanelProps}
-            onSelect={handleSceneSelect}
+            onSelect={selectScene}
             onPatch={patchScene}
             onReset={resetSceneTarget}
             onRefreshPositions={refreshDisplayFramePositions}
@@ -1379,9 +1307,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
           <em>Beta</em>
         </div>
         <div className="topbar-workflow">
-          <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={handleWorkflowStageChange} />
+          <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={changeWorkflowStage} />
           <div className="topbar-workflow__legacy" aria-hidden="true">
-            <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={handleWorkflowStepChange} />
+            <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={changeWorkflowPanel} />
           </div>
         </div>
         <div className="topbar-actions">
@@ -1716,7 +1644,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
                   showGrid={showGrid}
                   gridSize={gridSize}
                   renderIntervalMs={resolvedRenderInterval}
-                  onSelect={handleLegacySceneSelect}
+                  onSelect={selectLegacyScene}
                   onMoveText={moveText}
                   onMoveAsset={moveAsset}
                   onResizeAsset={resizeAsset}
