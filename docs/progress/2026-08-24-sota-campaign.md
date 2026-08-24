@@ -51,7 +51,8 @@
 | 28 | 已完成 | opus ×5 | 上游失败假 finish、未就绪房间拒增量、校徽内联导出、CSV GBK、嘉宾键盘 |
 | 29 | 已完成 | 混编 ×5 | 无效凭证不续命、资源包字体 remap、分区复查 |
 | 30 | 已完成 | opus ×5 | 只读熔断回声、SSE 版本跳变、导出剔除编辑态、文本拖拽预览、导入 warnings |
-| 31 | 进行中 | opus ×5 | 模板 scene 预算、项目库损坏可见、导出体积预警、复查 |
+| 31 | 已完成 | opus ×5 | 模板 scene 预算、项目库损坏可见、导出体积预警、复查 |
+| 32 | 进行中 | 混编 ×5 | App 导入/恢复/导出接线、地图缩放坐标系、AI persist 上限、素材取整、复查 |
 
 ### 第 1 轮工作流（只读）
 
@@ -87,8 +88,25 @@
 
 本轮不改 digest 协议、不接视觉模型、不删 `/api/ai/propose-edits` 服务端端点、不删 legacy 编辑器。
 
+## 第 31 轮已合入
+
+- 模板 scene/document 内嵌图走同一套 5MB 剥离（`project-package` / `template-store`）。
+- 解析失败的项目降级可见（`corrupted`），`count()` 按原始记录，不再当空库重播示例。
+- 工程包/资源包导出前按 24MB 做体积估计；`downloadResourcePack` 超限抛错。`ExportProjectDialog` 已接 `sizeEstimate`，但 App 交付栏仍直接调 `exportProjectPackage`，对话框预警未接线。
+
+## 第 32 轮（文件所有权互斥）
+
+| 切片 | 允许改动的路径 |
+|---|---|
+| App 导入/恢复/导出接线 | `src/App.tsx`、`src/App.test.tsx`。只读成员不得半应用工程包；恢复/新建走 `canEdit` + 确认框；交付栏导出走对话框并传 `sizeEstimate`；资源包导出接住 24MB 抛错。不改 hook / DeliveryWorkspace。 |
+| 地图缩放坐标系 | `src/lib/resize.ts`、`src/components/canvas/ResizeHandles.tsx` 及测试。手柄父级有 translate/scale 时指针必须落在 `rect` 同一用户空间，消灭首拖跳跃。不改 MapLayer.tsx。 |
+| AI persist 上限 | `server/ai/ai-state-store.ts` 及测试。条目上限与 1MiB 字节上限对齐；`AI_STATE_TOO_LARGE` 不得把 `/api/ready` 钉死 503。不改 `server/index.ts` 除非只读引用。 |
+| 素材零位移取整 | `src/components/canvas/RegionalAssetLayer.tsx`、`DecorationLayer.tsx` 及测试。提交比较两侧都 `Math.round`，与 PosterCanvas 卡片守卫一致。 |
+| 剩余复查 | 只读。避开本轮落地文件。 |
+
 ## 进度日志
 
+- 2026-08-24：第 31 轮模板预算、损坏项目可见、导出体积估计已合入；启动第 32 轮。
 - 2026-08-24：第 30 轮只读熔断、SSE 连续、导出剔除、文本预览、warnings 已合入；启动第 31 轮。
 - 2026-08-24：第 29 轮 peek 不续命、资源包字体 remap 已合入；启动第 30 轮。
 - 2026-08-24：第 28 轮假 finish、未就绪拒增量、校徽内联、CSV GBK、嘉宾键盘已合入；启动第 29 轮。
