@@ -17,7 +17,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | IMPLEMENTING | T2–T9 | — | T2/T3 collab pair 229 tests; remaining T1 layout + T10 agent landing |
+| 1 | IMPLEMENTING | T2–T10 | — | T10 agent landing 92 tests; remaining T1 layout solver |
 
 ## Round 0 Baseline (pre-optimization)
 
