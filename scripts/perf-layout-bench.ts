@@ -16,6 +16,7 @@ import {
   type CardLayoutMode,
   type CardLayoutResult,
 } from "../src/lib/card-layout";
+import { createCardLayoutCacheKey } from "../src/lib/card-layout-cache";
 import { posterPngExportSize } from "../src/lib/export-poster";
 import { assertLayoutInvariants } from "../src/lib/layout-perf";
 import { resolvePrintBleedGeometry } from "../src/lib/print-bleed";
@@ -85,8 +86,21 @@ export interface LayoutBenchmarkCliReport extends LayoutBenchmarkReport {
   adversarialFixture: AdversarialLayoutBenchmarkReport;
   clusteredAnchorFixture: ClusteredAnchorLayoutBenchmarkReport;
   workerMessageOverhead: WorkerMessageBenchmarkResult;
+  cacheKeyGeneration: CardLayoutCacheKeyBenchmarkReport;
   printBleedExport: PrintBleedExportBenchmarkReport;
   printPreflight: PrintPreflightBenchmarkReport;
+}
+
+export interface CardLayoutCacheKeyBenchmarkReport {
+  methodology: "stable cache-key serialization before worker dispatch; solver and cache lookup excluded";
+  cardCount: number;
+  polygonCount: number;
+  verticesPerPolygon: number;
+  warmupIterations: number;
+  iterations: number;
+  keyBytes: number;
+  p50Ms: number;
+  p95Ms: number;
 }
 
 export interface PrintBleedExportBenchmarkResult {
@@ -535,6 +549,55 @@ export function runPrintBleedExportBenchmark(
   };
 }
 
+/**
+ * Measures work that remains on the main thread before a large layout can be
+ * served from cache or dispatched to the worker. The dense polygon bounds make
+ * the stable-key fixture include the largest structured input used elsewhere
+ * in this benchmark, while deliberately excluding solver and worker time.
+ */
+export function runCardLayoutCacheKeyBenchmark(
+  cardCount = 400,
+  warmupIterations = 50,
+  iterations = 500,
+): CardLayoutCacheKeyBenchmarkReport {
+  positiveInteger(cardCount, "cache-key cardCount");
+  positiveInteger(warmupIterations, "cache-key warmupIterations");
+  positiveInteger(iterations, "cache-key iterations");
+  const cards = makeLayoutBenchmarkCards(cardCount, 20260824);
+  const { bounds } = makeDensePolygonBenchmarkFixture(20260824);
+  const input = {
+    cards,
+    bounds,
+    options: {
+      mode: "quadrant" as const,
+      autoBalance: true,
+      connectorStyle: "curve" as const,
+      connectorWidth: 1.5,
+    },
+  };
+  for (let iteration = 0; iteration < warmupIterations; iteration += 1) {
+    createCardLayoutCacheKey(input);
+  }
+  const samples: number[] = [];
+  let key = createCardLayoutCacheKey(input);
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const startedAt = performance.now();
+    key = createCardLayoutCacheKey(input);
+    samples.push(performance.now() - startedAt);
+  }
+  return {
+    methodology: "stable cache-key serialization before worker dispatch; solver and cache lookup excluded",
+    cardCount,
+    polygonCount: bounds.occupiedPolygons?.length ?? 0,
+    verticesPerPolygon: bounds.occupiedPolygons?.[0]?.rings[0]?.length ?? 0,
+    warmupIterations,
+    iterations,
+    keyBytes: Buffer.byteLength(key),
+    p50Ms: rounded(percentile(samples, 0.5)),
+    p95Ms: rounded(percentile(samples, 0.95)),
+  };
+}
+
 export function runPrintPreflightBenchmark(
   warmupIterations = 50,
   iterations = 500,
@@ -690,6 +753,7 @@ if (isDirectRun) {
     adversarialFixture: runDensePolygonBenchmark(),
     clusteredAnchorFixture: runClusteredAnchorBenchmark(),
     workerMessageOverhead: await runWorkerMessageBenchmark(),
+    cacheKeyGeneration: runCardLayoutCacheKeyBenchmark(),
     printBleedExport: runPrintBleedExportBenchmark(),
     printPreflight: runPrintPreflightBenchmark(),
   };

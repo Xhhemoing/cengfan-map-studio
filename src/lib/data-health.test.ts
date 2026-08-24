@@ -154,6 +154,46 @@ describe("project data health", () => {
     ]);
   });
 
+  it("reports a name made only of invisible characters as missing", () => {
+    // trim() keeps a zero-width space, so the record used to pass the required
+    // -field check and then render as a blank row with no warning attached.
+    const project = createProjectDocument({
+      students: [
+        { id: "zero-width", name: "\u200b", university: "浙江大学", city: "杭州市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project).missingRequired).toBe(1);
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({
+        id: "missing-field:zero-width",
+        studentName: "未命名学生",
+        detail: "缺少姓名",
+      }),
+    ]);
+  });
+
+  it("keeps warning about an unlocatable city behind an invisible province override", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "ghost-province", name: "林舟", university: "北京大学", city: "火星市", province: "\uFEFF", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ unresolved: 1, missingRequired: 0 });
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({
+        id: "unresolved-location:ghost-province",
+        kind: "unresolved-location",
+        detail: "无法定位城市：火星市",
+      }),
+    ]);
+  });
+
   it("flags a city-only row for its missing name and university without dropping it", () => {
     const project = createProjectDocument({
       students: [

@@ -169,6 +169,72 @@ describe("DeliveryWorkspace", () => {
     expect(container.textContent).not.toContain("最终像素尺寸");
   });
 
+  it("keeps the preview heading at trim size and notes the larger export when bleed is set", () => {
+    const bled = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    bled.canvas.printBleedMm = 3;
+    const container = renderWorkspace({ project: bled });
+
+    const preview = container.querySelector('section[aria-label="最终预览"]')!;
+    expect(preview.querySelector(".delivery-workspace__preview-heading")?.textContent).toContain("成品尺寸 1500 × 1000 px");
+    expect(preview.textContent).toContain("导出将向外扩出 3mm 出血");
+    // 舞台画布保持成品框，不随出血放大。
+    expect(preview.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 1500 1000");
+
+    // 出血为 0 时预览标题保持原样，也没有出血说明。
+    const plain = renderWorkspace();
+    const plainPreview = plain.querySelector('section[aria-label="最终预览"]')!;
+    expect(plainPreview.querySelector(".delivery-workspace__preview-heading")?.textContent).not.toContain("成品尺寸");
+    expect(plainPreview.querySelector(".delivery-workspace__preview-note")).toBeNull();
+  });
+
+  it("locates object-in-bleed print issues with severity in the accessible name", () => {
+    const onLocate = vi.fn();
+    const printIssues: LayoutHealthIssue[] = [
+      { id: "text-1", kind: "object-in-bleed", severity: "warning", detail: "text-1 落在出血区（裁切线之外），裁切后可能被切掉" },
+    ];
+    const container = renderWorkspace({ onLocate, printIssues });
+
+    const section = container.querySelector('section[aria-label="印刷检查"]')!;
+    const button = section.querySelector<HTMLButtonElement>('button[aria-label="定位警告：text-1 落在出血区（裁切线之外），裁切后可能被切掉"]');
+    expect(button).not.toBeNull();
+    flushSync(() => button?.click());
+    expect(onLocate).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "layout",
+      issue: expect.objectContaining({ id: "text-1", kind: "object-in-bleed" }),
+    }));
+  });
+
+  it("keeps export-resolution issues as real buttons marked aria-disabled with a signpost instead of locating", () => {
+    const onLocate = vi.fn();
+    const printPreflight: PrintPreflightResult = {
+      issues: [{
+        kind: "export-resolution",
+        target: "export",
+        detail: "PNG 1× 导出约 96dpi，低于 300dpi 印刷线；送印建议导出 SVG，由印前软件按纸张尺寸放大",
+        severity: "warning",
+      }],
+      exportDpi: 96,
+      requiredDpi: 96,
+      targetDpi: 300,
+      bleedMm: 3,
+      measuredRasters: 0,
+      unmeasured: [],
+      ready: false,
+    };
+    const container = renderWorkspace({ onLocate, printPreflight });
+
+    const section = container.querySelector('section[aria-label="印刷检查"]')!;
+    const button = Array.from(section.querySelectorAll<HTMLButtonElement>("li button"))
+      .find((candidate) => candidate.textContent?.includes("96dpi"))!;
+    // 仍是可聚焦的真按钮：不是无解释的 disabled，可访问名里保留严重级别并指路到导出设置。
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.getAttribute("aria-label")).toBe("警告：PNG 1× 导出约 96dpi，低于 300dpi 印刷线；送印建议导出 SVG，由印前软件按纸张尺寸放大，见导出设置");
+    expect(button.textContent).toContain("见导出设置");
+    flushSync(() => button.click());
+    expect(onLocate).not.toHaveBeenCalled();
+  });
+
   it("lists print preflight issues under 印刷检查 without repeating missing fonts", () => {
     const onLocate = vi.fn();
     const printPreflight: PrintPreflightResult = {

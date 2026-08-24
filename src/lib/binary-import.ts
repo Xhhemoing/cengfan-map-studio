@@ -243,6 +243,34 @@ const HTML_NAMED_ENTITIES: Record<string, string> = {
 
 const MAX_HTML_SPAN = 512;
 
+/**
+ * Attribute list of a start tag. A quoted value may hold a `>` — an online
+ * spreadsheet ships the cell value back as JSON in `data-sheets-value`, so a
+ * destination written "本科>硕士" ends up inside the attribute — and scanning
+ * to the first `>` would cut the tag in half and leak markup into the cell.
+ * The alternatives cannot match the same character, so the scan stays linear.
+ */
+const TAG_ATTRIBUTES = "(?:[^>\"']|\"[^\"]*\"|'[^']*')*";
+
+/** Tags that end whichever cell or row is currently open. */
+const TABLE_BOUNDARY = "(?:td|th|tr|tbody|thead|tfoot|table)";
+
+/**
+ * Hand-written table markup — the kind a school pastes onto its own site —
+ * routinely leaves `</td>` and `</tr>` out, which a browser fills in silently.
+ * A cell therefore runs to its closing tag *or* to the next table boundary,
+ * so an unclosed row still yields its cells instead of nothing at all.
+ */
+const HTML_ROW_PATTERN = new RegExp(
+  `<tr\\b${TAG_ATTRIBUTES}>([\\s\\S]*?)(?=</?tr\\b|</(?:tbody|thead|tfoot|table)\\b|$)`,
+  "gi",
+);
+
+const HTML_CELL_PATTERN = new RegExp(
+  `<(td|th)\\b(${TAG_ATTRIBUTES})>([\\s\\S]*?)(?=</?${TABLE_BOUNDARY}\\b|$)`,
+  "gi",
+);
+
 function decodeHtmlEntities(value: string): string {
   return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi, (match, entity: string) => {
     if (!entity.startsWith("#")) return HTML_NAMED_ENTITIES[entity.toLowerCase()] ?? match;
@@ -254,12 +282,16 @@ function decodeHtmlEntities(value: string): string {
   });
 }
 
+/** Same tolerance for the inline markup wrapping the text inside a cell. */
+const HTML_INNER_TAG_PATTERN = new RegExp(`</?[a-z][a-z0-9:-]*(?:\\s${TAG_ATTRIBUTES})?>`, "gi");
+
 /** Cell text: markup and comments out, entities in, whitespace collapsed. */
 function htmlCellText(cell: string): string {
   const text = cell
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, "")
     .replace(/<br\s*\/?>/gi, " ")
+    .replace(HTML_INNER_TAG_PATTERN, " ")
     .replace(/<[^>]*>/g, " ");
   return trimImportCell(decodeHtmlEntities(text).replace(/\s+/g, " "));
 }
@@ -281,7 +313,7 @@ export function parseHtmlTableRows(html: string): string[][] | null {
   const rows: string[][] = [];
   const carried = new Map<number, { value: string; remaining: number }>();
 
-  for (const rowMatch of source.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/gi)) {
+  for (const rowMatch of source.matchAll(HTML_ROW_PATTERN)) {
     const row: string[] = [];
     let column = 0;
     const consumeCarried = (index: number) => {
@@ -296,7 +328,7 @@ export function parseHtmlTableRows(html: string): string[][] | null {
     const takeCarried = () => {
       while (consumeCarried(column)) column += 1;
     };
-    for (const cellMatch of (rowMatch[1] ?? "").matchAll(/<(td|th)\b([^>]*)>([\s\S]*?)<\/\1\s*>/gi)) {
+    for (const cellMatch of (rowMatch[1] ?? "").matchAll(HTML_CELL_PATTERN)) {
       takeCarried();
       const value = htmlCellText(cellMatch[3] ?? "");
       const rowspan = readSpan(cellMatch[2] ?? "", "rowspan");

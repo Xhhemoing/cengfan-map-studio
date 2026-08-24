@@ -308,6 +308,45 @@ describe("pasted html tables", () => {
     expect(parsed.unparsed).toEqual([{ sourceLine: 4, rawLine: "合计\t合计\t2 人", reason: "汇总行" }]);
   });
 
+  it("carries a rowspan over a row that stops short of it", () => {
+    expect(parseHtmlTableRows(
+      '<table><tr><td rowspan="3">浙江省</td><td>苏禾</td><td>浙江大学</td></tr>'
+      + "<tr><td>陈宁</td></tr><tr><td>顾言</td><td>宁波大学</td></tr></table>",
+    )).toEqual([
+      ["浙江省", "苏禾", "浙江大学"],
+      ["浙江省", "陈宁"],
+      ["浙江省", "顾言", "宁波大学"],
+    ]);
+  });
+
+  it("reads a table whose closing cell and row tags the author left out", () => {
+    // A browser repairs this markup before showing it, so a table copied off a
+    // hand-written page reaches the clipboard looking exactly like this.
+    const result = parseHtmlTable(
+      "<table><tr><th>姓名<th>院校<th>城市<tr><td>林舟<td>北京大学<td>北京市"
+      + "<tr><td>苏禾<td>浙江大学<td>杭州市</table>",
+    );
+
+    expect(result.headerRowIndex).toBe(0);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
+  it("keeps a cell whose own attribute value contains an angle bracket", () => {
+    // An online spreadsheet ships the cell value back as JSON in an attribute,
+    // so scanning the start tag to the first ">" would leak markup into the cell.
+    expect(parseHtmlTableRows(
+      '<table><tr><td data-sheets-value=\'{"2":"姓名"}\'>姓名</td><td>去向</td><td>城市</td></tr>'
+      + '<tr><td>林舟</td><td data-sheets-value=\'{"2":"本科>硕士"}\'>本科&gt;硕士</td><td>北京市</td></tr></table>',
+    )).toEqual([
+      ["姓名", "去向", "城市"],
+      ["林舟", "本科>硕士", "北京市"],
+    ]);
+  });
+
   it("keeps empty cells so a sparse table stays aligned", () => {
     const result = parseHtmlTable(`
       <table>

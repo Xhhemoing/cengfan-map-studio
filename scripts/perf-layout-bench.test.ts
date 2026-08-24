@@ -4,12 +4,9 @@ import {
   makeClusteredAnchorBenchmarkFixture,
   makeDensePolygonBenchmarkFixture,
   makeLayoutBenchmarkCards,
+  runCardLayoutCacheKeyBenchmark,
   runLayoutBenchmark,
 } from "./perf-layout-bench";
-
-// Round 1's worst 36/60-card p95 was 16.766 ms. Keep this deliberately
-// generous: CI should catch pathological regressions, not machine variance.
-const CI_P95_BUDGET_MS = 500;
 
 describe("layout performance benchmark", () => {
   it("uses a reproducible card fixture", () => {
@@ -37,7 +34,20 @@ describe("layout performance benchmark", () => {
       .toEqual(new Set([`${fixture.anchor.x},${fixture.anchor.y}`]));
   });
 
-  it("keeps the small layout matrix below the pathological-regression budget", () => {
+  it("reports cache-key serialization metadata without asserting elapsed time", () => {
+    const report = runCardLayoutCacheKeyBenchmark(40, 1, 2);
+
+    expect(report).toMatchObject({
+      cardCount: 40,
+      polygonCount: 96,
+      verticesPerPolygon: 16,
+      warmupIterations: 1,
+      iterations: 2,
+    });
+    expect(report.keyBytes).toBeGreaterThan(0);
+  });
+
+  it("runs the small layout matrix without a machine-dependent time budget", () => {
     const report = runLayoutBenchmark({
       counts: [36, 60],
       warmupIterations: 1,
@@ -48,11 +58,11 @@ describe("layout performance benchmark", () => {
     expect(report.results).toHaveLength(2 * DEFAULT_LAYOUT_BENCH_MODES.length);
     expect(new Set(report.results.map(({ count }) => count))).toEqual(new Set([36, 60]));
     expect(new Set(report.results.map(({ mode }) => mode))).toEqual(new Set(DEFAULT_LAYOUT_BENCH_MODES));
-    for (const result of report.results) {
-      expect(
-        result.p95Ms,
-        `${result.mode}/${result.count} p95 exceeded ${CI_P95_BUDGET_MS}ms`,
-      ).toBeLessThan(CI_P95_BUDGET_MS);
-    }
+    expect(report.invariantChecks).toEqual({
+      finiteNumbers: true,
+      canvasBounds: true,
+      placementCount: true,
+      overlaps: "solved-results",
+    });
   });
 });

@@ -22,8 +22,7 @@ import { createCollaborationRouter } from "./collaboration-routes";
 import { handleRequestMethod } from "./route-methods";
 import {
   HTTP_ERROR_CODES,
-  InvalidJsonError,
-  RequestBodyTooLargeError,
+  RequestBodyError,
   apiSecurityHeaders,
   corsHeaders,
   createJsonSender,
@@ -327,12 +326,9 @@ export function createAiServer(options: AiServerOptions = {}) {
         error: { code: "NOT_FOUND", message: "资源不存在" },
       });
     } catch (error) {
-      if (error instanceof RequestBodyTooLargeError) {
-        (aiPath ? sendAi : send)(413, { error: { code: HTTP_ERROR_CODES.requestTooLarge, message: "请求体超过大小限制" } });
-        return;
-      }
-      if (error instanceof InvalidJsonError) {
-        (aiPath ? sendAi : send)(400, { error: { code: aiPath ? "AI_VALIDATION_ERROR" : HTTP_ERROR_CODES.invalidJson, message: error.message } });
+      if (error instanceof RequestBodyError) {
+        const code = aiPath && error.code === HTTP_ERROR_CODES.invalidJson ? "AI_VALIDATION_ERROR" : error.code;
+        (aiPath ? sendAi : send)(error.status, { error: { code, message: error.message } });
         return;
       }
       (aiPath ? sendAi : send)(500, {

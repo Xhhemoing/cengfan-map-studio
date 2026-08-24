@@ -273,6 +273,44 @@ describe("server request security", () => {
   });
 
   it.each([
+    ["/api/rooms", { clientId: "owner", displayName: "创建者", snapshot: {} }],
+    ["/api/ai/explain", { message: "解释布局", studentCount: 1 }],
+  ])("rejects a non-JSON media type on JSON route %s", async (path, input) => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify(input));
+
+    const response = await rawRequest(origin, path, "POST", body, {
+      "Content-Type": "text/plain",
+      "X-Request-Id": "unsupported-media",
+    });
+
+    expect(response.status).toBe(415);
+    expect(JSON.parse(response.body)).toMatchObject({
+      error: { code: "UNSUPPORTED_MEDIA_TYPE" },
+      requestId: "unsupported-media",
+    });
+  });
+
+  it("accepts structured JSON media types", async () => {
+    const server = createAiServer();
+    servers.push(server);
+    const origin = await startServer(server);
+    const body = Buffer.from(JSON.stringify({
+      clientId: "owner",
+      displayName: "创建者",
+      snapshot: {},
+    }));
+
+    const response = await rawRequest(origin, "/api/rooms", "POST", body, {
+      "Content-Type": "application/vnd.cengfan+json; charset=utf-8",
+    });
+
+    expect(response.status).toBe(201);
+  });
+
+  it.each([
     ["/api/rooms", "INVALID_JSON"],
     ["/api/ai/explain", "AI_VALIDATION_ERROR"],
   ])("rejects malformed UTF-8 JSON on %s", async (path, errorCode) => {

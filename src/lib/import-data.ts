@@ -63,14 +63,59 @@ export function parseLocationScopeValue(value: string | undefined): "internation
   return INTERNATIONAL_TOKENS.some((token) => normalized.includes(token)) ? "international" : undefined;
 }
 
-function splitLines(text: string): string[] {
-  return text
-    .replace(/\uFEFF/g, "")
-    .split(/\r?\n/)
+/** One physical line of the source, with the 1-based number it came from. */
+interface SourceLine {
+  text: string;
+  sourceLine: number;
+}
+
+/**
+ * Blank lines are dropped but never renumber the rest: an unparsed row is
+ * reported as "第 N 行", and N has to point at the line the user can see.
+ */
+function splitLines(text: string): SourceLine[] {
+  const physical = text.replace(/\uFEFF/g, "").split(/\r?\n/);
+  return joinQuotedLines(physical)
     // A leading tab is an empty leading column: trimming it would shift every
     // later cell of a sparse spreadsheet row, so only spaces are stripped.
-    .map((line) => line.replace(/^[^\S\t]+|\s+$/g, ""))
-    .filter((line) => line.length > 0);
+    .map((line) => ({ ...line, text: line.text.replace(/^[^\S\t]+|\s+$/g, "") }))
+    .filter((line) => line.text.length > 0);
+}
+
+/** A quoted cell may hold this many extra lines before the join is abandoned. */
+const MAX_QUOTED_LINE_JOIN = 32;
+
+/**
+ * RFC4180 lets a quoted cell hold a line break, and a spreadsheet exports a
+ * two-line remark that way. Physical lines that leave a quote open are rejoined
+ * into the one record they belong to before anything is split, otherwise the
+ * tail of the record parses as a student of its own.
+ *
+ * The join is only kept when the quote actually closes within a few lines, so a
+ * single stray quote cannot swallow the rest of the paste.
+ */
+function joinQuotedLines(lines: string[]): SourceLine[] {
+  // The line a quoted cell opens on may carry no delimiter of its own (the
+  // break can fall right after the opening quote), so the delimiter of the
+  // paste as a whole decides.
+  const shared = lines.reduce<string | null>((found, line) => found ?? detectDelimiter(line), null);
+  const joined: SourceLine[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const first = lines[index]!;
+    const delimiter = detectDelimiter(first) ?? shared;
+    let record = first;
+    let last = index;
+    while (delimiter && last - index < MAX_QUOTED_LINE_JOIN && endsInsideQuotedCell(record, delimiter)) {
+      last += 1;
+      if (last >= lines.length) break;
+      // The break belongs inside the cell; a space keeps the record on one line.
+      record += ` ${lines[last]}`;
+    }
+    const closed = delimiter !== null && last < lines.length && !endsInsideQuotedCell(record, delimiter);
+    joined.push({ text: closed ? record : first, sourceLine: index + 1 });
+    if (closed) index = last;
+  }
+  return joined;
 }
 
 function detectDelimiter(line: string): string | null {
@@ -81,12 +126,13 @@ function detectDelimiter(line: string): string | null {
   return null;
 }
 
-/**
- * RFC4180-style split: a delimiter inside double quotes belongs to the cell,
- * so `"李,四",北京大学,北京` keeps the comma in the student's name. Doubled
- * quotes inside a quoted cell are literal quotes.
- */
-export function splitDelimitedLine(line: string, delimiter: string): string[] {
+interface DelimitedScan {
+  cells: string[];
+  /** The line ended inside a quoted cell, so the record continues below. */
+  open: boolean;
+}
+
+function scanDelimitedLine(line: string, delimiter: string): DelimitedScan {
   const cells: string[] = [];
   let current = "";
   let quoted = false;
@@ -116,7 +162,20 @@ export function splitDelimitedLine(line: string, delimiter: string): string[] {
     current += char;
   }
   cells.push(current);
-  return cells.map(trimImportCell);
+  return { cells, open: quoted };
+}
+
+function endsInsideQuotedCell(line: string, delimiter: string): boolean {
+  return scanDelimitedLine(line, delimiter).open;
+}
+
+/**
+ * RFC4180-style split: a delimiter inside double quotes belongs to the cell,
+ * so `"李,四",北京大学,北京` keeps the comma in the student's name. Doubled
+ * quotes inside a quoted cell are literal quotes.
+ */
+export function splitDelimitedLine(line: string, delimiter: string): string[] {
+  return scanDelimitedLine(line, delimiter).cells.map(trimImportCell);
 }
 
 /** Delimiter-aware split that keeps empty cells so column indexes stay aligned. */
@@ -235,10 +294,10 @@ const MIN_LATE_HEADER_EXACT_CELLS = 2;
  * at least two of them exactly: pasted blocks often open with a title or a
  * "更新时间" line, but a data row must never be mistaken for a header.
  */
-function detectTextHeader(lines: string[]): TextHeader | null {
+function detectTextHeader(lines: SourceLine[]): TextHeader | null {
   for (const [lineIndex, line] of lines.slice(0, TEXT_HEADER_SEARCH_DEPTH).entries()) {
-    const delimiter = detectDelimiter(line);
-    const cells = splitCells(line, delimiter);
+    const delimiter = detectDelimiter(line.text);
+    const cells = splitCells(line.text, delimiter);
     if (cells.filter(Boolean).length < 2) continue;
     const indexes = detectHeaderColumns(cells);
     const header = { lineIndex, delimiter, cells, indexes };
@@ -263,26 +322,26 @@ export function parseStudentText(text: string): TextImportResult {
   const header = detectTextHeader(lines);
   const headerIsComplete = header !== null && missingRequiredColumns(header.indexes).length === 0;
 
-  lines.forEach((line, index) => {
+  lines.forEach(({ text, sourceLine }, index) => {
     if (header && index === header.lineIndex) return;
     // Titles and notes sitting above the header describe the sheet, not a
     // student: parsing them positionally would invent a record, so they are
     // reported as skipped instead.
     if (header && index < header.lineIndex) {
-      unparsed.push({ sourceLine: index + 1, rawLine: line, reason: "表头之前的内容" });
+      unparsed.push({ sourceLine, rawLine: text, reason: "表头之前的内容" });
       return;
     }
     let missingReason: string | null = null;
 
     if (headerIsComplete) {
-      const cells = splitCells(line, header!.delimiter);
+      const cells = splitCells(text, header!.delimiter);
       // Two exports stacked together repeat the header; it is not a student.
       if (rowRestatesHeader(cells, header!.indexes, header!.cells)) return;
       if (isSummaryRow(cells, header!.indexes)) {
-        unparsed.push({ sourceLine: index + 1, rawLine: line, reason: "汇总行" });
+        unparsed.push({ sourceLine, rawLine: text, reason: "汇总行" });
         return;
       }
-      const mapped = candidateFromColumns(cells, header!.indexes, index + 1, line);
+      const mapped = candidateFromColumns(cells, header!.indexes, sourceLine, text);
       if (mapped) {
         candidates.push(mapped);
         return;
@@ -292,22 +351,22 @@ export function parseStudentText(text: string): TextImportResult {
       missingReason = describeMissingCells(missingRequiredCells(cells, header!.indexes));
     }
 
-    const labeledCandidate = parseLabeledCandidate(line, index + 1);
+    const labeledCandidate = parseLabeledCandidate(text, sourceLine);
     if (labeledCandidate) {
       candidates.push(labeledCandidate);
       return;
     }
 
-    const parts = splitParts(line, detectDelimiter(line));
-    const candidate = toCandidate(parts, index + 1, line);
+    const parts = splitParts(text, detectDelimiter(text));
+    const candidate = toCandidate(parts, sourceLine, text);
     if (candidate) {
       candidates.push(candidate);
       return;
     }
 
     unparsed.push({
-      sourceLine: index + 1,
-      rawLine: line,
+      sourceLine,
+      rawLine: text,
       reason: missingReason ?? "无法识别学生名称、录取院校和城市",
     });
   });

@@ -75,6 +75,25 @@ describe("student data", () => {
     });
   });
 
+  it("ignores a province override that only holds invisible characters", () => {
+    // A zero-width cell survives trim() and would otherwise mark an unlocatable
+    // city as resolved, silently retiring the 城市未匹配 warning.
+    const student: Student = {
+      id: "student-1",
+      name: "林舟",
+      university: "北京大学",
+      city: "火星市",
+      province: "\u200b\uFEFF",
+      visibility: true,
+    };
+
+    expect(resolveStudentLocation(student)).toMatchObject({
+      city: "火星市",
+      province: "",
+      status: "unresolved",
+    });
+  });
+
   it("builds student records and flags unresolved cities and duplicates", () => {
     const inputs: StudentInput[] = [
       { name: "林舟", university: "北京大学", city: "北京" },

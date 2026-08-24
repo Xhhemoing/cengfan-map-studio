@@ -215,12 +215,25 @@ function resolveObstacles(
   return { ...placement, x, y };
 }
 
+/**
+ * One packed card together with the input it came from.
+ *
+ * Packing sorts along the side axis, so position `i` of the result is *not*
+ * card `i` of the assignment. Callers that have to map a packed card back to
+ * its input — {@link packSides}, when it overflows a rejected card to a
+ * neighbour side — must follow this pairing rather than the index.
+ */
+export interface SidePlacement {
+  card: CardLayoutInput;
+  placement: CardPlacement;
+}
+
 /** Pack one side's cards along its primary axis, then push them clear. */
-export function placeSide(
+export function packSideCards(
   assignment: SideAssignment,
   space: LayoutSpace,
   placed: PlacementIndex,
-): CardPlacement[] {
+): SidePlacement[] {
   const { side, cards } = assignment;
   if (cards.length === 0) return [];
   const horizontal = side === "left" || side === "right";
@@ -238,7 +251,7 @@ export function placeSide(
       y: horizontal ? positions[index]! : normal,
       side,
     };
-    return resolveObstacles(placement, space, placed);
+    return { card, placement: resolveObstacles(placement, space, placed) };
   });
 }
 
@@ -277,14 +290,15 @@ export function packSides(
     for (const side of SIDE_PACK_ORDER) {
       const assignment = pending.find((a) => a.side === side);
       if (!assignment || assignment.cards.length === 0) continue;
-      const packed = placeSide(assignment, space, placed);
+      const packed = packSideCards(assignment, space, placed);
       const accepted: CardPlacement[] = [];
       const rejected: CardLayoutInput[] = [];
       // Accept packed cards in order while they stay valid; once one fails,
-      // reject the rest so the side stays a contiguous block.
+      // reject the rest so the side stays a contiguous block. The rejected
+      // input is the one paired with the packed card, not the assignment entry
+      // at the same index: packing runs in side-axis order.
       let blockBroken = false;
-      for (let index = 0; index < packed.length; index += 1) {
-        const placement = packed[index]!;
+      for (const { card, placement } of packed) {
         const valid = space.inside(placement)
           && !space.blocked(placement)
           && !placed.hits(placement, space.gap)
@@ -292,7 +306,7 @@ export function packSides(
         if (valid && !blockBroken) accepted.push(placement);
         else {
           blockBroken = true;
-          rejected.push(assignment.cards[index]!);
+          rejected.push(card);
         }
       }
       for (const placement of accepted) placed.add(placement);

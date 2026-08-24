@@ -83,17 +83,21 @@ export function resolveStudentLocation(student: Student): {
   province: string;
   status: "resolved" | "unresolved";
 } {
-  if (student.province?.trim()) {
-    const province = resolveProvinceName(student.province);
+  // A province cell holding only zero-width characters is not an override: read
+  // like a filled-in one it would mark an unlocatable city as resolved and hide
+  // the 城市未匹配 warning the roster should raise.
+  const override = trimImportCell(student.province);
+  if (override) {
+    const province = resolveProvinceName(override);
     return {
-      city: student.city,
+      city: trimImportCell(student.city),
       // 手动指定省份视为已定位：已知别名归一化为标准省名，自定义省份保留原名称，
       // 使其可以正常进入省份卡片等数据视图，而不是一直标记为未匹配。
-      province: province || student.province.trim(),
+      province: province || override,
       status: "resolved",
     };
   }
-  return resolveCityLocation(student.city);
+  return resolveCityLocation(trimImportCell(student.city));
 }
 
 function duplicateKey(name: string, university: string): string {

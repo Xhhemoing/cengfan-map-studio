@@ -2,6 +2,7 @@ import type { ProjectDocument } from "./project-document";
 import type { Student } from "./project-data";
 import { resolveStudentLocation } from "./student-data";
 import { duplicateStudentIds } from "./data-duplicate";
+import { trimImportCell } from "./import-data";
 
 export interface DataHealthSummary {
   total: number;
@@ -54,11 +55,17 @@ export function withDataIssueId(issue: DataIssue): ResolvedDataIssue {
   return { ...issue, id: resolveDataIssueId(issue) };
 }
 
+/**
+ * Emptiness is judged with {@link trimImportCell}, the same rule the import
+ * pipeline uses: a cell holding only a BOM or a zero-width space looks filled
+ * in to `trim()` but renders as nothing, so it has to count as missing here too
+ * — otherwise the record shows up as a nameless row with no warning at all.
+ */
 function missingFields(student: Student): string[] {
   const fields: string[] = [];
-  if (!(student.name ?? "").trim()) fields.push("姓名");
-  if (!(student.university ?? "").trim()) fields.push("院校");
-  if (!(student.city ?? "").trim()) fields.push("城市");
+  if (!trimImportCell(student.name)) fields.push("姓名");
+  if (!trimImportCell(student.university)) fields.push("院校");
+  if (!trimImportCell(student.city)) fields.push("城市");
   return fields;
 }
 
@@ -71,7 +78,7 @@ function createIssue(
   return {
     id: dataIssueId(kind, student.id),
     studentId: student.id,
-    studentName: (student.name ?? "").trim() || "未命名学生",
+    studentName: trimImportCell(student.name) || "未命名学生",
     kind,
     detail,
     severity,
@@ -126,13 +133,14 @@ export function listDataIssues(project: ProjectDocument): ResolvedDataIssue[] {
       missing.push(createIssue(student, "missing-field", `缺少${fields.join("、")}`, "warning"));
     }
     if (student.locationScope !== "international" && resolveStudentLocation(student).status === "unresolved") {
-      unresolved.push(createIssue(student, "unresolved-location", `无法定位城市：${(student.city ?? "").trim() || "未填写"}`, "warning"));
+      unresolved.push(createIssue(student, "unresolved-location", `无法定位城市：${trimImportCell(student.city) || "未填写"}`, "warning"));
     }
-    if (student.province?.trim()) {
-      manualProvince.push(createIssue(student, "manual-province", `使用省份覆盖：${student.province.trim()}`, "info"));
+    const province = trimImportCell(student.province);
+    if (province) {
+      manualProvince.push(createIssue(student, "manual-province", `使用省份覆盖：${province}`, "info"));
     }
     if (student.locationScope === "international") {
-      international.push(createIssue(student, "international", `海外去向：${(student.city ?? "").trim() || "未填写"}`, "info"));
+      international.push(createIssue(student, "international", `海外去向：${trimImportCell(student.city) || "未填写"}`, "info"));
     }
     if (duplicateIds.has(student.id)) {
       duplicate.push(createIssue(student, "duplicate", "姓名、院校、城市和去向类型与其他记录一致", "warning"));

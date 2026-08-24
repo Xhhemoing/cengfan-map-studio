@@ -61,6 +61,11 @@ function issueSeverityLabel(item: DeliveryIssue): string {
   return "提示";
 }
 
+/** target 为 "export" 的印前问题（如 export-resolution）指向导出参数本身，画布上没有可跳转的对象。 */
+function issueLocatable(item: DeliveryIssue): boolean {
+  return !(item.kind === "print" && item.issue.target === "export");
+}
+
 function CheckSection({
   title,
   issues,
@@ -83,17 +88,24 @@ function CheckSection({
       </header>
       {issues.length > 0 && (
         <ul className="delivery-workspace__issue-list" style={{ listStyle: "none", padding: 0, marginBottom: 0 }} aria-label={`${title}问题列表`}>
-          {issues.map((item, index) => (
-            <li key={issueKey(item, index)} style={{ display: "grid" }}>
-              <button
-                type="button"
-                aria-label={`定位${issueSeverityLabel(item)}：${item.issue.detail}`}
-                onClick={() => onLocate(item)}
-              >
-                <span>{item.issue.detail}</span><small aria-hidden="true">定位</small>
-              </button>
-            </li>
-          ))}
+          {issues.map((item, index) => {
+            const locatable = issueLocatable(item);
+            return (
+              <li key={issueKey(item, index)} style={{ display: "grid" }}>
+                {/* 不可定位的问题保留按钮语义并标记 aria-disabled，动作文字改成指路提示，而非无解释地 disabled。 */}
+                <button
+                  type="button"
+                  aria-label={locatable
+                    ? `定位${issueSeverityLabel(item)}：${item.issue.detail}`
+                    : `${issueSeverityLabel(item)}：${item.issue.detail}，见导出设置`}
+                  aria-disabled={locatable ? undefined : true}
+                  onClick={() => { if (locatable) onLocate(item); }}
+                >
+                  <span>{item.issue.detail}</span><small aria-hidden="true">{locatable ? "定位" : "见导出设置"}</small>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
       {children}
@@ -214,11 +226,21 @@ export function DeliveryWorkspace({
   userFonts = [],
   posterRef,
 }: DeliveryWorkspaceProps) {
+  const bleedMm = normalizePrintBleedMm(project.canvas.printBleedMm);
   return (
     <main className="delivery-workspace" aria-label="最终导出">
       <div className="delivery-workspace__body">
         <section className="delivery-workspace__preview" aria-label="最终预览">
-          <div className="delivery-workspace__preview-heading"><strong>最终预览</strong><span>{project.canvas.width} × {project.canvas.height} px</span></div>
+          <div className="delivery-workspace__preview-heading">
+            <strong>最终预览</strong>
+            <span>{bleedMm > 0 ? `成品尺寸 ${project.canvas.width} × ${project.canvas.height} px` : `${project.canvas.width} × ${project.canvas.height} px`}</span>
+          </div>
+          {bleedMm > 0 && (
+            /* 预览画布始终按成品（trim）显示，出血只在导出时向外扩；不加说明会让「导出比预览大」像 bug。 */
+            <p className="delivery-workspace__preview-note" style={{ margin: "-6px 0 10px", color: "var(--editor-ink-muted, #536970)" }}>
+              <small>预览为成品（裁切后）画面；导出将向外扩出 {bleedMm}mm 出血并绘制裁切标记，实际导出尺寸更大，精确像素见右侧「导出设置」。</small>
+            </p>
+          )}
           <div className="delivery-workspace__canvas"><PosterCanvas project={project} posterRef={posterRef} exportMode userFonts={userFonts} /></div>
         </section>
       </div>

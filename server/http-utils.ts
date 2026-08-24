@@ -3,19 +3,36 @@ import type http from "node:http";
 export const HTTP_ERROR_CODES = {
   invalidJson: "INVALID_JSON",
   requestTooLarge: "REQUEST_TOO_LARGE",
+  unsupportedMediaType: "UNSUPPORTED_MEDIA_TYPE",
   validation: "VALIDATION_ERROR",
   internal: "INTERNAL_ERROR",
 } as const;
 
-export class RequestBodyTooLargeError extends Error {
-  constructor() {
-    super("请求体过大");
+export class RequestBodyError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
   }
 }
 
-export class InvalidJsonError extends Error {
+export class RequestBodyTooLargeError extends RequestBodyError {
   constructor() {
-    super("请求 JSON 格式无效");
+    super(413, HTTP_ERROR_CODES.requestTooLarge, "请求体超过大小限制");
+  }
+}
+
+export class InvalidJsonError extends RequestBodyError {
+  constructor() {
+    super(400, HTTP_ERROR_CODES.invalidJson, "请求 JSON 格式无效");
+  }
+}
+
+export class UnsupportedMediaTypeError extends RequestBodyError {
+  constructor() {
+    super(415, HTTP_ERROR_CODES.unsupportedMediaType, "请求体必须使用 application/json 类型");
   }
 }
 
@@ -89,7 +106,16 @@ export function createJsonSender(
   return (status, body) => sendJson(request, response, status, body, corsOrigins, requestId);
 }
 
+function hasJsonContentType(request: http.IncomingMessage): boolean {
+  const header = request.headers["content-type"];
+  const value = Array.isArray(header) ? header[0] : header;
+  const mediaType = value?.split(";", 1)[0]?.trim().toLowerCase();
+  return mediaType === "application/json"
+    || Boolean(mediaType && /^application\/[a-z0-9!#$&^_.+-]+\+json$/.test(mediaType));
+}
+
 export async function readJson(request: http.IncomingMessage, maxBytes: number): Promise<unknown> {
+  if (!hasJsonContentType(request)) throw new UnsupportedMediaTypeError();
   const chunks: Buffer[] = [];
   let totalBytes = 0;
   for await (const chunk of request) {
