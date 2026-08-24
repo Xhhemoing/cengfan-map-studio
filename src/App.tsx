@@ -46,21 +46,12 @@ import {
   type StudentPatch,
 } from "./lib/student-transactions";
 import { createId } from "./lib/ids";
-import { replaceAssetElementSourceTransaction } from "./lib/canvas-edit-transactions";
 import {
   createEditorCanvasActions,
   type CardPositions,
 } from "./lib/editor-canvas-actions";
-import {
-  addAssetToLibrary,
-  buildAssetUsageLabels,
-  describeAssetRemoval,
-  describeFontRemoval,
-  EMPTY_ASSET_MESSAGE,
-  mergeImportedResourcePack,
-  prepareResourcePackExport,
-  replaceAssetInLibrary,
-} from "./lib/resource-library";
+import { createEditorLibraryActions } from "./lib/editor-library-actions";
+import { buildAssetUsageLabels } from "./lib/resource-library";
 import {
   resolveDeliveryIssueNavigation,
   resolveLayoutIssueSelection,
@@ -127,11 +118,7 @@ import {
   type ProjectDocument,
   type ProjectTransaction,
 } from "./lib/project-document";
-import {
-  removeUserAsset,
-  removeUserFont,
-  STYLE_LAYER_TARGETS,
-} from "./lib/catalog-usage";
+import { STYLE_LAYER_TARGETS } from "./lib/catalog-usage";
 
 import { createSystemTemplate } from "./lib/template-document";
 import {
@@ -153,7 +140,6 @@ import {
   loadUserAssets,
   type UserAsset,
 } from "./lib/assets";
-import { downloadResourcePack } from "./lib/resource-pack";
 import {
   createProjectPackageEnvelope,
   restoreProjectPackage,
@@ -718,65 +704,29 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setStatusMessage(describeForceSaveOutcome(workspaceSync.getState().status, projectRecordSaveErrorRef.current));
   };
 
-  const addUserAsset = (asset: UserAsset) => {
-    if (!asset?.src) {
-      setStatusMessage(EMPTY_ASSET_MESSAGE);
-      return;
-    }
-    setUserAssets((current) => {
-      const outcome = addAssetToLibrary(current, asset);
-      setStatusMessage(outcome.message);
-      return outcome.assets;
-    });
-  };
-
-  const replaceUserAsset = (assetId: string, replacement: UserAsset) => {
-    setUserAssets((current) => replaceAssetInLibrary(current, assetId, replacement));
-    commitProject(applyTransaction(project, replaceAssetElementSourceTransaction(assetId, replacement)));
-    setStatusMessage(`已更新素材：${replacement.label}`);
-  };
-
-  const deleteUserAsset = (assetId: string) => {
-    const message = describeAssetRemoval(userAssets, assetId);
-    setUserAssets((current) => removeUserAsset(current, assetId));
-    setStatusMessage(message);
-  };
-
-  const deleteUserFont = (fontId: string) => {
-    const message = describeFontRemoval(userFonts, fontId);
-    setUserFonts((current) => removeUserFont(current, fontId));
-    setStatusMessage(message);
-  };
+  const {
+    addUserAsset,
+    deleteUserAsset,
+    deleteUserFont,
+    exportResourcePack,
+    importResourcePack,
+    replaceUserAsset,
+    uploadUserFont,
+  } = createEditorLibraryActions({
+    project,
+    userAssets,
+    userFonts,
+    setUserAssets,
+    setUserFonts,
+    setStatusMessage,
+    commitProject,
+  });
 
   const assetUsageById = useMemo(() => buildAssetUsageLabels(project, userAssets), [project, userAssets]);
 
   const selectStyleLayer = (target: (typeof STYLE_LAYER_TARGETS)[number]) => {
     setSelection(styleLayerSelection(target));
   };
-
-  const exportResourcePack = () => {
-    const outcome = prepareResourcePackExport({ assets: userAssets, fonts: userFonts });
-    if (outcome.pack) downloadResourcePack(outcome.pack);
-    setStatusMessage(outcome.message);
-  };
-
-  const importResourcePack = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const outcome = mergeImportedResourcePack({
-        text: String(reader.result || ""),
-        existingAssets: userAssets,
-        existingFonts: userFonts,
-      });
-      if (outcome.merged) {
-        setUserAssets(outcome.merged.assets);
-        setUserFonts(outcome.merged.fonts);
-      }
-      setStatusMessage(outcome.message);
-    };
-    reader.readAsText(file);
-  };
-
 
   const handleSceneSelect = (next: SceneSelection) => {
     setSelection(next);
@@ -1161,10 +1111,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onSetStudentsVisibility={dataWorkspaceProps.onSetStudentsVisibility}
         provinces={provinceNames}
         onApplyFont={applyFont}
-        onUploadFont={(font) => {
-          setUserFonts((current) => [...current, font]);
-          setStatusMessage(`已上传字体：${font.label}`);
-        }}
+        onUploadFont={uploadUserFont}
         onDeleteUserFont={deleteUserFont}
         workflowProgress={workflowProgress}
         workflowActiveStep={activeWorkflowStep}
@@ -1354,10 +1301,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
               onPatch={patchScene}
               onReset={resetSceneTarget}
               onApplyFont={applyFont}
-              onUploadFont={(font) => {
-                setUserFonts((current) => [...current, font]);
-                setStatusMessage(`已上传字体：${font.label}`);
-              }}
+              onUploadFont={uploadUserFont}
               onDeleteUserFont={deleteUserFont}
             />
           ),
@@ -1385,10 +1329,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             selectedStudentId={selectedStudentId}
             onSelectStudent={setSelectedStudentId}
             onApplyFont={applyFont}
-            onUploadFont={(font) => {
-              setUserFonts((current) => [...current, font]);
-              setStatusMessage(`已上传字体：${font.label}`);
-            }}
+            onUploadFont={uploadUserFont}
             onDeleteUserFont={deleteUserFont}
             onMoveText={moveText}
             onMoveAsset={moveAsset}
@@ -1808,10 +1749,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
             provinces={provinceNames}
             onOpenGlobalSettings={setGlobalSettingsSection}
             onApplyFont={applyFont}
-            onUploadFont={(font) => {
-              setUserFonts((current) => [...current, font]);
-              setStatusMessage(`已上传字体：${font.label}`);
-            }}
+            onUploadFont={uploadUserFont}
             onDeleteUserFont={deleteUserFont}
           />
           <details className="project-summary">
