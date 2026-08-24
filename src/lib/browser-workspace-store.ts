@@ -8,6 +8,26 @@ const PROJECT_STORE_NAME = "projects";
 const WORKSPACE_ID = "current";
 const MIRROR_KEY = "cengfan-map-studio:workspace-mirror";
 
+export interface WorkspaceWriteOptions {
+  /** 上次读到的 exportedAt。传入则以它做 CAS，不传保持后写覆盖（LWW）。 */
+  expectedExportedAt?: string;
+}
+
+/** CAS 失败：工作区已被其他标签页改写，调用方不应继续覆盖。 */
+export class WorkspaceStoreConflictError extends Error {
+  readonly scope: "durable" | "mirror";
+  readonly expectedExportedAt: string;
+  readonly storedExportedAt: string | null;
+
+  constructor(scope: "durable" | "mirror", expectedExportedAt: string, storedExportedAt: string | null) {
+    super("工作区已被其他标签页修改");
+    this.name = "WorkspaceStoreConflictError";
+    this.scope = scope;
+    this.expectedExportedAt = expectedExportedAt;
+    this.storedExportedAt = storedExportedAt;
+  }
+}
+
 export interface SyncWorkspaceStore {
   get(): string | null;
   set(value: string): void;
@@ -15,7 +35,7 @@ export interface SyncWorkspaceStore {
 
 export interface AsyncWorkspaceStore {
   get(): Promise<ProjectPackage | null>;
-  set(value: ProjectPackage): Promise<void>;
+  set(value: ProjectPackage, options?: WorkspaceWriteOptions): Promise<void>;
 }
 
 export interface BrowserWorkspaceStores {
@@ -25,7 +45,8 @@ export interface BrowserWorkspaceStores {
 
 export interface BrowserWorkspaceSaveResult {
   durable: "saved" | "failed";
-  mirror: "saved" | "failed";
+  /** skipped：镜像里已有更新的快照，本次不覆盖它。 */
+  mirror: "saved" | "failed" | "skipped";
 }
 
 function parsePackage(value: unknown): ProjectPackage | null {
@@ -37,8 +58,30 @@ function parsePackage(value: unknown): ProjectPackage | null {
 }
 
 function packageTime(pack: ProjectPackage): number {
-  const time = Date.parse(pack.exportedAt);
+  return timestampOf(pack.exportedAt);
+}
+
+function timestampOf(exportedAt: string): number {
+  const time = Date.parse(exportedAt);
   return Number.isFinite(time) ? time : 0;
+}
+
+function readExportedAt(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const exportedAt = (value as Record<string, unknown>).exportedAt;
+  return typeof exportedAt === "string" ? exportedAt : null;
+}
+
+/** 工作区不存在（首存）视为通过；只有已存在且 exportedAt 不同才算冲突。 */
+function conflictFor(
+  scope: "durable" | "mirror",
+  expectedExportedAt: string | undefined,
+  stored: unknown,
+): WorkspaceStoreConflictError | null {
+  if (expectedExportedAt === undefined || stored === undefined || stored === null) return null;
+  const storedExportedAt = readExportedAt(stored);
+  if (storedExportedAt === null || storedExportedAt === expectedExportedAt) return null;
+  return new WorkspaceStoreConflictError(scope, expectedExportedAt, storedExportedAt);
 }
 
 export function createLocalStorageMirror(storage: Storage = localStorage): SyncWorkspaceStore {
@@ -108,15 +151,32 @@ export function createIndexedDbWorkspaceStore(factory: IDBFactory = indexedDB): 
         database.close();
       }
     },
-    async set(value) {
+    async set(value, options) {
       const database = await openWorkspaceDatabase(factory);
+      const expectedExportedAt = options?.expectedExportedAt;
       try {
         await new Promise<void>((resolve, reject) => {
           const transaction = database.transaction(STORE_NAME, "readwrite");
-          transaction.objectStore(STORE_NAME).put(structuredClone(value), WORKSPACE_ID);
+          const store = transaction.objectStore(STORE_NAME);
+          let conflict: WorkspaceStoreConflictError | null = null;
+          const fail = () => reject(conflict ?? transaction.error ?? new Error("IndexedDB 写入失败"));
+          if (expectedExportedAt === undefined) {
+            store.put(structuredClone(value), WORKSPACE_ID);
+          } else {
+            // 读改写必须在同一个 readwrite 事务里完成，否则两个标签页仍可能交错。
+            const existing = store.get(WORKSPACE_ID);
+            existing.onsuccess = () => {
+              conflict = conflictFor("durable", expectedExportedAt, existing.result);
+              if (conflict) {
+                transaction.abort();
+                return;
+              }
+              store.put(structuredClone(value), WORKSPACE_ID);
+            };
+          }
           transaction.oncomplete = () => resolve();
-          transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB 写入失败"));
-          transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB 写入中止"));
+          transaction.onerror = fail;
+          transaction.onabort = fail;
         });
       } finally {
         database.close();
@@ -149,21 +209,44 @@ export function loadBrowserWorkspaceMirror(
   }
 }
 
+/**
+ * 写入工作区快照。
+ * 传入 `expectedExportedAt` 时按 CAS 语义写入：durable 在同一事务内读-比-写，
+ * 镜像里若已有比 expected 更新的快照（另一标签页刚保存过）则先于任何写入抛冲突。
+ * 省略 expected 时保持旧的后写覆盖（LWW），只是镜像仍不会被更旧的包盖掉。
+ */
 export async function saveBrowserWorkspaceSnapshot(
   pack: ProjectPackage,
   stores: BrowserWorkspaceStores = createBrowserWorkspaceStores(),
+  options: WorkspaceWriteOptions = {},
 ): Promise<BrowserWorkspaceSaveResult> {
-  let mirror: BrowserWorkspaceSaveResult["mirror"] = "saved";
+  const { expectedExportedAt } = options;
+  const storedMirror = loadBrowserWorkspaceMirror(stores.mirror);
+  // 镜像落后于 expected 属于正常降级（上次镜像写失败），不算冲突；只有更新的镜像才代表别的标签页抢先写过。
+  if (
+    expectedExportedAt !== undefined &&
+    storedMirror &&
+    packageTime(storedMirror) > timestampOf(expectedExportedAt)
+  ) {
+    throw new WorkspaceStoreConflictError("mirror", expectedExportedAt, storedMirror.exportedAt);
+  }
+
   let durable: BrowserWorkspaceSaveResult["durable"] = "saved";
+  try {
+    await stores.durable.set(pack, { expectedExportedAt });
+  } catch (error) {
+    if (error instanceof WorkspaceStoreConflictError) throw error;
+    durable = "failed";
+  }
+
+  if (storedMirror && packageTime(storedMirror) > packageTime(pack)) {
+    return { durable, mirror: "skipped" };
+  }
+  let mirror: BrowserWorkspaceSaveResult["mirror"] = "saved";
   try {
     stores.mirror.set(JSON.stringify(pack));
   } catch {
     mirror = "failed";
-  }
-  try {
-    await stores.durable.set(pack);
-  } catch {
-    durable = "failed";
   }
   return { durable, mirror };
 }
