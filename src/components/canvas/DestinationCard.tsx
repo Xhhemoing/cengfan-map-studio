@@ -302,7 +302,10 @@ export const DestinationCard = memo(function DestinationCard({
             top: titleTop,
             index,
             fontSize: flowTitleFontSize,
-            lineHeight: flowTitleBlock?.lineHeight ?? lineHeightMultiplier,
+            // The document line height, not the flow block's own: the solver charged the
+            // wrapped title lines to `headerExtra` at this multiplier, and a second line
+            // stepping any further would drop out of the header band it reserved.
+            lineHeight: lineHeightMultiplier,
           })}
           textAnchor={titlePaint.textAnchor}
           fontWeight={titlePaint.fontWeight}

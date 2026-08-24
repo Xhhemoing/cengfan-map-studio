@@ -41,7 +41,7 @@ function textOf(lines: Array<Array<{ text: string }>>): string[] {
   return lines.map((line) => line.map((fragment) => fragment.text).join(""));
 }
 
-/** The row step `PosterCanvas` still inlines into `cardStyle`, i.e. the one cards paint with. */
+/** The row step `cardStyle` carries to the renderer, spelled out rather than solved. */
 function canvasRowHeight(options: PreparedCardContentOptions): number {
   return Math.max(
     options.compactLayout ? 18 : 20,
@@ -70,6 +70,33 @@ describe("prepared card metrics", () => {
 
     const withTexture = computePreparedCardMetrics(options({ showProvinceTexture: true }));
     expect(withTexture.titleWidth).toBe(wide.titleWidth - 36);
+  });
+
+  it("takes the preset header offset out of the title width but leaves the body width whole", () => {
+    const plain = computePreparedCardMetrics(options());
+    const photo = computePreparedCardMetrics(options({ headerOffset: 32 }));
+
+    // The title starts after the avatar, so only it pays; body rows still wrap against the
+    // full padding box (see `destinationCardHeaderOffset`).
+    expect(photo.titleWidth).toBe(plain.titleWidth - 32);
+    expect(photo.contentWidth).toBe(plain.contentWidth);
+
+    const both = computePreparedCardMetrics(options({ headerOffset: 32, showProvinceTexture: true }));
+    expect(both.titleWidth).toBe(plain.titleWidth - 68);
+
+    // A card too narrow for either never wraps the title below one glyph.
+    const cramped = computePreparedCardMetrics(options({ headerOffset: 32, maxWidth: 90 }));
+    expect(cramped.titleWidth).toBe(cramped.titleFontSize);
+  });
+
+  it("wraps the title earlier once the header offset shrinks its box", () => {
+    const long = { ...DEFAULT_CARD_EXPRESSION_TEMPLATES, title: "毕业去向相聚在{group}的同学们一共{count}位同学" };
+    const plain = buildPreparedCardContents(options({ expressionTemplates: long }))[0]!;
+    const photo = buildPreparedCardContents(options({ expressionTemplates: long, headerOffset: 32 }))[0]!;
+
+    expect(photo.titleLines.length).toBeGreaterThan(plain.titleLines.length);
+    expect(photo.headerExtra).toBeGreaterThan(plain.headerExtra);
+    expect(photo.height).toBe(plain.height + (photo.headerExtra - plain.headerExtra));
   });
 
   it("scales row and title line heights with the line-height multiplier", () => {

@@ -14,8 +14,10 @@ import { resolveStudentLocation } from "./student-data";
 import type { VisibleField } from "./template-document";
 import {
   DESTINATION_CARD_HEADER_HEIGHT,
+  DESTINATION_CARD_TEXTURE_HEADER_WIDTH,
   destinationCardFixedRowHeight,
   destinationCardRowFontSize,
+  destinationCardTitleLineHeight,
 } from "./destination-card-metrics";
 
 /** One body row of a destination card, before its text is wrapped. */
@@ -68,6 +70,11 @@ export interface PreparedCardContentOptions {
   bottomPadding: number;
   /** Reserves header width for the province thumbnail. */
   showProvinceTexture: boolean;
+  /**
+   * Header width a preset ornament already occupies (`destinationCardHeaderOffset`). The title
+   * starts after it, so only the title wrap width pays for it — body rows keep the padding box.
+   */
+  headerOffset?: number;
   /** Fields that must never be split across lines. */
   noWrapFields?: ReadonlySet<CardFontField>;
   lineHeightMultiplier: number;
@@ -121,7 +128,8 @@ export function computePreparedCardMetrics(options: PreparedCardContentOptions):
   const titleFontSize = fieldFontSize("title");
   const cardWidth = Math.min(options.maxWidth, Math.max(80, options.canvasWidth - options.safeMargin * 2));
   const contentWidth = Math.max(rowFontSize, cardWidth - options.horizontalPadding * 2);
-  const textureHeaderWidth = options.showProvinceTexture ? 36 : 0;
+  const textureHeaderWidth = options.showProvinceTexture ? DESTINATION_CARD_TEXTURE_HEADER_WIDTH : 0;
+  const headerOffset = options.headerOffset ?? 0;
   return {
     rowFontSize,
     rowHeight: destinationCardFixedRowHeight({
@@ -130,10 +138,13 @@ export function computePreparedCardMetrics(options: PreparedCardContentOptions):
       lineHeightMultiplier: options.lineHeightMultiplier,
     }),
     titleFontSize,
-    titleLineHeight: Math.max(16, titleFontSize + 4) * options.lineHeightMultiplier,
+    titleLineHeight: destinationCardTitleLineHeight(titleFontSize, options.lineHeightMultiplier),
     cardWidth,
     contentWidth,
-    titleWidth: Math.max(titleFontSize, contentWidth - Math.max(42, titleFontSize * 3) - textureHeaderWidth),
+    titleWidth: Math.max(
+      titleFontSize,
+      contentWidth - Math.max(42, titleFontSize * 3) - textureHeaderWidth - headerOffset,
+    ),
   };
 }
 

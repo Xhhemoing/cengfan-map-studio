@@ -37,6 +37,14 @@ const surface: Pick<ResolvedDisplayFrameSurface, "borderColor" | "borderWidth" |
   borderRadius: 6,
 };
 
+/** Every rendering canvas source, so the layout contract can be asserted against them. */
+function canvasSources(): Array<[string, string]> {
+  const canvasDir = join(dirname(fileURLToPath(import.meta.url)), "..", "components", "canvas");
+  return readdirSync(canvasDir)
+    .filter((file) => file.endsWith(".tsx") && !file.includes(".test."))
+    .map((file): [string, string] => [file, readFileSync(join(canvasDir, file), "utf8")]);
+}
+
 describe("destination card chrome metrics", () => {
   it("stacks the header band in the order the card paints it", () => {
     expect(DESTINATION_CARD_TITLE_TOP).toBeLessThan(DESTINATION_CARD_COUNT_BASELINE);
@@ -45,17 +53,19 @@ describe("destination card chrome metrics", () => {
     expect(DESTINATION_CARD_FIXED_BODY_TOP).toBeLessThanOrEqual(DESTINATION_CARD_HEADER_HEIGHT);
   });
 
-  it("keeps the reserved header height in sync with the card height solver", () => {
-    // The solver still inlines the literal. Only assert when the expression is found, so moving
-    // it to another canvas file (or importing the token) does not fail this test spuriously.
-    const canvasDir = join(dirname(fileURLToPath(import.meta.url)), "..", "components", "canvas");
-    const sources = readdirSync(canvasDir)
-      .filter((file) => file.endsWith(".tsx") && !file.includes(".test."))
-      .map((file) => readFileSync(join(canvasDir, file), "utf8"));
-    const literals = sources.flatMap((source) => [
-      ...source.matchAll(/(\d+)\s*\+\s*headerExtra\s*\+\s*lineCount\s*\*\s*rowHeight/g),
-    ].map((match) => Number(match[1])));
-    for (const literal of literals) expect(literal).toBe(DESTINATION_CARD_HEADER_HEIGHT);
+  it("owns the header height and the fixed row step instead of leaving them to canvas literals", () => {
+    // Both numbers size the box a card's rows are painted into, so a canvas file re-deriving
+    // either one can drift away from the solver without any test noticing.
+    for (const [file, source] of canvasSources()) {
+      expect(source, `${file} re-inlines the reserved header height`)
+        .not.toMatch(/\d+\s*\+\s*headerExtra\s*\+\s*lineCount\s*\*\s*rowHeight/);
+      expect(source, `${file} re-inlines the fixed row step floors`)
+        .not.toMatch(/compactLayout \?\s*\d+\s*:\s*\d+/);
+    }
+
+    const [, posterCanvas] = canvasSources().find(([file]) => file === "PosterCanvas.tsx")!;
+    expect(posterCanvas).toContain("destinationCardFixedRowHeight");
+    expect(posterCanvas).toContain("destinationCardRowFontSize");
   });
 
   it("pushes the divider down by the extra title lines", () => {
@@ -108,6 +118,14 @@ describe("destination card chrome metrics", () => {
     expect(destinationCardFixedRowHeight({ rowFontSize: 13, compactLayout: true, lineHeightMultiplier: 1 })).toBe(19);
     expect(destinationCardFixedRowHeight({ rowFontSize: 16, compactLayout: false, lineHeightMultiplier: 1 })).toBe(22);
     expect(destinationCardFixedRowHeight({ rowFontSize: 16, compactLayout: false, lineHeightMultiplier: 1.5 })).toBe(33);
+
+    // The floors and the leading those numbers are built from.
+    expect(destinationCardFixedRowHeight({ rowFontSize: 0, compactLayout: false, lineHeightMultiplier: 1 }))
+      .toBe(DESTINATION_CARD_FIXED_ROW_MIN_HEIGHT);
+    expect(destinationCardFixedRowHeight({ rowFontSize: 0, compactLayout: true, lineHeightMultiplier: 1 }))
+      .toBe(DESTINATION_CARD_COMPACT_ROW_MIN_HEIGHT);
+    expect(destinationCardFixedRowHeight({ rowFontSize: 40, compactLayout: false, lineHeightMultiplier: 1 }))
+      .toBe(40 + DESTINATION_CARD_ROW_LINE_LEADING);
   });
 
   it("walks body lines with the solved step in fixed mode and the block step in flow mode", () => {
@@ -116,22 +134,6 @@ describe("destination card chrome metrics", () => {
       .toBeCloseTo(21.6, 5);
     // A flow block without its own leading falls back to the default one.
     expect(destinationCardBodyRowHeight({ mode: "flow", solvedRowHeight: 22, fontSize: 12 })).toBeCloseTo(21.6, 5);
-  });
-
-  it("keeps the solved fixed row step in sync with the one the canvas still inlines", () => {
-    // `PosterCanvas` builds `cardStyle.rowHeight` from these literals; assert only when the
-    // expression is found, so importing the helper there does not fail this test spuriously.
-    const canvasDir = join(dirname(fileURLToPath(import.meta.url)), "..", "components", "canvas");
-    const sources = readdirSync(canvasDir)
-      .filter((file) => file.endsWith(".tsx") && !file.includes(".test."))
-      .map((file) => readFileSync(join(canvasDir, file), "utf8"));
-    for (const source of sources) {
-      for (const match of source.matchAll(/compactLayout \? (\d+) : (\d+),[\s\S]*?\+ (\d+),\s*\) \* lineHeightMultiplier/g)) {
-        expect(Number(match[1])).toBe(DESTINATION_CARD_COMPACT_ROW_MIN_HEIGHT);
-        expect(Number(match[2])).toBe(DESTINATION_CARD_FIXED_ROW_MIN_HEIGHT);
-        expect(Number(match[3])).toBe(DESTINATION_CARD_ROW_LINE_LEADING);
-      }
-    }
   });
 
   it("reserves header room for the photo avatar and the province thumbnail", () => {

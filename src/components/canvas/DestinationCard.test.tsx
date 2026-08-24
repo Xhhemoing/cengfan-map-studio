@@ -106,6 +106,7 @@ function flowBlocks(styles: Partial<Record<"title" | "name" | "city", DisplayFra
 interface RenderOptions {
   headerExtra?: number;
   provinceTexture?: CardProvinceTexture | null;
+  titleLines?: typeof titleLines;
 }
 
 function renderCard(style: DestinationCardStyle, options: RenderOptions = {}) {
@@ -118,7 +119,7 @@ function renderCard(style: DestinationCardStyle, options: RenderOptions = {}) {
         group={group}
         province="北京市"
         rows={rows}
-        titleLines={titleLines}
+        titleLines={options.titleLines ?? titleLines}
         headerExtra={options.headerExtra ?? 0}
         width={220}
         height={110}
@@ -321,6 +322,26 @@ describe("DestinationCard", () => {
     expect(nameRow?.getAttribute("opacity")).toBe("0.5");
 
     dispose();
+  });
+
+  it("steps wrapped title lines at the document line height, not at the flow block's own", () => {
+    const wrapped = [
+      [{ text: "毕业去向相聚在", field: "title" as const }],
+      [{ text: "北京市的同学们", field: "title" as const }],
+    ];
+    // `buildPreparedCardContents` charges the second line to `headerExtra` at the document
+    // multiplier, so a title stepping at the block's 1.2 would leave that reserved band.
+    const single = renderCard(createStyle({ frameMode: "flow", ...flowBlocks() }), { titleLines: wrapped });
+    expect(Array.from(single.container.querySelectorAll("[data-card-title-line]"), (line) => line.getAttribute("y")))
+      .toEqual(["28", "44"]);
+    single.dispose();
+
+    const loose = renderCard(createStyle({ frameMode: "flow", lineHeightMultiplier: 1.5, ...flowBlocks() }), {
+      titleLines: wrapped,
+    });
+    expect(Array.from(loose.container.querySelectorAll("[data-card-title-line]"), (line) => line.getAttribute("y")))
+      .toEqual(["36", "60"]);
+    loose.dispose();
   });
 
   it("keeps bold titles by default but honours an explicit normal weight", () => {

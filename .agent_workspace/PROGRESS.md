@@ -14,16 +14,16 @@
 
 严禁静默降级。子代理输出首行必须声明实际使用的模型 slug。
 
-## 文件所有权（Cycle 2 Round 3）
+## 文件所有权（Cycle 3 Round 1）
 
 | 角色 | 可写路径 | 禁止 |
 | --- | --- | --- |
-| fable-A | `.agent_workspace/cycle2-round3-fable-a.md` | 生产代码 |
-| fable-B | `.agent_workspace/cycle2-round3-fable-b.md` | 生产代码 |
-| opus-fast-A | `PosterCanvas.tsx`（provincePolygons/Areas 仿射或依赖收窄）、`MapLayer.tsx` 若必须、相关测试 | `DestinationCard.tsx` |
-| opus-fast-B | `destination-card-metrics.ts*`、`prepared-card-content.ts`（titleWidth/flow 行高）、`DestinationCard.tsx`、`PosterCanvas.tsx` **仅** cardStyle.rowHeight 改调用 metrics | `DestinationCardsLayer.tsx` |
+| fable-A | `.agent_workspace/cycle3-round1-fable-a.md` | 生产代码 |
+| fable-B | `.agent_workspace/cycle3-round1-fable-b.md` | 生产代码 |
+| opus-fast-A | `src/lib/card-layout-cache.ts*`、`PosterCanvas.tsx`（polygonsKey 调用/换色依赖）、相关测试 | `DestinationCard.tsx` |
+| opus-fast-B | `src/lib/edge-styles.ts`（filterPrefix/seed 若仍缺）、DestinationCardsLayer 仅 defs id、样式余项 | `card-layout-cache.ts` |
 | gpt-sol-A | `scripts/perf-canvas-bench.ts`、`canvas-render-metrics.ts*` | UI 大重构 |
-| gpt-sol-B | 新建 `*.cycle2r3.test.ts(x)` | 生产实现 |
+| gpt-sol-B | 新建 `*.cycle3.test.ts(x)` | 生产实现 |
 
 ## 循环状态
 
@@ -62,14 +62,14 @@
   - opus-fast-B → `bc-1385e303-e7c3-53d1-930d-69fd30b0ff01`
   - gpt-sol-A → `bc-514033cc-1496-5354-a5d2-b165f21b071c`
   - gpt-sol-B → `bc-cdfd55cc-82ab-59d5-9531-9d88b287a8a2`
-- [ ] Cycle 2 Round 3 — 地图仿射缓存与样式收口（进行中，6 子代理并发）
+- [x] Cycle 2 Round 3 — 地图仿射缓存与样式收口（完成，见 `cycle2-round3-conclusion.md`）
   - fable-A → `bc-573c88a4-fca3-50dd-8f0f-d4de0f935314`
   - fable-B → `bc-85a81ade-cede-5e8e-8edc-ac3ecd4fcecc`
   - opus-fast-A → `bc-83fb2d76-fefb-57f1-83f8-ef5db74f81aa`
   - opus-fast-B → `bc-752451d8-bb08-5f68-9cb2-5522a210a4ae`
   - gpt-sol-A → `bc-49618dfe-d37f-52b4-afbb-c62e96a1066f`
   - gpt-sol-B → `bc-c0dee1a4-ec7d-5615-88bc-249e1b45b565`
-- [ ] Cycle 3 Round 1
+- [ ] Cycle 3 Round 1 — 布局 key 仿射化与换色不重投影（派发中）
 - [ ] Cycle 3 Round 2
 - [ ] Cycle 3 Round 3
 - [ ] 归档、结构化 PR

@@ -13,9 +13,6 @@ import type { CardPreset } from "./template-document";
  * Height the card solver reserves above the body rows: the divider at
  * {@link DESTINATION_CARD_DIVIDER_Y} plus room for the first row baseline at
  * {@link DESTINATION_CARD_FIXED_BODY_TOP}.
- *
- * `destinationHeight()` in `PosterCanvas` still inlines this literal; the metrics test guards the
- * two against drifting apart until that call site can import the token.
  */
 export const DESTINATION_CARD_HEADER_HEIGHT = 44;
 
@@ -52,7 +49,7 @@ export const DESTINATION_CARD_COMPACT_ROW_MIN_HEIGHT = 18;
 export const DESTINATION_CARD_FLOW_LINE_HEIGHT = 1.2;
 
 /**
- * Horizontal room the province thumbnail takes out of the header. `PosterCanvas` subtracts the
+ * Horizontal room the province thumbnail takes out of the header. The card solver subtracts the
  * same width from the title wrap width, so the title never runs under the thumbnail.
  */
 export const DESTINATION_CARD_TEXTURE_HEADER_WIDTH = 36;
@@ -130,9 +127,10 @@ export function destinationCardSurfaceChrome(
  * Header-only on purpose. The avatar disc ends at {@link DESTINATION_CARD_PHOTO_AVATAR_CENTER_Y}
  * plus {@link DESTINATION_CARD_PHOTO_AVATAR_RADIUS}, above {@link DESTINATION_CARD_FIXED_BODY_TOP},
  * so body rows have nothing to clear — while their wrap width is solved from the full padding box
- * (`contentWidth` in `prepared-card-content`, fed by `PosterCanvas`) without the offset. Indenting
- * the body by it would push the last glyph of every wrapped line past the card's right padding
- * instead. The metrics test guards the avatar against growing down into the body band.
+ * (`contentWidth` in `prepared-card-content`) without the offset. Indenting the body by it would
+ * push the last glyph of every wrapped line past the card's right padding instead. The title does
+ * start after the offset, so `titleWidth` alone pays for it. The metrics test guards the avatar
+ * against growing down into the body band.
  */
 export function destinationCardHeaderOffset(preset: CardPreset): number {
   return destinationCardPresetOverlay(preset)?.headerOffset ?? 0;

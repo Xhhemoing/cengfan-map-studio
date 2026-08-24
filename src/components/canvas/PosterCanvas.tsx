@@ -27,10 +27,16 @@ import { clampGridSize, DEFAULT_GRID_SIZE } from "../../lib/grid";
 import { DEFAULT_CARD_EXPRESSION_TEMPLATES } from "../../lib/card-expression";
 import {
   buildPreparedCardContents,
+  cardFieldFontSize,
   resolveCardAnchor,
   type CardAnchor,
   type PreparedCard,
 } from "../../lib/prepared-card-content";
+import {
+  destinationCardFixedRowHeight,
+  destinationCardHeaderOffset,
+  destinationCardRowFontSize,
+} from "../../lib/destination-card-metrics";
 import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
 import { computeGuestPanelLayout, DEFAULT_GUEST_PANEL } from "../../lib/guest-panel-layout";
 import { DecorationLayer } from "./DecorationLayer";
@@ -232,21 +238,36 @@ function PosterCanvasView({
     { type: "FeatureCollection", features: mainlandFeatures } as never,
   ), [mainlandFeatures, project.map.height, project.map.width]);
   const mapPath = useMemo(() => geoPath(projection), [projection]);
+  // Province extents in projection space. `mapPath.bounds` streams every ring of every
+  // feature, so it is kept off the pan path: only the projection (map size and the folded
+  // South China Sea split) can move these.
+  const projectedProvinceBounds = useMemo(() => mainlandFeatures.flatMap((feature) => {
+    const [[left, top], [right, bottom]] = mapPath.bounds(feature as never);
+    if (![left, top, right, bottom].every(Number.isFinite)) return [];
+    return [{ left, top, right, bottom }];
+  }), [mainlandFeatures, mapPath]);
   const provinceAreas = useMemo(() => {
     const centerX = project.map.width / 2;
     const centerY = project.map.height / 2;
-    return mainlandFeatures.flatMap((feature) => {
-      const [[left, top], [right, bottom]] = mapPath.bounds(feature as never);
-      if (![left, top, right, bottom].every(Number.isFinite)) return [];
-      return [{
-        x: project.map.x + centerX + (left - centerX) * project.map.scale,
-        y: project.map.y + centerY + (top - centerY) * project.map.scale,
-        width: (right - left) * project.map.scale,
-        height: (bottom - top) * project.map.scale,
-      }];
-    });
-  }, [mainlandFeatures, mapPath, project.map]);
-  const provincePolygons = useMemo<CardPolygon[]>(() => {
+    return projectedProvinceBounds.map(({ left, top, right, bottom }) => ({
+      x: project.map.x + centerX + (left - centerX) * project.map.scale,
+      y: project.map.y + centerY + (top - centerY) * project.map.scale,
+      width: (right - left) * project.map.scale,
+      height: (bottom - top) * project.map.scale,
+    }));
+  }, [
+    projectedProvinceBounds,
+    project.map.height,
+    project.map.scale,
+    project.map.width,
+    project.map.x,
+    project.map.y,
+  ]);
+  // Collision geometry expressed as offsets from the map center, which is where scaling
+  // happens. Panning only slides that center across the canvas, so it must not reproject —
+  // and because a translation preserves every distance, simplification decided here is the
+  // same one the canvas-space rings would have made.
+  const centeredProvincePolygons = useMemo<CardPolygon[]>(() => {
     const source = project.map.renderSource;
     if (source?.kind === "image" && source.composition !== "overlay") return [];
     const centerX = project.map.width / 2;
@@ -255,8 +276,8 @@ function PosterCanvasView({
       const point = projection(coordinate);
       if (!point || !point.every(Number.isFinite)) return null;
       return {
-        x: project.map.x + centerX + (point[0] - centerX) * project.map.scale,
-        y: project.map.y + centerY + (point[1] - centerY) * project.map.scale,
+        x: (point[0] - centerX) * project.map.scale,
+        y: (point[1] - centerY) * project.map.scale,
       };
     };
     return mainlandFeatures.flatMap((feature): CardPolygon[] => {
@@ -282,10 +303,18 @@ function PosterCanvasView({
     project.map.renderSource,
     project.map.scale,
     project.map.width,
-    project.map.x,
-    project.map.y,
     projection,
   ]);
+  const provincePolygons = useMemo<CardPolygon[]>(() => {
+    const originX = project.map.x + project.map.width / 2;
+    const originY = project.map.y + project.map.height / 2;
+    return centeredProvincePolygons.map(({ rings, bounds }) => ({
+      rings: rings.map((ring) => ring.map((point) => ({ x: originX + point.x, y: originY + point.y }))),
+      ...(bounds
+        ? { bounds: { x: originX + bounds.x, y: originY + bounds.y, width: bounds.width, height: bounds.height } }
+        : {}),
+    }));
+  }, [centeredProvincePolygons, project.map.height, project.map.width, project.map.x, project.map.y]);
   const mapContentBounds = useMemo(
     () => computeMapContentBounds({ map: project.map, provinceAreas }),
     [project.map, provinceAreas],
@@ -369,10 +398,16 @@ function PosterCanvasView({
       showCount: project.cards.showCount !== false,
       horizontalPadding,
       lineHeightMultiplier,
-      rowHeight: Math.max(
-        compactLayout ? 18 : 20,
-        Math.max(...project.cards.visibleFields.map((field) => project.cards.fieldTypography?.[field]?.fontSize ?? project.cards.fontSize), project.cards.fieldTypography?.city?.fontSize ?? Math.max(9, project.cards.fontSize - 1)) + 6,
-      ) * lineHeightMultiplier,
+      // The same step `buildPreparedCardContents` solved the card height from, so the rows a
+      // card paints land inside the box that was reserved for them.
+      rowHeight: destinationCardFixedRowHeight({
+        rowFontSize: destinationCardRowFontSize({
+          visibleFieldFontSizes: project.cards.visibleFields.map((field) => project.cards.fieldTypography?.[field]?.fontSize ?? project.cards.fontSize),
+          cityHeadingFontSize: cardFieldFontSize("city", project.cards.fontSize, project.cards.fieldTypography),
+        }),
+        compactLayout,
+        lineHeightMultiplier,
+      }),
       edgeColor: project.map.edgeColor,
       activeColor: project.map.activeColor,
       fieldFonts: project.cards.fieldFonts,
@@ -432,6 +467,7 @@ function PosterCanvasView({
       horizontalPadding,
       bottomPadding: project.cards.bottomPadding ?? project.cards.padding,
       showProvinceTexture: project.cards.showProvinceTexture === true,
+      headerOffset: destinationCardHeaderOffset(project.cards.preset),
       noWrapFields: noWrapFieldSet,
       lineHeightMultiplier,
       canvasWidth: project.canvas.width,
