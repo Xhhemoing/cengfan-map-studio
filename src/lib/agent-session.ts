@@ -187,10 +187,13 @@ const MAX_SNAPSHOT_STRING = 64 * 1024;
 const MAX_SNAPSHOT_DEPTH = 32;
 const MAX_SNAPSHOT_STEPS = MAX_CONVERSATION_MESSAGES * 2;
 
+/**
+ * History is dropped before cloning, not after: `applyTransaction` hands transactions a document
+ * whose `history` is a readonly Proxy, and `structuredClone` cannot clone a Proxy. Sessions never
+ * read history anyway, so this also keeps up to MAX_HISTORY snapshots out of every clone.
+ */
 function cloneProject(project: ProjectDocument): ProjectDocument {
-  const cloned = structuredClone(project) as ProjectDocument;
-  cloned.history = { past: [], future: [] };
-  return cloned;
+  return structuredClone({ ...project, history: { past: [], future: [] } }) as ProjectDocument;
 }
 
 function textOnlyConversation(messages: Array<Record<string, unknown>>): Array<{ role: "user" | "assistant"; content: string }> {

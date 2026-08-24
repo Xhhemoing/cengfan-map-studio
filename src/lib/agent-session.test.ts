@@ -1,9 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createProjectDocument } from "./project-document";
+import { applyTransaction, createProjectDocument, type ProjectDocument, type ProjectHistory } from "./project-document";
 import { AgentReplayError, AgentSession, compactAgentToolResult, truncateUtf8, type AgentSessionSnapshot } from "./agent-session";
 
 function response(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
+}
+
+/** Mirrors the readonly history proxy `applyTransaction` hands to `transaction.apply`. */
+function readonlyHistoryView(history: ProjectHistory): ProjectHistory {
+  const wrap = <V>(candidate: V): V => {
+    if (!candidate || typeof candidate !== "object") return candidate;
+    return new Proxy(candidate, {
+      get: (target, property, receiver) => wrap(Reflect.get(target, property, receiver)),
+      set: () => true,
+      deleteProperty: () => true,
+    }) as V;
+  };
+  return wrap(history);
+}
+
+function documentWithHistory(project: ProjectDocument): ProjectDocument {
+  return applyTransaction(project, {
+    id: "tx-manual-seed",
+    label: "手动调整",
+    source: "manual",
+    apply: (doc) => ({ ...doc, cards: { ...doc.cards, fontSize: doc.cards.fontSize + 2 } }),
+  });
 }
 
 afterEach(() => {
@@ -499,6 +521,88 @@ describe("AgentSession", () => {
     await expect(session.run("并发")).rejects.toThrow(/进行中/);
     session.cancel();
     expect((await running).kind).toBe("cancelled");
+  });
+
+  it("lands an AI transaction through applyTransaction on a document whose history is a proxy", async () => {
+    const base = createProjectDocument({
+      students: [{ id: "A", name: "甲", university: "大学", city: "广州", province: "广东", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "call-map", name: "update_map", arguments: { patch: { scale: 0.9 } } },
+        { id: "call-fact", name: "manage_students", arguments: { action: "update_fact", studentId: "A", fields: { city: "深圳" } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(base, { mode: "conservative" });
+    await session.run("缩小地图并把甲同学改到深圳");
+
+    const live = documentWithHistory(base);
+    const transaction = session.transactionForSteps(new Set(["call-map", "call-fact"]))!;
+    const landed = applyTransaction(live, transaction);
+
+    expect(landed.map.scale).toBe(0.9);
+    expect(landed.students.find((student) => student.id === "A")?.city).toBe("深圳");
+    expect(landed.cards.fontSize).toBe(live.cards.fontSize);
+    expect(landed.version).toBe(live.version + 1);
+    expect(landed.history.past.at(-1)).toMatchObject({ id: transaction.id, source: "ai" });
+    expect(session.lastReplayFailure).toBeNull();
+    expect(live.map.scale).not.toBe(0.9);
+    expect(live.students.find((student) => student.id === "A")?.city).toBe("广州");
+    expect(() => structuredClone(landed)).not.toThrow();
+  });
+
+  it("leaves the document unchanged apart from a no-op history entry when applyTransaction lands a rejected replay", async () => {
+    const base = createProjectDocument({
+      students: [
+        { id: "A", name: "甲", university: "大学", city: "广州", province: "广东", visibility: true },
+        { id: "B", name: "乙", university: "大学", city: "北京", province: "北京", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [
+        { id: "call-map", name: "update_map", arguments: { patch: { scale: 0.9 } } },
+        { id: "call-fact", name: "manage_students", arguments: { action: "update_fact", studentId: "A", fields: { city: "深圳" } } },
+      ], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "完成" })));
+    const session = new AgentSession(base, { mode: "conservative" });
+    await session.run("缩小地图并把甲同学改到深圳");
+
+    const seeded = documentWithHistory(base);
+    const live = { ...seeded, students: seeded.students.filter((student) => student.id !== "A") };
+    const transaction = session.transactionForSteps(new Set(["call-map", "call-fact"]))!;
+    const landed = applyTransaction(live, transaction);
+
+    expect(landed.map).toEqual(live.map);
+    expect(landed.students).toEqual(live.students);
+    expect(landed.cards).toEqual(live.cards);
+    expect(session.lastReplayFailure).toMatchObject({ stepId: "call-fact", name: "manage_students" });
+    // Known T5 behaviour, owned by project-document: a refused replay still burns a version bump
+    // and a no-op history entry. Asserted so the cosmetic undo-stack pollution stays visible.
+    expect(landed.version).toBe(live.version + 1);
+    expect(landed.history.past).toHaveLength(live.history.past.length + 1);
+    expect(landed.history.past.at(-1)).toMatchObject({ id: transaction.id, source: "ai" });
+    expect(landed.history.past.at(-1)?.snapshot.students).toEqual(live.students);
+  });
+
+  it("clones a project whose history is a proxy instead of throwing DataCloneError", () => {
+    const base = createProjectDocument({
+      students: [{ id: "A", name: "甲", university: "大学", city: "广州", province: "广东", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    const seeded = documentWithHistory(base);
+    const proxied: ProjectDocument = { ...seeded, history: readonlyHistoryView(seeded.history) };
+    expect(() => structuredClone(proxied)).toThrow();
+
+    const session = new AgentSession(proxied, { mode: "conservative" });
+    expect(session.shadowProject.history).toEqual({ past: [], future: [] });
+    expect(session.shadowProject.students).toEqual(seeded.students);
+    expect(session.shadowProject.cards.fontSize).toBe(seeded.cards.fontSize);
+    expect(() => structuredClone(session.shadowProject)).not.toThrow();
   });
 
   it("truncates on UTF-8 sequence boundaries without emitting replacement characters", () => {
