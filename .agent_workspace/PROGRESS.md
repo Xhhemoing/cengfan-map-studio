@@ -17,7 +17,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 | Round | Status | Merged | Rolled back | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | MERGED_PENDING_FULL_SUITE | T1–T10 | — | All 10 tasks merged; full vitest + fable review next |
+| 1 | REVIEWED_BLOCKED | T1–T10 | — | Full vitest 1388 pass / 1 skip; fable ACCEPT 9/10; **DataCloneError T5×T10 hotfix required** |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -30,6 +30,12 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - `npm audit`: high `nanoid@3.3.17` via Vite/PostCSS (`GHSA-2v37-7h3g-55p8`). Targeted bump to `3.3.18` without touching pinned `xlsx`.
 - Top Round-1 hypotheses: (1) EventSource re-ticket + ordered backfill, (2) IndexedDB migration/CAS, (3) spatial index in card-layout, (4) layout-worker coalescing, (5) off-thread import + size caps.
 - Full numbers: `.agent_workspace/round-1-baseline.md`
+
+## Round 1 closeout
+
+- Full suite on merged tree: **166 files, 1388 passed / 1 skipped** (`npm test`, 57.6s).
+- Fable review: `.agent_workspace/round-1-review.md`. PR stays draft until R2-0 DataCloneError hotfix.
+- Round 2 briefing: `.agent_workspace/round-1-briefing.md`.
 
 ## Round Briefings
 
