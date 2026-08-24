@@ -28,7 +28,10 @@ function member(clientId: string, role: RoomMember["role"] = "editor"): RoomMemb
 
 let latest: UseCollaborationRoomResult | null = null;
 let emitMembers: ((members: RoomMember[]) => void) | null = null;
-const unsubscribe = vi.fn();
+let subscribeOptions: { version?: number | (() => number) } | null = null;
+/** 每条订阅一个条目,记录是否已经退订,用来断言同一时刻只有一条流。 */
+let subscriptions: Array<{ live: boolean }> = [];
+const liveSubscriptions = (): number => subscriptions.filter((entry) => entry.live).length;
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 function Harness({ onRender }: { onRender: (result: UseCollaborationRoomResult) => void }): null {
@@ -72,6 +75,8 @@ async function mountRoom(): Promise<void> {
 beforeEach(() => {
   latest = null;
   emitMembers = null;
+  subscribeOptions = null;
+  subscriptions = [];
   window.localStorage.clear();
   mocks.createRoom.mockResolvedValue({
     room: { id: "ROOM01", version: 0, ready: false, updatedBy: "self", members: [member("self", "owner")] },
@@ -84,10 +89,15 @@ beforeEach(() => {
     _accessToken: string,
     _onSnapshot: unknown,
     _onError: unknown,
-    options: { onMembers?: (members: RoomMember[]) => void } = {},
+    options: { onMembers?: (members: RoomMember[]) => void; version?: number | (() => number) } = {},
   ) => {
     emitMembers = options.onMembers ?? null;
-    return unsubscribe;
+    subscribeOptions = options;
+    const entry = { live: true };
+    subscriptions.push(entry);
+    return () => {
+      entry.live = false;
+    };
   });
 });
 
@@ -138,5 +148,40 @@ describe("useCollaborationRoom membership", () => {
     expect(mocks.leaveRoom).toHaveBeenCalledWith("ROOM01", "self-token", "self");
     expect(latest!.roomId).toBeNull();
     expect(latest!.collaborationStatus).toBe("idle");
+  });
+});
+
+describe("useCollaborationRoom subscription", () => {
+  it("keeps exactly one live stream across leave and re-join", async () => {
+    await mountRoom();
+    expect(mocks.subscribeRoom).toHaveBeenCalledTimes(1);
+    expect(liveSubscriptions()).toBe(1);
+
+    act(() => latest!.leaveRoom());
+    expect(liveSubscriptions()).toBe(0);
+
+    await act(async () => {
+      latest!.startRoom();
+    });
+
+    expect(mocks.subscribeRoom).toHaveBeenCalledTimes(2);
+    // 重新订阅不叠流:上一条已经退订,房间上始终只有一条 EventSource。
+    expect(liveSubscriptions()).toBe(1);
+  });
+
+  it("drops the stream when the client is removed from the member list", async () => {
+    await mountRoom();
+
+    act(() => emitMembers!([member("mate")]));
+
+    expect(liveSubscriptions()).toBe(0);
+  });
+
+  it("lets the stream resume from the version reached after backfill", async () => {
+    await mountRoom();
+
+    // 传的是取值函数而非订阅时的版本快照,重连才能带上补齐后的最新版本。
+    expect(typeof subscribeOptions!.version).toBe("function");
+    expect((subscribeOptions!.version as () => number)()).toBe(1);
   });
 });

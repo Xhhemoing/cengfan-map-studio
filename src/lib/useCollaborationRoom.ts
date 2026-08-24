@@ -140,6 +140,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   ));
 
   const optionsRef = useRef(options);
+  const activeSubscriptionRef = useRef<(() => void) | null>(null);
   const receiveRoomUpdateRef = useRef<(room: CollaborationRoom<ProjectPackage>) => void>(() => undefined);
   const receiveRoomMembersRef = useRef<(members: RoomMember[]) => boolean>(() => true);
   useEffect(() => {
@@ -315,10 +316,15 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     if (!roomId || !roomAccessToken) return;
     roomRef.current = roomId;
     accessTokenRef.current = roomAccessToken;
-    return subscribeRoom<ProjectPackage>(roomId, roomAccessToken, (room) => receiveRoomUpdateRef.current(room), () => {
+    // 同一时刻只保留一条流:effect 重跑(换房间/换凭证)先掐掉上一条订阅,
+    // 否则客户端自带的断线重连会让多条 EventSource 叠在同一个房间上。
+    activeSubscriptionRef.current?.();
+    activeSubscriptionRef.current = null;
+    const unsubscribe = subscribeRoom<ProjectPackage>(roomId, roomAccessToken, (room) => receiveRoomUpdateRef.current(room), () => {
       void backfillCollaborationGap();
     }, {
-      version: versionRef.current,
+      // 传函数而非快照:断线补齐推进版本后,重连要从补齐后的版本续传。
+      version: () => versionRef.current,
       onMembers: (members) => {
         receiveRoomMembersRef.current(members);
       },
@@ -329,6 +335,11 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
         setCollaborationMessage("房间已关闭，无法继续同步或编辑");
       },
     });
+    activeSubscriptionRef.current = unsubscribe;
+    return () => {
+      if (activeSubscriptionRef.current === unsubscribe) activeSubscriptionRef.current = null;
+      unsubscribe();
+    };
     // applyPackage/currentPackage are re-created each render; re-subscribing the
     // SSE stream on every render would churn connections. Handlers run from refs
     // so the stream only depends on room identity/token.

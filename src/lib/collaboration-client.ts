@@ -258,13 +258,25 @@ export async function createRoomEventsTicket(roomId: string, accessToken: string
 }
 
 export interface SubscribeRoomOptions {
-  version?: number;
+  /** 已知版本;传函数时每次(重)连都会重新读取,断线补齐后不会再从旧版本重放。 */
+  version?: number | (() => number);
   createTicket?: (roomId: string, accessToken: string) => Promise<string>;
   onMembers?: (members: RoomMember[]) => void;
   onClosed?: (room: RoomClosedInfo) => void;
   onKicked?: (info: RoomKickedInfo) => void;
+  /** 断流后的重连退避序列(毫秒);用尽后不再重连。 */
+  reconnectDelays?: readonly number[];
+  wait?: (delayMs: number) => Promise<void>;
 }
 
+const RECONNECT_DELAYS = [500, 1_000, 2_000, 4_000, 8_000] as const;
+
+/**
+ * events ticket 是一次性的:浏览器 EventSource 自带的重连会带着已消费的 ticket 反复拿 403,
+ * 这条流就永久失效了。所以非终局断流一律由本函数接管——关掉旧流、退避重取 ticket、
+ * 重建 EventSource,并用当前版本续传。kicked/closed 是服务端主动 end 的终局事件,不重连。
+ * 回滚:把 stream.onerror 换回 `onError` 并去掉 scheduleReconnect 与 connect 的 catch 重试。
+ */
 export function subscribeRoom<T>(
   roomId: string,
   accessToken: string,
@@ -273,48 +285,88 @@ export function subscribeRoom<T>(
   options: SubscribeRoomOptions = {},
 ): () => void {
   let source: EventSource | null = null;
-  let closed = false;
+  /** 调用方取消或收到终局事件后置位:此后既不重连,也不再挂新流。 */
+  let stopped = false;
+  let attempt = 0;
   const createTicket = options.createTicket ?? ((id, token) => createRoomEventsTicket(id, token));
-  void createTicket(roomId, accessToken).then((ticket) => {
-    if (closed) return;
-    const query = new URLSearchParams({ ticket });
-    if (options.version !== undefined) query.set("version", String(options.version));
-    source = new EventSource(`/api/rooms/${normalizedRoomId(roomId)}/events?${query}`);
-    source.addEventListener("snapshot", (event) => {
-      try {
-        onSnapshot(JSON.parse((event as MessageEvent<string>).data) as CollaborationRoom<T>);
-      } catch {
-        onError();
-      }
+  const delays = options.reconnectDelays ?? RECONNECT_DELAYS;
+  const wait = options.wait ?? ((delayMs: number) => new Promise<void>((resolve) => window.setTimeout(resolve, delayMs)));
+  const knownVersion = (): number | undefined => (
+    typeof options.version === "function" ? options.version() : options.version
+  );
+
+  const scheduleReconnect = () => {
+    if (stopped || attempt >= delays.length) return;
+    const delay = delays[attempt]!;
+    attempt += 1;
+    void wait(delay).then(() => {
+      if (stopped) return;
+      return connect();
     });
-    if (options.onMembers) {
-      source.addEventListener("members", (event) => {
+  };
+
+  const attachStream = (ticket: string) => {
+    const query = new URLSearchParams({ ticket });
+    const version = knownVersion();
+    if (version !== undefined) query.set("version", String(version));
+    const stream = new EventSource(`/api/rooms/${normalizedRoomId(roomId)}/events?${query}`);
+    source = stream;
+    // 每条流只允许触发一次失败处理,旧流关闭后补发的 onerror 不应再拉起第二次重连。
+    let streamFailed = false;
+    const receive = <E>(type: string, notify: (payload: E) => void) => {
+      stream.addEventListener(type, (event) => {
+        // 收到数据说明这条流是通的,退避次数归零,下次断线重新从最短间隔开始。
+        attempt = 0;
         try {
-          options.onMembers?.(JSON.parse((event as MessageEvent<string>).data) as RoomMember[]);
+          notify(JSON.parse((event as MessageEvent<string>).data) as E);
         } catch {
           onError();
         }
       });
-    }
+    };
+    receive<CollaborationRoom<T>>("snapshot", onSnapshot);
+    if (options.onMembers) receive<RoomMember[]>("members", (members) => options.onMembers?.(members));
     // closed/kicked 都是终局事件:服务端已经断流,浏览器会拿着一次性 ticket 反复重连,
     // 所以无论调用方是否关心回调,都要主动关掉 EventSource。
     const endStream = <E>(type: string, notify?: (payload: E) => void) => {
-      source?.addEventListener(type, (event) => {
-        closed = true;
+      stream.addEventListener(type, (event) => {
+        stopped = true;
+        streamFailed = true;
         try {
           notify?.(JSON.parse((event as MessageEvent<string>).data) as E);
         } catch {
           onError();
         }
-        source?.close();
+        stream.close();
       });
     };
     endStream<RoomClosedInfo>("closed", options.onClosed);
     endStream<RoomKickedInfo>("kicked", options.onKicked);
-    source.onerror = onError;
-  }).catch(onError);
+    stream.onerror = () => {
+      if (streamFailed) return;
+      streamFailed = true;
+      onError();
+      if (source === stream) source = null;
+      stream.close();
+      scheduleReconnect();
+    };
+  };
+
+  const connect = async (): Promise<void> => {
+    try {
+      const ticket = await createTicket(roomId, accessToken);
+      if (stopped) return;
+      attachStream(ticket);
+    } catch {
+      onError();
+      scheduleReconnect();
+    }
+  };
+
+  void connect();
   return () => {
-    closed = true;
+    stopped = true;
     source?.close();
+    source = null;
   };
 }

@@ -16,6 +16,41 @@ import {
 
 const ok = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
 
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  listeners = new Map<string, (event: MessageEvent<string>) => void>();
+  onerror: (() => void) | null = null;
+  closed = false;
+  constructor(public readonly url: string) {
+    FakeEventSource.instances.push(this);
+  }
+  addEventListener(type: string, handler: (event: MessageEvent<string>) => void): void {
+    this.listeners.set(type, handler);
+  }
+  close(): void {
+    this.closed = true;
+  }
+  emit(type: string, data: unknown): void {
+    this.listeners.get(type)?.({ data: JSON.stringify(data) } as MessageEvent<string>);
+  }
+  fail(): void {
+    this.onerror?.();
+  }
+}
+
+/** 用假 EventSource 跑一段订阅逻辑,结束后恢复全局实现。 */
+async function withFakeEventSource(run: (instances: FakeEventSource[]) => Promise<void>): Promise<void> {
+  const original = globalThis.EventSource;
+  FakeEventSource.instances = [];
+  vi.stubGlobal("EventSource", FakeEventSource);
+  try {
+    await run(FakeEventSource.instances);
+  } finally {
+    vi.unstubAllGlobals();
+    globalThis.EventSource = original;
+  }
+}
+
 describe("collaboration client", () => {
   it("creates and reads rooms through the typed API", async () => {
     const request = vi.fn()
@@ -148,27 +183,7 @@ describe("collaboration client", () => {
   });
 
   it("dispatches members and closed events through subscribeRoom", async () => {
-    class FakeEventSource {
-      static instances: FakeEventSource[] = [];
-      listeners = new Map<string, (event: MessageEvent<string>) => void>();
-      onerror: (() => void) | null = null;
-      closed = false;
-      constructor(public readonly url: string) {
-        FakeEventSource.instances.push(this);
-      }
-      addEventListener(type: string, handler: (event: MessageEvent<string>) => void): void {
-        this.listeners.set(type, handler);
-      }
-      close(): void {
-        this.closed = true;
-      }
-      emit(type: string, data: unknown): void {
-        this.listeners.get(type)?.({ data: JSON.stringify(data) } as MessageEvent<string>);
-      }
-    }
-    const original = globalThis.EventSource;
-    vi.stubGlobal("EventSource", FakeEventSource);
-    try {
+    await withFakeEventSource(async (instances) => {
       const onSnapshot = vi.fn();
       const onMembers = vi.fn();
       const onClosed = vi.fn();
@@ -180,8 +195,8 @@ describe("collaboration client", () => {
         onClosed,
       });
 
-      await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
-      const source = FakeEventSource.instances[0]!;
+      await vi.waitFor(() => expect(instances.length).toBe(1));
+      const source = instances[0]!;
       expect(source.url).toContain("/api/rooms/ABC123/events?ticket=ticket-ABC123-owner-token");
       expect(source.url).toContain("version=2");
 
@@ -193,55 +208,161 @@ describe("collaboration client", () => {
       expect(source.closed).toBe(true);
 
       unsubscribe();
-    } finally {
-      vi.unstubAllGlobals();
-      globalThis.EventSource = original;
-    }
+    });
   });
 
   it("closes the stream on a kicked event even without a kicked handler", async () => {
-    class FakeEventSource {
-      static instances: FakeEventSource[] = [];
-      listeners = new Map<string, (event: MessageEvent<string>) => void>();
-      onerror: (() => void) | null = null;
-      closed = false;
-      constructor(public readonly url: string) {
-        FakeEventSource.instances.push(this);
-      }
-      addEventListener(type: string, handler: (event: MessageEvent<string>) => void): void {
-        this.listeners.set(type, handler);
-      }
-      close(): void {
-        this.closed = true;
-      }
-      emit(type: string, data: unknown): void {
-        this.listeners.get(type)?.({ data: JSON.stringify(data) } as MessageEvent<string>);
-      }
-    }
-    const original = globalThis.EventSource;
-    vi.stubGlobal("EventSource", FakeEventSource);
-    try {
+    await withFakeEventSource(async (instances) => {
       const onSnapshot = vi.fn();
       const onKicked = vi.fn();
       subscribeRoom("ABC123", "editor-token", onSnapshot, () => {}, {
         createTicket: () => Promise.resolve("ticket-kick"),
         onKicked,
       });
-      await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
-      const kicked = FakeEventSource.instances[0]!;
+      await vi.waitFor(() => expect(instances.length).toBe(1));
+      const kicked = instances[0]!;
       kicked.emit("kicked", { id: "ABC123", version: 4, clientId: "editor" });
       expect(onKicked).toHaveBeenCalledWith(expect.objectContaining({ clientId: "editor" }));
       expect(kicked.closed).toBe(true);
 
       // 没传回调也要断流:服务端已经 end,留着 EventSource 只会拿失效 ticket 反复重连。
       subscribeRoom("ABC123", "editor-token", onSnapshot, () => {}, { createTicket: () => Promise.resolve("ticket-kick-2") });
-      await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(2));
-      const silent = FakeEventSource.instances[1]!;
+      await vi.waitFor(() => expect(instances.length).toBe(2));
+      const silent = instances[1]!;
       silent.emit("closed", { id: "ABC123", version: 5, readonly: false, closed: true });
       expect(silent.closed).toBe(true);
-    } finally {
-      vi.unstubAllGlobals();
-      globalThis.EventSource = original;
-    }
+    });
+  });
+
+  it("rebuilds the stream with a fresh ticket after a disconnect", async () => {
+    await withFakeEventSource(async (instances) => {
+      const onSnapshot = vi.fn();
+      const onError = vi.fn();
+      const createTicket = vi.fn(() => Promise.resolve(`ticket-${createTicket.mock.calls.length}`));
+      const wait = vi.fn((_delayMs: number) => Promise.resolve());
+      let version = 2;
+
+      const unsubscribe = subscribeRoom("ABC123", "owner-token", onSnapshot, onError, {
+        version: () => version,
+        createTicket,
+        reconnectDelays: [10, 20],
+        wait,
+      });
+
+      await vi.waitFor(() => expect(instances.length).toBe(1));
+      const first = instances[0]!;
+      expect(first.url).toContain("ticket=ticket-1");
+
+      // 断线补齐会把本地版本推进到 5,重连必须从补齐后的版本续传而不是最初的 2。
+      onError.mockImplementation(() => { version = 5; });
+      first.fail();
+
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(first.closed).toBe(true);
+      await vi.waitFor(() => expect(instances.length).toBe(2));
+      const second = instances[1]!;
+      expect(second.url).toContain("ticket=ticket-2");
+      expect(second.url).toContain("version=5");
+      expect(wait.mock.calls.map(([delay]) => delay)).toEqual([10]);
+
+      // 新流继续投递远端更新。
+      second.emit("snapshot", { id: "ABC123", version: 6 });
+      expect(onSnapshot).toHaveBeenCalledWith(expect.objectContaining({ version: 6 }));
+
+      unsubscribe();
+      expect(second.closed).toBe(true);
+    });
+  });
+
+  it("stops reconnecting once the backoff budget runs out", async () => {
+    await withFakeEventSource(async (instances) => {
+      const onError = vi.fn();
+      const createTicket = vi.fn(() => Promise.resolve("ticket"));
+      const wait = vi.fn((_delayMs: number) => Promise.resolve());
+
+      subscribeRoom("ABC123", "owner-token", () => {}, onError, {
+        createTicket,
+        reconnectDelays: [10, 20],
+        wait,
+      });
+
+      await vi.waitFor(() => expect(instances.length).toBe(1));
+      instances[0]!.fail();
+      await vi.waitFor(() => expect(instances.length).toBe(2));
+      instances[1]!.fail();
+      await vi.waitFor(() => expect(instances.length).toBe(3));
+      instances[2]!.fail();
+
+      await Promise.resolve();
+      expect(wait.mock.calls.map(([delay]) => delay)).toEqual([10, 20]);
+      expect(instances.length).toBe(3);
+      expect(onError).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  it("restarts the backoff budget after the rebuilt stream delivers data", async () => {
+    await withFakeEventSource(async (instances) => {
+      const wait = vi.fn((_delayMs: number) => Promise.resolve());
+      subscribeRoom("ABC123", "owner-token", () => {}, () => {}, {
+        createTicket: () => Promise.resolve("ticket"),
+        reconnectDelays: [10, 20],
+        wait,
+      });
+
+      await vi.waitFor(() => expect(instances.length).toBe(1));
+      instances[0]!.fail();
+      await vi.waitFor(() => expect(instances.length).toBe(2));
+      instances[1]!.emit("snapshot", { id: "ABC123", version: 7 });
+      instances[1]!.fail();
+      await vi.waitFor(() => expect(instances.length).toBe(3));
+
+      expect(wait.mock.calls.map(([delay]) => delay)).toEqual([10, 10]);
+    });
+  });
+
+  it("never reconnects after a terminal kicked or closed event", async () => {
+    await withFakeEventSource(async (instances) => {
+      const onError = vi.fn();
+      const createTicket = vi.fn(() => Promise.resolve("ticket"));
+      const wait = vi.fn((_delayMs: number) => Promise.resolve());
+
+      subscribeRoom("ABC123", "editor-token", () => {}, onError, {
+        createTicket,
+        onKicked: () => {},
+        reconnectDelays: [10],
+        wait,
+      });
+
+      await vi.waitFor(() => expect(instances.length).toBe(1));
+      const stream = instances[0]!;
+      stream.emit("kicked", { id: "ABC123", version: 4, clientId: "editor" });
+      // 服务端 end 之后浏览器会立刻报错,这一次不能再重建流。
+      stream.fail();
+
+      await Promise.resolve();
+      expect(instances.length).toBe(1);
+      expect(wait).not.toHaveBeenCalled();
+      expect(createTicket).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("retries the ticket request when it fails before the stream opens", async () => {
+    await withFakeEventSource(async (instances) => {
+      const onError = vi.fn();
+      const createTicket = vi.fn()
+        .mockRejectedValueOnce(new CollaborationClientError("ROOM_INITIALIZING", "上传中"))
+        .mockResolvedValue("ticket-retry");
+      const wait = vi.fn((_delayMs: number) => Promise.resolve());
+
+      subscribeRoom("ABC123", "owner-token", () => {}, onError, {
+        createTicket,
+        reconnectDelays: [10, 20],
+        wait,
+      });
+
+      await vi.waitFor(() => expect(instances.length).toBe(1));
+      expect(instances[0]!.url).toContain("ticket=ticket-retry");
+      expect(onError).toHaveBeenCalledTimes(1);
+    });
   });
 });
