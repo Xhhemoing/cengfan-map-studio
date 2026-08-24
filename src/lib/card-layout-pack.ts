@@ -15,7 +15,6 @@ import {
   type CardArea,
   type CardLayoutInput,
   type CardPlacement,
-  type CardSide,
 } from "./card-layout-types";
 
 const CONTAIN_STEP = 12;
@@ -346,7 +345,13 @@ export function shelfLayout(cards: readonly CardLayoutInput[], space: LayoutSpac
   return orderResult(cards, placements, space);
 }
 
-/** Uniform grid layout (the `grid` mode), skipping obstacles and collisions. */
+/**
+ * Uniform grid layout (the `grid` mode), skipping obstacles and collisions.
+ * A cell is a seat like any other, so the clamped rectangle decides its side:
+ * measuring the raw cell against the map's horizontal midline could only ever
+ * answer `"left"` or `"right"`, which points the leader line of every row
+ * above or below a wide, shallow map out of an edge it does not sit against.
+ */
 export function layoutGrid(cards: readonly CardLayoutInput[], space: LayoutSpace): CardPlacement[] {
   if (cards.length === 0) return [];
   const maxWidth = Math.max(...cards.map((card) => card.width), 1);
@@ -359,15 +364,10 @@ export function layoutGrid(cards: readonly CardLayoutInput[], space: LayoutSpace
   for (const card of cards) {
     let done = false;
     for (let attempt = 0; attempt < columns * 40 && !done; attempt += 1) {
-      const x = space.margin + column * (maxWidth + space.gap);
-      const y = space.margin + row * (maxHeight + space.gap);
-      const side: CardSide = x + card.width / 2 >= space.map.x + space.map.width / 2 ? "right" : "left";
-      const candidate: CardPlacement = {
-        ...card,
-        x: space.clampX(x, card.width),
-        y: space.clampY(y, card.height),
-        side,
-      };
+      const x = space.clampX(space.margin + column * (maxWidth + space.gap), card.width);
+      const y = space.clampY(space.margin + row * (maxHeight + space.gap), card.height);
+      const seat = { ...card, x, y };
+      const candidate: CardPlacement = { ...seat, side: space.sideOf(seat) };
       column += 1;
       if (column >= columns) {
         column = 0;
@@ -379,7 +379,8 @@ export function layoutGrid(cards: readonly CardLayoutInput[], space: LayoutSpace
       done = true;
     }
     if (!done) {
-      const fallback: CardPlacement = { ...card, x: space.margin, y: space.margin, side: "left" };
+      // No cell survived: give up to the same seat every other exit here does.
+      const fallback = marginSeat(card, space);
       placements.push(fallback);
       placed.add(fallback);
     }

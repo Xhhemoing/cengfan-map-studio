@@ -13,6 +13,7 @@ import {
   COLLABORATION_DISPLAY_NAME,
   ROOM_ACCESS_STORAGE_PREFIX,
 } from "./app-constants";
+import { loadBrowserValue } from "./app-initialization";
 import {
   CollaborationClientError,
   createRoom,
@@ -74,14 +75,6 @@ export interface UseCollaborationRoomResult {
   createInvitation: (role: Exclude<CollaborationRole, "owner">) => void;
   leaveRoom: () => void;
   setAccess: (action: RoomAccessAction) => void;
-}
-
-function loadBrowserValue<T>(load: () => T, fallback: T): T {
-  try {
-    return load();
-  } catch {
-    return fallback;
-  }
 }
 
 export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseCollaborationRoomResult {

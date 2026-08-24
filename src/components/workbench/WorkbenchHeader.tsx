@@ -10,15 +10,15 @@ export function WorkbenchHeader({ importInputRef, onCreateProject, onImportProje
   return (
     <header className="workbench-header">
       <div className="workbench-brand">
-        <span className="workbench-brand-mark"><MapPinned size={20} /></span>
+        <span className="workbench-brand-mark"><MapPinned size={20} aria-hidden /></span>
         <span><strong>蹭饭地图工作室</strong><small>项目工作台</small></span>
       </div>
       <div className="workbench-actions">
         <button type="button" className="secondary-button" aria-label="导入工程包" onClick={() => importInputRef.current?.click()}>
-          <FolderOpen size={16} /> 导入
+          <FolderOpen size={16} aria-hidden /> 导入
         </button>
         <button type="button" className="primary-button" aria-label="新建项目" onClick={onCreateProject}>
-          <Plus size={16} /> 新建项目
+          <Plus size={16} aria-hidden /> 新建项目
         </button>
         <input ref={importInputRef} type="file" accept={PROJECT_PACKAGE_FILE_ACCEPT} aria-label="导入工程包文件" className="workbench-file-input" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
       </div>

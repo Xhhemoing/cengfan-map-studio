@@ -336,7 +336,7 @@ export function createAiServer(options: AiServerOptions = {}) {
       (aiPath ? sendAi : send)(500, {
         error: {
           code: HTTP_ERROR_CODES.internal,
-          message: error instanceof Error ? error.message : "未知错误",
+          message: "服务器内部错误",
         },
       });
     }

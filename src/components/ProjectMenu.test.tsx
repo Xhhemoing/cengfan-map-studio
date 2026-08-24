@@ -63,6 +63,15 @@ function normalized(text: string | null | undefined): string {
   return (text ?? "").replace(/\s+/g, "");
 }
 
+/** 装饰性 lucide 图标必须对辅助技术隐藏，控件名称只来自文字或 aria-label。 */
+function expectIconsHiddenFromAT(container: HTMLElement, minimumCount: number): void {
+  const icons = [...container.querySelectorAll("svg")];
+  expect(icons.length).toBeGreaterThanOrEqual(minimumCount);
+  for (const icon of icons) {
+    expect(icon.getAttribute("aria-hidden"), `svg inside "${icon.parentElement?.textContent?.trim()}"`).toBe("true");
+  }
+}
+
 /** WCAG 2.5.3 Label in Name：aria-label 必须包含控件的可见文字。 */
 function expectNamesContainVisibleText(container: HTMLElement): void {
   const named = [...container.querySelectorAll<HTMLElement>("button[aria-label], summary[aria-label]")];
@@ -145,6 +154,26 @@ describe("ProjectMenu", () => {
     const savingButton = saving.container.querySelector<HTMLButtonElement>('button[aria-label="保存中"]')!;
     expect(normalized(savingButton.textContent)).toBe("保存中");
     expect(savingButton.disabled).toBe(true);
+  });
+
+  it("hides every decorative lucide icon from assistive technology in all menu states", () => {
+    // 空闲状态：项目触发器、项目管理、导出、协作触发器、工程文件区共 9 枚图标。
+    const idle = renderMenu();
+    expectIconsHiddenFromAT(idle.container, 9);
+
+    // 未连接但展开协作面板：额外出现「创建房间」图标。
+    const open = renderMenu({ collaborationOpen: true });
+    expectIconsHiddenFromAT(open.container, 10);
+
+    // 已连接创建者 + 邀请凭证：额外出现复制房间码、复制邀请凭证、断开房间图标。
+    const connected = renderMenu({
+      roomId: "ROOM42",
+      roomRole: "owner",
+      collaborationOpen: true,
+      collaborationStatus: "connected",
+      invitationToken: "one-time-invite",
+    });
+    expectIconsHiddenFromAT(connected.container, 12);
   });
 
   it("names the project package import input by the visible 导入工程 label", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { overlaps } from "./card-layout-geometry";
-import { containFree, orderResult, stackAtMargin } from "./card-layout-pack";
+import { containFree, layoutGrid, orderResult, stackAtMargin } from "./card-layout-pack";
 import { LayoutSpace, PlacementIndex } from "./card-layout-space";
 import type { CardArea, CardLayoutInput, CardPlacement } from "./card-layout-types";
 
@@ -384,5 +384,71 @@ describe("orderResult", () => {
     expect(ordered.map((card) => [card.x, card.y])).toEqual([[700, 100], [700, 300], [space.margin, space.margin]]);
     // Cards the solver did place keep whatever side it decided on.
     expect(ordered.slice(0, 2).map((card) => card.side)).toEqual([placeholderSide, placeholderSide]);
+  });
+});
+
+describe("layoutGrid", () => {
+  /** A wide, shallow map: the whole top band of the grid is its *top* edge. */
+  const wideMap: CardArea = { x: 100, y: 300, width: 700, height: 100 };
+
+  function gridCards(count: number): CardLayoutInput[] {
+    return Array.from({ length: count }, (_, index) => inputCard(`g${index}`));
+  }
+
+  it("sides a cell above a wide, shallow map by its geometry, not by a left/right split", () => {
+    const space = makeSpace([wideMap], wideMap);
+
+    // Six 120px cells fit across the 900px canvas, so all six land in the top
+    // row, clear of the map band below them.
+    const placements = layoutGrid(gridCards(6), space);
+
+    expect(placements).toHaveLength(6);
+    for (const placement of placements) {
+      expect(placement.y).toBe(space.margin);
+      // A midline split on the raw cell called the first three "left" and the
+      // last three "right", and pointed six leader lines out of an edge none
+      // of these cards sit against.
+      expect(placement.side).toBe("top");
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+  });
+
+  it("sides a cell below the same map by its geometry too", () => {
+    const space = makeSpace([wideMap], wideMap);
+    // Two rows fit above the band and the rows crossing it are all blocked, so
+    // the last six cards are the first ones the grid seats underneath it.
+    const placements = layoutGrid(gridCards(18), space).slice(12);
+
+    expect(placements).toHaveLength(6);
+    for (const placement of placements) {
+      expect(placement.y).toBeGreaterThan(wideMap.y + wideMap.height);
+      expect(placement.side).toBe("bottom");
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+  });
+
+  it("still labels the flanks of a tall map left and right", () => {
+    const space = makeSpace();
+
+    const placements = layoutGrid(gridCards(18), space);
+
+    for (const placement of placements) {
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+    const sides = [...new Set(placements.map((placement) => placement.side))];
+    expect(sides).toContain("left");
+    expect(sides).toContain("right");
+  });
+
+  it("sides the margin seat it falls back to when no cell is free", () => {
+    // Nothing is placeable, so every cell is rejected and the fallback runs.
+    const space = makeSpace([{ x: 0, y: 0, width: 900, height: 700 }], wideMap);
+
+    const [seated] = layoutGrid(gridCards(1), space);
+
+    expect(seated!.x).toBe(space.margin);
+    expect(seated!.y).toBe(space.margin);
+    expect(seated!.side).toBe("top");
+    expect(seated!.side).toBe(space.sideOf(seated!));
   });
 });

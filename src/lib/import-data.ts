@@ -119,8 +119,8 @@ function joinQuotedLines(lines: string[]): SourceLine[] {
 /** Delimiters a paste may use, in the order they are believed. */
 const CELL_DELIMITERS = ["\t", ",", "，", ";", "；", "|", "、"];
 
-/** The "1." / "2、" / "3)" opening a numbered list: a marker, never a cell. */
-const LIST_MARKER = /^\d+[.、)]\s*(?=\D)/;
+/** The "1." / "2、" / "３)" opening a numbered list: a marker, never a cell. */
+const LIST_MARKER = /^\p{Nd}+[.、)]\s*(?=[^\p{Nd}])/u;
 
 /**
  * `、` is believed only from its second occurrence on: it is also the Chinese
@@ -170,8 +170,8 @@ export function splitDelimitedLine(line: string, delimiter: string): string[] {
 
 type UsableColumns = Map<string, ReadonlySet<number>>;
 
-/** A cell of digits alone: a 序号, a 学号, a date Excel left as its serial. */
-const SERIAL_CELL = /^\d+(?:\.\d+)?$/;
+/** A cell of digits alone, fullwidth "１" included: a 序号, a 学号, an Excel date serial. */
+const SERIAL_CELL = /^\p{Nd}+(?:[.．]\p{Nd}+)?$/u;
 
 /**
  * Columns the positional reader may use, per delimiter: the ones at least one

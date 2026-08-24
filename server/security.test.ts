@@ -132,6 +132,30 @@ describe("server request security", () => {
     expect(JSON.parse(response.body)).toMatchObject({ error: { code: "INVALID_URL_ENCODING" } });
   });
 
+  it("does not expose filesystem details in unexpected API errors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cengfan-internal-error-"));
+    directories.push(root);
+    const dataDir = join(root, "not-a-directory");
+    await writeFile(dataDir, "not a directory");
+    const server = createAiServer({ dataDir, workspaceApiToken: "workspace-token" });
+    servers.push(server);
+    const origin = await startServer(server);
+
+    const response = await rawRequest(origin, "/api/workspace", "GET", undefined, {
+      Authorization: "Bearer workspace-token",
+      "X-Request-Id": "internal-error-test",
+    });
+
+    expect(response.status).toBe(500);
+    expect(JSON.parse(response.body)).toEqual({
+      error: { code: "INTERNAL_ERROR", message: "服务器内部错误" },
+      requestId: "internal-error-test",
+    });
+    expect(response.body).not.toContain(dataDir);
+    expect(response.body).not.toContain("workspace.json");
+    expect(response.body).not.toContain("EISDIR");
+  });
+
   it.each([
     ["POST", "/api/health", "GET, OPTIONS"],
     ["PATCH", "/api/rooms", "POST, OPTIONS"],
