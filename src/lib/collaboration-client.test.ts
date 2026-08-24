@@ -613,6 +613,51 @@ describe("subscribeRoom reconnect loop", () => {
     unsubscribe();
   });
 
+  it("reports the terminal reason before the stream error so the caller can stop promising a reconnect", async () => {
+    const timeline = createTimeline();
+    const order: string[] = [];
+    const onTerminal = vi.fn(() => order.push("terminal"));
+    const onError = vi.fn(() => order.push("error"));
+
+    const unsubscribe = subscribeRoom("ABC123", "owner-token", () => {}, onError, {
+      version: () => 1,
+      createTicket: () => Promise.reject(new CollaborationClientError("ROOM_NOT_FOUND", "共享房间不存在")),
+      reconnectDelays: [500],
+      onTerminal,
+      schedule: timeline.schedule.bind(timeline),
+    });
+
+    await vi.waitFor(() => expect(onTerminal).toHaveBeenCalledWith("ROOM_NOT_FOUND"));
+    // 终局先于断流:调用方的补齐随后才启动,不会把终局提示又盖回"正在自动重连"。
+    expect(order).toEqual(["terminal", "error"]);
+    expect(timeline.pending.size).toBe(0);
+
+    unsubscribe();
+  });
+
+  it("keeps a transient ticket failure out of the terminal callback", async () => {
+    const timeline = createTimeline();
+    const onTerminal = vi.fn();
+    const createTicket = vi.fn()
+      .mockRejectedValueOnce(new CollaborationClientError("REQUEST_TIMEOUT", "协作服务无响应"))
+      .mockResolvedValue("ticket-2");
+
+    const unsubscribe = subscribeRoom("ABC123", "owner-token", () => {}, () => {}, {
+      version: () => 1,
+      createTicket,
+      reconnectDelays: [500],
+      onTerminal,
+      schedule: timeline.schedule.bind(timeline),
+    });
+
+    await vi.waitFor(() => expect(timeline.pending.size).toBe(1));
+    await timeline.runNext();
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+    expect(onTerminal).not.toHaveBeenCalled();
+
+    unsubscribe();
+  });
+
   it("recovers from an events-ticket request that never settles", async () => {
     const timeline = createTimeline();
     const onError = vi.fn();
