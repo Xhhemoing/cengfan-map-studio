@@ -4,7 +4,6 @@
  */
 import { performance } from "node:perf_hooks";
 import { geoMercator, geoPath } from "d3-geo";
-import { JSDOM } from "jsdom";
 import { createServer } from "vite";
 import { solveCardLayout } from "../src/lib/card-layout";
 import { wrapCardText } from "../src/lib/card-text-layout";
@@ -14,74 +13,20 @@ import {
   buildGuestBenchFixture,
   buildLongNameFragments,
   buildPosterCanvasBenchFixture,
-  medianDuration,
 } from "../src/lib/canvas-render-metrics";
+import {
+  buildPreparedTextBatches,
+  installDomGlobals,
+  measure,
+  printMeasurement,
+  readSink,
+  retain,
+} from "./perf-canvas-bench-harness";
 import {
   deriveFixedDisplayFrameFromCardSettings,
   normalizeDisplayFrame,
 } from "../src/lib/display-frame";
 import type { MapFeature } from "../src/lib/map-data";
-
-let benchmarkSink: unknown;
-
-function printMeasurement(name: string, n: number, samples: readonly number[]): void {
-  console.log(`name=${name} n=${n} ms=${medianDuration(samples).toFixed(3)}`);
-}
-
-function measure(
-  name: string,
-  n: number,
-  operation: () => unknown,
-  sampleCount = 7,
-): void {
-  benchmarkSink = operation();
-  const samples: number[] = [];
-  for (let sample = 0; sample < sampleCount; sample += 1) {
-    const start = performance.now();
-    benchmarkSink = operation();
-    samples.push(performance.now() - start);
-  }
-  printMeasurement(name, n, samples);
-}
-
-function installDomGlobals(): () => void {
-  const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-    pretendToBeVisual: true,
-  });
-  const globalValues: Record<string, unknown> = {
-    window: dom.window,
-    document: dom.window.document,
-    navigator: dom.window.navigator,
-    Node: dom.window.Node,
-    Element: dom.window.Element,
-    HTMLElement: dom.window.HTMLElement,
-    SVGElement: dom.window.SVGElement,
-    SVGSVGElement: dom.window.SVGSVGElement,
-    Event: dom.window.Event,
-    MouseEvent: dom.window.MouseEvent,
-    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
-    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
-    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
-  };
-  const previousDescriptors = new Map(
-    Object.keys(globalValues).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
-  );
-  for (const [key, value] of Object.entries(globalValues)) {
-    Object.defineProperty(globalThis, key, {
-      configurable: true,
-      writable: true,
-      value,
-    });
-  }
-
-  return () => {
-    for (const [key, descriptor] of previousDescriptors) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else Reflect.deleteProperty(globalThis, key);
-    }
-    dom.window.close();
-  };
-}
 
 for (const count of [1, 50, 200]) {
   const fixtures = buildDisplayFrameBenchFixtures(count);
@@ -171,58 +116,10 @@ try {
         templateId: "original",
         dataView: "province",
       });
-      // Mirror the three text-wrap batches prepared per one-student province card:
-      // title, city heading, and university/name body. Fixture construction stays
-      // outside the samples so this isolates the prepared-content wrapping cost.
       const preparedDisplayFrame = deriveFixedDisplayFrameFromCardSettings(project.cards);
       const preparedBodyItem = preparedDisplayFrame.fixed.items.find((item) => item.id === "name")
         ?? preparedDisplayFrame.fixed.items[0];
-      const preparedHorizontalPadding = preparedBodyItem?.x
-        ?? project.cards.horizontalPadding
-        ?? project.cards.padding;
-      // Typography-first chain, mirroring `cardFieldFontSize` in `prepared-card-content` — not the
-      // flow cursor of `destinationCardFlowContentStart`, which ignores `fieldTypography` on purpose.
-      const preparedFieldFontSize = (field: "title" | "name" | "university" | "city") =>
-        project.cards.fieldTypography?.[field]?.fontSize
-        ?? (field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize);
-      const preparedRowFontSize = Math.max(
-        ...project.cards.visibleFields.map(preparedFieldFontSize),
-        preparedFieldFontSize("city"),
-      );
-      const preparedTitleFontSize = preparedFieldFontSize("title");
-      const preparedCardWidth = Math.min(
-        project.cards.maxWidth,
-        Math.max(80, project.canvas.width - project.canvas.safeMargin * 2),
-      );
-      const preparedContentWidth = Math.max(
-        preparedRowFontSize,
-        preparedCardWidth - preparedHorizontalPadding * 2,
-      );
-      const preparedTitleWidth = Math.max(
-        preparedTitleFontSize,
-        preparedContentWidth - Math.max(42, preparedTitleFontSize * 3),
-      );
-      const preparedTextBatches = fixture.students.flatMap((student) => [
-        {
-          fragments: [{ text: student.province, field: "title" as const }],
-          maxWidth: preparedTitleWidth,
-          fontSize: preparedTitleFontSize,
-        },
-        {
-          fragments: [{ text: student.city, field: "city" as const }],
-          maxWidth: preparedContentWidth,
-          fontSize: preparedFieldFontSize("city"),
-        },
-        {
-          fragments: [
-            { text: student.university, field: "university" as const },
-            { text: " · " },
-            { text: student.name, field: "name" as const },
-          ],
-          maxWidth: preparedContentWidth,
-          fontSize: preparedRowFontSize,
-        },
-      ]);
+      const preparedTextBatches = buildPreparedTextBatches(project, fixture.students, preparedBodyItem?.x);
       const noWrapFields = new Set(project.cards.noWrapFields ?? []);
       measure("wrapCardTextPreparedContent", count, () =>
         preparedTextBatches.map((batch) =>
@@ -254,7 +151,7 @@ try {
         if (renderedCards !== count) {
           throw new Error(`PosterCanvas mount rendered ${renderedCards} cards; expected ${count}`);
         }
-        benchmarkSink = renderedCards;
+        retain(renderedCards);
         return duration;
       };
 
@@ -491,4 +388,4 @@ try {
   await vite.close();
 }
 
-void benchmarkSink;
+void readSink();
