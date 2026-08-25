@@ -14,7 +14,6 @@
   "src/components/DataWorkspace.tsx": 885,
   "src/components/ProjectWorkbench.test.tsx": 564,
   "src/components/canvas/MapDataLayer.tsx": 508,
-  "src/components/canvas/MapLayer.test.tsx": 647,
   "src/components/canvas/MapLayer.tsx": 475,
   "src/components/canvas/PosterCanvas.tsx": 1588,
   "src/components/inspector/MapInspector.tsx": 555,
