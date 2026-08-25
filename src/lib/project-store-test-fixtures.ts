@@ -1,4 +1,3 @@
-import { IDBFactory } from "fake-indexeddb";
 import type { RecoverScheduler, StoredProject } from "./project-store";
 import { createProjectDocument } from "./project-document";
 import { createProjectPackage } from "./project-package";
