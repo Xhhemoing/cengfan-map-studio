@@ -26,7 +26,6 @@
   "src/lib/agent-session.test.ts": 696,
   "src/lib/agent-session.ts": 799,
   "src/lib/binary-import.test.ts": 471,
-  "src/lib/card-layout.test.ts": 958,
   "src/lib/card-layout.ts": 1662,
   "src/lib/collaboration-client.ts": 754,
   "src/lib/export-poster.test.ts": 509,
