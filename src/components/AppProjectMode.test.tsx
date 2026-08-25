@@ -16,9 +16,11 @@ beforeAll(async () => {
 
 // jsdom 没有 IndexedDB;App 在 projectId 模式下会调用 editorProjectStore.get/put,
 // 必须注入内存 store,否则真实 store 的 get() 恒返回 null 导致项目缺失界面。
+// 这个替身要冒充「能正常落盘的库」:健康度必须报 persistent,否则 App 无从区分
+// 「磁盘上真的没有这一行」与「数据库降级后读到的是空内存副本」。
 vi.mock("../lib/editor-project-store", async () => {
   const { createMemoryProjectStore } = await import("../lib/project-store");
-  return { editorProjectStore: createMemoryProjectStore() };
+  return { editorProjectStore: { ...createMemoryProjectStore(), health: "persistent" } };
 });
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -100,7 +102,7 @@ describe("App in project mode", () => {
   it("shows a missing-project screen when the id is unknown", async () => {
     const container = mountApp("no-such-project");
 
-    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error[role='alert']")).not.toBeNull());
     expect(container.textContent).toContain("项目不存在或已删除");
     expect(container.querySelector('button[aria-label="返回项目列表"]')).not.toBeNull();
   });
@@ -193,20 +195,22 @@ describe("App in project mode", () => {
 
   it("recovers when a missing project id is replaced by a valid one", async () => {
     const container = mountApp("no-such-project");
-    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error[role='alert']")).not.toBeNull());
 
     rerenderApp(roots[roots.length - 1], sample.id);
 
     await vi.waitFor(() => expect(container.textContent).toContain("已打开项目"));
-    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector(".workbench-error[role='alert']")).toBeNull();
   });
 
-  it("shows the missing-project screen when the store get rejects", async () => {
+  // 读取失败与查无此行是两回事:读不出来时不能替数据库宣布工程已经被删除。
+  it("shows an unreadable-project screen when the store get rejects", async () => {
     vi.spyOn(editorProjectStore, "get").mockRejectedValueOnce(new Error("boom"));
     const container = mountApp(sample.id);
 
-    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
-    expect(container.textContent).toContain("项目不存在或已删除");
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error[role='alert']")).not.toBeNull());
+    expect(container.textContent).toContain("无法读取这个项目");
+    expect(container.textContent).not.toContain("项目不存在或已删除");
   });
 
   it("restores custom templates, fonts, and render settings from the record", async () => {

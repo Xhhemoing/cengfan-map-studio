@@ -1,5 +1,5 @@
 import { Check, Download, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   applyUniversityAutoLocation,
   confirmImportCandidates,
@@ -8,53 +8,55 @@ import {
   type ImportReviewRow,
   type StudentDraft,
 } from "../lib/data-workspace";
-import { parseStudentText } from "../lib/import-data";
+import { parseStudentText, type ImportCandidate, type UnparsedLine } from "../lib/import-data";
 import {
   createImportTemplateSheets,
-  parseExcelWorkbookRows,
+  isCsvFile,
   parseOcrLikeText,
+  STUDENT_COLUMN_LABELS,
   type ExcelImportResult,
-  type StudentColumn,
 } from "../lib/binary-import";
+import type { WorkbookImportRequest, WorkbookImportResponse } from "../workers/workbook-import.worker";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
+import { DataMessageRegions } from "./DataMessageRegions";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
 import { findDuplicateStudentGroups } from "../lib/data-duplicate";
-import { searchCities, searchProvinces, searchUniversities } from "../lib/search-catalog";
-import { SearchCombobox, type SearchComboboxOption } from "./SearchCombobox";
+import { cityOptions, provinceOptions, universityOptions } from "../lib/roster-search-options";
+import { SearchCombobox } from "./SearchCombobox";
 import { FileDropzone } from "./FileDropzone";
 import { UniversityEmblem } from "./UniversityEmblem";
 import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, SegmentedControl } from "./StudioUi";
 
-function universityOptions(query: string): SearchComboboxOption[] {
-  return searchUniversities(query).map((university) => ({
-    value: university.name,
-    label: university.name,
-    detail: university.city,
-  }));
+/** 未导入行最多列几条：一份 60 行的名单全废时不该把整个面板刷满。 */
+const UNPARSED_PREVIEW_LIMIT = 20;
+/** 提示里最多点名几张未读取的工作表，其余用「等」收尾。 */
+const SKIPPED_SHEET_PREVIEW = 3;
+/** 压缩工作簿解包后的体积可能远大于文件本身，先挡住异常大的输入再读取到内存。 */
+const MAX_WORKBOOK_FILE_BYTES = 25 * 1024 * 1024;
+/** 病态工作簿不能无限占住导入流程；超时后销毁 worker，避免其继续消耗 CPU。 */
+const WORKBOOK_PARSE_DEADLINE_MS = 30_000;
+/** 连续导入复用已加载 XLSX 的 worker，空闲后再释放其模块和堆内存。 */
+const WORKBOOK_WORKER_IDLE_MS = 30_000;
+const WORKBOOK_IMPORT_CANCELLED = Symbol("workbook-import-cancelled");
+
+interface ActiveWorkbookImport {
+  worker: Worker;
+  requestId: number;
+  deadlineTimer: ReturnType<typeof setTimeout>;
+  reject: (reason: unknown) => void;
 }
 
-function cityOptions(query: string): SearchComboboxOption[] {
-  return searchCities(query).map((city) => ({
-    value: city.name,
-    label: city.name,
-    detail: city.province,
-  }));
+function createWorkbookImportWorker(): Worker {
+  if (typeof Worker === "undefined") throw new Error("当前浏览器不支持后台解析 Excel / CSV");
+  return new Worker(new URL("../workers/workbook-import.worker.ts", import.meta.url), { type: "module" });
 }
 
-function provinceOptions(query: string): SearchComboboxOption[] {
-  return searchProvinces(query).map((province) => ({
-    value: province,
-    label: province,
-  }));
+function describeSkippedSheets(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  const preview = names.slice(0, SKIPPED_SHEET_PREVIEW).join("、");
+  return `，另有 ${names.length} 张工作表未读取（${preview}${names.length > SKIPPED_SHEET_PREVIEW ? " 等" : ""}）`;
 }
-
-const studentColumnLabels: Record<StudentColumn, string> = {
-  name: "学生姓名",
-  university: "录取院校",
-  city: "城市",
-  locationScope: "去向类型",
-};
 
 export function DataWorkspace({
   students,
@@ -73,6 +75,7 @@ export function DataWorkspace({
   confirmReplace = ({ currentCount, nextCount }) => window.confirm(`确认替换全部名单？当前 ${currentCount} 条 -> 新 ${nextCount} 条`),
   hideDataExpression = false,
   hideTemplateDownload = false,
+  hideWorkbenchHeader = false,
   compactRosterControls = false,
 }: {
   students: Student[];
@@ -91,6 +94,8 @@ export function DataWorkspace({
   confirmReplace?: (input: { currentCount: number; nextCount: number }) => boolean;
   hideDataExpression?: boolean;
   hideTemplateDownload?: boolean;
+  /** 名单阶段外壳已有「名单」标题时隐藏内部的「学生数据中心」头。 */
+  hideWorkbenchHeader?: boolean;
   compactRosterControls?: boolean;
 }) {
   const [draft, setDraft] = useState<StudentDraft>(createEmptyStudentDraft());
@@ -105,7 +110,132 @@ export function DataWorkspace({
   const [message, setMessage] = useState("");
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
-  const [unparsedCount, setUnparsedCount] = useState(0);
+  const [unparsedRows, setUnparsedRows] = useState<UnparsedLine[]>([]);
+  /**
+   * 每次发起识别都领一个号，只有仍持有最新号的那次才能落到候选状态上。
+   * 连点两次文件选择时，先发出的那次可能后返回，没有这道闸就会用旧文件覆盖新文件。
+   */
+  const importGenerationRef = useRef(0);
+  const workbookWorkerRef = useRef<Worker | null>(null);
+  const activeWorkbookImportRef = useRef<ActiveWorkbookImport | null>(null);
+  const workbookWorkerIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearWorkbookWorkerIdleTimer = () => {
+    if (workbookWorkerIdleTimerRef.current === null) return;
+    clearTimeout(workbookWorkerIdleTimerRef.current);
+    workbookWorkerIdleTimerRef.current = null;
+  };
+  const terminateWorkbookWorker = (worker: Worker | null = workbookWorkerRef.current) => {
+    if (!worker) return;
+    clearWorkbookWorkerIdleTimer();
+    if (workbookWorkerRef.current === worker) workbookWorkerRef.current = null;
+    worker.terminate();
+  };
+  const scheduleWorkbookWorkerIdleTeardown = (worker: Worker) => {
+    clearWorkbookWorkerIdleTimer();
+    if (workbookWorkerRef.current !== worker) return;
+    workbookWorkerIdleTimerRef.current = setTimeout(() => {
+      workbookWorkerIdleTimerRef.current = null;
+      if (workbookWorkerRef.current === worker && activeWorkbookImportRef.current?.worker !== worker) {
+        terminateWorkbookWorker(worker);
+      }
+    }, WORKBOOK_WORKER_IDLE_MS);
+  };
+  const acquireWorkbookWorker = (): Worker => {
+    clearWorkbookWorkerIdleTimer();
+    if (!workbookWorkerRef.current) workbookWorkerRef.current = createWorkbookImportWorker();
+    return workbookWorkerRef.current;
+  };
+  const cancelWorkbookImport = () => {
+    const active = activeWorkbookImportRef.current;
+    if (!active) return;
+    activeWorkbookImportRef.current = null;
+    clearTimeout(active.deadlineTimer);
+    terminateWorkbookWorker(active.worker);
+    active.reject(WORKBOOK_IMPORT_CANCELLED);
+  };
+  const beginImport = (): number => {
+    importGenerationRef.current += 1;
+    cancelWorkbookImport();
+    return importGenerationRef.current;
+  };
+  const isCurrentImport = (generation: number): boolean => importGenerationRef.current === generation;
+
+  const parseWorkbookInWorker = async (
+    buffer: ArrayBuffer,
+    isCsv: boolean,
+    requestId: number,
+  ): Promise<Extract<WorkbookImportResponse, { type: "result" }>> => {
+    const worker = acquireWorkbookWorker();
+    try {
+      return await new Promise((resolve, reject) => {
+        let settled = false;
+        let deadlineTimer: ReturnType<typeof setTimeout>;
+        const settle = () => {
+          if (settled) return false;
+          settled = true;
+          clearTimeout(deadlineTimer);
+          if (
+            activeWorkbookImportRef.current?.worker === worker
+            && activeWorkbookImportRef.current.requestId === requestId
+          ) {
+            activeWorkbookImportRef.current = null;
+          }
+          return true;
+        };
+        const rejectOnce = (reason: unknown) => {
+          if (!settle()) return;
+          reject(reason);
+        };
+        const resolveOnce = (response: Extract<WorkbookImportResponse, { type: "result" }>) => {
+          if (!settle()) return;
+          resolve(response);
+        };
+        deadlineTimer = setTimeout(() => {
+          terminateWorkbookWorker(worker);
+          rejectOnce(new Error("解析超时，文件可能已损坏"));
+        }, WORKBOOK_PARSE_DEADLINE_MS);
+        activeWorkbookImportRef.current = { worker, requestId, deadlineTimer, reject: rejectOnce };
+        worker.onmessage = (event: MessageEvent<WorkbookImportResponse>) => {
+          const response = event.data;
+          if (response.requestId !== requestId) return;
+          if (response.type === "error") {
+            rejectOnce(new Error(response.message));
+            return;
+          }
+          resolveOnce(response);
+        };
+        worker.onerror = (event) => {
+          event.preventDefault();
+          terminateWorkbookWorker(worker);
+          rejectOnce(new Error(event.message || "工作簿后台解析失败"));
+        };
+        worker.onmessageerror = () => {
+          terminateWorkbookWorker(worker);
+          rejectOnce(new Error("工作簿后台解析结果无法读取"));
+        };
+        const request: WorkbookImportRequest = {
+          type: "parse-workbook",
+          requestId,
+          buffer,
+          isCsv,
+        };
+        try {
+          worker.postMessage(request, [buffer]);
+        } catch (error) {
+          terminateWorkbookWorker(worker);
+          rejectOnce(error);
+        }
+      });
+    } finally {
+      if (workbookWorkerRef.current === worker) scheduleWorkbookWorkerIdleTeardown(worker);
+    }
+  };
+
+  useEffect(() => () => {
+    importGenerationRef.current += 1;
+    cancelWorkbookImport();
+    terminateWorkbookWorker();
+  }, []);
 
   const filteredStudents = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
@@ -146,22 +276,18 @@ export function DataWorkspace({
   const [showNewStudent, setShowNewStudent] = useState(!compactRosterControls);
 
   const setCandidates = (
-    candidates: Array<{
-      name: string;
-      university: string;
-      city: string;
-      locationScope?: "china" | "international";
-      sourceLine: number;
-      rawLine: string;
-    }>,
-    unparsedCount: number,
+    candidates: ImportCandidate[],
+    unparsed: UnparsedLine[],
     sourceLabel: string,
     recognition?: Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields">,
+    /** 追加在识别口径之后的补充说明，目前用于点名没被读取的工作表。 */
+    note = "",
   ) => {
     setExcelRecognition(recognition?.headerRowIndex !== undefined ? recognition : null);
-    setUnparsedCount(unparsedCount);
+    setUnparsedRows(unparsed);
+    const droppedNote = unparsed.length ? `，另有 ${unparsed.length} 行未识别` : "";
     if (candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入数据`);
+      setMessage(`没有从${sourceLabel}识别到可导入数据${droppedNote}${note}`);
       setReviewRows([]);
       return;
     }
@@ -171,9 +297,7 @@ export function DataWorkspace({
         accepted: true,
       })),
     );
-    setMessage(
-      `从${sourceLabel}识别到 ${candidates.length} 条候选${unparsedCount ? `，另有 ${unparsedCount} 行未识别` : ""}`,
-    );
+    setMessage(`从${sourceLabel}识别到 ${candidates.length} 条候选${droppedNote}${note}`);
   };
 
   const addDraftStudent = () => {
@@ -231,8 +355,9 @@ export function DataWorkspace({
   };
 
   const prepareImport = () => {
+    beginImport();
     const parsed = parseStudentText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "文本");
+    setCandidates(parsed.candidates, parsed.unparsed, "文本");
   };
 
   const downloadImportTemplate = async () => {
@@ -250,8 +375,9 @@ export function DataWorkspace({
   };
 
   const prepareOcrImport = () => {
+    beginImport();
     const parsed = parseOcrLikeText(importText);
-    setCandidates(parsed.candidates, parsed.unparsed.length, "OCR 文本");
+    setCandidates(parsed.candidates, parsed.unparsed, "OCR 文本");
   };
 
   const prepareAiImport = async () => {
@@ -259,11 +385,14 @@ export function DataWorkspace({
       setMessage("请先粘贴需要智能识别的名单");
       return;
     }
+    const generation = beginImport();
     setIsAiParsing(true);
     try {
       const parsed = await requestAiParse({ text: importText, source: "paste" });
-      setCandidates(parsed.candidates, parsed.unparsed.length, `智能识别（${parsed.provider}）`);
+      if (!isCurrentImport(generation)) return;
+      setCandidates(parsed.candidates, parsed.unparsed, `智能识别（${parsed.provider}）`);
     } catch (error) {
+      if (!isCurrentImport(generation)) return;
       setMessage(error instanceof Error ? error.message : "智能识别失败");
     } finally {
       setIsAiParsing(false);
@@ -272,36 +401,47 @@ export function DataWorkspace({
 
   const handleExcelFile = async (file: File | null) => {
     if (!file) return;
+    const generation = beginImport();
     setExcelRecognition(null);
+    const csv = isCsvFile(file);
+    if (file.size > MAX_WORKBOOK_FILE_BYTES) {
+      setMessage("文件过大，Excel / CSV 最大支持 25 MB");
+      return;
+    }
     try {
-      const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) {
-        setMessage("Excel 中没有工作表");
+      if (!isCurrentImport(generation)) return;
+      // 二进制解码、逐表 sheet_to_json 与 T8 的选表逻辑都在 worker 内完成；
+      // ArrayBuffer 直接转移所有权，避免主线程再复制一份大文件。
+      const response = await parseWorkbookInWorker(buffer, csv, generation);
+      if (!isCurrentImport(generation)) return;
+      const { parsed } = response;
+      if (!parsed) {
+        setMessage(csv ? "CSV 中没有数据" : "Excel 中没有工作表");
         return;
       }
-      const sheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<(string | number)[]>(sheet, {
-        header: 1,
-        defval: "",
-      });
-      const matrix = rows.map((row) =>
-        (Array.isArray(row) ? row : []).map((cell) => String(cell ?? "").trim()),
+      // 点名 GB18030：真遇到编码猜错时，用户能从提示里看出该换个编码另存。
+      const encodingNote = response.encoding === "gb18030" ? " · 按 GB18030 解码" : "";
+      setCandidates(
+        parsed.candidates,
+        parsed.unparsed,
+        csv ? `CSV（${file.name}${encodingNote}）` : `Excel（${file.name} · 工作表「${parsed.sheetName}」）`,
+        parsed,
+        describeSkippedSheets(parsed.skippedSheetNames),
       );
-      const parsed = parseExcelWorkbookRows(matrix);
-      setCandidates(parsed.candidates, parsed.unparsed.length, `Excel（${file.name}）`, parsed);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Excel 解析失败");
+      if (!isCurrentImport(generation)) return;
+      setMessage(error instanceof Error ? error.message : `${csv ? "CSV" : "Excel"} 解析失败`);
     }
   };
 
   const applyImport = (mode: "append" | "replace") => {
     const result = confirmImportCandidates(reviewRows);
     const next = result.students;
+    // 跳过口径覆盖两段损耗：解析阶段就没读成候选的行，以及候选里被取消勾选或校验不通过的行。
+    const skipped = unparsedRows.length + result.rejected.length;
     if (next.length === 0) {
-      setMessage(`没有可导入的有效记录，${result.issues.length} 条校验问题`);
+      setMessage(`没有可导入的有效记录，${result.issues.length} 条校验问题，跳过 ${skipped} 行`);
       return;
     }
     if (mode === "replace") {
@@ -312,9 +452,9 @@ export function DataWorkspace({
     if (mode === "replace") onReplaceStudents(next);
     setReviewRows([]);
     setExcelRecognition(null);
-    setUnparsedCount(0);
+    setUnparsedRows([]);
     setImportText("");
-    setMessage(`已${mode === "replace" ? "替换" : "追加"} ${next.length} 条学生数据`);
+    setMessage(`已${mode === "replace" ? "替换" : "追加"} ${next.length} 条学生数据，跳过 ${skipped} 行`);
   };
 
   const importDirectly = async () => {
@@ -322,6 +462,7 @@ export function DataWorkspace({
       setMessage("请先粘贴名单");
       return;
     }
+    const generation = beginImport();
     setExcelRecognition(null);
     setIsAiParsing(true);
     let parsed;
@@ -336,8 +477,10 @@ export function DataWorkspace({
     } finally {
       setIsAiParsing(false);
     }
+    if (!isCurrentImport(generation)) return;
+    setUnparsedRows(parsed.unparsed);
     if (parsed.candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入的学生记录`);
+      setMessage(`没有从${sourceLabel}识别到可导入的学生记录，跳过 ${parsed.unparsed.length} 行`);
       return;
     }
     const result = confirmImportCandidates(parsed.candidates.map((c) => ({ ...c, accepted: true })));
@@ -348,12 +491,12 @@ export function DataWorkspace({
     onAppendStudents(result.students);
     setReviewRows([]);
     setImportText("");
-    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录`);
+    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录，跳过 ${parsed.unparsed.length + result.rejected.length} 行`);
   };
 
   return (
     <div className={`data-workspace${compactRosterControls ? " data-workspace--roster" : ""}`}>
-      <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />
+      {!hideWorkbenchHeader && <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />}
 
       {!hideDataExpression && <section className="data-expression" aria-labelledby="data-expression-title">
         <PanelHeader id="data-expression-title" title="地图呈现方式" meta="同一份名单，实时切换" />
@@ -495,7 +638,7 @@ export function DataWorkspace({
               <FileDropzone
                 id="data-excel-upload"
                 label="导入 Excel"
-                hint="XLSX / CSV · 点击或拖拽"
+                hint="XLSX / CSV · 最大 25 MB"
                 accept=".xlsx,.xls,.csv"
                 variant="secondary"
                 icon={<FileUp size={16} aria-hidden />}
@@ -521,7 +664,7 @@ export function DataWorkspace({
             {excelRecognition.columnMappings.map((mapping) => (
               <div key={mapping.field} className="import-recognition__row">
                 <span>{mapping.sourceHeader}</span>
-                <strong>{studentColumnLabels[mapping.field]}</strong>
+                <strong>{STUDENT_COLUMN_LABELS[mapping.field]}</strong>
                 <small>{mapping.samples.length > 0 ? mapping.samples.join("、") : "暂无代表数据"}</small>
               </div>
             ))}
@@ -530,14 +673,32 @@ export function DataWorkspace({
             <p className="import-recognition__note">未使用：{excelRecognition.unmappedHeaders.join("、")}</p>
           )}
           {excelRecognition.missingRequiredFields.length > 0 && (
-            <p className="import-recognition__warning">缺少必填列：{excelRecognition.missingRequiredFields.map((field) => studentColumnLabels[field]).join("、")}</p>
+            <p className="import-recognition__warning">缺少必填列：{excelRecognition.missingRequiredFields.map((field) => STUDENT_COLUMN_LABELS[field]).join("、")}</p>
+          )}
+        </section>
+      )}
+
+      {unparsedRows.length > 0 && (
+        <section className="import-unparsed" aria-label="未导入的行">
+          <PanelHeader title="未导入的行" meta={`${unparsedRows.length} 行被跳过`} />
+          <ul className="import-unparsed__list">
+            {unparsedRows.slice(0, UNPARSED_PREVIEW_LIMIT).map((row, index) => (
+              <li key={`${row.sourceLine}-${index}`} className="import-unparsed__row">
+                <strong>第 {row.sourceLine} 行</strong>
+                <span>{row.reason}</span>
+                <small>{row.rawLine || "（空行）"}</small>
+              </li>
+            ))}
+          </ul>
+          {unparsedRows.length > UNPARSED_PREVIEW_LIMIT && (
+            <p className="import-recognition__note">仅显示前 {UNPARSED_PREVIEW_LIMIT} 行，共 {unparsedRows.length} 行未导入</p>
           )}
         </section>
       )}
 
       {reviewRows.length > 0 && (
         <div className="import-review">
-          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedCount} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}`} />
+          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedRows.length} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}`} />
           <div className="review-list">
             {reviewRows.map((row, index) => (
               <label key={`${row.sourceLine}-${index}`} className="review-row">
@@ -574,8 +735,7 @@ export function DataWorkspace({
         </div>
       )}
 
-      {replaceConfirmation && <p className="panel-note data-message">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</p>}
-      {message && <p className="panel-note data-message">{message}</p>}
+      <DataMessageRegions message={message} replaceConfirmation={replaceConfirmation} />
 
       <div className="student-actions">
         <input

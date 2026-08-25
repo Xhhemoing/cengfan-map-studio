@@ -1,5 +1,6 @@
 import type { EditorCommand } from "./editor-commands";
 import { createEditorCommand } from "./editor-commands";
+import { STATIC_HOST_API_HINT } from "./public-base-path";
 
 export interface AiProposal {
   mode: "proposal" | "explain";
@@ -35,6 +36,7 @@ async function readAiError(response: Response, fallback: string): Promise<Error>
   if (code === "AI_RATE_LIMITED") return new Error("请求过于频繁，请稍后重试。");
   if (code === "AI_TIMEOUT") return new Error("AI 请求超时，请稍后重试。");
   if (code === "WORKSPACE_API_DISABLED") return new Error("AI 服务尚未配置，请先配置服务端 API Key。");
+  if (!data && (response.status === 404 || response.status === 405)) return new Error(STATIC_HOST_API_HINT);
   return new Error(message || fallback);
 }
 

@@ -1,13 +1,12 @@
 import http from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream, existsSync, statSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
+import { mkdir, readFile } from "node:fs/promises";
 import { createBudgetReceiptLedger, createBudgetReceiptSigner, type BudgetReceiptLedger } from "./ai/budget-receipt";
 import { createFileAiStateStore, createMemoryAiStateStore, emptyAiRuntimeState, type AiRuntimeState, type AiStateStore } from "./ai/ai-state-store";
 import { createServerLifecycle, validateProductionConfig } from "./production";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { dirname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createGzip } from "node:zlib";
 
 import {
   createAiBackend,
@@ -16,26 +15,51 @@ import {
   type AiConfig,
 } from "./ai/llm-client";
 import { createAgentLoopBackend, normalizeAgentRuntimeConfig, resolveAgentConfig, resolveAgentRuntimeConfig, type AgentRuntimeConfig } from "./ai/agent-routing";
-import { parseAgentRequest } from "./ai/agent-request";
 import { createRateLimiter } from "./ai/rate-limit";
 import { createAiLogger } from "./ai/ai-observability";
-import {
-  parseDataRequestSchema,
-  proposeEditsRequestSchema,
-} from "./ai/schemas";
-import { CollaborationError, createRoomStore } from "./collaboration";
+import { createAiRoutes } from "./ai-routes";
+import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomPersistOutcome, type RoomStore, type RoomStoreOptions, type RoomStoreSnapshot } from "./collaboration";
+import { createRoomSnapshotWriter, isRestorableRoomSnapshot, loadRoomSnapshot, sweepStaleTemporaryFiles, sweepStaleTemporaryFilesBesideFile, writeFileAtomically } from "./room-snapshot-store";
+import { createRoomErrorSender, createRoomRoutes, roomAccessToken } from "./room-routes";
+import { corsHeaders, securityHeaders, sendJson, serveStatic } from "./static-files";
 
 export const DEFAULT_PORT = 8787;
-export type AiServer = http.Server & { flushAiState?: () => Promise<void>; lifecycle?: ReturnType<typeof createServerLifecycle> };
+
+/** SSE 背压观测量：字节数是进程内实际持有的未刷出数据，可直接作为内存上界的证据。 */
+export interface RoomStreamStats {
+  openStreams: number;
+  bufferedBytes: number;
+  peakBufferedBytes: number;
+  peakStreamBufferedBytes: number;
+  laggardDisconnects: number;
+  droppedEvents: number;
+  oversizedEvents: number;
+}
+
+/**
+ * 房间存储的持久化接线面。快照内容由房间存储定义并解释，服务器只负责在启动时把它
+ * 交回去、在关停时把它取出来落盘，因此 restore/persist 直接沿用房间存储的类型。
+ */
+export type RoomStoreFactoryOptions = RoomStoreOptions;
+
+/** 注入的房间存储替身可以省略 flush()：缺失时关停路径静默跳过。 */
+export type PersistableRoomStore = RoomStore & { flush?: () => void | Promise<void> };
+
+export type AiServer = http.Server & {
+  flushAiState?: () => Promise<void>;
+  /** 把房间状态交给持久化介质；房间存储尚未支持 flush 时为空操作。 */
+  flushRooms?: () => Promise<void>;
+  /** 干净地结束所有 SSE 连接（不发 closed 帧，房间在重启后依然存在）。 */
+  drainRoomStreams?: () => void;
+  lifecycle?: ReturnType<typeof createServerLifecycle>;
+  roomStreamStats?: () => RoomStreamStats;
+};
 
 export function resolvePort(value: string | undefined = process.env.PORT): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : DEFAULT_PORT;
 }
 const DEFAULT_DATA_DIR = fileURLToPath(new URL("../.data", import.meta.url));
-function createAgentTaskId(): string {
-  return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-}
 
 function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
   if (trustProxy) {
@@ -67,6 +91,9 @@ export interface AiServerOptions {
   roomTtlMs?: number;
   roomInvitationTtlMs?: number;
   roomEventsTicketTtlMs?: number;
+  roomHeartbeatIntervalMs?: number;
+  maxRoomEventBytes?: number;
+  maxRoomStreamBufferedBytes?: number;
   trustProxy?: boolean;
   budgetReceiptSecret?: string;
   budgetReceiptLedger?: BudgetReceiptLedger;
@@ -79,17 +106,30 @@ export interface AiServerOptions {
   };
   onAiStateUnavailable?: () => void;
   productionConfig?: ReturnType<typeof validateProductionConfig>;
+  /** 启动时交还给房间存储的快照（由上一次关停落盘）。 */
+  roomSnapshot?: unknown;
+  /** 房间存储交出快照时的落盘回调。 */
+  persistRooms?: (snapshot: unknown) => void | Promise<void>;
+  roomStoreFactory?: (options: RoomStoreFactoryOptions) => PersistableRoomStore;
 }
 
 const DEFAULT_MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_WORKSPACE_BYTES = 64 * 1024 * 1024;
-const DEFAULT_MAX_ROOM_TRANSACTION_BYTES = 8 * 1024 * 1024;
-const DEFAULT_MAX_AI_BODY_BYTES = 512 * 1024;
 const DEFAULT_MAX_ROOMS = 100;
 const DEFAULT_MAX_ROOM_SUBSCRIBERS = 50;
 const DEFAULT_ROOM_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_ROOM_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ROOM_EVENTS_TICKET_TTL_MS = 60 * 1000;
+const DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS = 20 * 1000;
+// 单个 SSE 事件的负载上限：超过就不再往管道里塞，改由客户端断线重连后走 HTTP 重新拉取。
+const DEFAULT_MAX_ROOM_EVENT_BYTES = 1024 * 1024;
+// 单个订阅者允许积压的字节数上限：超过即判定为慢订阅者并断开，丢弃已排队数据。
+const DEFAULT_MAX_ROOM_STREAM_BUFFERED_BYTES = 2 * 1024 * 1024;
+
+function positiveBytes(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -138,6 +178,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * 只数快照信封里的房间条数：房间存储不暴露房间清单，实际存活数由它按 TTL 与
+ * 房间上限自行裁剪，这里给的是「交回去多少条」而不是活房间普查。
+ */
+function countRestorableRooms(snapshot: unknown): number {
+  return isRestorableRoomSnapshot(snapshot) ? snapshot.rooms.length : 0;
+}
+
+/**
+ * 上一次关停有多少房间因超过持久化上限没落盘。这个字段在磁盘信封里是可选的，
+ * 所以在文件边界上按 unknown 读，不依赖房间存储的类型。
+ */
+function readSkippedRoomCount(snapshot: unknown): number {
+  if (!isRecord(snapshot)) return 0;
+  const skipped = snapshot.skippedRoomCount;
+  return typeof skipped === "number" && Number.isFinite(skipped) && skipped > 0 ? Math.floor(skipped) : 0;
+}
+
+/**
+ * 上一次关停被跳过的房间 id。同样是磁盘信封上的可选字段（R5-1 之前落盘的快照只有计数），
+ * 所以按 unknown 读；排序后返回，日志与 /api/health 才能跨重启稳定比对。
+ */
+function readSkippedRoomIds(snapshot: unknown): string[] {
+  if (!isRecord(snapshot)) return [];
+  const ids = snapshot.skippedRoomIds;
+  if (!Array.isArray(ids)) return [];
+  return [...new Set(ids.filter((id): id is string => typeof id === "string" && id.length > 0))].sort();
+}
+
 function isWorkspaceSnapshot(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value)) return false;
   const record = value as Record<string, unknown>;
@@ -147,86 +216,6 @@ function isWorkspaceSnapshot(value: unknown): value is Record<string, unknown> {
     && typeof record.projectPackage === "object"
     && !Array.isArray(record.projectPackage);
 }
-
-function corsHeaders(request: http.IncomingMessage, corsOrigins: readonly string[]): Record<string, string> {
-  const origin = request.headers.origin;
-  if (!origin || !corsOrigins.includes(origin)) return {};
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "GET,PUT,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, X-API-Key, Prefer, X-Cengfan-Room-Token",
-    "Access-Control-Max-Age": "600",
-    Vary: "Origin",
-  };
-}
-
-function sendJson(
-  request: http.IncomingMessage,
-  response: http.ServerResponse,
-  status: number,
-  body: unknown,
-  corsOrigins: readonly string[] = [],
-) {
-  response.writeHead(status, {
-    ...securityHeaders(),
-    ...corsHeaders(request, corsOrigins),
-    "Content-Type": "application/json; charset=utf-8",
-  });
-  response.end(JSON.stringify(body));
-}
-
-function contentTypeFor(filePath: string): string {
-  switch (extname(filePath).toLowerCase()) {
-    case ".html":
-      return "text/html; charset=utf-8";
-    case ".js":
-      return "text/javascript; charset=utf-8";
-    case ".css":
-      return "text/css; charset=utf-8";
-    case ".json":
-      return "application/json; charset=utf-8";
-    case ".svg":
-      return "image/svg+xml";
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".webp":
-      return "image/webp";
-    case ".ico":
-      return "image/x-icon";
-    case ".woff":
-      return "font/woff";
-    case ".woff2":
-      return "font/woff2";
-    default:
-      return "application/octet-stream";
-  }
-}
-
-function securityHeaders(): Record<string, string> {
-  return {
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "strict-origin-when-cross-origin",
-    "X-Frame-Options": "SAMEORIGIN",
-  };
-}
-
-function cacheControlFor(filePath: string): string {
-  if (filePath.endsWith("index.html")) return "no-cache";
-  const hashedAssetPattern = /(?:^|[-.])[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|jpe?g|webp|ico|woff2?)$/i;
-  return hashedAssetPattern.test(filePath)
-    ? "public, max-age=31536000, immutable"
-    : "public, max-age=86400";
-}
-
-function acceptsGzip(request: http.IncomingMessage): boolean {
-  const header = request.headers["accept-encoding"];
-  const value = Array.isArray(header) ? header.join(",") : header ?? "";
-  return /\bgzip\b/i.test(value);
-}
-
 
 async function readJson(request: http.IncomingMessage, maxBytes: number): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -243,57 +232,6 @@ async function readJson(request: http.IncomingMessage, maxBytes: number): Promis
   } catch {
     throw new InvalidJsonError();
   }
-}
-
-
-function serveStatic(
-  request: http.IncomingMessage,
-  response: http.ServerResponse,
-  staticDir: string,
-  requestUrl: string,
-  corsOrigins: readonly string[] = [],
-): boolean {
-  let urlPath: string;
-  try {
-    urlPath = decodeURIComponent(requestUrl.split("?")[0] || "/");
-  } catch {
-    sendJson(request, response, 400, {
-      error: { code: "INVALID_URL_ENCODING", message: "URL 编码无效" },
-    }, corsOrigins);
-    return true;
-  }
-  const relativePath = urlPath === "/" ? "index.html" : urlPath.replace(/^\//, "");
-  const candidate = resolve(staticDir, relativePath);
-  const root = resolve(staticDir);
-  if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) {
-    sendJson(request, response, 403, {
-      error: { code: "FORBIDDEN", message: "非法路径" },
-    }, corsOrigins);
-    return true;
-  }
-
-  let filePath = candidate;
-  if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
-    const fallback = join(staticDir, "index.html");
-    if (!existsSync(fallback)) {
-      return false;
-    }
-    filePath = fallback;
-  }
-
-  const shouldGzip = acceptsGzip(request)
-    && /\.(?:html|js|css|json|svg)$/i.test(filePath)
-    && statSync(filePath).size > 128;
-  response.writeHead(200, {
-    ...securityHeaders(),
-    "Content-Type": contentTypeFor(filePath),
-    "Cache-Control": cacheControlFor(filePath),
-    ...(shouldGzip ? { "Content-Encoding": "gzip", "Vary": "Accept-Encoding" } : {}),
-  });
-  const stream = createReadStream(filePath);
-  if (shouldGzip) stream.pipe(createGzip()).pipe(response);
-  else stream.pipe(response);
-  return true;
 }
 
 export function createAiServer(options: AiServerOptions = {}) {
@@ -354,14 +292,166 @@ export function createAiServer(options: AiServerOptions = {}) {
   const maxJsonBodyBytes = options.maxJsonBodyBytes ?? DEFAULT_MAX_JSON_BODY_BYTES;
   const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
   const trustProxy = options.trustProxy ?? process.env.TRUST_PROXY === "1";
+  // 四条 AI HTTP 路由住在 server/ai-routes.ts；`/api/ai/` 前缀上的 token 门禁、限流与
+  // 状态降级仍在下面，因为它们对未命中的 AI 路径同样生效。
+  const aiRoutes = createAiRoutes({
+    ai,
+    agent,
+    agentRuntime,
+    budgetReceipts,
+    budgetReceiptLedger,
+    aiLogger,
+    readJson,
+    maxJsonBodyBytes,
+    isRecord,
+  });
   const workspaceFile = join(dataDir, "workspace.json");
-  const roomStore = createRoomStore({
+  const roomStoreOptions: RoomStoreFactoryOptions = {
     maxRooms: options.maxRooms ?? Number(process.env.MAX_ROOMS ?? DEFAULT_MAX_ROOMS),
     maxSubscribers: options.maxRoomSubscribers ?? Number(process.env.MAX_ROOM_SUBSCRIBERS ?? DEFAULT_MAX_ROOM_SUBSCRIBERS),
     roomTtlMs: options.roomTtlMs ?? Number(process.env.ROOM_TTL_MS ?? DEFAULT_ROOM_TTL_MS),
     invitationTtlMs: options.roomInvitationTtlMs ?? DEFAULT_ROOM_INVITATION_TTL_MS,
+    // 磁盘上的 JSON 到这里仍是 unknown；createRoomStore 会按 version、凭证哈希、TTL
+    // 与房间上限逐条校验后才恢复，所以这里的断言不会把未经检查的数据放进房间状态。
+    ...(options.roomSnapshot === undefined ? {} : { restore: options.roomSnapshot as RoomStoreSnapshot }),
+    ...(options.persistRooms ? { persist: options.persistRooms } : {}),
+  };
+  const roomStore: PersistableRoomStore = (options.roomStoreFactory ?? createRoomStore)(roomStoreOptions);
+  // 启动时的持久化事实，留给 /api/health 复述：日志滚走之后它就是唯一能被外部观测到的证据。
+  // 三个读取器都把「没有快照」当成 0/空，所以冷启动在健康检查里是 restoredAtBoot 0。
+  const restoredAtBoot = countRestorableRooms(options.roomSnapshot);
+  const skippedRoomIds = readSkippedRoomIds(options.roomSnapshot);
+  // 旧信封只写了计数，新信封两者都有；取较大值也兼容只写了 id 的信封。
+  const skippedRoomCount = Math.max(readSkippedRoomCount(options.roomSnapshot), skippedRoomIds.length);
+  // 只有真拿到一份快照才谈得上「恢复」：冷启动报 restored 0 会让日志读者以为读到过一份空快照。
+  if (options.roomSnapshot !== undefined) {
+    console.info(`restored ${restoredAtBoot} collaboration room(s) from snapshot`);
+    // 这些房间在上一次关停时就丢了，只有本次启动把它说出来，运维才知道少了什么——
+    // 少了几个是量，少了哪几个才是能拿去补救的信息。
+    if (skippedRoomCount > 0) {
+      console.warn(
+        `上次关停有 ${skippedRoomCount} 个房间超过持久化上限，未恢复`
+        + (skippedRoomIds.length > 0 ? `：${skippedRoomIds.join("、")}` : ""),
+      );
+    }
+  }
+  /**
+   * 房间在上一次成功落盘里的处置结果。落盘按固定间隔进行，因此这个判断最多滞后一个
+   * 持久化周期：还没落过盘的新房间一律报 persisted。
+   *
+   * 三态而非布尔，是因为两种降级的后果不同：skipped 的房间重启后不会被恢复；trimmed 的
+   * 房间连快照带版本都还在，只是历史被裁掉，落后的客户端必须重新取一份快照。
+   * `at` 是最近一次**成功**落盘的时刻；房间存储用 0 表示从未成功落过盘，那不是 1970 年，
+   * 所以这里报 null。存储替身没有 lastPersistOutcome() 时同样没有结论可报，按 persisted + null 处理。
+   *
+   * `lastFailureAt` 是当前失败连击的最近一次失败时刻，null 表示没有连击（下一次成功落盘就会清除）。
+   * 三态说的是「上一次成功落盘怎么处置了这个房间」，磁盘正在坏掉的那一段时间里它只会重复
+   * 上一次成功，所以缺了这一项，落盘持续失败在房间响应上与一切正常长得一模一样。
+   */
+  const roomPersistence = (roomId: string): {
+    outcome: "persisted" | "trimmed" | "skipped";
+    at: number | null;
+    lastFailureAt: number | null;
+  } => {
+    const lastFlush = roomStore.lastPersistOutcome?.();
+    if (!lastFlush) return { outcome: "persisted", at: null, lastFailureAt: null };
+    // 房间存储把 id 统一成大写，外部传进来的路径参数不一定是。
+    const target = roomId.toUpperCase();
+    const listed = (ids: readonly string[] | undefined) => (ids ?? []).some((id) => id.toUpperCase() === target);
+    const at = typeof lastFlush.at === "number" && lastFlush.at > 0 ? lastFlush.at : null;
+    const failedAt = lastFlush.lastFailure?.at;
+    const lastFailureAt = typeof failedAt === "number" && failedAt > 0 ? failedAt : null;
+    if (listed(lastFlush.skippedIds)) return { outcome: "skipped", at, lastFailureAt };
+    if (listed(lastFlush.trimmedIds)) return { outcome: "trimmed", at, lastFailureAt };
+    return { outcome: "persisted", at, lastFailureAt };
+  };
+  /**
+   * 创建/加入/快照三个响应共用的落盘字段。`persistedAtLastFlush` 保留给只认布尔的旧客户端：
+   * 被跳过或被裁掉历史的房间同样报 false，两者的区别要看同级的 `persistence.outcome`；
+   * 落盘连续失败不改这个布尔，它说的仍是上一次成功落盘的处置。
+   *
+   * 没有失败连击时整个键不出现：只认 `outcome`/`at` 的客户端与既有响应形状一个字都不变，
+   * 而读取端拿到缺席与拿到 null 是同一件事（都不是有限数字）。
+   */
+  const roomPersistenceFields = (roomId: string) => {
+    const { outcome, at, lastFailureAt } = roomPersistence(roomId);
+    return {
+      persistedAtLastFlush: outcome === "persisted",
+      persistence: { outcome, at, ...(lastFailureAt === null ? {} : { lastFailureAt }) },
+    };
+  };
+  // 非 SSE 的房间 HTTP 路由住在 server/room-routes.ts；events-ticket 与 SSE events 仍在下面，
+  // 因为它们要用这里的 ticket 表、订阅集合与背压计量。
+  const roomRoutes = createRoomRoutes({
+    roomStore,
+    roomPersistenceFields,
+    roomCreateRateLimiter,
+    clientIp: (request) => clientIp(request, trustProxy),
+    readJson,
+    maxJsonBodyBytes,
+    isRecord,
   });
+  /**
+   * 健康检查上的落盘结论。房间存储用 at: 0 表示从未成功落过盘，原样发出去在朴素解析器
+   * 眼里就是 1970 年；房间响应早在 roomPersistence 里把它报成 null，运维面必须说同一件事。
+   * 失败连击原样透传——健康检查改写的只有那个假时刻——并且复制一份再改，
+   * 不去动存储自己持有的对象。
+   */
+  const publishedLastFlush = (): (Omit<RoomPersistOutcome, "at"> & { at: number | null }) | null => {
+    const lastFlush = roomStore.lastPersistOutcome?.();
+    if (!lastFlush) return null;
+    return { ...lastFlush, at: typeof lastFlush.at === "number" && lastFlush.at > 0 ? lastFlush.at : null };
+  };
   const roomEventsTicketTtlMs = options.roomEventsTicketTtlMs ?? DEFAULT_ROOM_EVENTS_TICKET_TTL_MS;
+  const roomHeartbeatIntervalMs = options.roomHeartbeatIntervalMs ?? DEFAULT_ROOM_HEARTBEAT_INTERVAL_MS;
+  const maxRoomEventBytes = positiveBytes(
+    options.maxRoomEventBytes ?? process.env.MAX_ROOM_EVENT_BYTES,
+    DEFAULT_MAX_ROOM_EVENT_BYTES,
+  );
+  const maxRoomStreamBufferedBytes = positiveBytes(
+    options.maxRoomStreamBufferedBytes ?? process.env.MAX_ROOM_STREAM_BUFFERED_BYTES,
+    DEFAULT_MAX_ROOM_STREAM_BUFFERED_BYTES,
+  );
+  // 软阈值：积压过半就暂停推送可丢弃事件（心跳、增量/元数据快照），客户端靠版本连续性门控补齐。
+  const pauseRoomStreamBufferedBytes = Math.max(1, Math.floor(maxRoomStreamBufferedBytes / 2));
+  const roomStreamMetrics: RoomStreamStats = {
+    openStreams: 0,
+    bufferedBytes: 0,
+    peakBufferedBytes: 0,
+    peakStreamBufferedBytes: 0,
+    laggardDisconnects: 0,
+    droppedEvents: 0,
+    oversizedEvents: 0,
+  };
+  // 一次广播会同步回调每个订阅者，且房间监听器给每个订阅者一份浅拷贝，
+  // 所以按 (房间, 版本, 更新时间, 事务, 是否携带快照) 记忆化，并在当前微任务结束后清空。
+  // 每个事件因此最多序列化两次（带快照 / 不带快照），与订阅者数量无关。
+  const roomEventPayloads = new Map<string, string>();
+  let roomEventPayloadsScheduledFlush = false;
+  const serializeRoomEvent = (room: CollaborationRoom, withoutSnapshot: boolean): string => {
+    const key = `${room.id}\u0000${room.version}\u0000${room.updatedAt}\u0000${room.lastTxId ?? ""}\u0000${withoutSnapshot ? "lite" : "full"}`;
+    const cached = roomEventPayloads.get(key);
+    if (cached !== undefined) return cached;
+    const serialized = JSON.stringify(withoutSnapshot ? { ...room, snapshot: undefined } : room);
+    roomEventPayloads.set(key, serialized);
+    if (!roomEventPayloadsScheduledFlush) {
+      roomEventPayloadsScheduledFlush = true;
+      queueMicrotask(() => {
+        roomEventPayloads.clear();
+        roomEventPayloadsScheduledFlush = false;
+      });
+    }
+    return serialized;
+  };
+  // 生命周期事件对象在所有订阅者之间共享同一个引用，可以直接按引用记忆化。
+  const lifecycleEventPayloads = new WeakMap<LifecycleEvent, string>();
+  const serializeLifecycleEvent = (event: LifecycleEvent, build: () => unknown): string => {
+    const cached = lifecycleEventPayloads.get(event);
+    if (cached !== undefined) return cached;
+    const serialized = JSON.stringify(build());
+    lifecycleEventPayloads.set(event, serialized);
+    return serialized;
+  };
   const roomEventsTickets = new Map<string, { roomId: string; accessToken: string; expiresAt: number }>();
   const MAX_ROOM_EVENTS_TICKETS = 10_000;
   const evictExpiredTickets = () => {
@@ -388,6 +478,26 @@ export function createAiServer(options: AiServerOptions = {}) {
       aiStateUnavailable = true;
       throw error;
     }
+  };
+  // 关停时需要主动结束的 SSE 连接。每条流注册自己的 endStream，拆流时自行注销。
+  const openRoomStreams = new Set<() => void>();
+  const drainRoomStreams = () => {
+    // 只结束连接，不发 closed 帧：房间随快照活过重启，客户端重连即可继续，
+    // 而 closed 是「房间真的没了」的终态信号，借用它会让客户端丢弃本地会话。
+    for (const endStream of [...openRoomStreams]) {
+      try {
+        endStream();
+      } catch {
+        // 单条连接收尾失败不应挡住其余连接。
+      }
+    }
+    openRoomStreams.clear();
+  };
+  const flushRooms = async () => {
+    const flush = roomStore.flush;
+    // 关停路径强制落一次快照；注入的替身没有 flush() 时静默跳过（此时房间只剩进程内状态）。
+    if (typeof flush !== "function") return;
+    await flush.call(roomStore);
   };
 
   const server = http.createServer(async (request, response) => {
@@ -419,7 +529,9 @@ export function createAiServer(options: AiServerOptions = {}) {
     }
     try {
       if (request.method === "OPTIONS") {
-        send( 204, {});
+        // 204 不允许携带响应体，也就不该声明 Content-Type/Content-Length。
+        response.writeHead(204, { ...securityHeaders(), ...corsHeaders(request, corsOrigins) });
+        response.end();
         return;
       }
 
@@ -454,6 +566,12 @@ export function createAiServer(options: AiServerOptions = {}) {
               persistenceReady: stateStore.ready,
               stateRecovered: stateStore.recovered,
             },
+          },
+          // 房间持久化的死亡率：控制台之外唯一能观测到它的地方。
+          rooms: {
+            restoredAtBoot,
+            skippedAtLastShutdown: { count: skippedRoomCount, ids: skippedRoomIds },
+            lastFlush: publishedLastFlush(),
           },
         });
         return;
@@ -493,239 +611,14 @@ export function createAiServer(options: AiServerOptions = {}) {
           return;
         }
         await mkdir(dataDir, { recursive: true });
-        const temporaryFile = `${workspaceFile}.${process.pid}.tmp`;
-        await writeFile(temporaryFile, `${JSON.stringify(snapshot)}\n`, "utf8");
-        await rename(temporaryFile, workspaceFile);
+        await writeFileAtomically(workspaceFile, `${JSON.stringify(snapshot)}\n`);
         response.writeHead(204, { ...securityHeaders(), ...corsHeaders(request, corsOrigins) });
         response.end();
         return;
       }
 
-      const roomAccessToken = (request: http.IncomingMessage): string | null => {
-        const value = request.headers["x-cengfan-room-token"];
-        return typeof value === "string" && value.trim() ? value.trim() : null;
-      };
-      const roomErrorStatus = (error: CollaborationError): number => error.code === "VERSION_CONFLICT" || error.code === "ROOM_CLOSED" ? 409
-        : error.code === "ROOM_NOT_FOUND" ? 404
-          : error.code === "ROOM_LIMIT_REACHED" || error.code === "SUBSCRIBER_LIMIT_REACHED" ? 429
-            : error.code === "ROOM_FORBIDDEN" || error.code === "FORBIDDEN" || error.code === "READONLY_ROOM" ? 403
-              : error.code === "ROOM_INITIALIZING" ? 425
-                : 400;
-      const sendRoomError = (error: CollaborationError) => send(roomErrorStatus(error), {
-        error: { code: error.code, message: error.message, currentVersion: error.currentVersion },
-      });
-      const roomProjection = (room: ReturnType<typeof roomStore.get>, accessToken: string) => {
-        if (!room) return null;
-        const participant = roomStore.authorize(room.id, accessToken, "read");
-        return { ...room, role: participant.role, participants: roomStore.listParticipants(room.id, accessToken) };
-      };
-
-      if (request.method === "POST" && pathname === "/api/rooms") {
-        const roomLimit = roomCreateRateLimiter.check(clientIp(request, trustProxy));
-        if (!roomLimit.allowed) {
-          send(429, { error: { code: "ROOM_RATE_LIMITED", message: "创建房间过于频繁，请稍后重试。" } });
-          return;
-        }
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId || typeof body.displayName !== "string" || !body.displayName.trim()) {
-          send( 400, { error: { code: "VALIDATION_ERROR", message: "clientId 和 displayName 必填" } });
-          return;
-        }
-        try {
-          send(201, roomStore.create(body.snapshot, { clientId: body.clientId, displayName: body.displayName.trim() }));
-        } catch (error) {
-          if (error instanceof CollaborationError) {
-            sendRoomError(error);
-            return;
-          }
-          throw error;
-        }
-        return;
-      }
-
-      const roomMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)$/);
-      if (request.method === "GET" && roomMatch) {
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        try {
-          const room = roomProjection(roomStore.get(roomMatch[1]!), accessToken);
-          if (!room) {
-            send(404, { error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } });
-            return;
-          }
-          if (!room.ready) {
-            send(425, { error: { code: "ROOM_INITIALIZING", message: "共享房间正在上传初始工程" } });
-            return;
-          }
-          send(200, room);
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const invitationMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/invitations$/);
-      if (request.method === "POST" && invitationMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body) || (body.role !== "editor" && body.role !== "viewer")) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "邀请角色无效" } });
-          return;
-        }
-        try {
-          send(201, roomStore.createInvitation(invitationMatch[1]!, accessToken, body.role));
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const joinMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/join$/);
-      if (request.method === "POST" && joinMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        if (!isRecord(body) || typeof body.inviteToken !== "string" || typeof body.clientId !== "string" || typeof body.displayName !== "string") {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "邀请凭证、clientId 和 displayName 必填" } });
-          return;
-        }
-        try {
-          send(200, roomStore.join(joinMatch[1]!, { inviteToken: body.inviteToken, clientId: body.clientId, displayName: body.displayName }));
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const transactionMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/transactions$/);
-      if (request.method === "POST" && transactionMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body)) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "请求体必须是对象" } });
-          return;
-        }
-        try {
-          const room = roomStore.apply(transactionMatch[1]!, accessToken, {
-            txId: typeof body.txId === "string" ? body.txId : "",
-            clientId: typeof body.clientId === "string" ? body.clientId : "",
-            baseVersion: Number(body.baseVersion),
-            snapshot: body.snapshot,
-            operations: Array.isArray(body.operations) ? body.operations : undefined,
-          });
-          const prefer = Array.isArray(request.headers.prefer) ? request.headers.prefer.join(",") : request.headers.prefer ?? "";
-          const result = prefer.toLowerCase().includes("return=minimal") ? { ...room, snapshot: undefined } : room;
-          send(200, result);
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const memberMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/members$/);
-      if (request.method === "POST" && memberMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "clientId 必填" } });
-          return;
-        }
-        try {
-          send(200, roomStore.refreshMember(memberMatch[1]!, accessToken, body.clientId));
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const leaveMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/leave$/);
-      if (request.method === "POST" && leaveMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "clientId 必填" } });
-          return;
-        }
-        try {
-          send(200, roomStore.leave(leaveMatch[1]!, accessToken, body.clientId));
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const accessMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/access$/);
-      if (request.method === "POST" && accessMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body) || typeof body.clientId !== "string" || (body.action !== "set-readonly" && body.action !== "close")) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "clientId 与 action(set-readonly|close) 必填" } });
-          return;
-        }
-        try {
-          send(200, roomStore.setAccess(accessMatch[1]!, accessToken, body.clientId, body.action));
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const operationsMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/operations$/);
-      if (request.method === "GET" && operationsMatch) {
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        const operationsUrl = new URL(url, "http://localhost");
-        const afterVersionParam = operationsUrl.searchParams.get("afterVersion");
-        const afterVersion = afterVersionParam === null ? Number.NaN : Number(afterVersionParam);
-        if (afterVersionParam === null || !Number.isInteger(afterVersion) || afterVersion < 0) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "afterVersion 必须是非负整数" } });
-          return;
-        }
-        try {
-          const result = roomStore.getOperations(operationsMatch[1]!, accessToken, afterVersion);
-          send(200, {
-            id: operationsMatch[1]!.toUpperCase(),
-            version: result.version,
-            afterVersion,
-            operations: result.operations,
-          });
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
+      const sendRoomError = createRoomErrorSender(send);
+      if (await roomRoutes.handle({ request, pathname, url, send, sendRoomError })) return;
 
       const eventsTicketMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/events-ticket$/);
       if (request.method === "POST" && eventsTicketMatch) {
@@ -763,27 +656,146 @@ export function createAiServer(options: AiServerOptions = {}) {
         roomEventsTickets.delete(ticket!);
         const knownVersionParam = eventUrl.searchParams.get("version");
         const knownVersion = knownVersionParam === null ? Number.NaN : Number(knownVersionParam);
-        let unsubscribe: () => void;
-        let unsubscribeLifecycle: () => void;
+        let unsubscribe: (() => void) | undefined;
+        let unsubscribeLifecycle: (() => void) | undefined;
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        let streamTornDown = false;
+        let streamCounted = false;
+        // 已经交给 response.write、但内核/进程侧还没刷出的字节数。write 的完成回调
+        // 是唯一可靠的释放信号：只看 write 的返回值无法知道积压什么时候消失。
+        let streamBufferedBytes = 0;
+        let drainRegistration: (() => void) | undefined;
+        const pendingWrites = new Set<() => void>();
+        const teardownStream = () => {
+          if (streamTornDown) return;
+          streamTornDown = true;
+          if (drainRegistration) {
+            openRoomStreams.delete(drainRegistration);
+            drainRegistration = undefined;
+          }
+          if (heartbeat) clearInterval(heartbeat);
+          heartbeat = undefined;
+          for (const settle of [...pendingWrites]) settle();
+          pendingWrites.clear();
+          if (streamCounted) {
+            streamCounted = false;
+            roomStreamMetrics.openStreams -= 1;
+          }
+          const releaseRoom = unsubscribe;
+          const releaseLifecycle = unsubscribeLifecycle;
+          unsubscribe = undefined;
+          unsubscribeLifecycle = undefined;
+          releaseRoom?.();
+          releaseLifecycle?.();
+        };
+        const dropLaggard = (reason: "buffer" | "oversize") => {
+          if (streamTornDown) return;
+          if (reason === "oversize") roomStreamMetrics.oversizedEvents += 1;
+          roomStreamMetrics.laggardDisconnects += 1;
+          const queued = streamBufferedBytes > 0;
+          try {
+            if (!response.writableEnded && !response.destroyed) response.end();
+          } catch {
+            // 对端已经销毁连接，交给 teardown 收尾即可。
+          }
+          // 优雅 end 不会丢弃已排队的数据；只有销毁连接才能立刻归还这部分内存。
+          if (queued && typeof response.destroy === "function" && !response.destroyed) {
+            try {
+              response.destroy();
+            } catch {
+              // 同上：销毁失败说明连接已经没了。
+            }
+          }
+          teardownStream();
+        };
+        /**
+         * `droppable` 事件在积压时直接跳过：客户端的版本连续性门控会在下一个事件上
+         * 发现跳变并补齐区间。`maxBytes` 命中的事件不降级为 lite 后照发——lite 负载
+         * 会让客户端把本地版本推到它从未收到的内容上，从此永久分叉；断流让它重连并
+         * 走 HTTP 重新拉取才是安全的收敛路径。
+         */
+        const writeStream = (chunk: string, limits: { droppable?: boolean; maxBytes?: number } = {}): boolean => {
+          // 房间事件可能在响应结束之后到达（例如房主关闭房间后有成员退出）。
+          if (streamTornDown || response.writableEnded || response.destroyed) return false;
+          const bytes = Buffer.byteLength(chunk, "utf8");
+          if (streamBufferedBytes > maxRoomStreamBufferedBytes) {
+            dropLaggard("buffer");
+            return false;
+          }
+          if (limits.droppable && streamBufferedBytes >= pauseRoomStreamBufferedBytes) {
+            roomStreamMetrics.droppedEvents += 1;
+            return true;
+          }
+          if (limits.maxBytes !== undefined && bytes > limits.maxBytes) {
+            dropLaggard("oversize");
+            return false;
+          }
+          if (streamBufferedBytes > 0 && streamBufferedBytes + bytes > maxRoomStreamBufferedBytes) {
+            dropLaggard("buffer");
+            return false;
+          }
+          let settled = false;
+          const settle = () => {
+            if (settled) return;
+            settled = true;
+            pendingWrites.delete(settle);
+            streamBufferedBytes -= bytes;
+            roomStreamMetrics.bufferedBytes -= bytes;
+          };
+          streamBufferedBytes += bytes;
+          roomStreamMetrics.bufferedBytes += bytes;
+          pendingWrites.add(settle);
+          if (streamBufferedBytes > roomStreamMetrics.peakStreamBufferedBytes) {
+            roomStreamMetrics.peakStreamBufferedBytes = streamBufferedBytes;
+          }
+          if (roomStreamMetrics.bufferedBytes > roomStreamMetrics.peakBufferedBytes) {
+            roomStreamMetrics.peakBufferedBytes = roomStreamMetrics.bufferedBytes;
+          }
+          try {
+            // write 返回 false 只代表要暂停推送，真正的释放时机由完成回调给出。
+            response.write(chunk, settle);
+            return true;
+          } catch {
+            settle();
+            teardownStream();
+            return false;
+          }
+        };
+        const endStream = () => {
+          if (!response.writableEnded && !response.destroyed) {
+            try {
+              response.end();
+            } catch {
+              // 连接已被对端销毁，交给 teardown 收尾即可。
+            }
+          }
+          teardownStream();
+        };
+        response.on("error", teardownStream);
         try {
           const room = roomStore.get(eventsMatch[1]!);
           if (!room) throw new CollaborationError("ROOM_NOT_FOUND", "共享房间不存在");
           const participant = roomStore.authorize(eventsMatch[1]!, ticketRecord.accessToken, "read");
           unsubscribe = roomStore.subscribe(eventsMatch[1]!, ticketRecord.accessToken, (next) => {
-            const payload = next.operations || next.updatedBy === participant.id ? { ...next, snapshot: undefined } : next;
-            response.write(`event: snapshot\ndata: ${JSON.stringify(payload)}\n\n`);
+            const withoutSnapshot = Boolean(next.operations) || next.updatedBy === participant.id;
+            const data = serializeRoomEvent(next, withoutSnapshot);
+            // 不带快照的事件（增量或自己刚提交的那笔）丢掉不会让客户端漏内容，可以在积压时跳过。
+            writeStream(`event: snapshot\ndata: ${data}\n\n`, { droppable: withoutSnapshot, maxBytes: maxRoomEventBytes });
           });
           unsubscribeLifecycle = roomStore.subscribeLifecycle(eventsMatch[1]!, ticketRecord.accessToken, (event) => {
             if (event.kind === "closed") {
-              response.write(`event: closed\ndata: ${JSON.stringify({ id: event.room.id, version: event.room.version, readonly: event.room.readonly === true, closed: true })}\n\n`);
-              response.end();
+              const data = serializeLifecycleEvent(event, () => ({ id: event.room.id, version: event.room.version, readonly: event.room.readonly === true, closed: true }));
+              writeStream(`event: closed\ndata: ${data}\n\n`);
+              endStream();
               return;
             }
             if (event.kind === "access") {
-              response.write(`event: snapshot\ndata: ${JSON.stringify({ ...event.room, snapshot: undefined })}\n\n`);
+              const data = serializeLifecycleEvent(event, () => ({ ...event.room, snapshot: undefined }));
+              writeStream(`event: snapshot\ndata: ${data}\n\n`, { maxBytes: maxRoomEventBytes });
               return;
             }
-            response.write(`event: members\ndata: ${JSON.stringify(event.members)}\n\n`);
+            const data = serializeLifecycleEvent(event, () => event.members);
+            writeStream(`event: members\ndata: ${data}\n\n`, { droppable: true, maxBytes: maxRoomEventBytes });
           });
           response.writeHead(200, {
             "Content-Type": "text/event-stream; charset=utf-8",
@@ -792,199 +804,39 @@ export function createAiServer(options: AiServerOptions = {}) {
             ...corsHeaders(request, corsOrigins),
           });
           response.flushHeaders();
+          roomStreamMetrics.openStreams += 1;
+          streamCounted = true;
+          drainRegistration = endStream;
+          openRoomStreams.add(endStream);
           if (!Number.isInteger(knownVersion) || knownVersion < room.version) {
-            response.write(`event: snapshot\ndata: ${JSON.stringify(room)}\n\n`);
+            // 首帧是这条连接唯一的引导快照，不受单事件上限约束（否则大房间会陷入重连循环）；
+            // 它仍计入积压统计，客户端排不掉就会在下一个事件上被判为慢订阅者。
+            writeStream(`event: snapshot\ndata: ${JSON.stringify(room)}\n\n`);
           }
         } catch (error) {
+          teardownStream();
           if (error instanceof CollaborationError) sendRoomError(error);
           else throw error;
           return;
         }
-        const heartbeat = setInterval(() => {
-          roomStore.get(eventsMatch[1]!);
-          response.write(": heartbeat\n\n");
-        }, 20_000);
-        request.on("close", () => {
-          clearInterval(heartbeat);
-          unsubscribe();
-          unsubscribeLifecycle();
-        });
+        // 引导帧写失败已经拆过流，此时再挂心跳会留下一个永不清理的定时器。
+        if (streamTornDown) {
+          endStream();
+          return;
+        }
+        heartbeat = setInterval(() => {
+          // 心跳只保活 TCP 连接，不刷新房间 TTL（房间活跃度由已授权的读写操作决定）。
+          // 同时兼任回收器：不再有事件推送时，靠它把已经积压超限的连接清掉。
+          if (!writeStream(": heartbeat\n\n", { droppable: true })) teardownStream();
+        }, roomHeartbeatIntervalMs);
+        request.on("close", teardownStream);
+        response.on("close", teardownStream);
+        // 连接可能在处理函数排队期间就已断开，此时 close 事件不会再次触发。
+        if (request.destroyed || response.destroyed || response.writableEnded) teardownStream();
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/ai/agent") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        const parsed = parseAgentRequest(body, { maxTokens: agentRuntime.tokenBudget, maxRounds: agentRuntime.maxRounds });
-        if (!parsed.ok) {
-          sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: parsed.error, aiCode: "AI_VALIDATION_ERROR" } });
-          return;
-        }
-        const historyHasAssistantOrTool = parsed.value.messages.some((message) => message.role === "assistant" || message.role === "tool");
-        const taskId = parsed.value.taskId || createAgentTaskId();
-        const receiptClaim = parsed.value.budgetReceipt
-          ? budgetReceiptLedger.beginConsume(parsed.value.budgetReceipt, taskId)
-          : null;
-        const initialClaim = parsed.value.budgetReceipt ? null : budgetReceiptLedger.reserveInitial(taskId);
-        const claim = receiptClaim ?? initialClaim;
-        const receipt = receiptClaim?.payload ?? null;
-        if ((historyHasAssistantOrTool && !parsed.value.budgetReceipt)
-          || (parsed.value.budgetReceipt && (!receiptClaim || receipt!.maxTokens !== agentRuntime.tokenBudget || receipt!.maxRounds !== agentRuntime.maxRounds))
-          || (!parsed.value.budgetReceipt && !initialClaim)) {
-          if (claim) budgetReceiptLedger.rollback(claim);
-          sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: "会话预算回执无效、已过期或已被使用" } });
-          return;
-        }
-        parsed.value.budget = receipt
-          ? { usedTokens: receipt.usedTokens, maxTokens: receipt.maxTokens, rounds: receipt.rounds, maxRounds: receipt.maxRounds }
-          : { usedTokens: 0, maxTokens: agentRuntime.tokenBudget, rounds: 0, maxRounds: agentRuntime.maxRounds };
-        aiLogger.log("ai.request.started", { requestId, route: "primary", messageCount: parsed.value.messages.length, promptBytes: Buffer.byteLength(parsed.value.userMessage, "utf8") });
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const outcome = await agent.runTurn({
-            ...parsed.value,
-            requestId,
-            signal: requestController.signal,
-            retryMaxAttempts: agentRuntime.retryMaxAttempts,
-            retryBaseDelayMs: agentRuntime.retryBaseDelayMs,
-          });
-          const meta = "meta" in outcome ? outcome.meta : undefined;
-          if (meta?.route === "fallback" || meta?.route === "local") {
-            aiLogger.log("ai.route.fallback", {
-              requestId,
-              route: meta.route,
-              provider: meta.provider,
-              model: meta.model,
-              latencyMs: meta.latencyMs,
-              attempts: meta.attempts,
-              usage: meta.usage,
-              fallbackReason: meta.fallbackReason,
-            });
-          }
-          aiLogger.log("ai.agent.finished", { requestId, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage, fallbackReason: meta?.fallbackReason });
-          aiLogger.log("ai.request.completed", { requestId, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage });
-          const responseBudget = "budget" in outcome && outcome.budget ? outcome.budget : parsed.value.budget;
-          const budgetReceipt = budgetReceipts.issue({ taskId, usedTokens: responseBudget.usedTokens, rounds: responseBudget.rounds, maxTokens: responseBudget.maxTokens, maxRounds: responseBudget.maxRounds, sequence: (receipt?.sequence ?? 0) + 1, issuedAt: Date.now() });
-          const budgetPayload = budgetReceipts.verify(budgetReceipt, taskId);
-          if (!budgetPayload || !claim) throw new Error("预算回执签发失败");
-          let committed = false;
-          const commitReceipt = () => {
-            if (committed) return;
-            committed = budgetReceiptLedger.commit(claim, budgetReceipt, budgetPayload);
-            if (!committed) budgetReceiptLedger.rollback(claim);
-          };
-          const rollbackReceipt = () => {
-            if (!committed) budgetReceiptLedger.rollback(claim);
-          };
-          response.once("finish", commitReceipt);
-          response.once("close", rollbackReceipt);
-          sendAi(200, { ...outcome, provider: meta?.provider ?? agent.provider, taskId, budget: responseBudget, budgetReceipt });
-        } catch (error) {
-          if (claim) budgetReceiptLedger.rollback(claim);
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
-
-      if (request.method === "POST" && pathname === "/api/ai/parse-data") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        aiLogger.log("ai.request.started", { requestId });
-        const parsed = parseDataRequestSchema(body);
-        if (!parsed.ok || !parsed.value) {
-          sendAi(400, {
-            error: { code: "AI_VALIDATION_ERROR", message: parsed.error },
-          });
-          return;
-        }
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const result = await ai.parseData(parsed.value, { requestId, signal: requestController.signal });
-          if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: "local", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
-          aiLogger.log("ai.request.completed", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider });
-          sendAi(200, result);
-        } catch (error) {
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
-
-      if (request.method === "POST" && pathname === "/api/ai/propose-edits") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        aiLogger.log("ai.request.started", { requestId });
-        const parsed = proposeEditsRequestSchema(body);
-        if (!parsed.ok || !parsed.value) {
-          sendAi(400, {
-            error: { code: "AI_VALIDATION_ERROR", message: parsed.error },
-          });
-          return;
-        }
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const result = await ai.proposeEdits(parsed.value, { requestId, signal: requestController.signal });
-          if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: "local", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
-          aiLogger.log("ai.request.completed", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider });
-          sendAi(200, result);
-        } catch (error) {
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
-
-      if (request.method === "POST" && pathname === "/api/ai/explain") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        aiLogger.log("ai.request.started", { requestId });
-        if (!isRecord(body) || typeof body.message !== "string" || !body.message.trim()) {
-          sendAi(400, {
-            error: { code: "AI_VALIDATION_ERROR", message: "message 不能为空" },
-          });
-          return;
-        }
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const result = await ai.explain(body.message, Number(body.studentCount ?? 0), { requestId, signal: requestController.signal });
-          if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: "local", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
-          aiLogger.log("ai.request.completed", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider });
-          sendAi(200, result);
-        } catch (error) {
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
+      if (await aiRoutes.handle({ request, response, pathname, requestId, sendAi })) return;
 
       if (url.startsWith("/api/")) {
         send( 404, {
@@ -1020,17 +872,69 @@ export function createAiServer(options: AiServerOptions = {}) {
     }
   });
   Object.defineProperty(server, "flushAiState", { value: flushAiState });
+  Object.defineProperty(server, "flushRooms", { value: flushRooms });
+  Object.defineProperty(server, "drainRoomStreams", { value: drainRoomStreams });
+  Object.defineProperty(server, "roomStreamStats", { value: (): RoomStreamStats => ({ ...roomStreamMetrics }) });
   return server as AiServer;
+}
+
+export interface AttachServerLifecycleOptions {
+  timeoutMs?: number;
+  onDraining?: () => void;
+  setTimeoutFn?: typeof setTimeout;
+}
+
+/**
+ * 把关停编排接到 HTTP 服务器上：排空 SSE、放走空闲连接、并行落 AI 状态与房间快照，
+ * 在途请求最多再跑 shutdownTimeoutMs，超时就强制切断连接。
+ */
+export function attachServerLifecycle(server: AiServer, options: AttachServerLifecycleOptions = {}) {
+  const lifecycle = createServerLifecycle({
+    server,
+    timeoutMs: options.timeoutMs,
+    setTimeoutFn: options.setTimeoutFn,
+    onDraining: options.onDraining,
+    drain: async () => {
+      server.drainRoomStreams?.();
+      // SSE 结束后 socket 会退回 keep-alive 空闲态；不主动放走，close 会一直等它。
+      server.closeIdleConnections?.();
+      await new Promise<void>((resolve) => { setImmediate(resolve); });
+      server.closeIdleConnections?.();
+    },
+    onTimeout: () => {
+      server.closeAllConnections?.();
+    },
+    flush: async () => {
+      // 两份状态互不依赖：一份失败也要把另一份落完，最后再把失败抛给调用方。
+      const results = await Promise.allSettled([
+        server.flushAiState?.() ?? Promise.resolve(),
+        server.flushRooms?.() ?? Promise.resolve(),
+      ]);
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failed) throw failed.reason;
+    },
+  });
+  Object.defineProperty(server, "lifecycle", { value: lifecycle, configurable: true });
+  return lifecycle;
 }
 
 export async function createReadyAiServer(options: AiServerOptions = {}): Promise<AiServer> {
   const config = options.productionConfig ?? validateProductionConfig(process.env);
   if (!config.ok) throw new Error(`生产配置无效: ${config.errors.join(",")}`);
-  const dataDir = resolve(options.dataDir ?? config.config?.dataDir ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
-  const stateFile = process.env.AI_STATE_FILE ?? config.config?.aiStateFile ?? join(dataDir, "ai-runtime-state.json");
+  const dataDir = resolve(options.dataDir ?? config.config?.dataDir ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR); await sweepStaleTemporaryFiles(dataDir);
+  const stateFile = process.env.AI_STATE_FILE ?? config.config?.aiStateFile ?? join(dataDir, "ai-runtime-state.json"); if (resolve(dirname(stateFile)) !== dataDir) await sweepStaleTemporaryFilesBesideFile(stateFile);
   const store = options.aiStateStore ?? createFileAiStateStore(stateFile);
   const state = await store.load();
-  return createAiServer({ ...options, aiStateStore: store, aiRuntimeState: state, productionConfig: config });
+  const roomSnapshotFile = join(dataDir, "collaboration-rooms.json");
+  const roomSnapshot = options.roomSnapshot ?? await loadRoomSnapshot(roomSnapshotFile);
+  return createAiServer({
+    ...options,
+    aiStateStore: store,
+    aiRuntimeState: state,
+    productionConfig: config,
+    ...(roomSnapshot === undefined ? {} : { roomSnapshot }),
+    persistRooms: options.persistRooms ?? createRoomSnapshotWriter(dataDir, roomSnapshotFile),
+  });
 }
 
 const isDirectRun =
@@ -1057,8 +961,7 @@ if (isDirectRun) {
   }
   const serverPromise = createReadyAiServer({ staticDir, aiConfig: resolveAiConfig(), productionConfig });
   void serverPromise.then((server) => {
-    const lifecycle = createServerLifecycle({ server, flush: () => server.flushAiState?.() ?? Promise.resolve(), timeoutMs: productionConfig.config?.shutdownTimeoutMs, onDraining: () => undefined });
-    Object.defineProperty(server, "lifecycle", { value: lifecycle });
+    const lifecycle = attachServerLifecycle(server, { timeoutMs: productionConfig.config?.shutdownTimeoutMs });
     const shutdown = (signal: string) => void lifecycle.shutdown(signal).then(() => process.exit(0));
     process.once("SIGINT", () => shutdown("SIGINT"));
     process.once("SIGTERM", () => shutdown("SIGTERM"));

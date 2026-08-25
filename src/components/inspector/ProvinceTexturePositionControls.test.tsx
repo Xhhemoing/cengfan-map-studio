@@ -1,7 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { ProvinceInspector } from "./ProvinceInspector";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+afterEach(() => {
+  // An assertion throwing before the inline unmount would leave the root mounted for
+  // the rest of the run, racing React's scheduler against jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 describe("province texture position controls", () => {
   it("resets manual placement without exposing cross-province synchronization", () => {
@@ -16,6 +29,7 @@ describe("province texture position controls", () => {
     };
     const container = document.createElement("div");
     const root = createRoot(container);
+    mounted.push({ root, container });
     flushSync(() => root.render(<ProvinceInspector
       province="浙江省"
       style={{ appearance }}
@@ -29,6 +43,5 @@ describe("province texture position controls", () => {
     expect(onPatch).toHaveBeenCalledWith({ appearance: expect.objectContaining({ offsetX: 0, offsetY: 0 }) });
 
     expect(container.textContent).not.toContain("同步所有贴图设置");
-    root.unmount();
   });
 });

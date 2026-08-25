@@ -1,17 +1,21 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "./project-document";
 import { applyTransaction } from "./project-document";
 import {
+  assertProjectPackageSize,
   createProjectPackage,
   createProjectPackageEnvelope,
   parseProjectPackage,
   projectPackageDisplayName,
   restoreProjectPackage,
   serializeProjectPackage,
+  ProjectPackageError,
+  PROJECT_PACKAGE_LIMITS,
 } from "./project-package";
+import { parseResourcePack } from "./resource-pack";
 import { DEFAULT_RENDER_SETTINGS } from "./render-settings";
 import { createDefaultDisplayFrame } from "./display-frame";
 import { createSystemTemplate } from "./template-document";
@@ -260,5 +264,189 @@ describe("project package", () => {
     const pack = parseProjectPackage(raw);
     expect(pack.kind).toBe("cengfan-project-package");
     expect(pack.project.students.length).toBeGreaterThan(0);
+  });
+
+  it("keeps the export format byte-identical to pretty-printed JSON", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const pack = createProjectPackage({ project, assets: [asset], fonts: [font], now: new Date("2026-07-27T00:00:00.000Z") });
+
+    expect(serializeProjectPackage(pack)).toBe(`${JSON.stringify(pack, null, 2)}\n`);
+  });
+});
+
+function rawPackage(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: "cengfan-project-package",
+    version: 2,
+    exportedAt: "2026-07-27T00:00:00.000Z",
+    project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
+    assets: [],
+    fonts: [],
+    ...overrides,
+  };
+}
+
+function textureAsset(index: number, srcBytes: number) {
+  return {
+    id: `texture-${index}`,
+    label: `省份贴图 ${index}`,
+    kind: "province-texture" as const,
+    src: `data:image/png;base64,${"A".repeat(srcBytes)}${index}`,
+    provinceIds: [`省份 ${index}`],
+    source: "user" as const,
+  };
+}
+
+describe("project package size caps", () => {
+  it("rejects an oversized payload before it reaches JSON.parse", () => {
+    const parseSpy = vi.spyOn(JSON, "parse");
+    const oversized = `{"kind":"cengfan-project-package","padding":"${"x".repeat(4096)}"}`;
+    let failure: unknown;
+    let parseCalls = 0;
+    try {
+      parseProjectPackage(oversized, { limits: { maxBytes: 1024 } });
+    } catch (reason) {
+      failure = reason;
+      parseCalls = parseSpy.mock.calls.length;
+    } finally {
+      parseSpy.mockRestore();
+    }
+
+    expect(parseCalls).toBe(0);
+    expect(failure).toBeInstanceOf(ProjectPackageError);
+    expect((failure as ProjectPackageError).code).toBe("package-too-large");
+    expect((failure as Error).message).toContain("工程包过大");
+  });
+
+  it("rejects a 500MB file from its size alone so the tab never reads it", () => {
+    expect(PROJECT_PACKAGE_LIMITS.maxBytes).toBeLessThan(500 * 1024 * 1024);
+    expect(() => assertProjectPackageSize(500 * 1024 * 1024)).toThrow(ProjectPackageError);
+    expect(() => assertProjectPackageSize(500 * 1024 * 1024)).toThrow("工程包过大");
+    expect(() => assertProjectPackageSize(4 * 1024 * 1024)).not.toThrow();
+  });
+
+  it("rejects packages with more resources than the cap allows", () => {
+    const assets = Array.from({ length: 5 }, (_, index) => textureAsset(index, 8));
+    let failure: unknown;
+    try {
+      restoreProjectPackage(rawPackage({ assets, fonts: [font] }), { limits: { maxResources: 4 } });
+    } catch (reason) {
+      failure = reason;
+    }
+
+    expect(failure).toBeInstanceOf(ProjectPackageError);
+    expect((failure as ProjectPackageError).code).toBe("too-many-resources");
+    expect((failure as Error).message).toContain("6");
+  });
+
+  it("rejects a single oversized data URL in assets or fonts", () => {
+    const huge = `data:image/png;base64,${"A".repeat(4096)}`;
+    let assetFailure: unknown;
+    let fontFailure: unknown;
+    try {
+      restoreProjectPackage(rawPackage({ assets: [{ ...asset, src: huge }] }), { limits: { maxResourceBytes: 1024 } });
+    } catch (reason) {
+      assetFailure = reason;
+    }
+    try {
+      restoreProjectPackage(rawPackage({ fonts: [{ ...font, src: huge }] }), { limits: { maxResourceBytes: 1024 } });
+    } catch (reason) {
+      fontFailure = reason;
+    }
+
+    expect((assetFailure as ProjectPackageError).code).toBe("resource-too-large");
+    expect((assetFailure as Error).message).toContain("浙江贴图");
+    expect((fontFailure as ProjectPackageError).code).toBe("resource-too-large");
+    expect((fontFailure as Error).message).toContain("手写体");
+  });
+
+  it("checks caps before doing any normalization work", () => {
+    const assets = Array.from({ length: 4 }, (_, index) => textureAsset(index, 32 * 1024));
+    const stringifySpy = vi.spyOn(JSON, "stringify");
+    let stringifyCalls = 0;
+    try {
+      restoreProjectPackage(rawPackage({ assets }), { limits: { maxResources: 2 } });
+    } catch {
+      stringifyCalls = stringifySpy.mock.calls.length;
+    } finally {
+      stringifySpy.mockRestore();
+    }
+
+    expect(stringifyCalls).toBe(0);
+  });
+
+  it("reports typed codes for malformed payloads while keeping the user-facing messages", () => {
+    const invalidJson = (() => {
+      try {
+        parseProjectPackage("not-json");
+      } catch (reason) {
+        return reason;
+      }
+    })();
+    const notAPackage = (() => {
+      try {
+        parseProjectPackage("{}");
+      } catch (reason) {
+        return reason;
+      }
+    })();
+
+    expect((invalidJson as ProjectPackageError).code).toBe("invalid-json");
+    expect((invalidJson as Error).message).toBe("工程包不是有效的 JSON");
+    expect((notAPackage as ProjectPackageError).code).toBe("not-a-package");
+    expect((notAPackage as Error).message).toBe("不是蹭饭图工程包");
+  });
+
+  it("restores without re-serializing embedded resource payloads", () => {
+    const assets = Array.from({ length: 4 }, (_, index) => textureAsset(index, 64 * 1024));
+    const assetBytes = assets.reduce((total, item) => total + item.src.length, 0);
+    const stringifySpy = vi.spyOn(JSON, "stringify");
+    restoreProjectPackage(rawPackage({ assets }));
+    const materialized = stringifySpy.mock.results.reduce(
+      (total, result) => total + (typeof result.value === "string" ? result.value.length : 0),
+      0,
+    );
+    stringifySpy.mockRestore();
+
+    expect(materialized).toBeLessThan(assetBytes);
+  });
+
+  it("normalizes catalog data exactly like the resource pack parser", () => {
+    const messyAssets = [
+      { id: "texture-good", label: "有效贴图", kind: "province-texture", src: "data:image/png;base64,SAME", provinceIds: ["浙江省", "浙江省", 42], source: "user" },
+      { id: "texture-good", label: "重复 ID", kind: "province-texture", src: "data:image/png;base64,OTHER", provinceIds: ["北京市"], source: "user" },
+      { id: "same-content", label: "重复内容", kind: "unknown-kind", src: "data:image/png;base64,SAME", provinceIds: ["江苏省"], source: "system" },
+      { id: "no-label", label: "", kind: "background", src: "data:image/png;base64,BG", provinceIds: "not-an-array", source: "user" },
+      { id: "broken", label: "损坏素材", kind: "province-texture", src: "", provinceIds: [], source: "user" },
+      "not-an-object",
+      null,
+    ];
+    const messyFonts = [
+      { id: "font-a", label: "", family: "", src: "data:font/ttf;base64,AA==", format: "bogus", source: "system" },
+      { id: "font-a", label: "重复字体", family: "重复", src: "data:font/ttf;base64,BB==", format: "woff2", source: "user" },
+      { id: "font-b", src: "data:font/ttf;base64,CC==" },
+      { id: "font-c", src: "" },
+      42,
+    ];
+
+    const restored = restoreProjectPackage(rawPackage({ assets: messyAssets, fonts: messyFonts }));
+    const reference = parseResourcePack(JSON.stringify({
+      kind: "cengfan-resource-pack",
+      exportedAt: "2026-07-27T00:00:00.000Z",
+      assets: messyAssets,
+      fonts: messyFonts,
+    }), { allowEmpty: true });
+
+    expect(restored.assets).toEqual(reference.pack.assets);
+    expect(restored.fonts).toEqual(reference.pack.fonts);
+  });
+
+  it("does not share resource references with the incoming value", () => {
+    const incoming = rawPackage({ assets: [{ ...asset }], fonts: [{ ...font }] });
+    const restored = restoreProjectPackage(incoming);
+
+    expect(restored.assets[0]).not.toBe((incoming.assets as unknown[])[0]);
+    expect(restored.assets[0]?.provinceIds).not.toBe((incoming.assets as { provinceIds: string[] }[])[0]?.provinceIds);
+    expect(restored.fonts[0]).not.toBe((incoming.fonts as unknown[])[0]);
   });
 });

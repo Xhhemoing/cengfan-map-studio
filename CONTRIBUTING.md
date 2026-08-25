@@ -32,6 +32,8 @@ npm install
 npm run dev          # 前端 5173 + API 8787
 ```
 
+公开演示站（无 Node API）见 [docs/deployment/public-demo.md](docs/deployment/public-demo.md)。
+
 1. 在 Issue 下评论「我来做」（大功能必须先有 Issue）。
 2. Fork，分支用 `fix/短名` 或 `feat/短名`。
 3. 能测的逻辑先写测试再改代码（见 AGENTS.md 验证纪律）。

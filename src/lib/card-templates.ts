@@ -130,6 +130,9 @@ export function applyCardTemplate(templateId: string, _currentCards: CardSetting
   if (!template) return {};
   return {
     ...template.cards,
+    // A template without its own presentation is a standard card. Stating that explicitly is
+    // what lets the canvas leave a reference renderer such as the colour pill behind.
+    presentation: template.cards.presentation ?? "standard",
     templateId: template.id,
     displayFrame: undefined,
   };

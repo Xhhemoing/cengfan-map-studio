@@ -1,38 +1,52 @@
 import { geoMercator, geoPath } from "d3-geo";
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, type PointerEvent, type ReactNode, type RefObject } from "react";
-import { clampDestinationCardPosition, type CardArea, type CardLayoutMode, type CardPoint, type CardPolygon } from "../../lib/card-layout";
+import { Fragment, memo, useCallback, useEffect, useMemo, type PointerEvent, type ReactNode, type RefObject } from "react";
+import type { DestinationCardStyle } from "./DestinationCard";
+import type {
+  CardArea,
+  CardLayoutBounds,
+  CardLayoutMode,
+  CardPlacement,
+  CardPoint,
+  CardPolygon,
+  CardSide,
+} from "../../lib/card-layout";
 import { createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
 import { computeMapContentBounds, computeMapOccupiedAreas } from "../../lib/map-content-bounds";
-import {
-  buildCitySections,
-  buildLayoutGroups,
-  buildSchoolRows,
-  schoolRowParts,
-  type SchoolRowPart,
-} from "../../lib/layout";
+import { buildLayoutGroups } from "../../lib/layout";
 import { buildProvinceSummary, getVisibleStudents } from "../../lib/project-data";
 import { CANVAS_LAYER_Z } from "../../lib/scene-document";
 import type { AssetElement, CanvasText, CardFontField, SceneSelection } from "../../lib/scene-document";
-import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame, type DisplayFrameFixedItem } from "../../lib/display-frame";
+import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame } from "../../lib/display-frame";
 import type { ProjectDocument } from "../../lib/project-document";
 import { resolveStudentLocation } from "../../lib/student-data";
 import { findProvinceFeature, getChinaMapFeatures, type MapFeature, type Position } from "../../lib/map-data";
-import { buildConnectorGeometry } from "../../lib/connector-geometry";
 import { resolveEdgeStyle } from "../../lib/edge-styles";
 import { resolveFontFamily, buildFontFaceCss, type UserFont } from "../../lib/fonts";
 import { clampGridSize, DEFAULT_GRID_SIZE } from "../../lib/grid";
-import { DEFAULT_CARD_EXPRESSION_TEMPLATES, formatCardExpression } from "../../lib/card-expression";
-import { DEFAULT_NAME_FORMAT, formatStudentName } from "../../lib/name-format";
-import { universityEmblems } from "../../data/university-emblems";
-import { wrapCardText, type CardTextFragment, type CardTextLine } from "../../lib/card-text-layout";
+import { DEFAULT_CARD_EXPRESSION_TEMPLATES } from "../../lib/card-expression";
+import {
+  buildPreparedCardContents,
+  cardFieldFontSize,
+  resolveCardAnchor,
+  type CardAnchor,
+  type PreparedCard,
+} from "../../lib/prepared-card-content";
+import {
+  destinationCardFixedRowHeight,
+  destinationCardFlowContentStart,
+  destinationCardHeaderOffset,
+  destinationCardRowFontSize,
+} from "../../lib/destination-card-metrics";
 import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
+import { computeGuestPanelLayout, DEFAULT_GUEST_PANEL } from "../../lib/guest-panel-layout";
 import { DecorationLayer } from "./DecorationLayer";
+import { DestinationCardsLayer, type DestinationCardsAppearance, type PlacedDestinationCard } from "./DestinationCardsLayer";
+import { GuestsLayer } from "./GuestsLayer";
 import { MapLayer } from "./MapLayer";
 import { RegionalAssetLayer } from "./RegionalAssetLayer";
 import { TextLayer } from "./TextLayer";
 import { useCardLayoutWorker } from "./useCardLayoutWorker";
-import { clearCanvasPreview, createCanvasPreviewScheduler, scheduleCanvasPreview } from "./CanvasDragPreview";
 
 const features = getChinaMapFeatures();
 const openMapSplit = splitMapFeaturesForSouthChinaSea(features, false);
@@ -40,41 +54,12 @@ const foldedMapSplit = splitMapFeaturesForSouthChinaSea(features, true);
 const HEAT_COLORS = ["#d9f0e5", "#8ccfb6", "#4da184", "#17675e"] as const;
 const LANDMARK_ASSET_KINDS: AssetElement["kind"][] = ["landmark"];
 const EMPTY_USER_FONTS: UserFont[] = [];
+const EMPTY_CARD_POLYGONS: CardPolygon[] = [];
 
 const MemoizedMapLayer = memo(MapLayer);
 const MemoizedRegionalAssetLayer = memo(RegionalAssetLayer);
 const MemoizedDecorationLayer = memo(DecorationLayer);
 const MemoizedTextLayer = memo(TextLayer);
-
-/** Truncate a single-line guest text (name / title / note) with an ellipsis. */
-function truncateGuestText(text: string, maxChars: number): string {
-  if (maxChars <= 0) return "";
-  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
-}
-
-const GUEST_CUSTOM_MAX_LINES = 14;
-
-/** Wrap the panel's free-form custom text into display lines (hard wrap by width, cap the line count). */
-function wrapGuestCustomText(text: string, maxChars: number): string[] {
-  const lines: string[] = [];
-  for (const rawLine of text.split("\n")) {
-    let rest = rawLine;
-    while (rest.length > maxChars) {
-      if (lines.length >= GUEST_CUSTOM_MAX_LINES) break;
-      lines.push(rest.slice(0, maxChars));
-      rest = rest.slice(maxChars);
-    }
-    if (lines.length >= GUEST_CUSTOM_MAX_LINES) {
-      if (rest.length > 0) {
-        const last = lines[GUEST_CUSTOM_MAX_LINES - 1];
-        if (last) lines[GUEST_CUSTOM_MAX_LINES - 1] = `${last.slice(0, maxChars - 1)}…`;
-      }
-      break;
-    }
-    lines.push(rest);
-  }
-  return lines;
-}
 
 function featureCoordinatePolygons(feature: MapFeature): Position[][][] {
   return feature.geometry.type === "Polygon"
@@ -157,62 +142,6 @@ export interface PosterCanvasProps {
   onCardPositionsResolved?: (positions: Record<string, { x: number; y: number }>) => void;
 }
 
-function destinationHeight(lineCount: number, rowHeight: number, bottomPadding: number, headerExtra: number): number {
-  return 44 + headerExtra + lineCount * rowHeight + bottomPadding;
-}
-
-function frameTextAnchor(item: DisplayFrameFixedItem): "start" | "middle" | "end" {
-  if (item.style?.align === "center") return "middle";
-  if (item.style?.align === "right") return "end";
-  return "start";
-}
-
-function frameTextX(item: DisplayFrameFixedItem): number {
-  if (item.style?.align === "center") return item.x + item.width / 2;
-  if (item.style?.align === "right") return item.x + item.width;
-  return item.x;
-}
-
-function renderDisplayFrameItem(item: DisplayFrameFixedItem, frameStyle: { color: string; fontSize: number; align: "left" | "center" | "right" }, userFonts: UserFont[]): ReactNode {
-  const color = item.style?.color ?? frameStyle.color;
-  if (item.kind === "text") {
-    return (
-      <text
-        key={item.id}
-        data-display-frame-text={item.id}
-        x={frameTextX(item)}
-        y={item.y + Math.min(item.height, item.style?.fontSize ?? frameStyle.fontSize)}
-        fill={color}
-        fontSize={item.style?.fontSize ?? frameStyle.fontSize}
-        fontWeight={item.style?.fontWeight === "bold" ? 700 : item.style?.fontWeight === "medium" ? 500 : undefined}
-        fontFamily={resolveFontFamily(item.style?.fontId, userFonts)}
-        textAnchor={frameTextAnchor(item)}
-        pointerEvents="none"
-      >
-        {item.content || " "}
-      </text>
-    );
-  }
-  if (item.kind === "decoration" && item.decoration === "line") {
-    return <line key={item.id} data-display-frame-decoration={item.id} x1={item.x} y1={item.y} x2={item.x + item.width} y2={item.y} stroke={color} strokeWidth={item.style?.strokeWidth ?? 1} pointerEvents="none" />;
-  }
-  if (item.kind === "decoration") {
-    return <rect key={item.id} data-display-frame-decoration={item.id} x={item.x} y={item.y} width={item.width} height={item.height} fill={item.style?.fill ?? "transparent"} stroke={color} strokeWidth={item.style?.strokeWidth ?? 1} pointerEvents="none" />;
-  }
-  return null;
-}
-
-/** Extend a connector path so it runs from the card center to its boundary port. The
- *  portion inside the card is covered by the card fill, so the visible line ends flush
- *  at the card edge and its tip stays hidden ("到板块的中心隐藏"). */
-function connectorPathToCenter(pathData: string, port: { x: number; y: number }, card: { x: number; y: number; width: number; height: number }): string {
-  const centerX = card.x + card.width / 2;
-  const centerY = card.y + card.height / 2;
-  const format = (value: number) => Number(value.toFixed(3)).toString();
-  const rest = pathData.replace(/^M[-\d.]+ [-\d.]+/, "").trim();
-  return `M${format(centerX)} ${format(centerY)} L${format(port.x)} ${format(port.y)} ${rest}`;
-}
-
 function textLayoutObstacle(text: CanvasText): CardArea | null {
   if (!text.visibility || !text.content.trim()) return null;
   const x = text.textAlign === "right"
@@ -228,196 +157,41 @@ function textLayoutObstacle(text: CanvasText): CardArea | null {
   };
 }
 
-function studentFieldParts(
-  student: { name: string; university: string; city: string },
-  fields: ProjectDocument["cards"]["visibleFields"],
-): SchoolRowPart[] {
-  return fields
-    .map((field) => ({ field, value: student[field] }))
-    .filter((part): part is SchoolRowPart => Boolean(part.value));
+/**
+ * Which side of the map a stored card box sits on, classified the same way the solver
+ * classifies a placement it produced itself. A placement's `side` only picks the connector
+ * port in the degenerate case where the anchor coincides with the card center, so a frozen
+ * card never needs the side the discarded solver run would have assigned it.
+ */
+function frozenCardSide(card: CardArea, map: CardArea): CardSide {
+  const horizontal = (card.x + card.width / 2 - (map.x + map.width / 2)) / Math.max(1, map.width / 2);
+  const vertical = (card.y + card.height / 2 - (map.y + map.height / 2)) / Math.max(1, map.height / 2);
+  if (Math.abs(horizontal) >= Math.abs(vertical)) return horizontal < 0 ? "left" : "right";
+  return vertical < 0 ? "top" : "bottom";
 }
 
-interface CardDisplayRow {
-  key: string;
-  parts: SchoolRowPart[];
-  remainingPeople: number;
-  cityHeading?: string;
-  city?: string;
-  university?: string;
-  names?: string;
+/** Document slices painted for a given document object. A caller may edit a document in place
+ *  (same object, a replaced `cards` / `map` / … slice); prop identity cannot see that, because
+ *  both sides of the memo comparison are then the very same object. */
+const paintedSlices = new WeakMap<ProjectDocument, Record<string, unknown>>();
+
+function documentChangedInPlace(project: ProjectDocument): boolean {
+  const painted = paintedSlices.get(project);
+  if (!painted) return false;
+  const current = project as unknown as Record<string, unknown>;
+  const keys = Object.keys(current);
+  return keys.length !== Object.keys(painted).length
+    || keys.some((key) => !Object.is(painted[key], current[key]));
 }
 
-interface PreparedCardRow extends CardDisplayRow {
-  lines: CardTextLine<CardFontField>[];
+function arePosterCanvasPropsEqual(previous: PosterCanvasProps, next: PosterCanvasProps): boolean {
+  if (documentChangedInPlace(next.project)) return false;
+  const keys = Object.keys(next) as Array<keyof PosterCanvasProps>;
+  if (keys.length !== Object.keys(previous).length) return false;
+  return keys.every((key) => Object.is(previous[key], next[key]));
 }
 
-const REFERENCE_CARD_COLORS = ["#e95646", "#f3c847", "#efb8c6", "#3d8fc2", "#263b78"] as const;
-
-function referenceCardColor(key: string, fallback: string): string {
-  let hash = 0;
-  for (const character of key) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  return REFERENCE_CARD_COLORS[hash % REFERENCE_CARD_COLORS.length] ?? fallback;
-}
-
-function readableTextColor(background: string): string {
-  const match = /^#([0-9a-f]{6})$/i.exec(background);
-  if (!match) return "#ffffff";
-  const value = Number.parseInt(match[1]!, 16);
-  const luminance = ((value >> 16) * 299 + ((value >> 8) & 255) * 587 + (value & 255) * 114) / 1000;
-  return luminance > 160 ? "#1c3154" : "#ffffff";
-}
-
-function renderReferenceCardVisual({
-  presentation,
-  group,
-  rows,
-  width,
-  height,
-  accent,
-  background,
-  opacity,
-  textColor,
-  fontSize,
-  edgeColor,
-  titleFont,
-}: {
-  presentation: Exclude<import("../../lib/scene-document").CardPresentation, "standard">;
-  group: ReturnType<typeof buildLayoutGroups>[number];
-  rows: PreparedCardRow[];
-  width: number;
-  height: number;
-  accent: string;
-  background: string;
-  opacity: number;
-  textColor: string;
-  fontSize: number;
-  edgeColor: string;
-  titleFont?: string;
-}): ReactNode {
-  const bodyRows = rows.filter((row) => !row.cityHeading || presentation === "glass-stat");
-  const textFor = (row: PreparedCardRow) => row.lines.map((line) => line.map((part) => part.text).join("")).join(" ");
-  const lineHeight = Math.max(17, fontSize + 5);
-
-  if (presentation === "color-pill") {
-    const foreground = readableTextColor(accent);
-    const bodyStart = 32;
-    return (
-      <g data-card-visual="color-pill">
-        <rect x={0} y={12} width={width} height={Math.max(36, height - 12)} rx={Math.min(28, Math.max(18, height / 3))} fill={accent} fillOpacity={opacity} />
-        <text x={width / 2} y={19} textAnchor="middle" fill="#1c3154" fontSize={fontSize + 5} fontWeight={800} fontFamily={titleFont}>{group.title}</text>
-        {bodyRows.map((row, index) => <text key={row.key} x={width / 2} y={bodyStart + index * lineHeight} textAnchor="middle" fill={foreground} fontSize={fontSize} fontWeight={600}>{textFor(row)}</text>)}
-      </g>
-    );
-  }
-
-  if (presentation === "emblem-list") {
-    return (
-      <g data-card-visual="emblem-list">
-        <path d={`M20 19 Q${Math.round(width * 0.35)} 10 ${Math.round(width * 0.68)} 18`} fill="none" stroke="#f1c84b" strokeWidth={13} strokeLinecap="round" opacity={0.85} />
-        <circle cx={11} cy={14} r={5} fill="#e24d42" /><path d="M8 18 L11 25 L14 18" fill="#e24d42" />
-        <text x={24} y={20} fill="#263b78" fontSize={fontSize + 5} fontWeight={800} fontFamily={titleFont}>{group.title}</text>
-        {bodyRows.map((row, index) => {
-          const y = 40 + index * Math.max(22, lineHeight + 3);
-          const emblem = row.university ? universityEmblems[row.university] : undefined;
-          return <g key={row.key}>{emblem && <image href={emblem} x={7} y={y - 14} width={18} height={18} preserveAspectRatio="xMidYMid meet" />}<text x={emblem ? 31 : 9} y={y} fill={textColor} fontSize={fontSize} fontWeight={500}>{textFor(row)}</text></g>;
-        })}
-      </g>
-    );
-  }
-
-  if (presentation === "city-label") {
-    return (
-      <g data-card-visual="city-label">
-        <text x={6} y={fontSize + 8} fill={accent} stroke="#ffffff" strokeWidth={2.5} paintOrder="stroke" fontSize={fontSize + 8} fontWeight={900} fontFamily={titleFont}>{group.title}</text>
-        {bodyRows.map((row, index) => {
-          const y = 39 + index * lineHeight;
-          const emblem = row.university ? universityEmblems[row.university] : undefined;
-          return <g key={row.key}>{emblem && <image href={emblem} x={7} y={y - 13} width={16} height={16} preserveAspectRatio="xMidYMid meet" />}<text x={emblem ? 29 : 8} y={y} fill={textColor} fontSize={fontSize} fontWeight={600}>{textFor(row)}</text></g>;
-        })}
-      </g>
-    );
-  }
-
-  let bodyIndex = 0;
-  return (
-    <g data-card-visual="glass-stat">
-      <rect width={width} height={height} rx={4} fill={background} fillOpacity={Math.min(0.9, Math.max(0.55, opacity))} stroke={edgeColor} strokeOpacity={0.7} />
-      <rect x={8} y={8} width={15} height={15} rx={3} fill={accent} />
-      <text x={29} y={20} fill={textColor} fontSize={fontSize + 2} fontWeight={800} fontFamily={titleFont}>{group.title}</text>
-      <text x={width - 9} y={20} textAnchor="end" fill={accent} fontSize={fontSize} fontWeight={800}>{group.count} 人</text>
-      <line x1={8} x2={width - 8} y1={28} y2={28} stroke={edgeColor} strokeOpacity={0.55} />
-      {rows.map((row) => {
-        const isHeading = Boolean(row.cityHeading);
-        const y = 46 + bodyIndex * lineHeight;
-        bodyIndex += 1;
-        return <text key={row.key} x={isHeading ? 9 : 15} y={y} fill={isHeading ? accent : textColor} fontSize={isHeading ? Math.max(9, fontSize - 1) : fontSize} fontWeight={isHeading ? 800 : 500}>{textFor(row)}</text>;
-      })}
-    </g>
-  );
-}
-
-function rowFragments(
-  row: CardDisplayRow,
-  expression: string,
-  context: Parameters<typeof formatCardExpression>[1],
-): CardTextFragment<CardFontField>[] {
-  if (expression !== DEFAULT_CARD_EXPRESSION_TEMPLATES.row) {
-    return [{ text: formatCardExpression(expression, context, row.parts.map((part) => part.value).join(" · ")) }];
-  }
-  return row.parts.flatMap((part, index) => [
-    ...(index > 0 ? [{ text: " · " }] : []),
-    { text: part.value, field: part.field },
-  ]);
-}
-
-function cardRowsForGroup(
-  group: ReturnType<typeof buildLayoutGroups>[number],
-  grouping: ProjectDocument["cards"]["grouping"],
-  fields: ProjectDocument["cards"]["visibleFields"],
-  citySubgroups: boolean,
-  formatName: (name: string) => string,
-): CardDisplayRow[] {
-  const students = group.students.map((student) => ({ ...student, name: formatName(student.name) }));
-  if (grouping === "university") {
-    return students.map((student) => ({
-      key: student.id,
-      parts: studentFieldParts(student, fields),
-      city: student.city,
-      university: student.university,
-      names: student.name,
-      remainingPeople: 0,
-    }));
-  }
-
-  if (grouping === "province" && citySubgroups) {
-    const showCityHeading = fields.includes("city");
-    return buildCitySections(students).flatMap((section) => [{
-        key: `city-${section.city}`,
-        parts: showCityHeading ? [{ field: "city" as const, value: section.city }] : [],
-        cityHeading: showCityHeading ? section.city : undefined,
-        city: section.city,
-        remainingPeople: 0,
-      }, ...section.rows.map((row) => ({
-        key: row.studentIds[0] ?? `${section.city}-${row.university}`,
-        parts: schoolRowParts(row, fields.filter((field) => field !== "city")),
-        city: section.city,
-        university: row.university,
-        names: row.names.join("、"),
-        remainingPeople: 0,
-      }))]);
-  }
-
-  return buildSchoolRows(students).map((row) => ({
-    key: row.studentIds[0] ?? row.university,
-    parts: schoolRowParts(row, fields, grouping === "city" ? undefined : group.students[0]?.city),
-    city: grouping === "city" ? group.title : group.students[0]?.city,
-    university: row.university,
-    names: row.names.join("、"),
-    remainingPeople: 0,
-  }));
-}
-
-export function PosterCanvas({
+function PosterCanvasView({
   project,
   posterRef,
   exportMode = false,
@@ -443,80 +217,8 @@ export function PosterCanvas({
   gridSize = DEFAULT_GRID_SIZE,
   renderIntervalMs = 0,
 }: PosterCanvasProps) {
+  paintedSlices.set(project, { ...project });
   const resolvedGridSize = clampGridSize(gridSize);
-  const cardDrag = useRef<{
-    id: string;
-    offsetX: number;
-    offsetY: number;
-    width: number;
-    height: number;
-    x: number;
-    y: number;
-    originalX: number;
-    originalY: number;
-    element: SVGGElement;
-    connectorGroup: SVGGElement;
-    anchorX: number;
-    anchorY: number;
-    side: "left" | "right" | "top" | "bottom";
-    connectorStyle: ProjectDocument["cards"]["connectorStyle"];
-    borderless: boolean;
-    connectorHidden: boolean;
-  } | null>(null);
-  const guestDrag = useRef<{
-    offsetX: number;
-    offsetY: number;
-    x: number;
-    y: number;
-    originalX: number;
-    originalY: number;
-    element: SVGGElement;
-  } | null>(null);
-  const cardPreviewScheduler = useRef(createCanvasPreviewScheduler<{ id: string; x: number; y: number }>());
-  const guestPreviewScheduler = useRef(createCanvasPreviewScheduler<{ x: number; y: number }>());
-
-  const updateCardPreview = (next: { id: string; x: number; y: number }) => {
-    const drag = cardDrag.current;
-    if (!drag || drag.id !== next.id) return;
-    const placement = { x: next.x, y: next.y, width: drag.width, height: drag.height, side: drag.side };
-    drag.element.setAttribute("transform", `translate(${next.x} ${next.y})`);
-    const connector = drag.connectorHidden ? null : buildConnectorGeometry({
-      card: placement,
-      anchor: { x: drag.anchorX, y: drag.anchorY },
-      style: drag.connectorStyle,
-      preferredSide: drag.side,
-    });
-    const pathData = connector
-      ? drag.borderless
-        ? connectorPathToCenter(connector.pathData, connector.port, placement)
-        : connector.pathData
-      : null;
-    if (pathData) {
-      drag.connectorGroup.querySelectorAll<SVGPathElement>("path").forEach((path) => path.setAttribute("d", pathData));
-    }
-  };
-
-  const clearCardPreview = () => clearCanvasPreview(cardPreviewScheduler.current);
-  const clearGuestPreview = () => clearCanvasPreview(guestPreviewScheduler.current);
-
-  const scheduleCardPreview = (next: { id: string; x: number; y: number }) => {
-    scheduleCanvasPreview(cardPreviewScheduler.current, next, renderIntervalMs, updateCardPreview);
-  };
-
-  const updateGuestPreview = (next: { x: number; y: number }) => {
-    const drag = guestDrag.current;
-    if (!drag) return;
-    drag.element.setAttribute("transform", `translate(${next.x} ${next.y})`);
-  };
-
-  const scheduleGuestPreview = (next: { x: number; y: number }) => {
-    scheduleCanvasPreview(guestPreviewScheduler.current, next, renderIntervalMs, updateGuestPreview);
-  };
-
-  useEffect(() => () => {
-    clearCardPreview();
-    clearGuestPreview();
-  }, []);
   const visibleStudents = useMemo(() => getVisibleStudents(project.students), [project.students]);
   const summary = useMemo(() => buildProvinceSummary(visibleStudents), [visibleStudents]);
   const counts = useMemo(() => new Map(summary.map((item) => [item.province, item.count])), [summary]);
@@ -538,35 +240,65 @@ export function PosterCanvas({
     { type: "FeatureCollection", features: mainlandFeatures } as never,
   ), [mainlandFeatures, project.map.height, project.map.width]);
   const mapPath = useMemo(() => geoPath(projection), [projection]);
+  // Province extents in projection space. `mapPath.bounds` streams every ring of every
+  // feature, so it is kept off the pan path: only the projection (map size and the folded
+  // South China Sea split) can move these.
+  const projectedProvinceBounds = useMemo(() => mainlandFeatures.flatMap((feature) => {
+    const [[left, top], [right, bottom]] = mapPath.bounds(feature as never);
+    if (![left, top, right, bottom].every(Number.isFinite)) return [];
+    return [{ left, top, right, bottom }];
+  }), [mainlandFeatures, mapPath]);
   const provinceAreas = useMemo(() => {
     const centerX = project.map.width / 2;
     const centerY = project.map.height / 2;
-    return mainlandFeatures.flatMap((feature) => {
-      const [[left, top], [right, bottom]] = mapPath.bounds(feature as never);
-      if (![left, top, right, bottom].every(Number.isFinite)) return [];
-      return [{
-        x: project.map.x + centerX + (left - centerX) * project.map.scale,
-        y: project.map.y + centerY + (top - centerY) * project.map.scale,
-        width: (right - left) * project.map.scale,
-        height: (bottom - top) * project.map.scale,
-      }];
-    });
-  }, [mainlandFeatures, mapPath, project.map]);
-  const provincePolygons = useMemo<CardPolygon[]>(() => {
-    const source = project.map.renderSource;
-    if (source?.kind === "image" && source.composition !== "overlay") return [];
+    return projectedProvinceBounds.map(({ left, top, right, bottom }) => ({
+      x: project.map.x + centerX + (left - centerX) * project.map.scale,
+      y: project.map.y + centerY + (top - centerY) * project.map.scale,
+      width: (right - left) * project.map.scale,
+      height: (bottom - top) * project.map.scale,
+    }));
+  }, [
+    projectedProvinceBounds,
+    project.map.height,
+    project.map.scale,
+    project.map.width,
+    project.map.x,
+    project.map.y,
+  ]);
+  const mapRenderSource = project.map.renderSource;
+  const mapImageReplacesProvinces = mapRenderSource?.kind === "image" && mapRenderSource.composition !== "overlay";
+  // Visibility is the only thing the collision geometry reads out of `provinceStyles`, and
+  // a recolor replaces that record wholesale. Reducing it to a sorted name list first means
+  // a color edit leaves the set — and therefore the projected rings — identical.
+  const hiddenProvincesKey = useMemo(() => {
+    const styles = project.map.provinceStyles;
+    if (!styles) return "";
+    return Object.keys(styles).filter((name) => styles[name]?.visible === false).sort().join("\n");
+  }, [project.map.provinceStyles]);
+  const hiddenProvinces = useMemo(
+    () => new Set(hiddenProvincesKey === "" ? [] : hiddenProvincesKey.split("\n")),
+    [hiddenProvincesKey],
+  );
+  const mapOriginX = project.map.x + project.map.width / 2;
+  const mapOriginY = project.map.y + project.map.height / 2;
+  // Collision geometry expressed as offsets from the map center, which is where scaling
+  // happens. Panning only slides that center across the canvas, so it must not reproject —
+  // and because a translation preserves every distance, simplification decided here is the
+  // same one the canvas-space rings would have made.
+  const centeredProvincePolygons = useMemo<CardPolygon[]>(() => {
+    if (mapImageReplacesProvinces) return [];
     const centerX = project.map.width / 2;
     const centerY = project.map.height / 2;
     const projectPoint = (coordinate: Position): CardPoint | null => {
       const point = projection(coordinate);
       if (!point || !point.every(Number.isFinite)) return null;
       return {
-        x: project.map.x + centerX + (point[0] - centerX) * project.map.scale,
-        y: project.map.y + centerY + (point[1] - centerY) * project.map.scale,
+        x: (point[0] - centerX) * project.map.scale,
+        y: (point[1] - centerY) * project.map.scale,
       };
     };
     return mainlandFeatures.flatMap((feature): CardPolygon[] => {
-      if (project.map.provinceStyles?.[feature.name]?.visible === false) return [];
+      if (hiddenProvinces.has(feature.name)) return [];
       return featureCoordinatePolygons(feature).flatMap((polygon) => {
         const rings = polygon.map((ring) => simplifyProjectedRing(
           ring.flatMap((coordinate) => {
@@ -578,7 +310,28 @@ export function PosterCanvas({
         return projected ? [projected] : [];
       });
     });
-  }, [mainlandFeatures, project.map, projection]);
+    // Depend on the map fields the projection actually reads instead of the whole
+    // project.map object — and on the derived visibility set rather than provinceStyles,
+    // which a recolor replaces wholesale. Either would otherwise reproject every province
+    // ring and invalidate the layout cache key for an edit that moves no geometry.
+  }, [
+    hiddenProvinces,
+    mainlandFeatures,
+    mapImageReplacesProvinces,
+    project.map.height,
+    project.map.scale,
+    project.map.width,
+    projection,
+  ]);
+  const provincePolygons = useMemo<CardPolygon[]>(
+    () => centeredProvincePolygons.map(({ rings, bounds }) => ({
+      rings: rings.map((ring) => ring.map((point) => ({ x: mapOriginX + point.x, y: mapOriginY + point.y }))),
+      ...(bounds
+        ? { bounds: { x: mapOriginX + bounds.x, y: mapOriginY + bounds.y, width: bounds.width, height: bounds.height } }
+        : {}),
+    })),
+    [centeredProvincePolygons, mapOriginX, mapOriginY],
+  );
   const mapContentBounds = useMemo(
     () => computeMapContentBounds({ map: project.map, provinceAreas }),
     [project.map, provinceAreas],
@@ -597,58 +350,12 @@ export function PosterCanvas({
     () => new Set(project.cards.noWrapFields ?? []),
     [project.cards.noWrapFields],
   );
-  const guests = project.guests ?? {
-    title: "特邀嘉宾 · 老师名单",
-    x: 48,
-    y: 780,
-    width: 280,
-    padding: 14,
-    background: "#ffffff",
-    opacity: 0.92,
-    textColor: "#1c3154",
-    fontSize: 13,
-    visibility: true,
-    people: [],
-  };
-  const visibleGuests = guests.people.filter((person) => person.visibility !== false);
-  const guestTitleTypography = guests.titleTypography ?? {};
-  const guestPeopleTypography = guests.peopleTypography ?? {};
-  const guestTitleFontSize = guestTitleTypography.fontSize ?? guests.fontSize + 1;
-  const guestPeopleFontSize = guestPeopleTypography.fontSize ?? guests.fontSize;
-  const guestNoteFontSize = Math.max(10, guestPeopleFontSize - 2);
-  const guestsDisplayMode = guests.displayMode === "cards" ? "cards" : "list";
-  const guestListAvatarSize = Math.max(22, guestPeopleFontSize + 8);
-  const guestListUsesAvatar = visibleGuests.some((person) => person.avatarSrc);
-  const guestListAvatarGap = guestListUsesAvatar ? guestListAvatarSize + 8 : 0;
-  const guestNoteLineHeight = Math.max(13, guestNoteFontSize + 3) * lineHeightMultiplier;
-  const guestListNoteLines = visibleGuests.some((person) => person.note) ? guestNoteLineHeight : 0;
-  const guestRowHeight = Math.max(guestListAvatarSize, Math.max(16, guestPeopleFontSize + 6) * lineHeightMultiplier) + guestListNoteLines;
-  const guestCardGap = 10;
-  const guestCardMinWidth = 92;
-  const guestCardColumns = Math.max(1, Math.floor((guests.width - guests.padding * 2 + guestCardGap) / (guestCardMinWidth + guestCardGap)));
-  const guestCardWidth = (guests.width - guests.padding * 2 - (guestCardColumns - 1) * guestCardGap) / guestCardColumns;
-  const guestCardAvatarSize = 40;
-  const guestCardTitleLine = Math.max(15, guestPeopleFontSize + 5) * lineHeightMultiplier;
-  const guestCardSubLine = Math.max(12, Math.max(10, guestPeopleFontSize - 2) + 3) * lineHeightMultiplier;
-  const guestCardHasTitle = visibleGuests.some((person) => person.title);
-  const guestCardHasNote = visibleGuests.some((person) => person.note);
-  const guestCardHeight = 6 + guestCardAvatarSize + 6 + guestCardTitleLine
-    + (guestCardHasTitle ? guestCardSubLine : 0)
-    + (guestCardHasNote ? guestCardSubLine : 0) + 6;
-  const guestCardRows = Math.max(1, Math.ceil(visibleGuests.length / Math.max(1, guestCardColumns)));
-  const guestCustomText = guests.customText ?? "";
-  const guestCustomMaxChars = Math.max(8, Math.floor((guests.width - guests.padding * 2 - guestListAvatarGap) / guestPeopleFontSize));
-  const guestCustomLines = guestCustomText ? wrapGuestCustomText(guestCustomText, guestCustomMaxChars) : [];
-  const guestCustomLineHeight = Math.max(16, guestPeopleFontSize + 4) * lineHeightMultiplier;
-  // Gap between the header divider and the first custom-text baseline, scaled with the font size.
-  const guestCustomTopGap = Math.round(guestPeopleFontSize * 0.9) + 11;
-  const guestCustomHeight = guestCustomLines.length > 0
-    ? guestCustomTopGap + (guestCustomLines.length - 1) * guestCustomLineHeight + Math.round(guestPeopleFontSize * 0.35) + 8
-    : 0;
-  const guestHeight = guests.padding * 2 + 28 + guestCustomHeight
-    + (guestsDisplayMode === "cards"
-      ? guestCardRows * guestCardHeight + (guestCardRows - 1) * guestCardGap
-      : Math.max(1, visibleGuests.length) * guestRowHeight);
+  const guests = project.guests ?? DEFAULT_GUEST_PANEL;
+  const guestLayout = useMemo(
+    () => computeGuestPanelLayout(guests, lineHeightMultiplier),
+    [guests, lineHeightMultiplier],
+  );
+  const guestHeight = guestLayout.height;
   const layoutOccupiedAreas = useMemo(() => {
     const textAreas = project.textElements.flatMap((text) => {
       const area = textLayoutObstacle(text);
@@ -661,110 +368,141 @@ export function PosterCanvas({
     return [...protectedMapAreas, ...textAreas, ...guestAreas];
   }, [guestHeight, guests.visibility, guests.width, guests.x, guests.y, nonProvinceMapAreas, project.cards.allowMapOverlap, project.textElements]);
   const layoutOccupiedPolygons = useMemo(
-    () => project.cards.allowMapOverlap === true ? [] : provincePolygons,
+    () => project.cards.allowMapOverlap === true ? EMPTY_CARD_POLYGONS : provincePolygons,
     [project.cards.allowMapOverlap, provincePolygons],
+  );
+  // The same obstacles the solver receives, still relative to the map center. A pan leaves
+  // this array instance alone, which is what keeps the layout cache key from re-serializing
+  // every province ring; `layoutOccupiedPolygons` is exactly this translated by the origin.
+  const layoutOccupiedCenteredPolygons = useMemo(
+    () => project.cards.allowMapOverlap === true ? EMPTY_CARD_POLYGONS : centeredProvincePolygons,
+    [centeredProvincePolygons, project.cards.allowMapOverlap],
   );
   const displayFrame = useMemo(
     () => project.cards.displayFrame === undefined
       ? deriveFixedDisplayFrameFromCardSettings(project.cards)
       : normalizeDisplayFrame(project.cards.displayFrame),
-    [project.cards],
+    // Depend on the card fields the frame derives from rather than the whole
+    // project.cards object, which is replaced on unrelated edits (a dragged card
+    // position, a connector tweak) and would re-render every destination card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      project.cards.background,
+      project.cards.displayFrame,
+      project.cards.fieldFonts,
+      project.cards.fieldTypography,
+      project.cards.fontSize,
+      project.cards.gap,
+      project.cards.maxWidth,
+      project.cards.opacity,
+      project.cards.padding,
+      project.cards.textColor,
+      project.cards.visibleFields,
+    ],
   );
 
-  const frameTitleItem = displayFrame.fixed.items.find((item) => item.id === "title");
   const frameBodyItem = displayFrame.fixed.items.find((item) => item.id === "name") ?? displayFrame.fixed.items[0];
-  const flowBlocks = displayFrame.mode === "flow" ? displayFrame.flow.blocks.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id)) : [];
-  const flowBlockFor = (field: CardFontField) => flowBlocks.find((block) => block.field === field);
-  const flowTitleBlock = flowBlockFor("title");
-  const flowNameBlock = flowBlockFor("name");
-  const flowTitleFontSize = flowTitleBlock?.style?.fontSize ?? project.cards.fieldTypography?.title?.fontSize ?? project.cards.fontSize;
-  const flowNameFontSize = flowNameBlock?.style?.fontSize ?? project.cards.fieldTypography?.name?.fontSize ?? project.cards.fontSize;
-  const flowContentStart = displayFrame.mode === "flow"
-    ? flowBlocks.reduce((cursor, block) => cursor + block.spacing + (block.style?.fontSize ?? (block.field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize)) * block.lineHeight, 12)
-    : 0;
-  const customFrameItems = displayFrame.mode === "fixed"
-    ? displayFrame.fixed.items.filter((item) => item.kind === "text" || item.kind === "decoration").slice().sort((left, right) => left.zIndex - right.zIndex || left.id.localeCompare(right.id))
-    : [];
   const horizontalPadding = displayFrame.mode === "fixed"
     ? frameBodyItem?.x ?? project.cards.horizontalPadding ?? project.cards.padding
     : displayFrame.style.padding;
-  const preparedCards = useMemo(() => {
-    if (project.cards.visibleFields.length === 0 || project.dataView === "pins") return [];
+  const cardStyle = useMemo<DestinationCardStyle>(() => {
+    const flowBlocks = displayFrame.mode === "flow"
+      ? displayFrame.flow.blocks.slice().sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+      : [];
+    const flowBlockFor = (field: CardFontField) => flowBlocks.find((block) => block.field === field);
+    const flowTitleBlock = flowBlockFor("title");
+    const flowNameBlock = flowBlockFor("name");
     const compactLayout = project.cards.compactLayout === true || project.cards.preset === "compact";
-    const cardFieldFontSize = (field: CardFontField) => project.cards.fieldTypography?.[field]?.fontSize ?? (field === "city" ? Math.max(9, project.cards.fontSize - 1) : project.cards.fontSize);
-    const rowFontSize = Math.max(...project.cards.visibleFields.map(cardFieldFontSize), cardFieldFontSize("city"));
-    const rowHeight = Math.max(compactLayout ? 18 : 20, rowFontSize + 6) * lineHeightMultiplier;
-    const titleFontSize = cardFieldFontSize("title");
-    const cardWidth = Math.min(project.cards.maxWidth, Math.max(80, project.canvas.width - project.canvas.safeMargin * 2));
-    const contentWidth = Math.max(rowFontSize, cardWidth - horizontalPadding * 2);
-    const bottomPadding = project.cards.bottomPadding ?? project.cards.padding;
-    const titleLineHeight = Math.max(16, titleFontSize + 4) * lineHeightMultiplier;
-    const formatName = (name: string) => formatStudentName(name, project.cards.nameFormat ?? DEFAULT_NAME_FORMAT);
-    const prepared = groups.map((group) => {
-      const isInternational = group.students.every((student) => student.locationScope === "international");
-      const province = isInternational || !group.students[0] ? "" : resolveStudentLocation(group.students[0]).province;
-      const feature = findProvinceFeature(features, province);
-      const administrativeCenter = feature ? projection(feature.center) : null;
-      const point = administrativeCenter && administrativeCenter.every(Number.isFinite)
-        ? administrativeCenter
-        : feature
-          ? mapPath.centroid(feature as never)
-          : [project.map.width / 2, project.map.height / 2];
-      const centerX = project.map.width / 2;
-      const centerY = project.map.height / 2;
-      const anchorX = Number.isFinite(point[0]) ? project.map.x + centerX + (point[0] - centerX) * project.map.scale : project.map.x + centerX;
-      const anchorY = Number.isFinite(point[1]) ? project.map.y + centerY + (point[1] - centerY) * project.map.scale : project.map.y + centerY;
-      const rows = cardRowsForGroup(group, grouping, project.cards.visibleFields, project.cards.citySubgroups !== false, formatName).map((row): PreparedCardRow => {
-        const context = {
-          group: group.title,
-          count: group.count,
-          province: grouping === "province" ? group.title : resolveStudentLocation(group.students[0]!).province,
-          city: row.city ?? group.students[0]?.city,
-          university: row.university,
-          names: row.names,
-        };
-        const fragments = row.cityHeading
-          ? [{ text: formatCardExpression(expressionTemplates.city, context, row.cityHeading), field: "city" as const }]
-          : rowFragments(row, expressionTemplates.row, context);
-        return { ...row, lines: wrapCardText(fragments, contentWidth, row.cityHeading ? cardFieldFontSize("city") : rowFontSize, {
-          preserveFields: noWrapFieldSet,
-        }) };
-      });
-      const lineCount = rows.reduce((total, row) => total + row.lines.length, 0);
-      const title = formatCardExpression(expressionTemplates.title, {
-        group: group.title,
-        count: group.count,
-        province: grouping === "province" ? group.title : resolveStudentLocation(group.students[0]!).province,
-        city: grouping === "city" ? group.title : undefined,
-        university: grouping === "university" ? group.students[0]?.university : undefined,
-      }, group.title);
-      const textureHeaderWidth = project.cards.showProvinceTexture === true ? 36 : 0;
-      const titleWidth = Math.max(titleFontSize, contentWidth - Math.max(42, titleFontSize * 3) - textureHeaderWidth);
-      const titleLines = wrapCardText([{ text: title, field: "title" as const }], titleWidth, titleFontSize);
-      const headerExtra = Math.max(0, titleLines.length - 1) * titleLineHeight;
-      return {
-        group,
-        province,
-        isInternational,
-        rows,
-        titleLines,
-        headerExtra,
-        anchorX,
-        anchorY,
-        width: cardWidth,
-        height: destinationHeight(lineCount, rowHeight, bottomPadding, headerExtra),
-      };
-    });
-    return prepared;
+    return {
+      preset: project.cards.preset,
+      background: project.cards.background,
+      opacity: project.cards.opacity,
+      textColor: project.cards.textColor,
+      fontSize: project.cards.fontSize,
+      showCount: project.cards.showCount !== false,
+      horizontalPadding,
+      lineHeightMultiplier,
+      // The same step `buildPreparedCardContents` solved the card height from, so the rows a
+      // card paints land inside the box that was reserved for them.
+      rowHeight: destinationCardFixedRowHeight({
+        rowFontSize: destinationCardRowFontSize({
+          visibleFieldFontSizes: project.cards.visibleFields.map((field) => project.cards.fieldTypography?.[field]?.fontSize ?? project.cards.fontSize),
+          cityHeadingFontSize: cardFieldFontSize("city", project.cards.fontSize, project.cards.fieldTypography),
+        }),
+        compactLayout,
+        lineHeightMultiplier,
+      }),
+      edgeColor: project.map.edgeColor,
+      activeColor: project.map.activeColor,
+      fieldFonts: project.cards.fieldFonts,
+      fieldTypography: project.cards.fieldTypography,
+      frameMode: displayFrame.mode,
+      frameStyle: displayFrame.style,
+      frameTitleItem: displayFrame.fixed.items.find((item) => item.id === "title"),
+      frameBodyItem,
+      customFrameItems: displayFrame.mode === "fixed"
+        ? displayFrame.fixed.items.filter((item) => item.kind === "text" || item.kind === "decoration").slice().sort((left, right) => left.zIndex - right.zIndex || left.id.localeCompare(right.id))
+        : [],
+      flowTitleBlock,
+      flowNameBlock,
+      flowCityBlock: flowBlockFor("city"),
+      flowTitleFontSize: flowTitleBlock?.style?.fontSize ?? project.cards.fieldTypography?.title?.fontSize ?? project.cards.fontSize,
+      flowNameFontSize: flowNameBlock?.style?.fontSize ?? project.cards.fieldTypography?.name?.fontSize ?? project.cards.fontSize,
+      flowContentStart: displayFrame.mode === "flow"
+        ? destinationCardFlowContentStart(flowBlocks, project.cards.fontSize)
+        : 0,
+      userFonts,
+    };
   }, [
-    expressionTemplates.city,
-    expressionTemplates.row,
-    expressionTemplates.title,
+    displayFrame,
+    frameBodyItem,
+    horizontalPadding,
+    lineHeightMultiplier,
+    project.cards.background,
+    project.cards.compactLayout,
+    project.cards.fieldFonts,
+    project.cards.fieldTypography,
+    project.cards.fontSize,
+    project.cards.opacity,
+    project.cards.preset,
+    project.cards.showCount,
+    project.cards.textColor,
+    project.cards.visibleFields,
+    project.map.activeColor,
+    project.map.edgeColor,
+    userFonts,
+  ]);
+  // Text wrapping and card sizing only read content and typography. Keeping the map
+  // transform out of this memo means panning or zooming the map re-runs the anchor memo
+  // below instead of re-wrapping every card.
+  const preparedCardContents = useMemo(() => {
+    if (project.cards.visibleFields.length === 0 || project.dataView === "pins") return [];
+    return buildPreparedCardContents({
+      groups,
+      grouping,
+      visibleFields: project.cards.visibleFields,
+      citySubgroups: project.cards.citySubgroups !== false,
+      expressionTemplates,
+      nameFormat: project.cards.nameFormat,
+      fontSize: project.cards.fontSize,
+      fieldTypography: project.cards.fieldTypography,
+      compactLayout: project.cards.compactLayout === true || project.cards.preset === "compact",
+      maxWidth: project.cards.maxWidth,
+      horizontalPadding,
+      bottomPadding: project.cards.bottomPadding ?? project.cards.padding,
+      showProvinceTexture: project.cards.showProvinceTexture === true,
+      headerOffset: destinationCardHeaderOffset(project.cards.preset),
+      noWrapFields: noWrapFieldSet,
+      lineHeightMultiplier,
+      canvasWidth: project.canvas.width,
+      safeMargin: project.canvas.safeMargin,
+    });
+  }, [
+    expressionTemplates,
     groups,
     grouping,
     horizontalPadding,
     lineHeightMultiplier,
-    mapPath,
     noWrapFieldSet,
     project.cards.bottomPadding,
     project.cards.citySubgroups,
@@ -780,16 +518,94 @@ export function PosterCanvas({
     project.canvas.safeMargin,
     project.canvas.width,
     project.dataView,
+  ]);
+
+  const cardAnchors = useMemo<CardAnchor[]>(() => {
+    const map = {
+      x: project.map.x,
+      y: project.map.y,
+      width: project.map.width,
+      height: project.map.height,
+      scale: project.map.scale,
+    };
+    const byProvince = new Map<string, CardAnchor>();
+    return preparedCardContents.map((content) => {
+      const cached = byProvince.get(content.province);
+      if (cached) return cached;
+      const feature = findProvinceFeature(features, content.province);
+      const administrativeCenter = feature ? projection(feature.center) : null;
+      const point = administrativeCenter && administrativeCenter.every(Number.isFinite)
+        ? administrativeCenter
+        : feature
+          ? mapPath.centroid(feature as never)
+          : [map.width / 2, map.height / 2];
+      const anchor = resolveCardAnchor(point, map);
+      byProvince.set(content.province, anchor);
+      return anchor;
+    });
+  }, [
+    mapPath,
+    preparedCardContents,
     project.map.height,
     project.map.scale,
     project.map.width,
-    project.map.y,
     project.map.x,
+    project.map.y,
     projection,
   ]);
 
+  const preparedCards = useMemo<PreparedCard[]>(
+    () => preparedCardContents.map((content, index) => ({ ...content, ...cardAnchors[index]! })),
+    [cardAnchors, preparedCardContents],
+  );
+
+  // Shared by auto-layout and by the clamp applied while a card is dragged, so both agree
+  // on the protected geometry.
+  const cardLayoutBounds = useMemo<CardLayoutBounds>(() => ({
+    width: project.canvas.width,
+    height: project.canvas.height,
+    map: mapContentBounds,
+    occupiedAreas: layoutOccupiedAreas,
+    occupiedPolygons: layoutOccupiedPolygons,
+    allowMapOverlap: project.cards.allowMapOverlap === true,
+    margin: project.canvas.safeMargin,
+    gap: Math.max(10, project.cards.gap),
+  }), [
+    layoutOccupiedAreas,
+    layoutOccupiedPolygons,
+    mapContentBounds,
+    project.canvas.height,
+    project.canvas.safeMargin,
+    project.canvas.width,
+    project.cards.allowMapOverlap,
+    project.cards.gap,
+  ]);
+
+  // Every card pinned to a stored position makes the solver pure overhead: `destinationCards`
+  // overwrites its x/y with those positions anyway, so a map pan would pay for a full re-solve
+  // that cannot move a single card. The stored positions are used exactly as saved — clamping
+  // them here would drag frozen cards around as the map slides underneath them.
+  const frozenPlacements = useMemo<CardPlacement[] | null>(() => {
+    const positions = project.cards.positions;
+    if (!positions || preparedCards.length === 0) return null;
+    const placements: CardPlacement[] = [];
+    for (const card of preparedCards) {
+      const position = positions[card.group.key];
+      if (!position) return null;
+      const box = { x: position.x, y: position.y, width: card.width, height: card.height };
+      placements.push({
+        id: card.group.key,
+        anchorX: card.anchorX,
+        anchorY: card.anchorY,
+        ...box,
+        side: frozenCardSide(box, mapContentBounds),
+      });
+    }
+    return placements;
+  }, [mapContentBounds, preparedCards, project.cards.positions]);
+
   const layoutRequest = useMemo<CardLayoutWorkerRequest | null>(() => {
-    if (preparedCards.length === 0) return null;
+    if (frozenPlacements || preparedCards.length === 0) return null;
     const layoutMode = (project.cards.layoutMode ?? "quadrant") as CardLayoutMode;
     const cards = preparedCards.map(({ group, anchorX, anchorY, width, height }) => ({
       id: group.key,
@@ -798,16 +614,6 @@ export function PosterCanvas({
       width,
       height,
     }));
-    const bounds = {
-      width: project.canvas.width,
-      height: project.canvas.height,
-      map: mapContentBounds,
-      occupiedAreas: layoutOccupiedAreas,
-      occupiedPolygons: layoutOccupiedPolygons,
-      allowMapOverlap: project.cards.allowMapOverlap === true,
-      margin: project.canvas.safeMargin,
-      gap: Math.max(10, project.cards.gap),
-    };
     const options = {
       mode: layoutMode,
       autoBalance: project.cards.autoBalance !== false,
@@ -815,38 +621,45 @@ export function PosterCanvas({
       connectorWidth: project.cards.connectorWidth,
     };
     return {
-      key: createCardLayoutCacheKey({ cards, bounds, options }),
+      key: createCardLayoutCacheKey({
+        cards,
+        bounds: cardLayoutBounds,
+        options,
+        polygonOrigin: {
+          polygons: layoutOccupiedCenteredPolygons,
+          originX: mapOriginX,
+          originY: mapOriginY,
+        },
+      }),
       cards,
-      bounds,
+      bounds: cardLayoutBounds,
       options,
     };
   }, [
-    layoutOccupiedAreas,
-    layoutOccupiedPolygons,
-    mapContentBounds,
+    cardLayoutBounds,
+    frozenPlacements,
+    layoutOccupiedCenteredPolygons,
+    mapOriginX,
+    mapOriginY,
     preparedCards,
-    project.canvas.height,
-    project.canvas.safeMargin,
-    project.canvas.width,
-    project.cards.allowMapOverlap,
     project.cards.autoBalance,
     project.cards.connectorStyle,
     project.cards.connectorWidth,
-    project.cards.gap,
     project.cards.layoutMode,
   ]);
 
   const layoutState = useCardLayoutWorker(layoutRequest, exportMode);
-  const destinationCards = useMemo(() => {
-    if (!layoutRequest || !layoutState.result) return [];
-    const placements = new Map(layoutState.result.placements.map((placement) => [placement.id, placement]));
+  const destinationCards = useMemo<PlacedDestinationCard[]>(() => {
+    const solved = frozenPlacements ?? (layoutRequest ? layoutState.result?.placements : null);
+    if (!solved) return [];
+    const placements = new Map(solved.map((placement) => [placement.id, placement]));
     return preparedCards.flatMap((card) => {
       const placement = placements.get(card.group.key);
       if (!placement) return [];
       const manual = project.cards.positions?.[card.group.key];
       return [manual ? { ...card, placement: { ...placement, x: manual.x, y: manual.y } } : { ...card, placement }];
     });
-  }, [layoutRequest, layoutState.result, preparedCards, project.cards.positions]);
+  }, [frozenPlacements, layoutRequest, layoutState.result, preparedCards, project.cards.positions]);
 
   useEffect(() => {
     if (!onCardPositionsResolved || destinationCards.length === 0) return;
@@ -860,8 +673,6 @@ export function PosterCanvas({
     filterPrefix: "connector-edge",
   }), [project.cards.connectorColor, project.cards.connectorDash, project.cards.connectorWidth]);
 
-  const guestX = guests.x;
-  const guestY = guests.y;
   const decorationAssets = useMemo(
     () => project.assetElements.filter((asset) => asset.kind === "decoration"),
     [project.assetElements],
@@ -876,8 +687,9 @@ export function PosterCanvas({
   const selectAsset = useCallback((id: string) => onSelect?.({ type: "asset", id }), [onSelect]);
   const mapPathForAsset = useCallback((feature: MapFeature) => mapPath(feature as never), [mapPath]);
   const selectText = useCallback((id: string) => onSelect?.({ type: "text", id }), [onSelect]);
+  const selectGuests = useCallback(() => onSelect?.({ type: "guests" }), [onSelect]);
 
-  const canvasPoint = (event: PointerEvent<SVGGElement>) => {
+  const canvasPoint = useCallback((event: PointerEvent<SVGGElement>) => {
     const svg = event.currentTarget.ownerSVGElement;
     if (!svg) return null;
     if (typeof svg.createSVGPoint !== "function") {
@@ -893,7 +705,45 @@ export function PosterCanvas({
     point.x = event.clientX;
     point.y = event.clientY;
     return point.matrixTransform(svg.getScreenCTM()?.inverse());
-  };
+  }, [project.canvas.height, project.canvas.width]);
+
+  const selectCards = useCallback(() => onSelect?.({ type: "cards" }), [onSelect]);
+
+  // Grouped so the cards layer keeps its memo across edits to unrelated card settings.
+  const cardsAppearance = useMemo<DestinationCardsAppearance>(() => ({
+    preset: project.cards.preset,
+    presentation: project.cards.presentation ?? "standard",
+    connectorStyle: project.cards.connectorStyle,
+    connectorDash: project.cards.connectorDash,
+    connectorWidth: project.cards.connectorWidth,
+    background: project.cards.background,
+    opacity: project.cards.opacity,
+    textColor: project.cards.textColor,
+    fontSize: project.cards.fontSize,
+    showProvinceTexture: project.cards.showProvinceTexture === true,
+    titleFont: resolveFontFamily(project.cards.fieldFonts?.title, userFonts),
+    activeColor: project.map.activeColor,
+    edgeColor: project.map.edgeColor,
+    provinceStyles: project.map.provinceStyles,
+    lineHeightMultiplier,
+  }), [
+    lineHeightMultiplier,
+    project.cards.background,
+    project.cards.connectorDash,
+    project.cards.connectorStyle,
+    project.cards.connectorWidth,
+    project.cards.fieldFonts,
+    project.cards.fontSize,
+    project.cards.opacity,
+    project.cards.presentation,
+    project.cards.preset,
+    project.cards.showProvinceTexture,
+    project.cards.textColor,
+    project.map.activeColor,
+    project.map.edgeColor,
+    project.map.provinceStyles,
+    userFonts,
+  ]);
 
   const mapLayerZ = project.map.zIndex ?? CANVAS_LAYER_Z.map;
   const cardsLayerZ = project.cards.zIndex ?? CANVAS_LAYER_Z.cards;
@@ -951,273 +801,18 @@ export function PosterCanvas({
       key: "cards",
       z: cardsLayerZ,
       node: (
-        <>
-          {destinationCards.length > 0 && (
-            <g
-              data-cards-layer
-              onClick={!exportMode ? () => onSelect?.({ type: "cards" }) : undefined}
-              role={!exportMode && onSelect ? "button" : undefined}
-            >
-              {connectorEdge.filters.length > 0 && (
-                <defs data-connector-edge-filters>
-                  {connectorEdge.filters.map((filter) => (
-                    filter.markupKey === "soft-glow" ? (
-                      <filter key={filter.id} id={filter.id} x="-40%" y="-40%" width="180%" height="180%">
-                        <feGaussianBlur stdDeviation={Math.max(1.2, project.cards.connectorWidth)} result="blur" />
-                        <feMerge>
-                          <feMergeNode in="blur" />
-                          <feMergeNode in="SourceGraphic" />
-                        </feMerge>
-                      </filter>
-                    ) : filter.markupKey === "ink" ? (
-                      <filter key={filter.id} id={filter.id} x="-20%" y="-20%" width="140%" height="140%">
-                        <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="1" result="noise" />
-                        <feDisplacementMap in="SourceGraphic" in2="noise" scale={Math.max(0.6, project.cards.connectorWidth * 0.35)} />
-                      </filter>
-                    ) : null
-                  ))}
-                </defs>
-              )}
-              {destinationCards.map(({ group, province, isInternational, rows, titleLines, headerExtra, anchorX, anchorY, placement }) => {
-                const displayPlacement = placement;
-                const provinceAppearance = project.map.provinceStyles?.[province]?.appearance;
-                const provinceTexture = project.cards.showProvinceTexture === true
-                  && provinceAppearance
-                  && provinceAppearance.kind !== "manual-color"
-                  ? provinceAppearance
-                  : null;
-                const connector = isInternational ? null : buildConnectorGeometry({
-                  card: displayPlacement,
-                  anchor: { x: anchorX, y: anchorY },
-                  style: project.cards.connectorStyle,
-                  preferredSide: displayPlacement.side,
-                });
-                // Borderless cards have no border stroke to visually terminate the connector,
-                // so the line runs to the card center where the card fill hides it. When the
-                // fill is too transparent to cover the line (it would cross the card text),
-                // the connector is omitted entirely.
-                const borderlessCards = project.cards.preset === "borderless";
-                const connectorHidden = connector !== null && borderlessCards && (project.cards.opacity ?? 1) < 0.9;
-                const displayConnector = connector !== null && !connectorHidden
-                  ? borderlessCards
-                    ? { ...connector, pathData: connectorPathToCenter(connector.pathData, connector.port, displayPlacement) }
-                    : connector
-                  : null;
-                const strokeNodes = [
-                  ...(displayConnector ? connectorEdge.underlays.map((spec, index) => (
-                    <path
-                      key={`${group.key}-u-${index}`}
-                      data-destination-connector-underlay={group.key}
-                      d={displayConnector.pathData}
-                      fill="none"
-                      stroke={spec.color}
-                      strokeWidth={spec.width}
-                      strokeDasharray={spec.dasharray}
-                      strokeLinecap={spec.linecap}
-                      strokeLinejoin={spec.linejoin}
-                      opacity={spec.opacity ?? 0.55}
-                      filter={spec.filter}
-                      pointerEvents="none"
-                    />
-                  )) : []),
-                  ...(displayConnector ? connectorEdge.strokes.map((spec, index) => (
-                    <path
-                      key={`${group.key}-s-${index}`}
-                      data-destination-connector={index === 0 ? group.key : undefined}
-                      data-connector-style={project.cards.connectorStyle}
-                      data-connector-dash={project.cards.connectorDash}
-                      d={displayConnector.pathData}
-                      fill="none"
-                      stroke={spec.color}
-                      strokeWidth={spec.width}
-                      strokeDasharray={spec.dasharray}
-                      strokeLinecap={spec.linecap}
-                      strokeLinejoin={spec.linejoin}
-                      opacity={spec.opacity ?? 0.85}
-                      filter={spec.filter}
-                    />
-                  )) : []),
-                ];
-                return (
-                  <g key={group.key}>
-                    {strokeNodes}
-                    {!isInternational && <circle data-destination-anchor={group.key} cx={anchorX} cy={anchorY} r={4} fill={project.map.activeColor} />}
-                    <g
-                      transform={`translate(${displayPlacement.x} ${displayPlacement.y})`}
-                      data-destination-card={group.key}
-                      data-card-preset={project.cards.preset}
-                      data-card-presentation={project.cards.presentation ?? "standard"}
-                      className="destination-card"
-                      onPointerDown={!exportMode && onMoveCard ? (event) => {
-                        const point = canvasPoint(event);
-                        if (!point) return;
-                        event.stopPropagation();
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                        const connectorGroup = event.currentTarget.parentElement;
-                        if (!connectorGroup) return;
-                        cardDrag.current = {
-                          id: group.key,
-                          offsetX: point.x - displayPlacement.x,
-                          offsetY: point.y - displayPlacement.y,
-                          width: displayPlacement.width,
-                          height: displayPlacement.height,
-                          x: displayPlacement.x,
-                          y: displayPlacement.y,
-                          originalX: displayPlacement.x,
-                          originalY: displayPlacement.y,
-                          element: event.currentTarget,
-                          connectorGroup: connectorGroup as unknown as SVGGElement,
-                          anchorX,
-                          anchorY,
-                          side: displayPlacement.side,
-                          connectorStyle: project.cards.connectorStyle,
-                          borderless: borderlessCards,
-                          connectorHidden,
-                        };
-                      } : undefined}
-                      onPointerMove={!exportMode && onMoveCard ? (event) => {
-                        if (!event.currentTarget.hasPointerCapture(event.pointerId) || !cardDrag.current) return;
-                        const point = canvasPoint(event);
-                        if (!point) return;
-                        const drag = cardDrag.current;
-                        const position = clampDestinationCardPosition({
-                          x: point.x - drag.offsetX,
-                          y: point.y - drag.offsetY,
-                          width: drag.width,
-                          height: drag.height,
-                        }, {
-                          width: project.canvas.width,
-                          height: project.canvas.height,
-                          map: mapContentBounds,
-                          occupiedAreas: layoutOccupiedAreas,
-                          occupiedPolygons: layoutOccupiedPolygons,
-                          allowMapOverlap: project.cards.allowMapOverlap === true,
-                          margin: project.canvas.safeMargin,
-                          gap: Math.max(10, project.cards.gap),
-                        });
-                        drag.x = Math.round(position.x);
-                        drag.y = Math.round(position.y);
-                        scheduleCardPreview({ id: drag.id, x: drag.x, y: drag.y });
-                      } : undefined}
-                      onPointerUp={!exportMode && onMoveCard ? (event) => {
-                        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-                        const drag = cardDrag.current;
-                        if (drag) onMoveCard(drag.id, drag.x, drag.y);
-                        clearCardPreview();
-                        cardDrag.current = null;
-                      } : undefined}
-                      onPointerCancel={!exportMode && onMoveCard ? () => {
-                        const drag = cardDrag.current;
-                        if (drag) updateCardPreview({ id: drag.id, x: drag.originalX, y: drag.originalY });
-                        clearCardPreview();
-                        cardDrag.current = null;
-                      } : undefined}
-                    >
-                      {(project.cards.presentation ?? "standard") !== "standard" ? renderReferenceCardVisual({
-                        presentation: project.cards.presentation as Exclude<import("../../lib/scene-document").CardPresentation, "standard">,
-                        group,
-                        rows,
-                        width: placement.width,
-                        height: placement.height,
-                        accent: project.map.provinceStyles?.[province]?.appearance?.kind === "manual-color"
-                          ? project.map.provinceStyles[province]!.appearance!.color
-                          : referenceCardColor(group.key, project.map.activeColor),
-                        background: project.cards.background,
-                        opacity: project.cards.opacity,
-                        textColor: project.cards.textColor,
-                        fontSize: project.cards.fontSize,
-                        edgeColor: project.map.edgeColor,
-                        titleFont: resolveFontFamily(project.cards.fieldFonts?.title, userFonts),
-                      }) : <>
-                      <rect
-                        data-display-frame-surface
-                        width={placement.width}
-                        height={placement.height}
-                        rx={project.cards.preset === "ticket" ? 12 : project.cards.preset === "borderless" ? 0 : displayFrame.style.borderRadius ?? 6}
-                        fill={displayFrame.style.background || project.cards.background}
-                        fillOpacity={displayFrame.style.opacity ?? project.cards.opacity}
-                        stroke={project.cards.preset === "borderless" ? "none" : displayFrame.style.borderColor ?? project.map.edgeColor}
-                        strokeWidth={project.cards.preset === "borderless" ? undefined : displayFrame.style.borderWidth ?? 1}
-                        data-display-frame-mode={displayFrame.mode}
-                      />
-                      {provinceTexture && (
-                        <image
-                          data-card-province-texture={province}
-                          href={provinceTexture.src}
-                          x={horizontalPadding + (project.cards.preset === "photo" ? 32 : 0)}
-                          y={3}
-                          width={30}
-                          height={30}
-                          opacity={provinceTexture.opacity ?? 1}
-                          preserveAspectRatio="xMidYMid meet"
-                          pointerEvents="none"
-                        />
-                      )}
-                      {project.cards.preset === "ticket" && <><rect data-card-accent width={8} height={placement.height} rx={4} fill={project.map.activeColor} /><circle cx={placement.width - 18} cy={18} r={7} fill={project.map.activeColor} opacity={0.2} /></>}
-                      {project.cards.preset === "photo" && <><circle data-card-avatar cx={horizontalPadding + 13} cy={21} r={13} fill={project.map.activeColor} opacity={0.2} /><text x={horizontalPadding + 13} y={25} textAnchor="middle" fill={project.map.activeColor} fontWeight={700} fontSize={11}>{group.title.slice(0, 1)}</text></>}
-                      {customFrameItems.map((item) => renderDisplayFrameItem(item, displayFrame.style, userFonts))}
-                      {titleLines.map((line, index) => (
-                        <text
-                          key={`title-${index}`}
-                          data-card-title-line
-                          x={(displayFrame.mode === "fixed" ? frameTitleItem?.x ?? horizontalPadding : horizontalPadding) + (project.cards.preset === "photo" ? 32 : 0) + (provinceTexture ? 36 : 0)}
-                          y={(displayFrame.mode === "fixed" ? frameTitleItem?.y ?? 12 : 12 + (flowTitleBlock?.spacing ?? 0)) + (index + 1) * Math.max(16, flowTitleFontSize + 4) * (flowTitleBlock?.lineHeight ?? lineHeightMultiplier)}
-                          fontWeight={flowTitleBlock?.style?.fontWeight === "medium" ? 500 : 700}
-                          fontSize={flowTitleFontSize}
-                          fill={flowTitleBlock?.style?.color ?? project.cards.fieldTypography?.title?.color ?? project.cards.textColor}
-                          fontFamily={resolveFontFamily(flowTitleBlock?.style?.fontId ?? project.cards.fieldFonts?.title, userFonts)}
-                        >{line.map((fragment) => fragment.text).join("")}</text>
-                      ))}
-                      {project.cards.showCount !== false && <text x={placement.width - horizontalPadding} y={22} fill={project.map.activeColor} textAnchor="end" fontWeight={700} fontSize={project.cards.fontSize} fontFamily={resolveFontFamily(project.cards.fieldFonts?.title, userFonts)}>{group.count} 人</text>}
-                      {project.cards.preset !== "borderless" && <line x1={horizontalPadding} x2={placement.width - horizontalPadding} y1={30 + headerExtra} y2={30 + headerExtra} stroke={project.map.edgeColor} />}
-                      {(() => {
-                        const rowHeight = Math.max(
-                          project.cards.compactLayout === true || project.cards.preset === "compact" ? 18 : 20,
-                          Math.max(...project.cards.visibleFields.map((field) => project.cards.fieldTypography?.[field]?.fontSize ?? project.cards.fontSize), project.cards.fieldTypography?.city?.fontSize ?? Math.max(9, project.cards.fontSize - 1)) + 6,
-                        ) * lineHeightMultiplier;
-                        let lineIndex = 0;
-                        return rows.flatMap((row) => row.lines.map((line, index) => {
-                          const rowField = row.cityHeading ? "city" : "name";
-                          const block = displayFrame.mode === "flow" ? flowBlockFor(rowField) : undefined;
-                          const rowFontSize = block?.style?.fontSize ?? project.cards.fieldTypography?.[rowField]?.fontSize ?? (row.cityHeading ? Math.max(9, project.cards.fontSize - 1) : flowNameFontSize);
-                          const rowLineHeight = displayFrame.mode === "flow"
-                            ? Math.max(16, rowFontSize + 6) * (block?.lineHeight ?? 1.2)
-                            : rowHeight;
-                          const y = (displayFrame.mode === "fixed" ? frameBodyItem?.y ?? 42 : flowContentStart + flowTitleFontSize + 8) + headerExtra + lineIndex * rowLineHeight;
-                          lineIndex += 1;
-                          return (
-                            <text
-                              key={`${row.key}-${index}`}
-                                  data-city-section={index === 0 ? row.cityHeading : undefined}
-                              data-card-row-line={row.key}
-                              x={displayFrame.mode === "fixed" ? frameBodyItem?.x ?? horizontalPadding : horizontalPadding}
-                              y={y}
-                              fill={block?.style?.color ?? project.cards.fieldTypography?.[rowField]?.color ?? project.cards.textColor}
-                              fontSize={rowFontSize}
-                              fontWeight={row.cityHeading ? 700 : block?.style?.fontWeight === "bold" ? 700 : block?.style?.fontWeight === "medium" ? 500 : undefined}
-                            >
-                              {line.map((fragment, fragmentIndex) => (
-                                <tspan
-                                  key={fragmentIndex}
-                                  fontFamily={resolveFontFamily(fragment.field ? project.cards.fieldFonts?.[fragment.field] : undefined, userFonts)}
-                                  fontSize={fragment.field ? project.cards.fieldTypography?.[fragment.field]?.fontSize : undefined}
-                                  fill={fragment.field ? project.cards.fieldTypography?.[fragment.field]?.color : undefined}
-                                >{fragment.text}</tspan>
-                              ))}
-                            </text>
-                          );
-                        }));
-                      })()}
-
-                      </>}
-
-                    </g>
-                  </g>
-                );
-              })}
-            </g>
-          )}
-        </>
+        <DestinationCardsLayer
+          cards={destinationCards}
+          style={cardStyle}
+          appearance={cardsAppearance}
+          connectorEdge={connectorEdge}
+          dragBounds={cardLayoutBounds}
+          exportMode={exportMode}
+          renderIntervalMs={renderIntervalMs}
+          canvasPoint={canvasPoint}
+          onSelectCards={onSelect ? selectCards : undefined}
+          onMoveCard={onMoveCard}
+        />
       ),
     },
     {
@@ -1226,258 +821,19 @@ export function PosterCanvas({
       node: (
         <>
           {guests.visibility !== false && (
-            <g
-              data-guests-layer
-              transform={`translate(${guestX} ${guestY})`}
-              onClick={!exportMode ? (event) => { event.stopPropagation(); onSelect?.({ type: "guests" }); } : undefined}
-              role={!exportMode && onSelect ? "button" : undefined}
-              tabIndex={!exportMode && onSelect ? 0 : undefined}
-              aria-label="特邀嘉宾"
-              onPointerDown={!exportMode && onMoveGuests ? (event) => {
-                const point = canvasPoint(event);
-                if (!point) return;
-                event.stopPropagation();
-                event.currentTarget.setPointerCapture(event.pointerId);
-                guestDrag.current = {
-                  offsetX: point.x - guestX,
-                  offsetY: point.y - guestY,
-                  x: guestX,
-                  y: guestY,
-                  originalX: guestX,
-                  originalY: guestY,
-                  element: event.currentTarget,
-                };
-              } : undefined}
-              onPointerMove={!exportMode && onMoveGuests ? (event) => {
-                if (!event.currentTarget.hasPointerCapture(event.pointerId) || !guestDrag.current) return;
-                const point = canvasPoint(event);
-                if (!point) return;
-                const nextX = Math.round(Math.min(project.canvas.width - guests.width, Math.max(0, point.x - guestDrag.current.offsetX)));
-                const nextY = Math.round(Math.min(project.canvas.height - guestHeight, Math.max(0, point.y - guestDrag.current.offsetY)));
-                guestDrag.current.x = nextX;
-                guestDrag.current.y = nextY;
-                scheduleGuestPreview({ x: nextX, y: nextY });
-              } : undefined}
-              onPointerUp={!exportMode && onMoveGuests ? (event) => {
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-                const drag = guestDrag.current;
-                if (drag) onMoveGuests(drag.x, drag.y);
-                guestDrag.current = null;
-                clearGuestPreview();
-              } : undefined}
-              onPointerCancel={!exportMode && onMoveGuests ? () => {
-                const drag = guestDrag.current;
-                if (drag) drag.element.setAttribute("transform", `translate(${drag.originalX} ${drag.originalY})`);
-                guestDrag.current = null;
-                clearGuestPreview();
-              } : undefined}
-            >
-              <rect
-                width={guests.width}
-                height={guestHeight}
-                rx={10}
-                fill={guests.background}
-                fillOpacity={guests.opacity}
-                stroke={project.map.edgeColor}
-              />
-              <text data-guest-title x={guests.padding} y={guests.padding + guestTitleFontSize} fill={guestTitleTypography.color ?? guests.textColor} fontSize={guestTitleFontSize} fontWeight={700} fontFamily={resolveFontFamily(guests.titleFontId, userFonts)}>
-                {guests.title}
-              </text>
-              <line
-                x1={guests.padding}
-                x2={guests.width - guests.padding}
-                y1={guests.padding + guestTitleFontSize + 8}
-                y2={guests.padding + guestTitleFontSize + 8}
-                stroke={project.map.edgeColor}
-              />
-              {guestCustomLines.map((line, index) => (
-                <text
-                  key={`guest-custom-${index}`}
-                  data-guest-custom-text
-                  x={guests.padding + guestListAvatarGap}
-                  y={guests.padding + guestTitleFontSize + 8 + guestCustomTopGap + index * guestCustomLineHeight}
-                  fill={guestPeopleTypography.color ?? guests.textColor}
-                  fontSize={guestPeopleFontSize}
-                  fontFamily={resolveFontFamily(guests.peopleFontId, userFonts)}
-                >
-                  {line || " "}
-                </text>
-              ))}
-              {visibleGuests.length === 0 && !guestCustomText ? (
-                <text x={guests.padding} y={guests.padding + 36 + guests.fontSize} fill={guests.textColor} fontSize={guests.fontSize} opacity={0.65}>
-                  在右侧添加老师 / 嘉宾
-                </text>
-              ) : guestsDisplayMode === "cards" ? visibleGuests.map((person, index) => {
-                const col = index % guestCardColumns;
-                const row = Math.floor(index / guestCardColumns);
-                const cardX = guests.padding + col * (guestCardWidth + guestCardGap);
-                const cardY = guests.padding + 30 + guestTitleFontSize + guestCustomHeight + row * (guestCardHeight + guestCardGap);
-                const avatarCenterX = guestCardWidth / 2;
-                const avatarCenterY = 6 + guestCardAvatarSize / 2;
-                const nameBaseline = 6 + guestCardAvatarSize + 6 + guestCardTitleLine;
-                const nameMaxChars = Math.max(4, Math.floor((guestCardWidth - 8) / guestPeopleFontSize));
-                const subMaxChars = Math.max(4, Math.floor((guestCardWidth - 8) / guestNoteFontSize));
-                const noteBaseline = nameBaseline + (guestCardHasTitle ? guestCardSubLine : 0) + guestCardSubLine;
-                return (
-                  <g key={person.id} data-guest-card={person.id} transform={`translate(${cardX} ${cardY})`}>
-                    <rect
-                      width={guestCardWidth}
-                      height={guestCardHeight}
-                      rx={8}
-                      fill={guestPeopleTypography.color ?? guests.textColor}
-                      fillOpacity={0.07}
-                      stroke={project.map.edgeColor}
-                      strokeOpacity={0.4}
-                      strokeWidth={1}
-                    />
-                    <g data-guest-avatar={person.id}>
-                      <clipPath id={`guest-avatar-clip-${person.id}`}>
-                        <circle cx={avatarCenterX} cy={avatarCenterY} r={guestCardAvatarSize / 2} />
-                      </clipPath>
-                      <circle
-                        cx={avatarCenterX}
-                        cy={avatarCenterY}
-                        r={guestCardAvatarSize / 2}
-                        fill={guestPeopleTypography.color ?? guests.textColor}
-                        fillOpacity={0.14}
-                        stroke={guestPeopleTypography.color ?? guests.textColor}
-                        strokeOpacity={0.4}
-                        strokeWidth={1}
-                      />
-                      {person.avatarSrc ? (
-                        <image
-                          href={person.avatarSrc}
-                          x={avatarCenterX - guestCardAvatarSize / 2}
-                          y={avatarCenterY - guestCardAvatarSize / 2}
-                          width={guestCardAvatarSize}
-                          height={guestCardAvatarSize}
-                          clipPath={`url(#guest-avatar-clip-${person.id})`}
-                          preserveAspectRatio="xMidYMid slice"
-                        />
-                      ) : (
-                        <text
-                          data-guest-avatar-initial={person.id}
-                          x={avatarCenterX}
-                          y={avatarCenterY + Math.max(6, guestCardAvatarSize * 0.3)}
-                          textAnchor="middle"
-                          fill={guestPeopleTypography.color ?? guests.textColor}
-                          fontSize={Math.max(14, guestCardAvatarSize * 0.38)}
-                          fontWeight={600}
-                        >
-                          {person.name.slice(0, 1)}
-                        </text>
-                      )}
-                    </g>
-                    <text
-                      data-guest-person={person.id}
-                      x={avatarCenterX}
-                      y={nameBaseline}
-                      textAnchor="middle"
-                      fill={guestPeopleTypography.color ?? guests.textColor}
-                      fontSize={guestPeopleFontSize}
-                      fontWeight={600}
-                      fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                    >
-                      {truncateGuestText(person.name, nameMaxChars)}
-                    </text>
-                    {person.title && (
-                      <text
-                        x={avatarCenterX}
-                        y={nameBaseline + guestCardSubLine}
-                        textAnchor="middle"
-                        fill={guestPeopleTypography.color ?? guests.textColor}
-                        fillOpacity={0.66}
-                        fontSize={guestNoteFontSize}
-                        fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                      >
-                        {truncateGuestText(person.title, subMaxChars)}
-                      </text>
-                    )}
-                    {person.note && (
-                      <text
-                        data-guest-note={person.id}
-                        x={avatarCenterX}
-                        y={noteBaseline}
-                        textAnchor="middle"
-                        fill={guestPeopleTypography.color ?? guests.textColor}
-                        fillOpacity={0.72}
-                        fontSize={guestNoteFontSize}
-                        fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                      >
-                        {truncateGuestText(person.note, subMaxChars)}
-                      </text>
-                    )}
-                  </g>
-                );
-              }) : visibleGuests.map((person, index) => {
-                const nameBaseline = guests.padding + 30 + guestTitleFontSize + guestCustomHeight + index * guestRowHeight;
-                const avatarCenterY = nameBaseline - guestPeopleFontSize * 0.35;
-                const avatarR = guestListAvatarSize / 2;
-                const textX = guests.padding + guestListAvatarGap;
-                const noteMaxChars = Math.max(8, Math.floor((guests.width - guests.padding * 2 - guestListAvatarGap) / guestNoteFontSize));
-                return (
-                  <g key={person.id} data-guest-row={person.id}>
-                    {guestListUsesAvatar && (
-                      <g data-guest-avatar={person.id}>
-                        {person.avatarSrc ? (
-                          <>
-                            <clipPath id={`guest-avatar-clip-${person.id}`}>
-                              <circle cx={guests.padding + avatarR} cy={avatarCenterY} r={avatarR} />
-                            </clipPath>
-                            <circle cx={guests.padding + avatarR} cy={avatarCenterY} r={avatarR} fill={guests.background} stroke={project.map.edgeColor} strokeWidth={1} />
-                            <image
-                              href={person.avatarSrc}
-                              x={guests.padding}
-                              y={avatarCenterY - avatarR}
-                              width={guestListAvatarSize}
-                              height={guestListAvatarSize}
-                              clipPath={`url(#guest-avatar-clip-${person.id})`}
-                              preserveAspectRatio="xMidYMid slice"
-                            />
-                          </>
-                        ) : (
-                          <circle
-                            cx={guests.padding + avatarR}
-                            cy={avatarCenterY}
-                            r={avatarR}
-                            fill={guestPeopleTypography.color ?? guests.textColor}
-                            fillOpacity={0.12}
-                            stroke={guestPeopleTypography.color ?? guests.textColor}
-                            strokeOpacity={0.35}
-                            strokeWidth={1}
-                          >
-                            <title>{person.name}</title>
-                          </circle>
-                        )}
-                      </g>
-                    )}
-                    <text
-                      data-guest-person={person.id}
-                      x={textX}
-                      y={nameBaseline}
-                      fill={guestPeopleTypography.color ?? guests.textColor}
-                      fontSize={guestPeopleFontSize}
-                      fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                    >
-                      {person.name}{person.title ? ` · ${person.title}` : ""}
-                    </text>
-                    {person.note && (
-                      <text
-                        data-guest-note={person.id}
-                        x={textX}
-                        y={nameBaseline + guestNoteFontSize + 3}
-                        fill={guestPeopleTypography.color ?? guests.textColor}
-                        fillOpacity={0.62}
-                        fontSize={guestNoteFontSize}
-                        fontFamily={resolveFontFamily(person.fontId ?? guests.peopleFontId, userFonts)}
-                      >
-                        {truncateGuestText(person.note, noteMaxChars)}
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-            </g>
+            <GuestsLayer
+              guests={guests}
+              layout={guestLayout}
+              edgeColor={project.map.edgeColor}
+              userFonts={userFonts}
+              exportMode={exportMode}
+              canvasWidth={project.canvas.width}
+              canvasHeight={project.canvas.height}
+              renderIntervalMs={renderIntervalMs}
+              canvasPoint={canvasPoint}
+              onSelectGuests={onSelect ? selectGuests : undefined}
+              onMoveGuests={onMoveGuests}
+            />
           )}
         </>
       ),
@@ -1586,3 +942,7 @@ export function PosterCanvas({
     </svg>
   );
 }
+
+/** Memoized so unrelated editor state (panel toggles, status text, the undo stack) cannot
+ *  re-run the canvas body. Callers already pass a memoized document and stable callbacks. */
+export const PosterCanvas = memo(PosterCanvasView, arePosterCanvasPropsEqual);

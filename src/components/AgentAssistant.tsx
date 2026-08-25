@@ -1,12 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { AlertTriangle, Check, LoaderCircle, Minus, Plus, ShieldCheck, Sparkles, X } from "lucide-react";
-import { AgentSession, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
+import { AgentSession, type AgentReplayFailure, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
 import type { UserAsset } from "../lib/assets";
 import { loadAssistantConversationState, saveAssistantConversationState, type AssistantConversationRecord } from "../lib/agent-conversation-store";
 import { fingerprintProject } from "../lib/project-digest";
 import type { ProjectDocument, ProjectTransaction } from "../lib/project-document";
 
 const READ_ONLY = new Set(["inspect_project", "describe_capability", "check_health", "find_assets"]);
+const AUTO_APPLIED_NOTE = " 低风险修改已自动应用。";
 type Mode = "conservative" | "smart";
 type ConversationStatus = "draft" | "running" | "completed" | "failed" | "cancelled" | "applied";
 
@@ -26,6 +27,9 @@ type AssistantConversation = {
   provider: string;
   restored: boolean;
   projectDigest: string;
+  landingError: string;
+  /** 传输中断留下的会话仍能续跑：只有这种失败可以接着聊，模型拒绝或快照失败仍要重开。 */
+  resumable: boolean;
 };
 
 function digestFor(project: ProjectDocument): string {
@@ -66,6 +70,8 @@ function restoreConversation(project: ProjectDocument, assets: UserAsset[], reco
     provider: record.provider,
     restored: true,
     projectDigest: record.projectDigest ?? digestFor(project),
+    landingError: "",
+    resumable: false,
   };
 }
 
@@ -115,8 +121,52 @@ function riskLabel(risk: AgentStep["risk"]): string {
   return "低风险";
 }
 
+function replayFailureReason(content: string): string {
+  try {
+    const parsed = JSON.parse(content) as { code?: unknown; error?: unknown; message?: unknown };
+    if (parsed.code === "SCENE_TARGET_MISSING") return "目标元素已不在当前工程中";
+    for (const candidate of [parsed.error, parsed.message, parsed.code]) {
+      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    }
+  } catch {
+    // 工具结果可能已被压缩成非 JSON 文本，退回到原文摘要。
+  }
+  return content.slice(0, 80) || "原因未知";
+}
+
+/**
+ * 落地被整体放弃时给用户的解释：哪一步失败、为什么，否则用户只看到一次“什么都没发生”。
+ * project-document 的拒绝契约保证工程文档原样返回，无需再提醒用户清理历史。
+ */
+function landingFailureMessage(failure: AgentReplayFailure, steps: AgentStep[]): string {
+  const step = steps.find((candidate) => candidate.id === failure.stepId);
+  const label = step ? stepLabel(step) : failure.name;
+  return `未能应用：「${label}」在当前工程上已无法执行（${replayFailureReason(failure.content)}）。`
+    + "为避免只落地一半，本次全部改动都已放弃，画布内容与历史记录都没有变化。"
+    + "请取消该步骤或重新规划后再次确认应用。";
+}
+
 function newId(): string {
   return `assistant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+type PrimaryAction = { kind: "start" | "continue" | "resume"; label: string; disabled: boolean };
+
+/**
+ * 主按钮是唯一的续跑入口：传输中断后默认重发原需求，用户改写输入框后才换成带新文本的续跑。
+ * 两个按钮同时出现会让用户在“重试”和“继续对话”之间二选一，而它们发出的其实是同一种请求。
+ */
+function primaryAction(conversation: { status: ConversationStatus; resumable: boolean; request: string }, draft: string, projectIsCurrent: boolean): PrimaryAction {
+  const typed = draft.trim();
+  const rewritten = typed.length > 0 && typed !== conversation.request.trim();
+  const canResume = projectIsCurrent && conversation.status === "failed" && conversation.resumable;
+  if (canResume && !rewritten) return { kind: "resume", label: "网络恢复后重试", disabled: false };
+  const canContinue = projectIsCurrent && (conversation.status === "completed" || canResume);
+  return {
+    kind: canContinue ? "continue" : "start",
+    label: canContinue ? "继续对话" : "开始规划",
+    disabled: !projectIsCurrent || typed.length === 0 || conversation.status === "applied",
+  };
 }
 
 function rebaseTextSession(project: ProjectDocument, assets: UserAsset[], conversation: AssistantConversation): AgentSession {
@@ -144,6 +194,8 @@ function createConversation(project: ProjectDocument, mode: Mode, assets: UserAs
     provider: "",
     restored: false,
     projectDigest: digestFor(project),
+    landingError: "",
+    resumable: false,
   };
 }
 
@@ -259,6 +311,8 @@ export function AgentAssistant({
           steps: [],
           selectedStepIds: [],
           projectDigest: currentDigest,
+          landingError: "",
+          resumable: false,
         };
       }));
       onPreview?.(null);
@@ -287,7 +341,7 @@ export function AgentAssistant({
         setConversations((current) => current.map((conversation) => {
           const record = records.find((candidate) => candidate.id === conversation.id);
           return record?.status === "failed" && conversation.steps.length > 0
-            ? { ...conversation, status: "failed", summary: record.summary, error: record.error, steps: [], selectedStepIds: [] }
+            ? { ...conversation, status: "failed", summary: record.summary, error: record.error, steps: [], selectedStepIds: [], resumable: conversation.resumable && record.snapshot !== null }
             : conversation;
         }));
         onPreview?.(null);
@@ -370,9 +424,42 @@ export function AgentAssistant({
     onPreview?.(transaction?.apply(project) ?? null);
   };
 
-  const run = async () => {
-    if (!mountedRef.current || !active || !projectIsCurrent || !message.trim() || active.status === "running") return;
-    const request = message.trim();
+  /**
+   * 宿主通常在 React 状态更新函数里才调用 `transaction.apply`，所以 `onCommit` 返回时会话上还看不到
+   * 重放结果。改为观察被包装的事务，并在渲染阶段之外回报：整体放弃时把对话退回可重试的已完成态。
+   */
+  const commitWithLandingGuard = (conversationId: string, session: AgentSession, transaction: ProjectTransaction, stepIds: string[]) => {
+    let reported = false;
+    onCommit({
+      ...transaction,
+      apply: (current) => {
+        const next = transaction.apply(current);
+        const failure = session.lastReplayFailure;
+        if (!failure || reported) return next;
+        reported = true;
+        queueMicrotask(() => {
+          if (!mountedRef.current) return;
+          updateConversation(conversationId, (conversation) => conversation.status === "running" || conversation.steps.length === 0
+            ? conversation
+            : {
+              ...conversation,
+              status: "completed",
+              summary: conversation.summary.replace(AUTO_APPLIED_NOTE, ""),
+              selectedStepIds: stepIds,
+              landingError: landingFailureMessage(failure, conversation.steps),
+            });
+          onPreview?.(null);
+        });
+        return next;
+      },
+    });
+  };
+
+  /** `resumeRequest` 重发那次被网络中断的需求，此时输入框可能已被清空或改写。 */
+  const run = async (resumeRequest?: string) => {
+    if (!mountedRef.current || !active || !projectIsCurrent || active.status === "running") return;
+    const request = (resumeRequest ?? message).trim();
+    if (!request) return;
     const runProjectDigest = currentProjectDigest;
     const runProjectGeneration = projectGenerationRef.current;
     const isCurrentRun = () => mountedRef.current && activeRunIdRef.current === active.id &&
@@ -383,7 +470,7 @@ export function AgentAssistant({
         progress: `第 ${round} 轮 · ${name} · ${status === "running" ? "执行中" : status === "done" ? "已完成" : "已拒绝"}`,
       }));
     };
-    const isFresh = active.status === "draft" || active.status === "failed" || active.status === "cancelled";
+    const isFresh = active.status === "draft" || active.status === "cancelled" || (active.status === "failed" && !active.resumable);
     const session = isFresh
       ? new AgentSession(project, { mode: active.mode, assets, onProgress: progress })
       : active.session;
@@ -396,11 +483,13 @@ export function AgentAssistant({
       title: request.slice(0, 28),
       status: "running",
       error: "",
+      landingError: "",
       summary: "",
       steps: isFresh ? [] : active.steps,
       selectedStepIds: isFresh ? [] : active.selectedStepIds,
       progress: "",
       mode: active.mode,
+      resumable: false,
     }));
     try {
       const sessionWithProgress = session;
@@ -421,7 +510,9 @@ export function AgentAssistant({
         return;
       }
       if (outcome.kind === "failed") {
-        updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", error: outcome.error ?? "AI 会话失败", steps: preview.steps, progress: "" }));
+        // 传输中断没有污染对话：预算、taskId 与消息都还在，所以只标记可续跑，不清空任何东西。
+        const resumable = outcome.retriable === true && sessionWithProgress.canContinue;
+        updateConversation(active.id, (conversation) => ({ ...conversation, status: "failed", error: outcome.error ?? "AI 会话失败", steps: preview.steps, progress: "", resumable }));
         onPreview?.(null);
         return;
       }
@@ -432,7 +523,7 @@ export function AgentAssistant({
       updateConversation(active.id, (conversation) => ({
         ...conversation,
         status: smartApply ? "applied" : "completed",
-        summary: `${outcome.summary ?? "已完成。"}${smartApply ? " 低风险修改已自动应用。" : ""}`,
+        summary: `${outcome.summary ?? "已完成。"}${smartApply ? AUTO_APPLIED_NOTE : ""}`,
         steps: preview.steps,
         selectedStepIds: smartApply ? [] : selectedStepIds,
         route: sessionWithProgress.metrics.route,
@@ -441,7 +532,7 @@ export function AgentAssistant({
       }));
       if (smartApply && isCurrentRun()) {
         const transaction = sessionWithProgress.transactionForSteps(new Set(selectedStepIds));
-        if (transaction) onCommit(transaction);
+        if (transaction) commitWithLandingGuard(active.id, sessionWithProgress, transaction, selectedStepIds);
         onPreview?.(null);
       } else if (isCurrentRun()) {
         const transaction = sessionWithProgress.transactionForSteps(new Set(selectedStepIds));
@@ -469,11 +560,12 @@ export function AgentAssistant({
 
   const applySelected = () => {
     if (!active || !projectIsCurrent || active.status === "running" || active.status === "applied") return;
-    const transaction = active.session.transactionForSteps(new Set(active.selectedStepIds));
+    const stepIds = active.selectedStepIds;
+    const transaction = active.session.transactionForSteps(new Set(stepIds));
     if (!transaction) return;
-    onCommit(transaction);
+    commitWithLandingGuard(active.id, active.session, transaction, stepIds);
     onPreview?.(null);
-    updateConversation(active.id, (conversation) => ({ ...conversation, status: "applied", selectedStepIds: [] }));
+    updateConversation(active.id, (conversation) => ({ ...conversation, status: "applied", selectedStepIds: [], landingError: "" }));
   };
 
   const beginDrag = (event: React.PointerEvent<HTMLElement>) => {
@@ -522,11 +614,15 @@ export function AgentAssistant({
         <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="描述你的需求" aria-label="描述 AI 修改需求" disabled={conversation.status === "running"} />
         {conversation.status === "running" ? (
           <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
-        ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && conversation.status === "completed" ? "继续对话" : "开始规划"}</button>
-        )}
+        ) : (() => {
+          const action = primaryAction(conversation, message, projectIsCurrent);
+          return (
+            <button className="wide-button" type="button" data-agent-action={action.kind} aria-label={action.label} onClick={() => void run(action.kind === "resume" ? conversation.request : undefined)} disabled={action.disabled}><Sparkles size={16} aria-hidden /> {action.label}</button>
+          );
+        })()}
         {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
         {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
+        {conversation.landingError && <p className="panel-note agent-error" role="alert">{conversation.landingError}</p>}
         {conversation.route === "local" && <p className="panel-note" role="status">已使用本地规则完成可识别的修改。</p>}
         {conversation.route === "fallback" && <p className="panel-note" role="status">已切换备选模型：{conversation.provider || "备选模型"}。</p>}
         {conversation.summary && <p className="panel-note agent-summary">{conversation.summary}</p>}
@@ -565,6 +661,8 @@ export function AgentAssistant({
     provider: "",
     restored: false,
     projectDigest: currentProjectDigest,
+    landingError: "",
+    resumable: false,
   } : null);
 
   if (presentation === "docked") {

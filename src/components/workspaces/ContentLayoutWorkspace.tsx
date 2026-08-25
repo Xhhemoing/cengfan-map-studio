@@ -3,9 +3,16 @@ import type { UserAsset } from "../../lib/assets";
 import type { UserFont } from "../../lib/fonts";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { SceneSelection } from "../../lib/scene-document";
+import type { CustomTemplateRecord } from "../../lib/template-store";
 import { AssetPanel } from "../AssetPanel";
 import { PosterCanvas } from "../canvas/PosterCanvas";
 import { InspectorPanel } from "../inspector/InspectorPanel";
+import { TemplateExchange } from "../TemplateExchange";
+import {
+  TemplatePicker,
+  type CustomTemplateOption,
+  type TemplateOption,
+} from "../TemplatePicker";
 
 export type ContentAssetPanelProps = ComponentProps<typeof AssetPanel>;
 export interface ContentLayoutWorkspaceProps {
@@ -40,6 +47,18 @@ export interface ContentLayoutWorkspaceProps {
   selectedStudentId?: string | null;
 }
 
+interface ContentLayoutTemplateProps {
+  templates?: TemplateOption[];
+  currentTemplateId?: string;
+  customTemplates?: CustomTemplateOption[];
+  customTemplateRecords?: CustomTemplateRecord[];
+  onApplyTemplate?: ComponentProps<typeof TemplatePicker>["onApplyTemplate"];
+  onApplyCustomTemplate?: ComponentProps<typeof TemplatePicker>["onApplyCustomTemplate"];
+  onSaveTemplate?: ComponentProps<typeof TemplatePicker>["onSaveTemplate"];
+  onImportTemplateRecord?: (record: CustomTemplateRecord) => void;
+  templateAuthor?: string;
+}
+
 const EMPTY_ASSET_PANEL_PROPS: ContentAssetPanelProps = {
   onApplyBackground: () => undefined,
 };
@@ -59,7 +78,8 @@ function selectionLabel(selection: SceneSelection): string {
 /**
  * Props for the content stage's right rail. The shell owns the rail chrome
  * (labelled aside + resizer + mobile drawer); this component supplies the
- * 当前对象 inspector and the 素材与实例 asset context. History and the
+ * 当前对象 inspector and the 素材库 (the primary asset-management entry of
+ * the whole flow — the roster stage no longer exposes one). History and the
  * position-refresh / back-to-map actions live in the topbar instead.
  */
 export type ContentLayoutRailProps = Omit<
@@ -70,7 +90,7 @@ export type ContentLayoutRailProps = Omit<
   | "onMoveText" | "onMoveAsset" | "onResizeAsset"
   | "onMoveProvinceTexture" | "onResizeMapImage"
   | "onMoveCard" | "onMoveGuests" | "onCardPositionsResolved"
->;
+> & ContentLayoutTemplateProps;
 
 export function ContentLayoutRail({
   project,
@@ -83,7 +103,30 @@ export function ContentLayoutRail({
   onApplyFont,
   onUploadFont,
   onDeleteUserFont,
+  templates,
+  currentTemplateId,
+  customTemplates = [],
+  customTemplateRecords = [],
+  onApplyTemplate,
+  onApplyCustomTemplate,
+  onSaveTemplate,
+  onImportTemplateRecord,
+  templateAuthor,
 }: ContentLayoutRailProps) {
+  const templatePickerProps = (
+    templates
+    && currentTemplateId !== undefined
+    && onApplyTemplate
+    && onApplyCustomTemplate
+    && onSaveTemplate
+  ) ? {
+      templates,
+      currentTemplateId,
+      onApplyTemplate,
+      onApplyCustomTemplate,
+      onSaveTemplate,
+    } : null;
+
   return (
     <aside className="content-layout-workspace__context" aria-label="内容对象属性">
       <section aria-label="当前对象属性">
@@ -99,8 +142,32 @@ export function ContentLayoutRail({
           onDeleteUserFont={onDeleteUserFont}
         />
       </section>
-      <details open className="content-layout-workspace__assets" aria-label="内容素材上下文">
-        <summary>素材与实例</summary>
+      {templatePickerProps && (
+        <details
+          className="content-layout-workspace__assets content-layout-workspace__templates"
+          aria-label="整体模板与交换"
+        >
+          <summary>整体模板与交换</summary>
+          <TemplatePicker
+            templates={templatePickerProps.templates}
+            currentTemplateId={templatePickerProps.currentTemplateId}
+            customTemplates={customTemplates}
+            onApplyTemplate={templatePickerProps.onApplyTemplate}
+            onApplyCustomTemplate={templatePickerProps.onApplyCustomTemplate}
+            onSaveTemplate={templatePickerProps.onSaveTemplate}
+            exchange={onImportTemplateRecord ? (
+              <TemplateExchange
+                customTemplates={customTemplateRecords}
+                onImport={onImportTemplateRecord}
+                author={templateAuthor}
+              />
+            ) : undefined}
+          />
+        </details>
+      )}
+      {/* 无选中对象（画布态）时展开素材库；编辑具体对象时默认收起，把空间让给检查器。 */}
+      <details open={selection.type === "canvas"} className="content-layout-workspace__assets" aria-label="素材库">
+        <summary>素材库 · 装饰与实例</summary>
         <AssetPanel {...assetPanelProps} userAssets={userAssets} />
       </details>
     </aside>
@@ -109,8 +176,8 @@ export function ContentLayoutRail({
 
 /**
  * Center content of the content stage: the poster canvas preview. The
- * 当前对象 inspector and 素材与实例 context live in the unified right rail
- * (`ContentLayoutRail`); undo/redo, 刷新展示框位置 and 返回地图样式 actions
+ * 当前对象 inspector and 素材库 context live in the unified right rail
+ * (`ContentLayoutRail`); undo/redo, 刷新展示框位置 and 返回地图 actions
  * live in the topbar's stage-actions slot.
  */
 export function ContentLayoutWorkspace({
@@ -130,7 +197,7 @@ export function ContentLayoutWorkspace({
   selectedStudentId = null,
 }: ContentLayoutWorkspaceProps) {
   return (
-    <main className="content-layout-workspace workflow-panel--content" aria-label="内容与排版">
+    <main className="content-layout-workspace workflow-panel--content" aria-label="内容">
       <div className="content-layout-workspace__body">
         <section className="content-layout-workspace__preview" aria-label="内容排版画布">
           <div className="content-layout-workspace__preview-heading"><strong>实时画布</strong><span>{project.canvas.width} × {project.canvas.height}</span></div>

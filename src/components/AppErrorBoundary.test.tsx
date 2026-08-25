@@ -1,27 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot, type Root } from "react-dom/client";
-import { flushSync } from "react-dom";
-import { AppErrorBoundary } from "./AppErrorBoundary";
+// 崩溃屏的基础渲染契约：子树抛错时换上恢复界面，不抛错时原样透传。
+// 共享挂载装置见 src/components/app-error-boundary-test-harness.tsx，
+// 导出备份、项目库回落与返回列表分别在 AppErrorBoundary.export/project-store/
+// return-navigation.test.tsx。
+import { describe, expect, it, vi } from "vitest";
+import { Boom } from "./app-error-boundary-crash-child";
+import {
+  installAppErrorBoundaryTestHarness,
+  mountBoundary,
+} from "./app-error-boundary-test-harness";
 
-let roots: Array<{ root: Root; container: HTMLElement }> = [];
-
-afterEach(() => {
-  roots.forEach(({ root }) => root.unmount());
-  roots = [];
-  vi.restoreAllMocks();
-});
+installAppErrorBoundaryTestHarness();
 
 describe("AppErrorBoundary", () => {
   it("renders a recovery screen instead of a blank page when a child throws", () => {
-    const Boom = () => {
-      throw new Error("boom");
-    };
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ root, container });
-    flushSync(() => root.render(<AppErrorBoundary><Boom /></AppErrorBoundary>));
+    const container = mountBoundary(<Boom />);
 
     expect(container.textContent).toContain("界面加载出错");
     expect(container.querySelector('button[aria-label="重新加载界面"]')).not.toBeNull();
@@ -30,11 +23,7 @@ describe("AppErrorBoundary", () => {
   });
 
   it("renders children normally when nothing throws", () => {
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    roots.push({ root, container });
-    flushSync(() => root.render(<AppErrorBoundary><p>正常内容</p></AppErrorBoundary>));
+    const container = mountBoundary(<p>正常内容</p>);
     expect(container.textContent).toContain("正常内容");
     expect(container.querySelector(".workbench-error")).toBeNull();
   });

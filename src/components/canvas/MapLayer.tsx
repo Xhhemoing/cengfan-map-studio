@@ -1,4 +1,5 @@
 import { geoMercator, geoPath } from "d3-geo";
+import { memo, useMemo } from "react";
 import type { DataViewId } from "../../lib/project-data";
 import { findProvinceFeature, type MapFeature } from "../../lib/map-data";
 import type { MapSettings, SceneSelection } from "../../lib/scene-document";
@@ -57,6 +58,71 @@ const splitCache = new WeakMap<readonly MapFeature[], {
   open: ReturnType<typeof splitMapFeaturesForSouthChinaSea>;
   folded: ReturnType<typeof splitMapFeaturesForSouthChinaSea>;
 }>();
+
+interface ProjectedGeometry {
+  projection: ReturnType<typeof geoMercator>;
+  /** Serialized `d` attribute for a feature, computed once per projection. */
+  path: (feature: MapFeature) => string | null;
+  bounds: (feature: MapFeature) => [[number, number], [number, number]] | null;
+  /** Projected centroid, or null when the geometry projects to non-finite coordinates. */
+  center: (feature: MapFeature) => [number, number] | null;
+  /** Raw centroid, including non-finite results, as d3 returns it. */
+  rawCentroid: (feature: MapFeature) => [number, number];
+}
+
+/** Project a feature set once and memoize every derived string / box the layer draws with.
+ *  Each feature's `d` string is otherwise serialized four times per render (fills, borders,
+ *  image clip, hit target). */
+function projectFeatures(
+  features: readonly MapFeature[],
+  extent: [[number, number], [number, number]],
+): ProjectedGeometry {
+  const projection = geoMercator().fitExtent(extent, { type: "FeatureCollection", features } as never);
+  const generator = geoPath(projection);
+  const paths = new Map<MapFeature, string | null>();
+  const boxes = new Map<MapFeature, [[number, number], [number, number]] | null>();
+  const centroids = new Map<MapFeature, [number, number]>();
+
+  const pathOf = (feature: MapFeature): string | null => {
+    let cached = paths.get(feature);
+    if (cached === undefined) {
+      cached = generator(feature as never) ?? null;
+      paths.set(feature, cached);
+    }
+    return cached;
+  };
+  const boundsOf = (feature: MapFeature): [[number, number], [number, number]] | null => {
+    let cached = boxes.get(feature);
+    if (cached === undefined) {
+      const box = generator.bounds(feature as never);
+      cached = box && Number.isFinite(box[0][0]) && Number.isFinite(box[1][0])
+        ? box as [[number, number], [number, number]]
+        : null;
+      boxes.set(feature, cached);
+    }
+    return cached;
+  };
+  const centroidOf = (feature: MapFeature): [number, number] => {
+    let cached = centroids.get(feature);
+    if (cached === undefined) {
+      const centroid = generator.centroid(feature as never);
+      cached = [centroid[0], centroid[1]];
+      centroids.set(feature, cached);
+    }
+    return cached;
+  };
+
+  return {
+    projection,
+    path: pathOf,
+    bounds: boundsOf,
+    center: (feature) => {
+      const centroid = centroidOf(feature);
+      return Number.isFinite(centroid[0]) && Number.isFinite(centroid[1]) ? centroid : null;
+    },
+    rawCentroid: centroidOf,
+  };
+}
 
 function getFeatureSplit(features: readonly MapFeature[], collapse: boolean) {
   let cached = splitCache.get(features);
@@ -161,26 +227,13 @@ function SouthSeaInset({
   onSelectProvince?: (province: string) => void;
   onMoveProvinceTexture?: (province: string, offsetX: number, offsetY: number) => void;
 }) {
-  if (insetFeatures.length === 0) return null;
   const frame = defaultSouthSeaInsetFrame(settings.width, settings.height);
   const pad = 8;
-  const projection = geoMercator().fitExtent(
-    [[pad, pad], [frame.width - pad, frame.height - pad]],
-    { type: "FeatureCollection", features: insetFeatures } as never,
+  const geometry = useMemo(
+    () => projectFeatures(insetFeatures, [[pad, pad], [frame.width - pad, frame.height - pad]]),
+    [frame.height, frame.width, insetFeatures],
   );
-  const path = geoPath(projection);
-  const featureBounds = (feature: MapFeature): [[number, number], [number, number]] | null => {
-    const bounds = path.bounds(feature as never);
-    if (!bounds || !Number.isFinite(bounds[0][0]) || !Number.isFinite(bounds[1][0])) return null;
-    return bounds as [[number, number], [number, number]];
-  };
-  const featureCenter = (feature: MapFeature): [number, number] | null => {
-    const centroid = path.centroid(feature as never);
-    if (Number.isFinite(centroid[0]) && Number.isFinite(centroid[1])) {
-      return [centroid[0], centroid[1]];
-    }
-    return null;
-  };
+  if (insetFeatures.length === 0) return null;
 
   return (
     <g data-south-sea-inset transform={`translate(${frame.x} ${frame.y})`}>
@@ -198,9 +251,9 @@ function SouthSeaInset({
         features={insetFeatures}
         counts={counts}
         dataView={dataView}
-        path={(feature) => path(feature as never)}
-        bounds={featureBounds}
-        center={featureCenter}
+        path={geometry.path}
+        bounds={geometry.bounds}
+        center={geometry.center}
         heatColors={theme?.heatColors}
         renderFills={renderVectorFills}
         renderTextures
@@ -246,48 +299,73 @@ function MapImageResizeHandles({
   );
 }
 
-export function MapLayer({
+interface MapLayerContentProps {
+  /** Read everything except `x`/`y`: this subtree draws in the map's own coordinate space,
+   *  and the memo below skips re-rendering it when only those two moved. */
+  settings: MapSettings;
+  features: readonly MapFeature[];
+  counts: ReadonlyMap<string, number>;
+  dataView: DataViewId;
+  pins: readonly StudentPin[];
+  selectedStudentId: string | null;
+  onSelectStudent?: (id: string) => void;
+  theme?: MapLayerThemeColors;
+  exportMode: boolean;
+  /** The map is clickable, so the dashed editor overlay belongs on top of it. */
+  mapSelectable: boolean;
+  onSelectProvince?: (province: string) => void;
+  selectedProvince: string | null;
+  onMoveProvinceTexture?: (province: string, offsetX: number, offsetY: number) => void;
+  selected: boolean;
+  renderIntervalMs: number;
+  onResizeMapImage?: (alignment: { x: number; y: number; width: number; height: number; rotation: number }) => void;
+  userFonts: UserFont[];
+}
+
+function settingsEqualIgnoringOrigin(previous: MapSettings, next: MapSettings): boolean {
+  if (previous === next) return true;
+  const keys = Object.keys(previous) as Array<keyof MapSettings>;
+  if (keys.length !== Object.keys(next).length) return false;
+  return keys.every((key) => key === "x" || key === "y" || Object.is(previous[key], next[key]));
+}
+
+/** A pan replaces `map` wholesale, so plain memo never bails out even though the pan is entirely
+ *  carried by the wrapper's translate. Comparing settings without `x`/`y` keeps every province
+ *  node, label and hit target off the drag path. */
+function contentPropsEqual(previous: MapLayerContentProps, next: MapLayerContentProps): boolean {
+  const keys = Object.keys(previous) as Array<keyof MapLayerContentProps>;
+  if (keys.length !== Object.keys(next).length) return false;
+  return keys.every((key) => key === "settings"
+    ? settingsEqualIgnoringOrigin(previous.settings, next.settings)
+    : Object.is(previous[key], next[key]));
+}
+
+const MapLayerContent = memo(function MapLayerContent({
   settings,
   features,
   counts,
-  dataView = "province",
-  pins = [],
-  selectedStudentId = null,
+  dataView,
+  pins,
+  selectedStudentId,
   onSelectStudent,
   theme,
-  exportMode = false,
-  onSelectMap,
+  exportMode,
+  mapSelectable,
   onSelectProvince,
-  selectedProvince = null,
+  selectedProvince,
   onMoveProvinceTexture,
-  selected = false,
-  renderIntervalMs = 0,
+  selected,
+  renderIntervalMs,
   onResizeMapImage,
-  userFonts = [],
-}: MapLayerProps) {
+  userFonts,
+}: MapLayerContentProps) {
   const collapse = settings.collapseSouthChinaSea === true;
   const { mainlandFeatures, insetFeatures } = getFeatureSplit(features, collapse);
-  const projection = geoMercator().fitExtent(
-    [[0, 0], [settings.width, settings.height]],
-    { type: "FeatureCollection", features: mainlandFeatures } as never,
+  const geometry = useMemo(
+    () => projectFeatures(mainlandFeatures, [[0, 0], [settings.width, settings.height]]),
+    [mainlandFeatures, settings.height, settings.width],
   );
-  const path = geoPath(projection);
-  const featureBounds = (feature: MapFeature): [[number, number], [number, number]] | null => {
-    const bounds = path.bounds(feature as never);
-    if (!bounds || !Number.isFinite(bounds[0][0]) || !Number.isFinite(bounds[1][0])) return null;
-    return bounds as [[number, number], [number, number]];
-  };
-  const featureCenter = (feature: MapFeature): [number, number] | null => {
-    const centroid = path.centroid(feature as never);
-    if (Number.isFinite(centroid[0]) && Number.isFinite(centroid[1])) {
-      return [centroid[0], centroid[1]];
-    }
-    return null;
-  };
-  const interactive = !exportMode && Boolean(onSelectMap);
-  const selectMap = () => onSelectMap?.({ type: "map" });
-  const centerX = settings.width / 2;
-  const centerY = settings.height / 2;
+  const { projection, path } = geometry;
 
   const imageSource = settings.renderSource?.kind === "image" ? settings.renderSource : null;
   const composition = imageSource?.composition === "overlay" ? "overlay" : "replace";
@@ -300,25 +378,8 @@ export function MapLayer({
   const interactiveFeatures = mainlandFeatures;
 
   return (
-    <g
-      data-map-layer
-      data-width={settings.width}
-      data-height={settings.height}
-      data-scale={settings.scale}
-      data-collapse-south-sea={collapse || undefined}
-      transform={`translate(${settings.x} ${settings.y}) translate(${centerX} ${centerY}) scale(${settings.scale}) translate(${-centerX} ${-centerY})`}
-      role={interactive ? "button" : undefined}
-      tabIndex={interactive ? 0 : undefined}
-      aria-label={interactive ? "选择地图" : undefined}
-      onClick={interactive ? () => selectMap() : undefined}
-      onKeyDown={interactive ? (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          selectMap();
-        }
-      } : undefined}
-    >
-      {!exportMode && onSelectMap && (
+    <>
+      {!exportMode && mapSelectable && (
         <rect
           data-map-selection-overlay
           width={settings.width}
@@ -344,15 +405,15 @@ export function MapLayer({
         features={mainlandFeatures}
         counts={counts}
         dataView={dataView}
-        path={(feature) => path(feature as never)}
-        bounds={featureBounds}
-        center={featureCenter}
+        path={path}
+        bounds={geometry.bounds}
+        center={geometry.center}
         heatColors={theme?.heatColors}
         renderFills={renderVectorFills}
         renderTextures={false}
         renderBorders={false}
       />
-      {imageSource && (imageZIndex < BORDER_Z) && renderMapImage(settings, mainlandFeatures, (feature) => path(feature as never))}
+      {imageSource && (imageZIndex < BORDER_Z) && renderMapImage(settings, mainlandFeatures, path)}
       {/* Borders + province textures on top of the custom map image (and solid fills). */}
       <g data-map-borders>
         <MapDataLayer
@@ -360,9 +421,9 @@ export function MapLayer({
           features={mainlandFeatures}
           counts={counts}
           dataView={dataView}
-          path={(feature) => path(feature as never)}
-          bounds={featureBounds}
-          center={featureCenter}
+          path={path}
+          bounds={geometry.bounds}
+          center={geometry.center}
           heatColors={theme?.heatColors}
           renderFills={false}
           renderTextures
@@ -372,7 +433,7 @@ export function MapLayer({
           onMoveProvinceTexture={!exportMode ? onMoveProvinceTexture : undefined}
         />
       </g>
-      {imageSource && (imageZIndex >= BORDER_Z && imageZIndex < LABEL_Z) && renderMapImage(settings, mainlandFeatures, (feature) => path(feature as never))}
+      {imageSource && (imageZIndex >= BORDER_Z && imageZIndex < LABEL_Z) && renderMapImage(settings, mainlandFeatures, path)}
       {collapse && (
         <SouthSeaInset
           settings={settings}
@@ -420,7 +481,7 @@ export function MapLayer({
       })}
       {settings.showProvinceLabels && mainlandFeatures.map((feature) => {
         const administrativeCenter = projection(feature.center);
-        const centroid = path.centroid(feature as never);
+        const centroid = geometry.rawCentroid(feature);
         const usesAdministrativeCenter = Boolean(administrativeCenter
           && Number.isFinite(administrativeCenter[0])
           && Number.isFinite(administrativeCenter[1]));
@@ -445,13 +506,13 @@ export function MapLayer({
           </text>
         ) : null;
       })}
-      {imageSource && imageZIndex >= LABEL_Z && renderMapImage(settings, mainlandFeatures, (feature) => path(feature as never))}
+      {imageSource && imageZIndex >= LABEL_Z && renderMapImage(settings, mainlandFeatures, path)}
       </g>
       {!exportMode && onSelectProvince && interactiveFeatures.map((feature) => (
         <path
           key={`province-hit-${feature.id}`}
           data-province-hit={feature.id}
-          d={path(feature as never) ?? ""}
+          d={path(feature) ?? ""}
           fill="transparent"
           stroke="transparent"
           strokeWidth={8}
@@ -470,6 +531,76 @@ export function MapLayer({
       {imageSource && selected && !exportMode && onResizeMapImage && imageSource.alignment && (
         <MapImageResizeHandles alignment={imageSource.alignment} renderIntervalMs={renderIntervalMs} onCommit={onResizeMapImage} />
       )}
+    </>
+  );
+}, contentPropsEqual);
+
+const NO_PINS: readonly StudentPin[] = [];
+const NO_USER_FONTS: UserFont[] = [];
+
+export function MapLayer({
+  settings,
+  features,
+  counts,
+  dataView = "province",
+  pins = NO_PINS,
+  selectedStudentId = null,
+  onSelectStudent,
+  theme,
+  exportMode = false,
+  onSelectMap,
+  onSelectProvince,
+  selectedProvince = null,
+  onMoveProvinceTexture,
+  selected = false,
+  renderIntervalMs = 0,
+  onResizeMapImage,
+  userFonts = NO_USER_FONTS,
+}: MapLayerProps) {
+  const collapse = settings.collapseSouthChinaSea === true;
+  const interactive = !exportMode && Boolean(onSelectMap);
+  const selectMap = () => onSelectMap?.({ type: "map" });
+  const centerX = settings.width / 2;
+  const centerY = settings.height / 2;
+
+  return (
+    <g
+      data-map-layer
+      data-width={settings.width}
+      data-height={settings.height}
+      data-scale={settings.scale}
+      data-collapse-south-sea={collapse || undefined}
+      transform={`translate(${settings.x} ${settings.y}) translate(${centerX} ${centerY}) scale(${settings.scale}) translate(${-centerX} ${-centerY})`}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={interactive ? "选择地图" : undefined}
+      onClick={interactive ? () => selectMap() : undefined}
+      onKeyDown={interactive ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectMap();
+        }
+      } : undefined}
+    >
+      <MapLayerContent
+        settings={settings}
+        features={features}
+        counts={counts}
+        dataView={dataView}
+        pins={pins}
+        selectedStudentId={selectedStudentId}
+        onSelectStudent={onSelectStudent}
+        theme={theme}
+        exportMode={exportMode}
+        mapSelectable={Boolean(onSelectMap)}
+        onSelectProvince={onSelectProvince}
+        selectedProvince={selectedProvince}
+        onMoveProvinceTexture={onMoveProvinceTexture}
+        selected={selected}
+        renderIntervalMs={renderIntervalMs}
+        onResizeMapImage={onResizeMapImage}
+        userFonts={userFonts}
+      />
     </g>
   );
 }

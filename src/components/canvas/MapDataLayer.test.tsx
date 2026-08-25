@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { MapFeature } from "../../lib/map-data";
 import type { MapSettings } from "../../lib/scene-document";
 import { MapDataLayer } from "./MapDataLayer";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
 
 const features: MapFeature[] = [
   {
@@ -51,10 +53,27 @@ const settings = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 } as unknown as MapSettings);
 
-function renderMap(overrides: Record<string, unknown> = {}) {
+function mount(element: React.ReactElement) {
   const container = document.createElement("div");
   const root = createRoot(container);
-  flushSync(() => root.render(
+  mounted.push({ root, container });
+  flushSync(() => root.render(element));
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted for
+  // the rest of the run, racing React's scheduler against jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
+
+function renderMap(overrides: Record<string, unknown> = {}) {
+  return mount(
     <svg>
       <MapDataLayer
         settings={settings(overrides)}
@@ -67,23 +86,19 @@ function renderMap(overrides: Record<string, unknown> = {}) {
         center={() => [40, 55]}
       />
     </svg>,
-  ));
-  return { container, root };
+  );
 }
 
 describe("MapDataLayer", () => {
   it("normalizes heat colors against the highest active province count", () => {
-    const { container, root } = renderMap({ fillMode: "heat" });
+    const { container } = renderMap({ fillMode: "heat" });
 
     expect(container.querySelector('[data-province-id="beijing"]')?.getAttribute("fill")).toBe("#d9f0e5");
     expect(container.querySelector('[data-province-id="zhejiang"]')?.getAttribute("fill")).toBe("#237a62");
-
-    root.unmount();
-    container.remove();
   });
 
   it("uses configured heat depths and colors while retaining manual province overrides", () => {
-    const { container, root } = renderMap({
+    const { container } = renderMap({
       fillMode: "heat",
       heatScale: {
         minDepth: 2,
@@ -98,13 +113,10 @@ describe("MapDataLayer", () => {
 
     expect(container.querySelector('[data-province-id="beijing"]')?.getAttribute("fill")).toBe("#e56a54");
     expect(container.querySelector('[data-province-id="zhejiang"]')?.getAttribute("fill")).toBe("#174a7c");
-
-    root.unmount();
-    container.remove();
   });
 
   it("applies a deterministic poster palette to active provinces and keeps manual overrides", () => {
-    const { container, root } = renderMap({
+    const { container } = renderMap({
       fillMode: "manual",
       dataPalette: "playful",
       provinceStyles: {
@@ -116,22 +128,16 @@ describe("MapDataLayer", () => {
     expect(["#e95646", "#f3c847", "#efb8c6", "#3d8fc2", "#263b78"]).toContain(
       container.querySelector('[data-province-id="zhejiang"]')?.getAttribute("fill"),
     );
-
-    root.unmount();
-    container.remove();
   });
 
   it("shows the canvas background through zero-count provinces when enabled", () => {
-    const { container, root } = renderMap({ emptyProvinceFill: "transparent" });
+    const { container } = renderMap({ emptyProvinceFill: "transparent" });
 
     expect(container.querySelector('[data-province-id="sichuan"]')?.getAttribute("fill")).toBe("transparent");
-
-    root.unmount();
-    container.remove();
   });
 
   it("uses a single centered clipped texture image instead of a tiling pattern fill", () => {
-    const { container, root } = renderMap({
+    const { container } = renderMap({
       provinceStyles: {
         浙江省: {
           appearance: {
@@ -166,13 +172,10 @@ describe("MapDataLayer", () => {
     expect(Number(image?.getAttribute("y"))).toBeCloseTo(30);
     // only one image node for the province — no pattern tiling
     expect(container.querySelectorAll('[data-province-texture="zhejiang"]')).toHaveLength(1);
-
-    root.unmount();
-    container.remove();
   });
 
   it("distinguishes province-stretched sizing from natural image aspect ratio", () => {
-    const { container, root } = renderMap({
+    const { container } = renderMap({
       provinceStyles: {
         北京市: {
           appearance: {
@@ -201,13 +204,10 @@ describe("MapDataLayer", () => {
 
     expect(container.querySelector('[data-province-texture="beijing"]')?.getAttribute("preserveAspectRatio")).toBe("none");
     expect(container.querySelector('[data-province-texture="zhejiang"]')?.getAttribute("preserveAspectRatio")).toBe("xMidYMid meet");
-
-    root.unmount();
-    container.remove();
   });
 
   it("uses one explicit image box for every province when uniform texture size is enabled", () => {
-    const { container, root } = renderMap({
+    const { container } = renderMap({
       provinceTextureUniformSize: { enabled: true, width: 72, height: 44 },
       provinceStyles: {
         北京市: {
@@ -240,9 +240,6 @@ describe("MapDataLayer", () => {
       expect(Number(image.getAttribute("height"))).toBeCloseTo(44);
       expect(image.getAttribute("data-texture-uniform")).toBe("true");
     }
-
-    root.unmount();
-    container.remove();
   });
 
   it("separates nearby overflow textures inside the map bounds", () => {
@@ -251,9 +248,7 @@ describe("MapDataLayer", () => {
       zhejiang: [95, 78],
       sichuan: [88, 92],
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
-    flushSync(() => root.render(
+    const { container } = mount(
       <svg>
         <MapDataLayer
           settings={settings({
@@ -280,7 +275,7 @@ describe("MapDataLayer", () => {
           center={(feature) => closeCenters[feature.id]}
         />
       </svg>,
-    ));
+    );
 
     const images = Array.from(container.querySelectorAll<SVGImageElement>("[data-province-texture]"));
     expect(images).toHaveLength(3);
@@ -308,13 +303,10 @@ describe("MapDataLayer", () => {
       }
     }
     expect(images.some((image) => image.getAttribute("data-texture-adjusted") === "true")).toBe(true);
-
-    root.unmount();
-    container.remove();
   });
 
   it("renders multi-layer decorative province borders", () => {
-    const { container, root } = renderMap({
+    const { container } = renderMap({
       edgeStyle: "double",
       edgeWidth: 2,
       edgeColor: "#215d75",
@@ -324,26 +316,20 @@ describe("MapDataLayer", () => {
     expect(edges.length).toBeGreaterThanOrEqual(2);
     expect(container.querySelector('[data-edge-layer="underlay"]')).not.toBeNull();
     expect(container.querySelector('[data-edge-layer="stroke"]')).not.toBeNull();
-
-    root.unmount();
-    container.remove();
   });
 
   it("injects glow filters for soft-glow borders", () => {
-    const { container, root } = renderMap({
+    const { container } = renderMap({
       edgeStyle: "soft-glow",
       edgeWidth: 1.5,
     });
 
     expect(container.querySelector('[data-edge-filter="soft-glow"]')).not.toBeNull();
     expect(container.querySelector('[data-edge-layer="underlay"]')?.getAttribute("filter")).toContain("map-edge-soft-glow");
-
-    root.unmount();
-    container.remove();
   });
 
   it("renders overflow textures above solid fills so they are not covered by pure color", () => {
-    const { container, root } = renderMap({
+    const { container } = renderMap({
       provinceStyles: {
         浙江省: {
           appearance: {
@@ -371,8 +357,5 @@ describe("MapDataLayer", () => {
     expect(nodes[0]?.getAttribute("data-province-id")).toBe("zhejiang");
     expect(nodes[nodes.length - 1]?.getAttribute("data-province-overflow")
       ?? nodes[nodes.length - 1]?.getAttribute("data-province-texture")).toBe("zhejiang");
-
-    root.unmount();
-    container.remove();
   });
 });

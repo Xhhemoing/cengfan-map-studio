@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DeliveryRail, DeliveryWorkspace, type DeliveryWorkspaceProps } from "./DeliveryWorkspace";
 import { createProjectDocument } from "../../lib/project-document";
+import { sampleStudents } from "../../lib/project-data";
 import type { DataIssue } from "../../lib/data-health";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
@@ -60,7 +61,7 @@ describe("DeliveryWorkspace", () => {
     const onLocate = vi.fn();
     const container = renderWorkspace({ onLocate });
 
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="返回编辑器"]')).toBeNull();
     expect(container.textContent).toContain("数据完整性");
     expect(container.textContent).toContain("排版问题");
@@ -71,6 +72,24 @@ describe("DeliveryWorkspace", () => {
     const locateButtons = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).filter((button) => button.textContent?.includes("地图"));
     flushSync(() => locateButtons[0]?.click());
     expect(onLocate).toHaveBeenCalled();
+    // 仍有待处理问题时不显示正向摘要。
+    expect(container.querySelector(".delivery-workspace__all-clear")).toBeNull();
+  });
+
+  it("summarizes the roster coverage when every check passes", () => {
+    const container = renderWorkspace({
+      project: createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" }),
+      dataIssues: [],
+      layoutIssues: [],
+      resourceIssues: [],
+      fontIssues: [],
+    });
+
+    const summary = container.querySelector('[role="status"].delivery-workspace__all-clear');
+    expect(summary).not.toBeNull();
+    expect(summary?.textContent).toContain("检查全部通过");
+    expect(summary?.textContent).toMatch(/\d+ 人/);
+    expect(summary?.textContent).toMatch(/\d+ 个省市/);
   });
 
   it("shows an export preview and keeps pixel/export settings visible", () => {
@@ -81,12 +100,50 @@ describe("DeliveryWorkspace", () => {
     expect(container.querySelector('aside[aria-label="交付检查"]')).not.toBeNull();
     expect(container.querySelector('section[aria-label="导出设置"]')).not.toBeNull();
     expect(container.textContent).toContain("1500 × 1000 px");
+    expect(container.querySelector("[data-export-print-size]")?.textContent).toContain("约合印刷：50.8 × 33.9 cm @ 150dpi");
     expect(container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')?.value).toBe("2");
     expect(container.querySelector<HTMLInputElement>('input[aria-label="透明背景"]')?.checked).toBe(true);
     expect(container.querySelector<HTMLInputElement>('input[aria-label="工程包包含资源"]')?.checked).toBe(true);
     expect(container.querySelector<HTMLInputElement>('input[aria-label="透明背景"]')?.closest("label")?.classList).toContain("boolean-control");
     expect(container.querySelector<HTMLInputElement>('input[aria-label="工程包包含资源"]')?.closest("label")?.classList).toContain("checkbox-row");
     expect(container.querySelector('[role="group"][aria-label="导出操作"]')).not.toBeNull();
+  });
+
+  it("shows the exported file name and a re-export button after a successful export", () => {
+    const onRetry = vi.fn();
+    const container = renderWorkspace({ exportState: "success", lastExportFileName: "我的毕业去向图-2x.png", onRetry });
+
+    const result = container.querySelector('[role="status"]');
+    expect(result?.classList).toContain("delivery-workspace__result");
+    expect(result?.textContent).toContain("已导出 我的毕业去向图-2x.png");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    const retry = result?.querySelector<HTMLButtonElement>('button[aria-label="再次导出"]');
+    expect(retry?.disabled).toBe(false);
+    flushSync(() => retry?.click());
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("disables the export actions while an export is running", () => {
+    const actions = renderWorkspace({ exportState: "exporting" }).querySelector('[role="group"][aria-label="导出操作"]');
+    expect(actions?.getAttribute("aria-busy")).toBe("true");
+    const buttons = Array.from(actions?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    expect(buttons).toHaveLength(3);
+    expect(buttons.filter((button) => button.disabled)).toHaveLength(3);
+
+    const idle = renderWorkspace().querySelector('[role="group"][aria-label="导出操作"]');
+    expect(idle?.getAttribute("aria-busy")).toBe("false");
+    expect(Array.from(idle?.querySelectorAll<HTMLButtonElement>("button") ?? []).filter((button) => button.disabled)).toHaveLength(0);
+  });
+
+  it("keeps the success bar readable when the file name is unknown and hides it otherwise", () => {
+    const withoutName = renderWorkspace({ exportState: "success" });
+    const bar = withoutName.querySelector('[role="status"]');
+    expect(bar?.textContent).toContain("已导出");
+    expect(withoutName.querySelector('button[aria-label="再次导出"]')).not.toBeNull();
+
+    expect(renderWorkspace({ exportState: "idle" }).querySelector('[role="status"]')).toBeNull();
+    expect(renderWorkspace({ exportState: "exporting" }).querySelector('[role="status"]')).toBeNull();
+    expect(renderWorkspace({ exportState: "error", exportError: "PNG 导出失败" }).querySelector('[role="status"]')).toBeNull();
   });
 
   it("shows retry on export error without removing the current configuration", () => {
@@ -97,5 +154,17 @@ describe("DeliveryWorkspace", () => {
     expect(container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')?.value).toBe("2");
     flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="重试导出"]')?.click());
     expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("never shows a file name in the error bar", () => {
+    const container = renderWorkspace({
+      exportState: "error",
+      exportError: "PNG 导出失败",
+      lastExportFileName: "我的毕业去向图-2x.png",
+    });
+
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).not.toContain("我的毕业去向图-2x.png");
+    expect(container.textContent).not.toContain("我的毕业去向图-2x.png");
   });
 });

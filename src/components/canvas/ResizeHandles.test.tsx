@@ -1,13 +1,31 @@
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ResizeHandles } from "./ResizeHandles";
 
-afterEach(() => vi.useRealTimers());
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
 
-function renderHandles(props: Partial<React.ComponentProps<typeof ResizeHandles>> = {}) {
+function trackedRoot() {
   const container = document.createElement("div");
   const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted with
+  // its coalesced-preview timer armed, racing jsdom teardown for the rest of the run.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+  vi.useRealTimers();
+});
+
+function renderHandles(props: Partial<React.ComponentProps<typeof ResizeHandles>> = {}) {
+  const { container, root } = trackedRoot();
   flushSync(() => root.render(
     <svg>
       <ResizeHandles
@@ -26,8 +44,7 @@ describe("ResizeHandles", () => {
     vi.useFakeTimers();
     const onChange = vi.fn();
     const onCommit = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <ResizeHandles
@@ -63,13 +80,11 @@ describe("ResizeHandles", () => {
     expect(onCommit).toHaveBeenCalledTimes(1);
     expect(onCommit.mock.calls[0]?.[0].width).toBeGreaterThan(preview.width);
     expect(onCommit.mock.calls[0]?.[0].height).toBeGreaterThan(preview.height);
-
-    flushSync(() => root.unmount());
   });
 
   it("does not commit when a handle is clicked without any size change", () => {
     const onCommit = vi.fn();
-    const { container, root } = renderHandles({ onCommit });
+    const { container } = renderHandles({ onCommit });
     const handle = container.querySelector<Element>('[data-resize-handle="se"]')!;
 
     // jsdom has no getScreenCTM, so svgLocalPoint returns null and final === start
@@ -78,14 +93,11 @@ describe("ResizeHandles", () => {
       handle.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1, clientX: 90, clientY: 80 }));
     });
     expect(onCommit).not.toHaveBeenCalled();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("does not commit when the drag is cancelled (pointer capture lost)", () => {
     const onCommit = vi.fn();
-    const { container, root } = renderHandles({ onCommit });
+    const { container } = renderHandles({ onCommit });
     const handle = container.querySelector<Element>('[data-resize-handle="se"]')!;
 
     flushSync(() => {
@@ -93,8 +105,5 @@ describe("ResizeHandles", () => {
       handle.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 1 }));
     });
     expect(onCommit).not.toHaveBeenCalled();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 });

@@ -144,8 +144,21 @@ function cloneSnapshot(snapshot: ProjectSnapshot): ProjectSnapshot {
   };
 }
 
-function toSnapshot(project: ProjectDocument): ProjectSnapshot {
-  return cloneSnapshot(project);
+function snapshotView(project: ProjectDocument): ProjectSnapshot {
+  return {
+    schemaVersion: 2,
+    students: project.students,
+    templateId: project.templateId,
+    dataView: project.dataView,
+    canvas: project.canvas,
+    map: project.map,
+    cards: project.cards,
+    guests: project.guests,
+    textElements: project.textElements,
+    assetElements: project.assetElements,
+    style: project.style,
+    version: project.version,
+  };
 }
 
 function fromSnapshot(snapshot: ProjectSnapshot, history: ProjectHistory): ProjectDocument {
@@ -198,25 +211,56 @@ export function createProjectDocument(input: {
   };
 }
 
+/**
+ * Builds the throwaway document a transaction mutates freely.
+ *
+ * Rejection contract: returning this exact object back from `apply` (identity, not a copy)
+ * tells `applyTransaction` the transaction declined to change anything, so nothing is
+ * committed — no version bump, no history entry. Any other return value, including an
+ * unchanged spread copy, is a normal commit.
+ */
 function cloneProjectForTransaction(project: ProjectDocument): ProjectDocument {
   return {
     ...cloneSnapshot(project),
-    history: {
-      past: [...project.history.past],
-      future: [...project.history.future],
-    },
+    // Transactions can inspect history, but writes must not corrupt snapshots
+    // structurally shared by earlier ProjectDocument values.
+    history: readonlyView(project.history),
   };
 }
 
+function readonlyView<T extends object>(value: T): T {
+  const proxies = new WeakMap<object, object>();
+  const wrap = <V>(candidate: V): V => {
+    if (!candidate || typeof candidate !== "object") return candidate;
+    const existing = proxies.get(candidate);
+    if (existing) return existing as V;
+    const proxy = new Proxy(candidate, {
+      get: (target, property, receiver) => wrap(Reflect.get(target, property, receiver)),
+      set: () => true,
+      deleteProperty: () => true,
+      defineProperty: () => true,
+      setPrototypeOf: () => true,
+    });
+    proxies.set(candidate, proxy);
+    return proxy as V;
+  };
+  return wrap(value);
+}
+
 export function applyTransaction(project: ProjectDocument, transaction: ProjectTransaction): ProjectDocument {
-  const before = toSnapshot(project);
-  const applied = transaction.apply(cloneProjectForTransaction(project));
+  const before = snapshotView(project);
+  const cloned = cloneProjectForTransaction(project);
+  const applied = transaction.apply(cloned);
+  // Rejection contract (see cloneProjectForTransaction): the transaction handed its input
+  // straight back, so there is nothing to commit and the undo stack stays clean.
+  if (applied === cloned) return project;
   const previousEntry = project.history.past[project.history.past.length - 1];
+  const committedAt = Date.now();
   const shouldCoalesce = Boolean(
     transaction.historyGroup &&
     previousEntry?.historyGroup === transaction.historyGroup &&
     typeof previousEntry.committedAt === "number" &&
-    Date.now() - previousEntry.committedAt <= HISTORY_COALESCE_WINDOW_MS &&
+    committedAt - previousEntry.committedAt <= HISTORY_COALESCE_WINDOW_MS &&
     project.history.future.length === 0,
   );
   const nextEntry: ProjectHistoryEntry = {
@@ -224,12 +268,13 @@ export function applyTransaction(project: ProjectDocument, transaction: ProjectT
     label: transaction.label,
     source: transaction.source,
     historyGroup: transaction.historyGroup,
-    committedAt: Date.now(),
+    committedAt,
     snapshot: shouldCoalesce ? previousEntry.snapshot : before,
   };
   const retainedPast = shouldCoalesce ? project.history.past.slice(0, -1) : project.history.past;
   return {
-    ...cloneSnapshot(applied),
+    ...applied,
+    schemaVersion: 2,
     version: project.version + 1,
     history: {
       past: [...retainedPast, nextEntry].slice(-MAX_HISTORY),
@@ -249,7 +294,7 @@ export function undoTransaction(project: ProjectDocument): ProjectDocument {
       source: previous.source,
       historyGroup: previous.historyGroup,
       committedAt: previous.committedAt,
-      snapshot: toSnapshot(project),
+      snapshot: cloneSnapshot(project),
     }, ...project.history.future],
   });
 }
@@ -264,7 +309,7 @@ export function redoTransaction(project: ProjectDocument): ProjectDocument {
       source: nextEntry.source,
       historyGroup: nextEntry.historyGroup,
       committedAt: nextEntry.committedAt,
-      snapshot: toSnapshot(project),
+      snapshot: cloneSnapshot(project),
     }].slice(-MAX_HISTORY),
     future: project.history.future.slice(1),
   });

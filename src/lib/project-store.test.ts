@@ -60,11 +60,12 @@ describe("project store", () => {
     await store.put(sample);
     const listed = await store.list();
     listed[0]!.name = "被修改的名字";
-    listed[0]!.pack.project.students[0]!.name = "被修改的学生";
+    listed[0]!.studentCount = 0;
     const relisted = await store.list();
     expect(relisted[0]!.name).toBe("示例：2026届毕业去向");
-    expect(relisted[0]!.pack.project.students[0]!.name).toBe("林舟");
+    expect(relisted[0]!.studentCount).toBe(12);
     expect((await store.get(sample.id))?.name).toBe("示例：2026届毕业去向");
+    expect((await store.get(sample.id))?.pack.project.students[0]!.name).toBe("林舟");
   });
 
   it("throws when the IndexedDB factory is unavailable", async () => {

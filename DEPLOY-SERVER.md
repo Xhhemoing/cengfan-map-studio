@@ -1,5 +1,7 @@
 # 蹭饭图 · 服务器部署与 API 配置
 
+> 若只想给大家打开编辑器参观：用静态站（Cloudflare Pages / GitHub Pages），见 [docs/deployment/public-demo.md](docs/deployment/public-demo.md)。本文是带 Node API 的 VPS 部署。
+
 > 部署目标:121.5.16.236 (hermes) · Ubuntu 24.04 · Node v24.18.0
 > 项目路径:`/home/ubuntu/work/蹭饭图` · 服务端口:`8787`
 
@@ -44,16 +46,9 @@ DATA_DIR=.data
 SHUTDOWN_TIMEOUT_MS=10000
 ```
 
-### 3. 管理后台(可选)
+### 3. 管理后台(已移除)
 
-管理员用户名/密码在 `/home/ubuntu/.config/cengfan/admin.env`:
-
-```env
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=<你的密码>
-```
-
-后台页面 `http://<IP>:8787/admin`,访问统计 `GET /api/admin/visits`。
+原 `/admin` 后台页面与访问统计接口 `GET /api/admin/visits` 已从代码库删除,服务端不再读取 `ADMIN_USERNAME`/`ADMIN_PASSWORD`。历史配置文件 `/home/ubuntu/.config/cengfan/admin.env` 可安全删除。
 
 ### 4. 工作区 API token(可选,保护 /api/workspace 读写)
 
@@ -82,7 +77,7 @@ curl http://127.0.0.1:8787/api/health
 # 本地: tar czf /tmp/deploy.tgz --exclude=node_modules --exclude=.git --exclude=.data .
 # 服务器: tar xzf deploy.tgz && npm ci && npm run build && systemctl --user restart cengfan-8787
 
-# 备份数据(房间/访问统计/工作区/回执)
+# 备份数据(工作区快照/AI 回执状态;协作房间仅存内存,不落盘)
 tar czf ~/backups/cengfan-data-$(date +%F).tgz /home/ubuntu/work/蹭饭图/.data
 
 # 回滚: 恢复到上一个构建

@@ -258,7 +258,7 @@
 | AI 助手独立一级页 | 全局悬浮入口 / 当前步骤助手 | AI 是辅助决策，不是独立制作阶段 |
 | 工程菜单 + 项目摘要 | 项目菜单 + 交付 | 新建/恢复属于项目级，输出/保存/协作属于交付 |
 | 渲染性能设置 | 版式 > 精调 > 高级 | 对大多数毕业海报用户低频，不干扰主路径 |
-| `/admin` 访问统计 | 独立受保护管理页 | 保持不出现在制作主站中 |
+| `/admin` 访问统计 | 已移除 | 访问统计页面与接口已从代码库删除，主站与服务端均不再提供 |
 
 ---
 
@@ -370,16 +370,16 @@
 
 | 层 | 技术 |
 |---|---|
-| 前端 | React 18 + TypeScript + Vite，纯前端 SPA（无路由框架，按 `location.pathname` 分发主应用/管理页） |
+| 前端 | React 19 + TypeScript + Vite，纯前端 SPA（无路由框架，按 `location.pathname` 分发主应用/原型页） |
 | 地图渲染 | `d3-geo`（geoMercator 墨卡托投影 + geoPath），地图数据为内置 `src/assets/china.geojson` |
 | 后端 | Node.js 原生 `http` 模块（无框架），TypeScript 经 `tsx` 直接运行（`server/index.ts`） |
 | 数据处理 | `xlsx`（Excel 解析）、`pinyin-pro`（拼音）、原生 FileReader/Canvas |
 | 测试 | Vitest + jsdom（组件与纯函数均有测试），ESLint + TypeScript |
-| 存储 | 前端：localStorage + IndexedDB（双轨工作区快照）；后端：`.data/` 目录 JSON 文件（访问日志、工作区快照） |
+| 存储 | 前端：localStorage + IndexedDB（双轨工作区快照）；后端：`.data/` 目录 JSON 文件（工作区快照、AI 运行状态） |
 
 - 开发：`npm run dev`（Vite + API server）。
 - 生产：`npm run build` → `npm start`（server 同时托管 `dist` 静态文件）。
-- 页面：`/` 主编辑器；`/admin` 独立管理后台（Basic Auth / 本机回环保护）。
+- 页面：`/` 主编辑器（原 `/admin` 独立管理后台已移除）。
 
 ### 8.2 模板、字体与系统资源
 
@@ -412,17 +412,14 @@
 - 不冲突的并发字段自动 rebase；同路径冲突返回 409 并要求重新加入。
 - 房间内存保存，100 房间上限、每房 50 订阅、30 分钟无活动清理、256 条操作历史。
 
-**管理后台**
-- `/admin` 显示总请求、独立 IP、路径排行和最近访问记录。
-- `/api/admin/visits` 仅允许本机回环；配置 `ADMIN_PASSWORD` 时须 Basic Auth（用户名默认 `admin`）。
-- `.data/visits.json` 最多保留 5000 条页面 GET 记录；主站没有统计入口。
+**管理后台（已移除）**
+- 原 `/admin` 页面、`GET /api/admin/visits` 接口与 `.data/visits.json` 访问日志均已从代码库删除，服务端不再记录或展示访问统计。
 
 ### 8.5 后端 API
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
 | GET | `/api/health` | 健康检查 | 无 |
-| GET | `/api/admin/visits` | 访问统计 | Basic Auth / 本机 |
 | GET/PUT | `/api/workspace` | 工作区快照读写 | Bearer / X-API-Key（`WORKSPACE_API_TOKEN`） |
 | POST | `/api/rooms` | 创建协作房间 | 无 |
 | GET | `/api/rooms/:id` | 读取协作房间 | 无 |
@@ -463,4 +460,4 @@
 - 协作房间只存在于内存，30 分钟无活动自动清理；冲突需要重新加入房间确认最新版本。
 - AI 未配置主模型时使用本地规则回退；配置 `AI_PRIMARY_*` 后可调用外部 OpenAI 兼容 LLM。预算回执重启续聊和多实例防重放受进程内 ledger 限制。
 - 导出 PNG 依赖浏览器 Canvas；超大画布或 3× 导出可能受浏览器内存限制。
-- 访问统计只可通过受保护的 `/admin` 查看，不能在主站或公开 API 中暴露。
+- 访问统计功能已移除：主站与公开 API 均不提供访问统计。

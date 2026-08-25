@@ -1,8 +1,28 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { MapInspector } from "./MapInspector";
 import type { MapSettings } from "../../lib/scene-document";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted for
+  // the rest of the run, racing React's scheduler against jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -28,8 +48,7 @@ const baseMap: MapSettings = {
 describe("MapInspector", () => {
   it("defers editable values until blur or Enter", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} />,
     ));
@@ -54,14 +73,11 @@ describe("MapInspector", () => {
     // the picker closes with a change event — one commit, no blur required
     flushSync(() => color.dispatchEvent(new Event("change", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ edgeColor: "#abcdef" });
-
-    root.unmount();
   });
 
   it("adjusts the map layer with a z-index input and quick buttons", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <MapInspector map={{ ...baseMap, zIndex: 5 }} onPatch={onPatch} onReset={() => undefined} />,
     ));
@@ -81,14 +97,11 @@ describe("MapInspector", () => {
     expect(onPatch).toHaveBeenCalledWith({ zIndex: 6 });
     flushSync(() => (container.querySelector("button[aria-label='地图置顶']") as HTMLButtonElement).dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ zIndex: 100 });
-
-    flushSync(() => root.unmount());
   });
 
   it("offers decorative province border textures and applies them", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} />,
     ));
@@ -117,14 +130,11 @@ describe("MapInspector", () => {
     const opacity = container.querySelector("#map-opacity") as HTMLInputElement;
     flushSync(() => setInputValue(opacity, "0.45"));
     expect(onPatch).toHaveBeenCalledWith({ opacity: 0.45 });
-
-    root.unmount();
   });
 
   it("shows heat-map depth, color, and preview controls", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} />,
     ));
@@ -142,14 +152,11 @@ describe("MapInspector", () => {
     expect(onPatch).toHaveBeenCalledWith({
       heatScale: expect.objectContaining({ lowColor: "#dceeff" }),
     });
-
-    root.unmount();
   });
 
   it("sets and clears a color override for any selected province", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} />,
     ));
@@ -176,14 +183,11 @@ describe("MapInspector", () => {
         浙江省: { appearance: undefined, fill: undefined },
       },
     });
-
-    root.unmount();
   });
 
   it("exposes overlay alignment controls and auto-fit for image maps", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const imageMap: MapSettings = {
       ...baseMap,
       renderSource: {
@@ -245,14 +249,11 @@ describe("MapInspector", () => {
         }),
       }),
     }));
-
-    root.unmount();
   });
 
   it("folds heat and per-province color controls into advanced details when collapsible", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} mode="global" collapsible />,
     ));
@@ -271,14 +272,11 @@ describe("MapInspector", () => {
     const labels = container.querySelector("#map-labels") as HTMLInputElement;
     expect(labels.closest("label")?.classList.contains("boolean-control")).toBe(true);
     expect(labels.closest("label")?.firstElementChild).toBe(labels);
-
-    root.unmount();
   });
 
   it("keeps advanced controls open by default", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} mode="global" />,
     ));
@@ -286,7 +284,5 @@ describe("MapInspector", () => {
     expect(container.querySelector(".property-panel__advanced")).toBeNull();
     expect(container.querySelector(".heat-scale-control")).not.toBeNull();
     expect(container.querySelector("#map-collapse-south-sea")).not.toBeNull();
-
-    root.unmount();
   });
 });

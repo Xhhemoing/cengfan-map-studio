@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { RegionalAssetLayer } from "./RegionalAssetLayer";
 import type { MapFeature } from "../../lib/map-data";
@@ -75,9 +75,12 @@ const landmark: AssetElement = {
   visibility: true,
 };
 
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
 function renderLayer(props: Partial<React.ComponentProps<typeof RegionalAssetLayer>> = {}) {
   const container = document.createElement("div");
   const root = createRoot(container);
+  mounted.push({ root, container });
   flushSync(() => root.render(
     <svg>
       <RegionalAssetLayer
@@ -92,15 +95,21 @@ function renderLayer(props: Partial<React.ComponentProps<typeof RegionalAssetLay
   return { container, root };
 }
 
-function cleanup(root: ReturnType<typeof createRoot>, container: HTMLDivElement) {
-  flushSync(() => root.unmount());
-  container.remove();
-}
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted with
+  // its landmark drag handlers and preview timer armed for the rest of the run.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 describe("RegionalAssetLayer", () => {
   it("clips every visible province texture to its matching province path", () => {
     const second = { ...texture, id: "texture-2", label: "北京纹理二", zIndex: 2 };
-    const { container, root } = renderLayer({ assets: [texture, second] });
+    const { container } = renderLayer({ assets: [texture, second] });
 
     const clips = Array.from(container.querySelectorAll("clipPath"));
     const textures = Array.from(container.querySelectorAll("[data-province-texture]"));
@@ -109,15 +118,13 @@ describe("RegionalAssetLayer", () => {
     expect(textures).toHaveLength(2);
     expect(textures.every((image) => image.getAttribute("clip-path")?.startsWith("url(#province-clip-"))).toBe(true);
     expect(textures[0]?.getAttribute("opacity")).toBe("0.7");
-
-    cleanup(root, container);
   });
 
   it("renders landmarks in z-index order with instance geometry", () => {
     const lower = { ...landmark, id: "landmark-low", zIndex: 1 };
     const higher = { ...landmark, id: "landmark-high", zIndex: 4, x: 360 };
     const onSelectAsset = vi.fn();
-    const { container, root } = renderLayer({
+    const { container } = renderLayer({
       assets: [higher, lower],
       selectedAssetId: "landmark-low",
       onSelectAsset,
@@ -134,8 +141,6 @@ describe("RegionalAssetLayer", () => {
     expect(container.querySelector('[data-asset-selection="landmark-low"]')).not.toBeNull();
     flushSync(() => images[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onSelectAsset).toHaveBeenCalledWith("landmark-low");
-
-    cleanup(root, container);
   });
 
   it("skips hidden assets, reports broken images, and omits overlays during export", () => {
@@ -153,7 +158,6 @@ describe("RegionalAssetLayer", () => {
     flushSync(() => image.dispatchEvent(new Event("error", { bubbles: true })));
     expect(onAssetLoadError).toHaveBeenCalledWith("selected");
     expect(editor.container.querySelector('[data-asset-selection="selected"]')).not.toBeNull();
-    cleanup(editor.root, editor.container);
 
     const exported = renderLayer({
       assets: [{ ...landmark, id: "selected" }],
@@ -162,12 +166,11 @@ describe("RegionalAssetLayer", () => {
     });
     expect(exported.container.querySelector('[data-landmark="selected"]')).not.toBeNull();
     expect(exported.container.querySelector('[data-asset-selection="selected"]')).toBeNull();
-    cleanup(exported.root, exported.container);
   });
 
   it("renders resize handles for selected landmark", () => {
     const onResizeAsset = vi.fn();
-    const { container, root } = renderLayer({
+    const { container } = renderLayer({
       assets: [landmark],
       selectedAssetId: "landmark-1",
       onResizeAsset,
@@ -176,13 +179,11 @@ describe("RegionalAssetLayer", () => {
     const handles = container.querySelectorAll("[data-resize-handles]");
     expect(handles.length).toBe(1);
     expect(handles[0]?.querySelector("[data-resize-handle='se']")).not.toBeNull();
-
-    cleanup(root, container);
   });
 
   it("commits landmark movement once on pointer up", () => {
     const onMoveAsset = vi.fn();
-    const { container, root } = renderLayer({ onMoveAsset });
+    const { container } = renderLayer({ onMoveAsset });
     const group = container.querySelector('[data-landmark="landmark-1"]')?.parentElement!;
 
     flushSync(() => {
@@ -194,13 +195,11 @@ describe("RegionalAssetLayer", () => {
     flushSync(() => group.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 280, clientY: 365 })));
     expect(onMoveAsset).toHaveBeenCalledTimes(1);
     expect(onMoveAsset).toHaveBeenCalledWith("landmark-1", 280, 365);
-
-    cleanup(root, container);
   });
 
   it("does not commit a move for a plain click without movement", () => {
     const onMoveAsset = vi.fn();
-    const { container, root } = renderLayer({ onMoveAsset });
+    const { container } = renderLayer({ onMoveAsset });
     const group = container.querySelector('[data-landmark="landmark-1"]')?.parentElement!;
 
     flushSync(() => {
@@ -208,13 +207,11 @@ describe("RegionalAssetLayer", () => {
       group.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 260, clientY: 340 }));
     });
     expect(onMoveAsset).not.toHaveBeenCalled();
-
-    cleanup(root, container);
   });
 
   it("captures the pointer and ignores non-primary buttons on drag start", () => {
     const onMoveAsset = vi.fn();
-    const { container, root } = renderLayer({ onMoveAsset });
+    const { container } = renderLayer({ onMoveAsset });
     const group = container.querySelector('[data-landmark="landmark-1"]')?.parentElement!;
     const capture = vi.fn();
     (group as unknown as { setPointerCapture: (id: number) => void }).setPointerCapture = capture;
@@ -225,14 +222,12 @@ describe("RegionalAssetLayer", () => {
     // right-click must not start a drag
     flushSync(() => group.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 8, clientX: 260, clientY: 340, button: 2 })));
     expect(capture).toHaveBeenCalledTimes(1);
-
-    cleanup(root, container);
   });
 
   it("limits landmark drag preview paints while committing the final position immediately", () => {
     vi.useFakeTimers();
     const onMoveAsset = vi.fn();
-    const { container, root } = renderLayer({ onMoveAsset, renderIntervalMs: 100 });
+    const { container } = renderLayer({ onMoveAsset, renderIntervalMs: 100 });
     const group = container.querySelector<SVGGElement>('[data-asset-group="landmark-1"]')!;
     const image = container.querySelector<SVGImageElement>('[data-landmark="landmark-1"]')!;
 
@@ -251,7 +246,6 @@ describe("RegionalAssetLayer", () => {
     expect(onMoveAsset).toHaveBeenCalledWith("landmark-1", 295, 380);
     expect(image.getAttribute("x")).toBe("260");
 
-    cleanup(root, container);
     vi.useRealTimers();
   });
 });

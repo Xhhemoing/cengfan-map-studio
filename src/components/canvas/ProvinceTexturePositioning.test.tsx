@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { geoMercator, geoPath } from "d3-geo";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { MapFeature } from "../../lib/map-data";
 import type { MapSettings } from "../../lib/scene-document";
@@ -37,6 +37,26 @@ function settings(styles: MapSettings["provinceStyles"]): MapSettings {
   };
 }
 
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted with
+  // its texture-drag pointer handlers armed for the rest of the run.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
+
 describe("province texture positioning", () => {
   it("anchors textures at the geometry centroid while labels keep the administrative center", () => {
     const mapSettings = settings({ 北京市: { appearance: {
@@ -54,8 +74,7 @@ describe("province texture positioning", () => {
     const administrativeCenter = projection(feature.center)!;
     expect(Math.hypot(expected[0] - administrativeCenter[0], expected[1] - administrativeCenter[1])).toBeGreaterThan(10);
 
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<svg><MapLayer settings={mapSettings} features={[feature]} counts={new Map()} /></svg>));
 
     const texture = container.querySelector('[data-province-texture="1"]')!;
@@ -64,14 +83,12 @@ describe("province texture positioning", () => {
     expect(Number(texture.getAttribute("data-texture-cy"))).toBeCloseTo(expected[1], 4);
     expect(Number(label.getAttribute("x"))).toBeCloseTo(administrativeCenter[0], 4);
     expect(Number(label.getAttribute("y"))).toBeCloseTo(administrativeCenter[1], 4);
-    root.unmount();
   });
 
   it("previews drag locally and commits one rounded map-local offset on pointer up", async () => {
     const onSelectProvince = vi.fn();
     const onMoveProvinceTexture = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<svg><MapLayer
       settings={settings({ 北京市: { appearance: {
         kind: "texture", assetId: "texture-beijing", src: "beijing.png", fit: "contain", overflow: true,
@@ -101,7 +118,6 @@ describe("province texture positioning", () => {
     flushSync(() => editor.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 130.4, clientY: 119.6, pointerId: 7 })));
     expect(onMoveProvinceTexture).toHaveBeenCalledTimes(1);
     expect(onMoveProvinceTexture).toHaveBeenCalledWith("北京市", 30, 20);
-    root.unmount();
   });
 
   it("starts the first manual drag at an automatically adjusted visible rectangle", async () => {
@@ -119,8 +135,7 @@ describe("province texture positioning", () => {
     mapSettings.height = 160;
     mapSettings.provinceTextureUniformSize = { enabled: true, width: 72, height: 44 };
 
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<svg><MapDataLayer
       settings={mapSettings}
       features={features}
@@ -146,6 +161,5 @@ describe("province texture positioning", () => {
 
     expect(Number(image.getAttribute("x"))).toBeCloseTo(visibleX + 10, 2);
     expect(Number(image.getAttribute("y"))).toBeCloseTo(visibleY + 5, 2);
-    root.unmount();
   });
 });

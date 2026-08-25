@@ -1,0 +1,10 @@
+{
+  "name": "蹭饭地图工作室",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "dev (web 5173 + api 8787)",
+      "command": "npm run dev"
+    }
+  ]
+}

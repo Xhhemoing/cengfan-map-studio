@@ -13,23 +13,43 @@ import { buildProvinceSummary } from "./project-data";
 
 const MAX_TOOL_RESULT_BYTES = 16 * 1024;
 const MAX_CONVERSATION_MESSAGES = 24;
-const CLIENT_ROUND_TIMEOUT_MS = 70_000;
+/** Generous on purpose: a single model round with tool planning routinely runs tens of seconds. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 90_000;
+const REQUEST_TIMEOUT_MESSAGE = "AI 请求超时，请稍后重试。";
+const NETWORK_FAILURE_MESSAGE = "网络连接中断，AI 请求未完成，请检查网络后重试。";
+const HTTP_ERROR_MESSAGES: Record<string, string> = {
+  AI_RATE_LIMITED: "请求过于频繁，请稍后重试。",
+  AI_VALIDATION_ERROR: "请求内容未通过校验，请重新开始当前 AI 任务。",
+  AI_UPSTREAM_UNAVAILABLE: "AI 服务暂时不可用，请稍后重试。",
+  AI_TIMEOUT: REQUEST_TIMEOUT_MESSAGE,
+};
 const MAX_HEALTH_ISSUES = 20;
 const MAX_ASSET_RESULTS = 20;
 const MAX_LAYOUT_SAMPLES = 10;
 
+const utf8Encoder = new TextEncoder();
+const utf8Decoder = new TextDecoder();
+
 function utf8Bytes(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
+  return utf8Encoder.encode(value).byteLength;
 }
 
-function truncateUtf8(value: string, maxBytes: number): string {
-  if (utf8Bytes(value) <= maxBytes) return value;
-  let result = "";
-  for (const character of value) {
-    if (utf8Bytes(result + character) > maxBytes) break;
-    result += character;
-  }
-  return result;
+function isUtf8Continuation(byte: number): boolean {
+  return (byte & 0b1100_0000) === 0b1000_0000;
+}
+
+/** Longest prefix of `bytes` within `maxBytes` that ends on a UTF-8 sequence boundary. */
+function sliceUtf8(bytes: Uint8Array, maxBytes: number): string {
+  if (maxBytes <= 0) return "";
+  if (maxBytes >= bytes.byteLength) return utf8Decoder.decode(bytes);
+  let end = maxBytes;
+  while (end > 0 && isUtf8Continuation(bytes[end]!)) end -= 1;
+  return utf8Decoder.decode(bytes.subarray(0, end));
+}
+
+export function truncateUtf8(value: string, maxBytes: number): string {
+  const bytes = utf8Encoder.encode(value);
+  return bytes.byteLength <= maxBytes ? value : sliceUtf8(bytes, maxBytes);
 }
 
 export function compactAgentToolResult(callName: string, content: string): string {
@@ -50,14 +70,16 @@ export function compactAgentToolResult(callName: string, content: string): strin
     compact = { ok: false, code: "TOOL_RESULT_INVALID_JSON" };
   }
   const base = JSON.stringify(compact);
-  if (utf8Bytes(base) <= MAX_TOOL_RESULT_BYTES) return base;
+  const baseBytes = utf8Encoder.encode(base);
+  if (baseBytes.byteLength <= MAX_TOOL_RESULT_BYTES) return base;
   const makeTruncated = (preview: string) => JSON.stringify({ ok: false, code: "TOOL_RESULT_TRUNCATED", preview });
   let low = 0;
-  let high = base.length;
+  // JSON escaping never shrinks the preview, so a prefix longer than the whole budget can never fit.
+  let high = Math.min(baseBytes.byteLength, MAX_TOOL_RESULT_BYTES);
   let best = makeTruncated("");
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
-    const candidate = makeTruncated(truncateUtf8(base, middle));
+    const candidate = makeTruncated(sliceUtf8(baseBytes, middle));
     if (utf8Bytes(candidate) <= MAX_TOOL_RESULT_BYTES) {
       best = candidate;
       low = middle + 1;
@@ -128,6 +150,22 @@ export interface AgentSessionReplayStep {
   lostManualLayout?: boolean;
 }
 
+export interface AgentReplayFailure {
+  stepId: string;
+  name: string;
+  content: string;
+}
+
+export class AgentReplayError extends Error {
+  readonly failure: AgentReplayFailure;
+
+  constructor(failure: AgentReplayFailure) {
+    super("Agent 会话步骤无法在当前项目上重放");
+    this.name = "AgentReplayError";
+    this.failure = failure;
+  }
+}
+
 export interface AgentSessionSnapshot {
   schemaVersion: 2;
   conversation: Array<{ role: "user" | "assistant"; content: string }>;
@@ -140,8 +178,28 @@ export interface AgentSessionOptions {
   mode: "conservative" | "smart";
   assets?: StudioAsset[];
   endpoint?: string;
+  /** Per-request deadline in milliseconds; non-positive or non-finite values fall back to the default. */
+  requestTimeoutMs?: number;
   onProgress?: (progress: { round: number; name: string; status: "running" | "done" | "rejected" }) => void;
 }
+
+/** Transport-level failures the caller can retry as-is, unlike a model refusal or a user cancel. */
+export type AgentTransportFailure = "timeout" | "network";
+
+export interface AgentRunOutcome {
+  kind: "finish" | "tool-rejected" | "failed" | "cancelled";
+  summary?: string;
+  error?: string;
+  reason?: AgentTransportFailure;
+  retriable?: boolean;
+}
+
+type AgentApiPayload = AgentApiOutcome & { taskId?: string; budgetReceipt?: string };
+
+type RoundResponse =
+  | { kind: "ok"; outcome: AgentApiPayload }
+  | { kind: "http-error"; error: string }
+  | { kind: "transport-failure"; reason: AgentTransportFailure };
 
 interface AgentApiOutcome {
   kind: "tool-call" | "tool-rejected" | "finish" | "failed";
@@ -158,10 +216,13 @@ const MAX_SNAPSHOT_STRING = 64 * 1024;
 const MAX_SNAPSHOT_DEPTH = 32;
 const MAX_SNAPSHOT_STEPS = MAX_CONVERSATION_MESSAGES * 2;
 
+/**
+ * History is dropped before cloning, not after: `applyTransaction` hands transactions a document
+ * whose `history` is a readonly Proxy, and `structuredClone` cannot clone a Proxy. Sessions never
+ * read history anyway, so this also keeps up to MAX_HISTORY snapshots out of every clone.
+ */
 function cloneProject(project: ProjectDocument): ProjectDocument {
-  const cloned = structuredClone(project) as ProjectDocument;
-  cloned.history = { past: [], future: [] };
-  return cloned;
+  return structuredClone({ ...project, history: { past: [], future: [] } }) as ProjectDocument;
 }
 
 function textOnlyConversation(messages: Array<Record<string, unknown>>): Array<{ role: "user" | "assistant"; content: string }> {
@@ -249,6 +310,13 @@ function patchForTool(name: string, args: Record<string, unknown>): { domain: Sc
   return { domain: target.type, patch: patch as Record<string, unknown> };
 }
 
+/** Id-addressed scene targets vanish when the element is deleted; patching them would be a silent no-op. */
+function sceneTargetExists(project: ProjectDocument, target: SceneSelection): boolean {
+  if (target.type === "text") return project.textElements.some((element) => element.id === target.id);
+  if (target.type === "asset") return project.assetElements.some((element) => element.id === target.id);
+  return true;
+}
+
 function findStudent(project: ProjectDocument, args: Record<string, unknown>): Student | undefined {
   const studentId = typeof args.studentId === "string" ? args.studentId : "";
   const name = typeof args.name === "string" ? args.name.trim() : "";
@@ -313,11 +381,13 @@ export class AgentSession {
   private readonly conversation: Array<Record<string, unknown>> = [];
   private _steps: AgentStep[] = [];
   private activeController: AbortController | null = null;
-  private activeRun: Promise<{ kind: "finish" | "tool-rejected" | "failed" | "cancelled"; summary?: string; error?: string }> | null = null;
+  private activeRun: Promise<AgentRunOutcome> | null = null;
   private completed = false;
+  private retriableFailure = false;
   private budget = { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: 20 };
   private taskId: string | undefined;
   private budgetReceipt: string | undefined;
+  private _lastReplayFailure: AgentReplayFailure | null = null;
   private _metrics = { rounds: 0, usedTokens: 0, route: undefined as "primary" | "fallback" | "local" | undefined, provider: undefined as string | undefined, fallbackReason: undefined as string | undefined };
 
   constructor(project: ProjectDocument, options: AgentSessionOptions) {
@@ -331,7 +401,7 @@ export class AgentSession {
     session.conversation.push(...structuredClone(snapshot.conversation));
     for (const replayStep of snapshot.steps) {
       const result = session.execute({ id: replayStep.id, name: replayStep.name, arguments: structuredClone(replayStep.arguments) });
-      if (!result.ok) throw new Error("Agent 会话步骤无法在当前项目上重放");
+      if (!result.ok) throw new AgentReplayError({ stepId: replayStep.id, name: replayStep.name, content: result.content });
       session._steps.push({ ...structuredClone(replayStep), result });
     }
     session._metrics = structuredClone(snapshot.metrics);
@@ -374,8 +444,14 @@ export class AgentSession {
     return { ...this._metrics };
   }
 
+  /** Set when the last `transactionForSteps` apply refused to land because a step no longer replays. */
+  get lastReplayFailure(): AgentReplayFailure | null {
+    return this._lastReplayFailure ? { ...this._lastReplayFailure } : null;
+  }
+
+  /** A transport failure leaves the conversation intact, so the user can resume it instead of restarting. */
   get canContinue(): boolean {
-    return this.completed && !this.activeRun;
+    return (this.completed || this.retriableFailure) && !this.activeRun;
   }
 
   cancel(): void {
@@ -401,6 +477,70 @@ export class AgentSession {
 
   private compactToolResult(callName: string, content: string): string {
     return compactAgentToolResult(callName, content);
+  }
+
+  private get requestTimeoutMs(): number {
+    const configured = this.options.requestTimeoutMs;
+    return typeof configured === "number" && Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+
+  private failTransport(reason: AgentTransportFailure): AgentRunOutcome {
+    this.retriableFailure = true;
+    return { kind: "failed", error: reason === "timeout" ? REQUEST_TIMEOUT_MESSAGE : NETWORK_FAILURE_MESSAGE, reason, retriable: true };
+  }
+
+  /**
+   * One round trip under a deadline that covers the body read as well: a partition can deliver headers
+   * and then stall forever. The deadline settles the race on its own rather than relying on `signal`,
+   * because a wedged transport may never react to the abort at all.
+   */
+  private async requestRound(message: string, cancelSignal: AbortSignal): Promise<RoundResponse> {
+    const roundController = new AbortController();
+    const abortRound = () => roundController.abort();
+    cancelSignal.addEventListener("abort", abortRound, { once: true });
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<RoundResponse>((resolve) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        roundController.abort();
+        resolve({ kind: "transport-failure", reason: "timeout" });
+      }, this.requestTimeoutMs);
+    });
+    const attempt = (async (): Promise<RoundResponse> => {
+      let response: Response;
+      try {
+        response = await fetch(this.options.endpoint ?? "/api/ai/agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation, budget: this.budget, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
+          signal: roundController.signal,
+        });
+      } catch (cause) {
+        if (timedOut) return { kind: "transport-failure", reason: "timeout" };
+        // A user cancel must stay a cancel; fetch rejects for nothing else but transport trouble.
+        if (cancelSignal.aborted) throw cause;
+        return { kind: "transport-failure", reason: "network" };
+      }
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+        return { kind: "http-error", error: HTTP_ERROR_MESSAGES[data?.error?.code ?? ""] ?? data?.error?.message ?? `Agent 接口错误：${response.status}` };
+      }
+      try {
+        return { kind: "ok", outcome: await response.json() as AgentApiPayload };
+      } catch (cause) {
+        if (timedOut) return { kind: "transport-failure", reason: "timeout" };
+        throw cause;
+      }
+    })();
+    // When the deadline wins the race nobody awaits the attempt any more; its later rejection is expected.
+    attempt.catch(() => {});
+    try {
+      return await Promise.race([attempt, deadline]);
+    } finally {
+      clearTimeout(timer);
+      cancelSignal.removeEventListener("abort", abortRound);
+    }
   }
 
   private compactConversation(): void {
@@ -431,6 +571,15 @@ export class AgentSession {
     });
   }
 
+  /**
+   * A round that fails in transport leaves its request as the conversation tail with no reply after it.
+   * The resume re-sends that text as `userMessage` anyway, so pushing it again would only ask twice.
+   */
+  private tailIsUnansweredRequest(message: string): boolean {
+    const last = this.conversation.at(-1);
+    return last?.role === "user" && last.content === message;
+  }
+
   private execute(call: AgentToolCall): AgentToolResult {
     const rejected = this.validateClientCall(call);
     if (rejected) return { id: call.id, ok: false, content: rejected };
@@ -459,6 +608,9 @@ export class AgentSession {
       }
       const target = sceneTargetForTool(call.name, args);
       if (target) {
+        if (!sceneTargetExists(this.shadow, target)) {
+          return { id: call.id, ok: false, content: JSON.stringify({ ok: false, code: "SCENE_TARGET_MISSING", target }) };
+        }
         const patch = patchForTool(call.name, args)?.patch ?? {};
         this.shadow = { ...this.shadow, ...scenePatch(this.shadow, target, patch) };
         return { id: call.id, ok: true, content: JSON.stringify({ ok: true, target }) };
@@ -507,9 +659,10 @@ export class AgentSession {
     }
   }
 
-  async run(message: string, options: { signal?: AbortSignal; continue?: boolean } = {}): Promise<{ kind: "finish" | "tool-rejected" | "failed" | "cancelled"; summary?: string; error?: string }> {
+  async run(message: string, options: { signal?: AbortSignal; continue?: boolean } = {}): Promise<AgentRunOutcome> {
     if (this.activeRun) throw new Error("Agent 会话正在进行中");
     if (options.signal?.aborted) return { kind: "cancelled" };
+    this.retriableFailure = false;
     if (!options.continue) {
       this.conversation.length = 0;
       this.completed = false;
@@ -517,7 +670,7 @@ export class AgentSession {
       this.taskId = undefined;
       this.budgetReceipt = undefined;
     }
-    this.conversation.push({ role: "user", content: message });
+    if (!options.continue || !this.tailIsUnansweredRequest(message)) this.conversation.push({ role: "user", content: message });
     const controller = new AbortController();
     this.activeController = controller;
     const onAbort = () => controller.abort();
@@ -527,41 +680,14 @@ export class AgentSession {
         for (let round = 0; round < MAX_ROUNDS; round += 1) {
           if (controller.signal.aborted) return { kind: "cancelled" as const };
           this.compactConversation();
-          const roundController = new AbortController();
-          let timedOut = false;
-          const abortRound = () => roundController.abort();
-          controller.signal.addEventListener("abort", abortRound, { once: true });
-          const timeout = setTimeout(() => {
-            timedOut = true;
-            roundController.abort();
-          }, CLIENT_ROUND_TIMEOUT_MS);
-          let response: Response;
-          try {
-            response = await fetch(this.options.endpoint ?? "/api/ai/agent", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation, budget: this.budget, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
-              signal: roundController.signal,
-            });
-          } catch (cause) {
-            if (timedOut) return { kind: "failed" as const, error: "AI 请求超时，请稍后重试。" };
-            throw cause;
-          } finally {
-            clearTimeout(timeout);
-            controller.signal.removeEventListener("abort", abortRound);
+          const roundResponse = await this.requestRound(message, controller.signal);
+          if (roundResponse.kind === "transport-failure") {
+            // A cancel that raced the deadline still reads as a cancel; budget and metrics stay untouched.
+            if (controller.signal.aborted) return { kind: "cancelled" as const };
+            return this.failTransport(roundResponse.reason);
           }
-          if (!response.ok) {
-            const data = await response.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
-            const code = data?.error?.code;
-            const messageByCode: Record<string, string> = {
-              AI_RATE_LIMITED: "请求过于频繁，请稍后重试。",
-              AI_VALIDATION_ERROR: "请求内容未通过校验，请重新开始当前 AI 任务。",
-              AI_UPSTREAM_UNAVAILABLE: "AI 服务暂时不可用，请稍后重试。",
-              AI_TIMEOUT: "AI 请求超时，请稍后重试。",
-            };
-            return { kind: "failed" as const, error: messageByCode[code ?? ""] ?? data?.error?.message ?? `Agent 接口错误：${response.status}` };
-          }
-          const outcome = await response.json() as AgentApiOutcome & { taskId?: string; budgetReceipt?: string };
+          if (roundResponse.kind === "http-error") return { kind: "failed" as const, error: roundResponse.error };
+          const outcome = roundResponse.outcome;
           this.taskId = outcome.taskId ?? this.taskId;
           this.budgetReceipt = outcome.budgetReceipt ?? this.budgetReceipt;
           if (outcome.meta) {
@@ -632,9 +758,15 @@ export class AgentSession {
       label: `AI 助手：${selectedSteps.length} 项改动`,
       source: "ai",
       apply: (current) => {
+        this._lastReplayFailure = null;
         const replay = new AgentSession(current, { ...this.options, onProgress: undefined });
         for (const step of selectedSteps) {
-          replay.execute({ id: step.id, name: step.name, arguments: structuredClone(step.arguments) });
+          const result = replay.execute({ id: step.id, name: step.name, arguments: structuredClone(step.arguments) });
+          // All-or-nothing: a step that no longer applies to the live document must not land partially.
+          if (!result.ok) {
+            this._lastReplayFailure = { stepId: step.id, name: step.name, content: result.content };
+            return current;
+          }
         }
         const finalSnapshot = cloneProject(replay.shadowProject);
         return { ...finalSnapshot, history: current.history, version: current.version };

@@ -13,6 +13,13 @@ export interface DisplayFrameStyle {
   background: string;
   opacity: number;
   padding: number;
+  /**
+   * @deprecated Nothing renders this. `deriveFixedDisplayFrameFromCardSettings` copies
+   * `cards.gap` into it and `resolveDisplayFrameSurface` carries it through, but the spacing
+   * between cards comes from `cards.gap` in the layout solver and flow-block spacing comes from
+   * `DisplayFrameFlowBlock.spacing`. Read `cards.gap`; the field stays for document
+   * compatibility so older projects keep normalizing.
+   */
   margin: number;
   align: TextAlign;
   borderColor?: string;
@@ -28,6 +35,7 @@ export interface DisplayFrameItemStyle {
   align?: TextAlign;
   fill?: string;
   strokeWidth?: number;
+  opacity?: number;
 }
 
 export interface DisplayFrameFixedItem {
@@ -64,6 +72,12 @@ export interface DisplayFrameFlowBlock {
 export interface DisplayFrameDefinition {
   mode: DisplayFrameMode;
   style: DisplayFrameStyle;
+  /**
+   * @deprecated No renderer reads this. It is derived from `["title", ...cards.visibleFields]`
+   * and only seeds the fixed items / flow blocks at derivation time; afterwards those lists own
+   * the order and the card rows follow `cards.visibleFields`. Read `cards.visibleFields`; the
+   * field stays for document compatibility so older projects keep normalizing.
+   */
   fieldOrder: DisplayFrameField[];
   fixed: { items: DisplayFrameFixedItem[] };
   flow: { blocks: DisplayFrameFlowBlock[] };
@@ -121,7 +135,8 @@ function normalizeItemStyle(value: unknown, fallback: DisplayFrameItemStyle | un
     : fallback?.align;
   const fill = optionalText(source.fill) ?? fallback?.fill;
   const strokeWidth = source.strokeWidth !== undefined ? clamp(source.strokeWidth, 0, 24, fallback?.strokeWidth ?? 1) : fallback?.strokeWidth;
-  if (!fontId && fontSize === undefined && !color && !fontWeight && !align && !fill && strokeWidth === undefined) return undefined;
+  const opacity = source.opacity !== undefined ? clamp(source.opacity, 0, 1, fallback?.opacity ?? 1) : fallback?.opacity;
+  if (!fontId && fontSize === undefined && !color && !fontWeight && !align && !fill && strokeWidth === undefined && opacity === undefined) return undefined;
   return {
     ...(fontId ? { fontId } : {}),
     ...(fontSize !== undefined ? { fontSize } : {}),
@@ -130,6 +145,7 @@ function normalizeItemStyle(value: unknown, fallback: DisplayFrameItemStyle | un
     ...(align ? { align } : {}),
     ...(fill ? { fill } : {}),
     ...(strokeWidth !== undefined ? { strokeWidth } : {}),
+    ...(opacity !== undefined ? { opacity } : {}),
   };
 }
 

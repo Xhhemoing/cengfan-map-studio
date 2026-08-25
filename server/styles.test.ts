@@ -29,17 +29,12 @@ describe("extractRule", () => {
 });
 
 describe("workflow workspace responsive contract", () => {
-  it("defines tokenized template and delivery surfaces", () => {
-    expect(extractRule(workspaceStyles, ".template-workspace")).toContain("background: var(--editor-bg)");
+  it("defines the tokenized delivery surface", () => {
     expect(extractRule(workspaceStyles, ".delivery-workspace")).toContain("background: var(--editor-bg)");
   });
 
-  it("defines desktop delivery columns and workspace overflow contracts", () => {
+  it("defines desktop delivery columns and surface contracts", () => {
     expect(extractRule(workspaceStyles, ".delivery-workspace__actions")).toContain("grid-template-columns: 1fr 1fr 1fr");
-    expect(extractRule(workspaceStyles, ".template-workspace__catalog")).toContain("min-width: 0");
-    expect(extractRule(workspaceStyles, ".template-workspace__catalog")).toContain("overflow: auto");
-    expect(extractRule(workspaceStyles, ".template-workspace__detail")).toContain("min-width: 0");
-    expect(extractRule(workspaceStyles, ".template-workspace__detail")).toContain("overflow: auto");
     expect(workspaceStyles).toContain(".delivery-workspace__check, .delivery-workspace__controls, .delivery-workspace__error");
     expect(workspaceStyles).toContain("background: var(--editor-surface)");
     expect(extractRule(workspaceStyles, ".delivery-workspace__preview")).toContain("var(--editor-surface-muted)");
@@ -70,11 +65,9 @@ describe("workflow workspace responsive contract", () => {
     expect(extractRule(workspaceStyles, ".delivery-workspace__canvas")).toContain("overflow: auto");
     expect(extractRule(workspaceStyles, ".delivery-workspace__actions", 760)).toContain("grid-template-columns: 1fr");
     expect(extractRule(workspaceStyles, ".delivery-workspace__actions button", 760)).toContain("min-height: 44px");
-    expect(extractRule(workspaceStyles, ".template-workspace__footer .primary-button", 760)).toContain("min-height: 44px");
   });
 
-  it("provides narrow single-column layouts at both workspace breakpoints", () => {
-    expect(extractRule(workspaceStyles, ".template-workspace__layout", 900)).toContain("grid-template-columns: 1fr");
+  it("provides narrow delivery layouts at both workspace breakpoints", () => {
     expect(extractRule(workspaceStyles, ".delivery-workspace__body", 900)).toContain("grid-template-columns: 1fr");
     expect(extractRule(workspaceStyles, ".delivery-workspace__actions", 760)).toContain("grid-template-columns: 1fr");
   });

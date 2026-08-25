@@ -1,7 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { ProvinceInspector } from "./ProvinceInspector";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted for
+  // the rest of the run, racing React's scheduler against jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 vi.mock("../../lib/background-removal", () => ({
   removeBackground: vi.fn(async (src: string) => src),
@@ -35,8 +55,7 @@ describe("ProvinceInspector", () => {
     }
     vi.stubGlobal("Image", ImmediateImage);
 
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <ProvinceInspector province="浙江省" onPatch={onPatch} onAddUserAsset={onAddUserAsset} />,
     ));
@@ -66,15 +85,13 @@ describe("ProvinceInspector", () => {
       });
     });
 
-    root.unmount();
     vi.stubGlobal("FileReader", originalFileReader);
     vi.stubGlobal("Image", originalImage);
   });
 
   it("exposes numeric size, opacity, and overflow controls for active textures", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <ProvinceInspector
         province="浙江省"
@@ -104,13 +121,11 @@ describe("ProvinceInspector", () => {
     expect(onPatch).toHaveBeenCalledWith({
       appearance: expect.objectContaining({ overflow: true, fit: "contain" }),
     });
-    root.unmount();
   });
 
   it("defers manual texture scale input until blur", () => {
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <ProvinceInspector
         province="浙江省"
@@ -137,7 +152,6 @@ describe("ProvinceInspector", () => {
     expect(onPatch).toHaveBeenCalledWith({
       appearance: expect.objectContaining({ scale: 1.35 }),
     });
-    root.unmount();
   });
 
   it("resets manual placement without exposing cross-province synchronization", () => {
@@ -150,8 +164,7 @@ describe("ProvinceInspector", () => {
       offsetX: 18,
       offsetY: -12,
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <ProvinceInspector
         province="浙江省"
@@ -169,7 +182,6 @@ describe("ProvinceInspector", () => {
     });
 
     expect(container.textContent).not.toContain("同步所有贴图设置");
-    root.unmount();
   });
 
   it("loads missing dimensions when a legacy texture switches to natural sizing", async () => {
@@ -185,8 +197,7 @@ describe("ProvinceInspector", () => {
       set src(_value: string) { queueMicrotask(() => this.onload?.()); }
     }
     vi.stubGlobal("Image", SizedImage);
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <ProvinceInspector
         province="浙江省"
@@ -217,7 +228,6 @@ describe("ProvinceInspector", () => {
         }),
       });
     });
-    root.unmount();
     vi.stubGlobal("Image", originalImage);
   });
 });

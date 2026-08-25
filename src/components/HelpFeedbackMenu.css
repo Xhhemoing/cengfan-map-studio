@@ -1,0 +1,44 @@
+/* 从 src/styles.css 搬出：帮助与反馈菜单。样式随组件走，主样式表只留全局外壳。 */
+/* 帮助与反馈菜单：复用项目菜单的折叠范式，只补链接列表与环境信息块的样式。 */
+.help-menu { position: relative; }
+.help-menu > summary { list-style: none; cursor: pointer; }
+.help-menu > summary::-webkit-details-marker { display: none; }
+.help-menu[open] > summary { border-color: var(--editor-accent, #245d57); }
+.help-menu__popover {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 10px);
+  right: 0;
+  display: grid;
+  width: 232px;
+  padding: 8px;
+  color: var(--editor-ink, #263b4e);
+  background: var(--editor-surface-raised, #fff);
+  border: 1px solid var(--editor-line, #bdcbd3);
+  border-radius: 6px;
+  box-shadow: 0 16px 38px rgb(12 31 56 / 24%);
+}
+.help-menu__popover section { display: grid; gap: 6px; padding: 8px; }
+.help-menu__popover section + section { border-top: 1px solid var(--editor-line, #e1e7ea); }
+.help-menu__popover strong { font-size: 11px; color: var(--editor-ink-muted, #617485); }
+.help-menu__popover a,
+.help-menu__popover button {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--editor-ink, #314d60);
+  background: var(--editor-surface-muted, #f5f8f9);
+  border: 1px solid var(--editor-line, #d5dee3);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: none;
+}
+.help-menu__popover a:hover,
+.help-menu__popover button:hover { border-color: var(--editor-accent, #245d57); }
+.help-menu__environment small { color: var(--editor-ink-muted, #687887); font-size: 11px; line-height: 1.5; }
+.help-menu__environment-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.help-menu__environment-line button { width: 30px; padding: 0; justify-content: center; }
+.help-menu--workbench .help-menu__popover { right: auto; left: 0; }

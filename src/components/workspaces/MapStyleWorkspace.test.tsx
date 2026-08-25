@@ -60,8 +60,8 @@ describe("MapStyleWorkspace", () => {
   it("renders the center preview and the right rail with the five map data expressions and unified appearance controls", () => {
     const { container } = renderWorkspace();
 
-    expect(container.querySelector('main[aria-label="地图样式"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="地图样式预览"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="地图"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="地图预览"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="地图对象属性"]')).not.toBeNull();
     expect(container.querySelectorAll('[role="group"][aria-label="地图表达"] button')).toHaveLength(5);
     expect(container.textContent).toContain("省份");

@@ -1,15 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createProjectDocument } from "../../lib/project-document";
 import { InspectorPanel } from "./InspectorPanel";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted for
+  // the rest of the run, racing React's scheduler against jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 describe("InspectorPanel", () => {
   it("shows selected canvas/map/cards controls and emits normalized patches", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
 
     flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "canvas" }} onPatch={onPatch} onReset={vi.fn()} />));
     expect(container.textContent).toContain("画布属性");
@@ -18,6 +37,7 @@ describe("InspectorPanel", () => {
     expect(container.querySelector("#canvas-background-opacity")).not.toBeNull();
     expect(container.querySelector('.property-panel__pair[data-property-pair="canvas-size"] #canvas-width')).not.toBeNull();
     expect(container.querySelector('.property-panel__pair[data-property-pair="canvas-size"] #canvas-height')).not.toBeNull();
+    expect(container.querySelector("[data-canvas-print-size]")?.textContent).toContain("约合印刷");
     const width = container.querySelector("#canvas-width") as HTMLInputElement;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     flushSync(() => {
@@ -35,6 +55,12 @@ describe("InspectorPanel", () => {
       preset.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(onPatch).toHaveBeenCalledWith({ type: "canvas" }, { width: 1080, height: 1080 });
+
+    flushSync(() => {
+      presetSetter?.call(preset, "a3-150");
+      preset.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(onPatch).toHaveBeenCalledWith({ type: "canvas" }, { width: 2480, height: 1754 });
 
     flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "map" }} onPatch={onPatch} onReset={vi.fn()} />));
     expect(container.textContent).toContain("地图属性");
@@ -57,9 +83,6 @@ describe("InspectorPanel", () => {
     expect(container.querySelector('#cards-opacity[type="range"]')).not.toBeNull();
     expect(container.querySelector('#cards-font-size[type="number"]')).not.toBeNull();
     expect(container.querySelector('#cards-connector-style')).not.toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("uploads, replaces, previews, and removes the full-canvas background image", () => {
@@ -79,8 +102,7 @@ describe("InspectorPanel", () => {
       }
     }
     vi.stubGlobal("FileReader", ImmediateFileReader);
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <InspectorPanel project={project} selection={{ type: "canvas" }} onPatch={onPatch} onReset={vi.fn()} />,
     ));
@@ -99,23 +121,18 @@ describe("InspectorPanel", () => {
     flushSync(() => remove.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ type: "canvas" }, { backgroundImageSrc: undefined });
 
-    flushSync(() => root.unmount());
-    container.remove();
     vi.stubGlobal("FileReader", originalFileReader);
   });
 
   it("asks for exactly one reset transaction", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onReset = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "map" }} onPatch={vi.fn()} onReset={onReset} />));
     const reset = container.querySelector('button[type="button"]')!;
     flushSync(() => reset.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onReset).toHaveBeenCalledTimes(1);
     expect(onReset).toHaveBeenCalledWith({ type: "map" });
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("shows the selected asset inspector by stable instance id", () => {
@@ -137,8 +154,7 @@ describe("InspectorPanel", () => {
       visibility: true,
     };
     const nextProject = { ...project, assetElements: [asset] };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <InspectorPanel
         project={nextProject}
@@ -151,9 +167,6 @@ describe("InspectorPanel", () => {
     expect(container.textContent).toContain("北京地标");
     expect(container.textContent).toContain("地域地标");
     expect(container.querySelector("#asset-width")).not.toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 
   it("updates the map-level uniform province texture size from a selected province", () => {
@@ -178,8 +191,7 @@ describe("InspectorPanel", () => {
       },
     };
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <InspectorPanel project={project} selection={{ type: "province", province: "北京市" }} onPatch={onPatch} onReset={vi.fn()} />,
     ));
@@ -191,16 +203,12 @@ describe("InspectorPanel", () => {
       { type: "map" },
       { provinceTextureUniformSize: { enabled: true, width: 100, height: 80 } },
     );
-
-    root.unmount();
-    container.remove();
   });
 
   it("shows a dedicated province inspector and writes only the selected province style", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <InspectorPanel project={project} selection={{ type: "province", province: "北京市" }} onPatch={onPatch} onReset={vi.fn()} />,
     ));
@@ -222,16 +230,12 @@ describe("InspectorPanel", () => {
     });
     flushSync(() => color.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledTimes(1);
-
-    root.unmount();
-    container.remove();
   });
 
   it("keeps full project-wide controls in the right inspector with a global settings entry", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
 
     flushSync(() => root.render(
       <InspectorPanel
@@ -273,8 +277,5 @@ describe("InspectorPanel", () => {
     ));
     expect(container.querySelector("#guests-background")).not.toBeNull();
     expect(container.querySelector(".guest-people-editor")).not.toBeNull();
-
-    flushSync(() => root.unmount());
-    container.remove();
   });
 });

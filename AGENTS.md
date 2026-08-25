@@ -1,12 +1,12 @@
 # 蹭饭地图工作室 — 仓库指南
 
-面向毕业班去向地图编辑器:React + Vite 前端、内嵌 API(`src/server`)、AI 助手(`server/ai`)。改动聚焦在拥有该行为的模块内。
+面向毕业班去向地图编辑器:React + Vite 前端、内嵌 API(`server/`)、AI 助手(`server/ai`)。改动聚焦在拥有该行为的模块内。
 
 ## 结构与所有权
 
 - `src/App.tsx` 编辑器画布、`src/components/ProjectWorkbench.tsx` 项目工作台、`src/components/*` 组件、`src/lib/*` 工具与 AI 客户端(含 IndexedDB 项目存储)、`src/data/*` 静态数据。
-- `src/server/*` Node API(认证、协作、AI agent 循环、导入导出)。
-- 前端视觉问题优先定位 `App.tsx` 与对应组件;数据流问题定位 `src/lib` 与 `src/server`。
+- `server/*` Node API(认证、协作、AI agent 循环、导入导出)。
+- 前端视觉问题优先定位 `App.tsx` 与对应组件;数据流问题定位 `src/lib` 与 `server/`。
 
 ## 构建、测试与开发
 

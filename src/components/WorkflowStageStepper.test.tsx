@@ -34,10 +34,10 @@ describe("WorkflowStageStepper", () => {
 
     expect(container.querySelectorAll("button")).toHaveLength(5);
     expect(container.querySelector("nav")?.getAttribute("aria-label")).toBe("制作步骤");
-    expect(container.textContent).toContain("展示框样式");
-    expect(container.textContent).toContain("数据与素材");
-    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain("展示框样式");
-    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="最终导出"]')?.click());
+    expect(container.textContent).toContain("版式");
+    expect(container.textContent).toContain("名单");
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain("版式");
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="交付"]')?.click());
     expect(onChange).toHaveBeenCalledWith("export");
   });
 });

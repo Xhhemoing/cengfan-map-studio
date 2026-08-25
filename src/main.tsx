@@ -1,15 +1,16 @@
 import { StrictMode, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { App } from "./App";
 import { WorkflowPrototype } from "./components/WorkflowPrototype";
-import { ProjectWorkbench } from "./components/ProjectWorkbench";
 import { StudioMuiProvider } from "./components/StudioMuiProvider";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
-import { createIndexedDbProjectStore } from "./lib/project-store";
+import { ProjectRoute, WorkbenchRoute } from "./components/StudioRoutes";
+import { editorProjectStore } from "./lib/editor-project-store";
+import { isPrototypePath } from "./lib/public-base-path";
 import "./styles.css";
 
-export const workbenchStore = createIndexedDbProjectStore();
+/** 工作台路由沿用的旧名字,指向同一个共享实例。 */
+export const workbenchStore = editorProjectStore;
 
 function projectIdFromHash(hash: string): string | null {
   const match = hash.match(/^#\/project\/([A-Za-z0-9-]+)$/);
@@ -32,21 +33,28 @@ function renderView(container: HTMLElement, view: ReactElement) {
   }
   if (!root) root = createRoot(container);
   const activeRoot: Root = root; // const 捕获,避免闭包内 TS18047 窄化丢失
-  flushSync(() => activeRoot.render(<StrictMode><StudioMuiProvider><AppErrorBoundary>{view}</AppErrorBoundary></StudioMuiProvider></StrictMode>));
+  // 崩溃边界必须拿到共享 store:自建实例看不到降级会话留在内存里的项目,导出通道会空手而归。
+  flushSync(() => activeRoot.render(
+    <StrictMode>
+      <StudioMuiProvider>
+        <AppErrorBoundary projectStore={editorProjectStore}>{view}</AppErrorBoundary>
+      </StudioMuiProvider>
+    </StrictMode>,
+  ));
 }
 
 export function renderApp(container: HTMLElement): void {
   const render = () => {
-    if (window.location.pathname === "/prototype") {
+    if (isPrototypePath(window.location.pathname)) {
       renderView(container, <WorkflowPrototype />);
       return;
     }
     const projectId = projectIdFromHash(window.location.hash);
     if (projectId) {
-      renderView(container, <App projectId={projectId} />);
+      renderView(container, <ProjectRoute projectId={projectId} />);
       return;
     }
-    renderView(container, <ProjectWorkbench store={workbenchStore} />);
+    renderView(container, <WorkbenchRoute />);
   };
   if (hashListener) window.removeEventListener("hashchange", hashListener); // 重复调用 renderApp 只保留一个监听器
   hashListener = render;

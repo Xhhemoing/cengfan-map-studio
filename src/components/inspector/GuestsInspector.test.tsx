@@ -1,15 +1,34 @@
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "../../lib/project-document";
 import { GuestsInspector } from "./GuestsInspector";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted for
+  // the rest of the run, racing React's scheduler against jsdom teardown.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 describe("GuestsInspector", () => {
   it("defers editable fields while keeping visibility immediate", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<GuestsInspector guests={project.guests} onPatch={onPatch} />));
 
     const title = container.querySelector<HTMLInputElement>("#guests-title")!;
@@ -26,15 +45,12 @@ describe("GuestsInspector", () => {
     const visibility = container.querySelector<HTMLButtonElement>("header button")!;
     flushSync(() => visibility.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ visibility: false });
-
-    flushSync(() => root.unmount());
   });
 
   it("switches the guest panel display mode", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<GuestsInspector guests={project.guests} onPatch={onPatch} />));
 
     const select = container.querySelector<HTMLSelectElement>("#guests-display-mode")!;
@@ -43,15 +59,12 @@ describe("GuestsInspector", () => {
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(onPatch).toHaveBeenCalledWith({ displayMode: "cards" });
-
-    flushSync(() => root.unmount());
   });
 
   it("commits the panel free-form custom text from the textarea", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(<GuestsInspector guests={project.guests} onPatch={onPatch} />));
 
     const textarea = container.querySelector<HTMLTextAreaElement>("#guests-custom-text")!;
@@ -63,8 +76,6 @@ describe("GuestsInspector", () => {
     expect(onPatch).not.toHaveBeenCalled();
     flushSync(() => textarea.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ customText: "感谢老师三年的陪伴\n愿大家前程似锦" });
-
-    flushSync(() => root.unmount());
   });
 
   it("commits per-person custom note and avatar url, and clears the avatar", () => {
@@ -73,8 +84,7 @@ describe("GuestsInspector", () => {
       ...project.guests,
       people: [{ id: "g1", name: "王老师", visibility: true }],
     };
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     let currentGuests = project.guests;
     const onPatch = vi.fn((patch: Partial<typeof project.guests>) => {
       currentGuests = { ...currentGuests, ...patch };
@@ -111,7 +121,5 @@ describe("GuestsInspector", () => {
     expect(onPatch).toHaveBeenCalledWith({
       people: [{ id: "g1", name: "王老师", note: "祝大家前程似锦", avatarSrc: undefined, visibility: true }],
     });
-
-    flushSync(() => root.unmount());
   });
 });

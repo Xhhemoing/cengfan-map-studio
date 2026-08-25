@@ -1,7 +1,8 @@
 import type { UserAsset } from "./assets";
+import { buildExportFileName } from "./export-filename";
 import { BUILT_IN_FONTS, type UserFont } from "./fonts";
 import { restoreProjectDocument, serializeProjectDocument, type ProjectDocument } from "./project-document";
-import { createResourcePack, parseResourcePack } from "./resource-pack";
+import { createResourcePack } from "./resource-pack";
 import { DEFAULT_RENDER_SETTINGS, normalizeRenderSettings, type RenderSettings } from "./render-settings";
 import { loadCustomTemplates, type CustomTemplateRecord } from "./template-store";
 import type { ProvinceAppearance } from "./scene-document";
@@ -27,6 +28,106 @@ type ProjectPackageInput = {
   renderSettings?: RenderSettings;
   now?: Date;
 };
+
+export type ProjectPackageErrorCode =
+  | "invalid-json"
+  | "not-a-package"
+  | "package-too-large"
+  | "too-many-resources"
+  | "resource-too-large";
+
+/** 导入失败的统一错误类型：`message` 面向用户，`code` 供调用方区分处理。 */
+export class ProjectPackageError extends Error {
+  readonly code: ProjectPackageErrorCode;
+
+  constructor(code: ProjectPackageErrorCode, message: string) {
+    super(message);
+    this.name = "ProjectPackageError";
+    this.code = code;
+  }
+}
+
+export interface ProjectPackageLimits {
+  /** 工程包文本的字节上限。 */
+  maxBytes: number;
+  /** 素材与字体的条目总数上限。 */
+  maxResources: number;
+  /** 单个素材/字体 data URL 的字节上限。 */
+  maxResourceBytes: number;
+  /** 自定义模板数量上限。 */
+  maxCustomTemplates: number;
+}
+
+export const PROJECT_PACKAGE_LIMITS: ProjectPackageLimits = {
+  maxBytes: 128 * 1024 * 1024,
+  maxResources: 2000,
+  maxResourceBytes: 32 * 1024 * 1024,
+  maxCustomTemplates: 500,
+};
+
+export interface ProjectPackageParseOptions {
+  limits?: Partial<ProjectPackageLimits>;
+}
+
+function resolveLimits(limits: Partial<ProjectPackageLimits> | undefined): ProjectPackageLimits {
+  return limits ? { ...PROJECT_PACKAGE_LIMITS, ...limits } : PROJECT_PACKAGE_LIMITS;
+}
+
+function formatBytes(bytes: number): string {
+  const megabytes = bytes / (1024 * 1024);
+  return megabytes >= 0.1 ? `${megabytes.toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
+}
+
+/**
+ * 在读取文件内容之前用 `File.size` 拒绝超限工程包，避免整份文本进内存后卡死页面。
+ */
+export function assertProjectPackageSize(byteLength: number, options: ProjectPackageParseOptions = {}): void {
+  const { maxBytes } = resolveLimits(options.limits);
+  if (Number.isFinite(byteLength) && byteLength > maxBytes) {
+    throw new ProjectPackageError(
+      "package-too-large",
+      `工程包过大（约 ${formatBytes(byteLength)}），超过 ${formatBytes(maxBytes)} 上限，已停止导入`,
+    );
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function resourceLabel(value: unknown, fallback: string): string {
+  return isRecord(value) && typeof value.label === "string" && value.label ? value.label : fallback;
+}
+
+function assertResourceLimits(record: Record<string, unknown>, limits: ProjectPackageLimits): void {
+  const assets = Array.isArray(record.assets) ? record.assets : [];
+  const fonts = Array.isArray(record.fonts) ? record.fonts : [];
+  const total = assets.length + fonts.length;
+  if (total > limits.maxResources) {
+    throw new ProjectPackageError(
+      "too-many-resources",
+      `工程包内素材与字体共 ${total} 项，超过 ${limits.maxResources} 项上限，已停止导入`,
+    );
+  }
+  const templates = Array.isArray(record.customTemplates) ? record.customTemplates.length : 0;
+  if (templates > limits.maxCustomTemplates) {
+    throw new ProjectPackageError(
+      "too-many-resources",
+      `工程包内自定义模板共 ${templates} 个，超过 ${limits.maxCustomTemplates} 个上限，已停止导入`,
+    );
+  }
+  const assertSource = (item: unknown, fallbackLabel: string): void => {
+    const src = isRecord(item) && typeof item.src === "string" ? item.src : "";
+    if (src.length > limits.maxResourceBytes) {
+      throw new ProjectPackageError(
+        "resource-too-large",
+        `工程包内「${resourceLabel(item, fallbackLabel)}」体积过大（约 ${formatBytes(src.length)}），超过 ${formatBytes(limits.maxResourceBytes)} 上限，已停止导入`,
+      );
+    }
+  };
+  for (const item of assets) assertSource(item, "未命名素材");
+  for (const item of fonts) assertSource(item, "未命名字体");
+}
 
 function normalizeCustomTemplates(value: unknown): CustomTemplateRecord[] {
   if (!Array.isArray(value)) return [];
@@ -137,6 +238,70 @@ function hydrateMissingAssetSources(value: unknown, assets: UserAsset[]): unknow
   return { ...project, map: { ...map, provinceStyles } };
 }
 
+/**
+ * 与 `parseResourcePack` 的归一化语义保持一致，但直接读取已解析的对象：
+ * 工程包里的素材/字体是 base64 大字段，再序列化一次会把整包内容重新物化一遍。
+ * 语义一致性由 project-package.test.ts 的对照用例守护。
+ */
+function normalizePackageResources(record: Record<string, unknown>): { assets: UserAsset[]; fonts: UserFont[] } {
+  const assets: UserAsset[] = [];
+  const assetIds = new Set<string>();
+  const assetsByContent = new Map<string, UserAsset>();
+  if (Array.isArray(record.assets)) {
+    for (const item of record.assets) {
+      if (!isRecord(item)) continue;
+      if (typeof item.id !== "string" || typeof item.src !== "string" || !item.src) continue;
+      if (assetIds.has(item.id)) continue;
+      assetIds.add(item.id);
+      const kind = item.kind === "background" || item.kind === "regional" || item.kind === "province-texture"
+        ? item.kind
+        : "decoration";
+      const provinceIds = Array.isArray(item.provinceIds)
+        ? [...new Set(item.provinceIds.filter((province): province is string => typeof province === "string" && Boolean(province)))]
+        : [];
+      const contentKey = `${kind}\0${item.src}`;
+      const existing = assetsByContent.get(contentKey);
+      if (existing) {
+        existing.provinceIds = [...new Set([...existing.provinceIds, ...provinceIds])];
+        continue;
+      }
+      const asset: UserAsset = {
+        id: item.id,
+        label: typeof item.label === "string" && item.label ? item.label : "未命名素材",
+        src: item.src,
+        kind,
+        provinceIds,
+        source: "user",
+      };
+      assets.push(asset);
+      assetsByContent.set(contentKey, asset);
+    }
+  }
+
+  const fonts: UserFont[] = [];
+  const fontIds = new Set<string>();
+  if (Array.isArray(record.fonts)) {
+    for (const item of record.fonts) {
+      if (!isRecord(item)) continue;
+      if (typeof item.id !== "string" || typeof item.src !== "string" || !item.src) continue;
+      if (fontIds.has(item.id)) continue;
+      fontIds.add(item.id);
+      fonts.push({
+        id: item.id,
+        label: typeof item.label === "string" && item.label ? item.label : "未命名字体",
+        family: typeof item.family === "string" && item.family ? item.family : item.id,
+        src: item.src,
+        format: item.format === "truetype" || item.format === "opentype" || item.format === "woff" || item.format === "woff2"
+          ? item.format
+          : "truetype",
+        source: "user",
+      });
+    }
+  }
+
+  return { assets, fonts };
+}
+
 export function createProjectPackageEnvelope(input: ProjectPackageInput): ProjectPackage {
   return {
     kind: "cengfan-project-package",
@@ -168,42 +333,40 @@ export function serializeProjectPackage(pack: ProjectPackage): string {
   return `${JSON.stringify(pack, null, 2)}\n`;
 }
 
-export function parseProjectPackage(raw: string): ProjectPackage {
+export function parseProjectPackage(raw: string, options: ProjectPackageParseOptions = {}): ProjectPackage {
+  // UTF-16 长度不会大于 UTF-8 字节数，可在 JSON.parse 之前就挡掉超限文本。
+  assertProjectPackageSize(raw.length, options);
   let value: unknown;
   try {
     value = JSON.parse(raw);
   } catch {
-    throw new Error("工程包不是有效的 JSON");
+    throw new ProjectPackageError("invalid-json", "工程包不是有效的 JSON");
   }
-  return restoreProjectPackage(value);
+  return restoreProjectPackage(value, options);
 }
 
-export function restoreProjectPackage(value: unknown): ProjectPackage {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("不是蹭饭图工程包");
-  const record = value as Record<string, unknown>;
+export function restoreProjectPackage(value: unknown, options: ProjectPackageParseOptions = {}): ProjectPackage {
+  if (!isRecord(value)) throw new ProjectPackageError("not-a-package", "不是蹭饭图工程包");
+  const record = value;
   if (record.kind !== "cengfan-project-package" || !record.project || typeof record.project !== "object") {
-    throw new Error("不是蹭饭图工程包");
+    throw new ProjectPackageError("not-a-package", "不是蹭饭图工程包");
   }
-  const resourcePack = parseResourcePack(JSON.stringify({
-    kind: "cengfan-resource-pack",
-    exportedAt: record.exportedAt,
-    assets: record.assets,
-    fonts: record.fonts,
-  }), { allowEmpty: true });
+  assertResourceLimits(record, resolveLimits(options.limits));
+  const resources = normalizePackageResources(record);
   const project = repairProjectFontReferences(
     repairProjectAssetReferences(
-      restoreProjectDocument(JSON.stringify(hydrateMissingAssetSources(record.project, resourcePack.pack.assets))),
-      resourcePack.pack.assets,
+      restoreProjectDocument(JSON.stringify(hydrateMissingAssetSources(record.project, resources.assets))),
+      resources.assets,
     ),
-    resourcePack.pack.fonts,
+    resources.fonts,
   );
   return {
     kind: "cengfan-project-package",
     version: PROJECT_PACKAGE_VERSION,
     exportedAt: validExportedAt(record.exportedAt),
     project,
-    assets: resourcePack.pack.assets,
-    fonts: resourcePack.pack.fonts,
+    assets: resources.assets,
+    fonts: resources.fonts,
     customTemplates: normalizeCustomTemplates(record.customTemplates),
     renderSettings: normalizeRenderSettings(record.renderSettings),
   };
@@ -212,11 +375,16 @@ export function restoreProjectPackage(value: unknown): ProjectPackage {
 /** File picker filter for `.json` / `.cengfan` project packages. */
 export const PROJECT_PACKAGE_FILE_ACCEPT = "application/json,.json,.cengfan";
 
+/** 与 `buildExportFileName` 互逆：剥掉「-[工程包-]YYYY-MM-DD」，重新导入自家导出文件时还原项目名而非连日期一起当名字。 */
 export function projectPackageDisplayName(filename: string): string {
-  return filename.replace(/\.(json|cengfan)$/i, "") || "导入的项目";
+  const withoutExtension = filename.replace(/\.(json|cengfan)$/i, "");
+  return withoutExtension.replace(/-(?:工程包-)?\d{4}-\d{2}-\d{2}$/, "") || withoutExtension || "导入的项目";
 }
 
-export function downloadProjectPackage(pack: ProjectPackage, filename = `cengfan-project-${pack.exportedAt.slice(0, 10)}.json`): void {
+export function downloadProjectPackage(
+  pack: ProjectPackage,
+  filename = buildExportFileName({ kind: "project", date: pack.exportedAt.slice(0, 10) }),
+): void {
   const blob = new Blob([serializeProjectPackage(pack)], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

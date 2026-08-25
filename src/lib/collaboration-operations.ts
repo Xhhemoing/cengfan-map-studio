@@ -46,68 +46,132 @@ export function areValidCollaborationOperations(value: unknown): value is Collab
     && value.every(isCollaborationOperation);
 }
 
-function sameValue(left: unknown, right: unknown): boolean {
+type SeenObjectPairs = WeakMap<object, WeakSet<object>>;
+
+function objectPairWasSeen(left: object, right: object, seen: SeenObjectPairs): boolean {
+  const knownRights = seen.get(left);
+  if (knownRights?.has(right)) return true;
+  if (knownRights) knownRights.add(right);
+  else seen.set(left, new WeakSet([right]));
+  return false;
+}
+
+function forgetObjectPair(left: object, right: object, seen: SeenObjectPairs): void {
+  seen.get(left)?.delete(right);
+}
+
+/** Own keys that survive JSON serialization: `undefined` values are dropped. */
+function definedKeys(record: Record<string, unknown>): string[] {
+  return Object.keys(record).filter((key) => record[key] !== undefined);
+}
+
+/**
+ * Compares JSON-shaped values in one traversal without materializing strings.
+ * Revisited object pairs are treated as equal so circular input terminates.
+ *
+ * Comparison follows JSON semantics rather than JavaScript's: a key whose value
+ * is `undefined` counts as absent and an `undefined` array element counts as
+ * `null`, because a document that round-trips through the wire loses both. Were
+ * they distinguished, restoring a package would report every such key as a
+ * change and emit ghost `array-upsert`s that resurrect items other members
+ * already removed.
+ */
+function structurallyEqual(
+  left: unknown,
+  right: unknown,
+  seen: SeenObjectPairs = new WeakMap(),
+): boolean {
   if (Object.is(left, right)) return true;
-  if (typeof left !== typeof right) return false;
-  if (!left || !right || typeof left !== "object") return false;
-  try {
-    return JSON.stringify(left) === JSON.stringify(right);
-  } catch {
-    return false;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+
+  const leftIsArray = Array.isArray(left);
+  if (leftIsArray !== Array.isArray(right)) return false;
+  if (objectPairWasSeen(left, right, seen)) return true;
+
+  if (leftIsArray) {
+    const leftArray = left as unknown[];
+    const rightArray = right as unknown[];
+    if (leftArray.length !== rightArray.length) return false;
+    for (let index = 0; index < leftArray.length; index += 1) {
+      if (!structurallyEqual(leftArray[index] ?? null, rightArray[index] ?? null, seen)) return false;
+    }
+    return true;
   }
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = definedKeys(leftRecord);
+  const rightKeys = definedKeys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (const key of leftKeys) {
+    if (rightRecord[key] === undefined
+      || !structurallyEqual(leftRecord[key], rightRecord[key], seen)) return false;
+  }
+  return true;
 }
 
 /** 数组元素：普通对象且带非空字符串 id。 */
 type IdQualifiedItem = Record<string, unknown> & { id: string };
 
-/** 数组是否由唯一、非空字符串 id 的普通对象构成。 */
-function isIdQualifiedObjectArray(value: unknown): value is IdQualifiedItem[] {
-  if (!Array.isArray(value)) return false;
-  const seen = new Set<string>();
+/** 为唯一、非空字符串 id 的普通对象数组建立一次性索引。 */
+function indexIdQualifiedObjectArray(value: unknown): Map<string, IdQualifiedItem> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const byId = new Map<string, IdQualifiedItem>();
   for (const element of value) {
-    if (!isRecord(element)) return false;
-    if (typeof element.id !== "string" || element.id.length === 0) return false;
-    if (seen.has(element.id)) return false;
-    seen.add(element.id);
+    if (!isRecord(element)) return undefined;
+    if (typeof element.id !== "string" || element.id.length === 0) return undefined;
+    if (byId.has(element.id)) return undefined;
+    byId.set(element.id, element as IdQualifiedItem);
   }
-  return true;
+  return byId;
 }
 
 export function diffCollaborationDocument(before: unknown, after: unknown): CollaborationOperation[] {
   const operations: CollaborationOperation[] = [];
+  const activeRecordPairs: SeenObjectPairs = new WeakMap();
 
   const visit = (left: unknown, right: unknown, path: string[]) => {
-    if (sameValue(left, right)) return;
+    if (Object.is(left, right)) return;
     if (isRecord(left) && isRecord(right)) {
-      const keys = Array.from(new Set([...Object.keys(left), ...Object.keys(right)])).sort();
+      // A repeated pair is a circular edge already covered by an ancestor.
+      if (objectPairWasSeen(left, right, activeRecordPairs)) return;
+      // Same JSON key semantics as structurallyEqual: an explicitly `undefined`
+      // key is absent, so it never becomes a ghost delete or a set-to-undefined.
+      const keys = Array.from(new Set([...definedKeys(left), ...definedKeys(right)])).sort();
       for (const key of keys) {
-        if (!Object.hasOwn(right, key)) {
+        if (BLOCKED_PATH_PARTS.has(key)) continue;
+        if (right[key] === undefined) {
           operations.push({ type: "delete", path: [...path, key] });
-        } else if (!Object.hasOwn(left, key)) {
+        } else if (left[key] === undefined) {
           operations.push({ type: "set", path: [...path, key], value: structuredClone(right[key]) });
         } else {
           visit(left[key], right[key], [...path, key]);
         }
       }
+      forgetObjectPair(left, right, activeRecordPairs);
       return;
     }
-    if (Array.isArray(left) && Array.isArray(right)
-      && isIdQualifiedObjectArray(left) && isIdQualifiedObjectArray(right)) {
-      const removed = left.filter((item) => !right.some((candidate) => candidate.id === item.id));
-      const upserts: CollaborationOperation[] = [];
-      for (const item of right) {
-        const previous = left.find((candidate) => candidate.id === item.id);
-        if (!previous || !sameValue(previous, item)) {
-          upserts.push({ type: "array-upsert", path, item: structuredClone(item) });
+    if (Array.isArray(left) && Array.isArray(right)) {
+      const leftById = indexIdQualifiedObjectArray(left);
+      const rightById = indexIdQualifiedObjectArray(right);
+      if (leftById && rightById) {
+        const removed = left.filter((item) => !rightById.has((item as IdQualifiedItem).id)) as IdQualifiedItem[];
+        const upserts: CollaborationOperation[] = [];
+        for (const item of right as IdQualifiedItem[]) {
+          const previous = leftById.get(item.id);
+          if (!previous || !structurallyEqual(previous, item)) {
+            upserts.push({ type: "array-upsert", path, item: structuredClone(item) });
+          }
         }
-      }
-      if (removed.length + upserts.length > MAX_OPERATIONS) {
-        operations.push({ type: "set", path, value: structuredClone(right) });
+        if (removed.length + upserts.length > MAX_OPERATIONS) {
+          operations.push({ type: "set", path, value: structuredClone(right) });
+          return;
+        }
+        for (const item of removed) operations.push({ type: "array-remove", path, itemId: item.id });
+        operations.push(...upserts);
         return;
       }
-      for (const item of removed) operations.push({ type: "array-remove", path, itemId: item.id });
-      operations.push(...upserts);
-      return;
+      if (structurallyEqual(left, right)) return;
     }
     if (path.length > 0) operations.push({ type: "set", path, value: structuredClone(right) });
   };

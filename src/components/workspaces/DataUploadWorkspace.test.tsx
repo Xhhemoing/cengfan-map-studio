@@ -44,12 +44,10 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
   const summary = overrides.summary ?? { total: 1, visible: 1, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 };
   const issues = overrides.issues ?? [];
   const dataWorkspaceProps = overrides.dataWorkspaceProps ?? defaultDataWorkspaceProps();
-  const assetPanelProps = overrides.assetPanelProps ?? { onApplyBackground: vi.fn() };
-  const onCreateDecoration = overrides.onCreateDecoration ?? vi.fn();
   const onSelectStudent = overrides.onSelectStudent ?? vi.fn();
   // The DATA stage is split: the center workbench (header + roster table) and
-  // the unified right rail (数据质量/素材库) are separate components composed
-  // by the app shell, so render both together like the shell does.
+  // the unified right rail (数据质量) are separate components composed by the
+  // app shell, so render both together like the shell does.
   flushSync(() => root.render(
     <div className="data-upload-test-suite">
       <DataUploadWorkspace
@@ -57,8 +55,6 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
         summary={summary}
         issues={issues}
         dataWorkspaceProps={dataWorkspaceProps}
-        assetPanelProps={assetPanelProps}
-        onCreateDecoration={onCreateDecoration}
         onSelectStudent={onSelectStudent}
       />
       <DataUploadRail
@@ -66,8 +62,6 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
         summary={summary}
         issues={issues}
         dataWorkspaceProps={dataWorkspaceProps}
-        assetPanelProps={assetPanelProps}
-        onCreateDecoration={onCreateDecoration}
         onSelectStudent={onSelectStudent}
       />
     </div>,
@@ -76,13 +70,15 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
 }
 
 describe("DataUploadWorkspace", () => {
-  it("is the upload data workbench and excludes templates and map expression controls", () => {
+  it("is the roster workbench and excludes map expression controls", () => {
     const { container } = renderWorkspace();
 
-    expect(container.querySelector('main[aria-label="数据与素材工作台"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="名单工作台"]')).not.toBeNull();
     expect(container.querySelector('.data-upload-workspace--expanded')).not.toBeNull();
     expect(container.querySelector('.data-workspace--roster')).not.toBeNull();
     expect(container.querySelector('.data-table-wrap')).not.toBeNull();
+    // 外壳已有「名单」标题，不再叠一层旧的「学生数据中心」头。
+    expect(container.textContent).not.toContain("学生数据中心");
     const addStudent = container.querySelector<HTMLButtonElement>('button[aria-label="展开新增学生"]');
     const importRoster = container.querySelector<HTMLButtonElement>('button[aria-label="展开导入名单"]');
     expect(addStudent?.getAttribute("aria-expanded")).toBe("false");
@@ -91,11 +87,23 @@ describe("DataUploadWorkspace", () => {
     flushSync(() => importRoster?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(container.querySelector('button[aria-label="收起新增学生"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(container.querySelector('button[aria-label="收起导入名单"]')?.getAttribute("aria-expanded")).toBe("true");
-    expect(container.textContent).not.toContain("模板");
+    // 数据阶段仍然不承载「整体模板」选择器；下载 XLSX 模板属于导入主路径，必须可见。
+    expect(container.querySelector(".template-picker")).toBeNull();
+    expect(container.textContent).not.toContain("整体模板");
     expect(container.textContent).not.toContain("地图呈现");
-    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).not.toBeNull();
     expect(container.querySelector(".student-table")).not.toBeNull();
     expect(container.querySelector('[aria-label="数据质量"]')).not.toBeNull();
+  });
+
+  it("hides the template download only when the shell asks for it", () => {
+    const { container } = renderWorkspace({
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), hideTemplateDownload: true },
+    });
+
+    const importRoster = container.querySelector<HTMLButtonElement>('button[aria-label="展开导入名单"]');
+    flushSync(() => importRoster?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(container.querySelector('button[aria-label="下载学生数据 XLSX 模板"]')).toBeNull();
   });
 
   it("forwards row selection without rendering a return-editor action", () => {
@@ -118,6 +126,17 @@ describe("DataUploadWorkspace", () => {
 
     // 顶部栏统一承载六阶段导航，工作台自身不再渲染重复的步骤条
     expect(container.querySelector(".workflow-stage-stepper")).toBeNull();
+  });
+
+  it("keeps the asset library out of the roster stage rail", () => {
+    const { container } = renderWorkspace();
+
+    // 素材主入口在内容阶段，省份贴图从地图阶段直达；名单侧栏只做数据质量。
+    expect(container.textContent).not.toContain("素材库");
+    expect(container.querySelector(".asset-panel")).toBeNull();
+    expect(container.querySelector('.data-upload-workspace__rail [role="tablist"]')).toBeNull();
+    expect(container.querySelector('.data-upload-workspace__rail [aria-label="数据质量"]')).not.toBeNull();
+    expect(container.querySelector('.data-upload-workspace__rail section[aria-label="地图映射"]')).not.toBeNull();
   });
 
   it("restores the province mapping panel with inline province overrides", () => {
@@ -150,54 +169,5 @@ describe("DataUploadWorkspace", () => {
     expect(mapping).not.toBeNull();
     expect(mapping?.textContent).toContain("城市与省份已全部定位");
     expect(mapping?.querySelector('[aria-label="省份分布"]')?.textContent).toContain("北京市");
-  });
-
-  it("defaults the side rail to the quality tab and switches to the asset library", () => {
-    const { container } = renderWorkspace();
-
-    const qualityTab = container.querySelector<HTMLButtonElement>("#data-rail-quality-tab");
-    const assetsTab = container.querySelector<HTMLButtonElement>("#data-rail-assets-tab");
-    expect(qualityTab).not.toBeNull();
-    expect(assetsTab).not.toBeNull();
-    expect(container.querySelector("#data-rail-quality")).not.toBeNull();
-    expect(container.querySelector("#data-rail-assets")).toBeNull();
-    expect(qualityTab?.getAttribute("aria-selected")).toBe("true");
-    expect(assetsTab?.getAttribute("aria-selected")).toBe("false");
-
-    flushSync(() => assetsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-
-    expect(container.querySelector("#data-rail-quality")).toBeNull();
-    expect(container.querySelector("#data-rail-assets")).not.toBeNull();
-    expect(container.querySelector("#data-rail-assets .asset-panel")).not.toBeNull();
-    expect(assetsTab?.getAttribute("aria-selected")).toBe("true");
-    expect(qualityTab?.getAttribute("aria-selected")).toBe("false");
-
-    // arrow keys switch and refocus the other tab
-    flushSync(() => assetsTab?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })));
-    expect(container.querySelector("#data-rail-quality")).not.toBeNull();
-    expect(container.querySelector("#data-rail-assets")).toBeNull();
-    expect(qualityTab?.getAttribute("aria-selected")).toBe("true");
-    expect(document.activeElement).toBe(qualityTab);
-  });
-
-  it("wires the asset library province picker to the workspace override", () => {
-    const onCreateDecoration = vi.fn();
-    const { container } = renderWorkspace({
-      assetPanelProps: { onApplyBackground: vi.fn(), provinces: ["北京市", "浙江省"] },
-      onCreateDecoration,
-    });
-
-    flushSync(() => container.querySelector<HTMLButtonElement>("#data-rail-assets-tab")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-
-    const select = container.querySelector("#asset-province") as HTMLSelectElement;
-    expect(select).not.toBeNull();
-    expect(container.querySelector("#asset-province-upload")).toBeNull();
-
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-    flushSync(() => {
-      setter?.call(select, "北京市");
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    expect(container.querySelector("#asset-province-upload")).not.toBeNull();
   });
 });

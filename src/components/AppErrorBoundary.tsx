@@ -1,24 +1,348 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { MapPinned } from "lucide-react";
+import {
+  createSafeLocalStorageMirror,
+  loadBrowserWorkspaceMirror,
+  type SyncWorkspaceStore,
+} from "../lib/browser-workspace-store";
+import { downloadProjectPackage, type ProjectPackage } from "../lib/project-package";
+import type { ProjectStore, ProjectStoreHealth } from "../lib/project-store";
+
+type BackupOutcome =
+  | "exported"
+  | "mirror-empty"
+  | "mirror-corrupt"
+  | "mirror-unreadable"
+  | "download-failed"
+  | "store-listed"
+  | "store-empty"
+  | "store-degraded"
+  | "store-unreadable"
+  | "store-unavailable"
+  | "project-missing";
+
+const OK_OUTCOMES = new Set<BackupOutcome>(["exported", "store-listed"]);
+
+/**
+ * `health === "memory"` 的唯一含义是本机数据库打不开、读到的是本次会话的内存副本。
+ * 磁盘上还有没有工程，降级状态下无从得知，文案不能替用户下这个结论。
+ */
+const DEGRADED_PREFIX = "无法打开本机项目数据库，已降级为内存模式";
+
+export interface AppErrorBoundaryProps {
+  children: ReactNode;
+  /** 覆盖工作区镜像来源，默认读取 localStorage 镜像。 */
+  mirror?: SyncWorkspaceStore;
+  /**
+   * 项目库来源（只读，不会写回），由 main.tsx 注入共享实例。
+   * 崩溃屏绝不自建 store：降级会话里的工程只活在共享实例的内存副本里，
+   * 第二个实例既看不到这些工程，还会再占一条数据库连接。
+   */
+  projectStore?: ProjectStore;
+  /** 覆盖下载通道，默认走工程包下载助手。 */
+  downloadPack?: (pack: ProjectPackage, filename?: string) => void;
+  /** 覆盖跳转通道，默认改写地址栏 hash。 */
+  navigate?: (hash: string) => void;
+  /** 覆盖整页重载通道，默认调用 window.location.reload。 */
+  reload?: () => void;
+}
+
+interface CrashDetail {
+  message: string;
+  componentStack: string | null;
+}
+
+interface BackupNote {
+  tone: "ok" | "error";
+  message: string;
+}
+
+/** 崩溃屏里可以逐个导出的工程条目，只保留展示与定位需要的字段。 */
+interface RecoverableProject {
+  id: string;
+  name: string;
+  updatedAt: string;
+  studentCount: number;
+}
+
+interface AppErrorBoundaryState {
+  failed: boolean;
+  backup: BackupNote | null;
+  projects: RecoverableProject[];
+}
+
+function errorMessage(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason);
+}
+
+/** 工程名可能带路径分隔符等在下载时非法的字符。 */
+function filenameSafe(name: string): string {
+  // C0 controls are illegal in download names; the class is intentional.
+  // eslint-disable-next-line no-control-regex
+  const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "_").trim();
+  return cleaned || "未命名项目";
+}
 
 /**
  * Last-resort error boundary: any uncaught render error shows a recoverable
- * screen instead of a blank page. Recovery actions: re-render the tree or go
- * back to the project list.
+ * screen instead of a blank page. Recovery actions: re-render the tree, go back
+ * to the project list, or export the user's work as project packages.
+ *
+ * 导出有两条通道：编辑器的 localStorage 工作区镜像是主通道；镜像为空/损坏/读不出来时
+ * （例如崩溃发生在项目工作台路由上），回落到只读枚举 IndexedDB 项目库并逐个导出。
  */
-export class AppErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
+export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
+  state: AppErrorBoundaryState = { failed: false, backup: null, projects: [] };
 
-  static getDerivedStateFromError(): { failed: boolean } {
+  private crash: CrashDetail | null = null;
+
+  /** 列举当时的持久化状态：导出读不到工程时，用它区分“中途掉线”与“真的没了”。 */
+  private listedHealth: ProjectStoreHealth | null = null;
+
+  private mounted = true;
+
+  static getDerivedStateFromError(): Pick<AppErrorBoundaryState, "failed"> {
     return { failed: true };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
+    this.crash = { message: error.message, componentStack: info.componentStack ?? null };
     console.error("AppErrorBoundary caught:", error, info.componentStack);
   }
 
+  componentWillUnmount(): void {
+    this.mounted = false;
+  }
+
+  private finishBackup(
+    outcome: BackupOutcome,
+    message: string,
+    detail: Record<string, unknown> = {},
+    append = false,
+  ): void {
+    const record = {
+      scope: "AppErrorBoundary",
+      action: "export-backup",
+      outcome,
+      at: new Date().toISOString(),
+      crash: this.crash,
+      ...detail,
+    };
+    if (OK_OUTCOMES.has(outcome)) console.info("AppErrorBoundary 备份导出:", record);
+    else console.error("AppErrorBoundary 备份导出失败:", record);
+    if (!this.mounted) return;
+    const tone: BackupNote["tone"] = OK_OUTCOMES.has(outcome) ? "ok" : "error";
+    this.setState((previous) => {
+      if (!append || !previous.backup) return { backup: { tone, message } };
+      return {
+        backup: {
+          tone: previous.backup.tone === "error" || tone === "error" ? "error" : "ok",
+          message: `${previous.backup.message} ${message}`,
+        },
+      };
+    });
+  }
+
+  private exportBackup = (): void => {
+    const mirror = this.props.mirror ?? createSafeLocalStorageMirror();
+    const download = this.props.downloadPack ?? downloadProjectPackage;
+    let raw: string | null;
+    try {
+      raw = mirror.get();
+    } catch (reason) {
+      this.finishBackup("mirror-unreadable", `读取本地工作区失败：${errorMessage(reason)}`, {
+        error: errorMessage(reason),
+      });
+      void this.offerStoredProjects();
+      return;
+    }
+    if (!raw) {
+      this.finishBackup("mirror-empty", "没有找到本地工作区备份，这台设备上还没有保存过工程内容。");
+      void this.offerStoredProjects();
+      return;
+    }
+    const pack = loadBrowserWorkspaceMirror(mirror);
+    if (!pack) {
+      this.finishBackup("mirror-corrupt", "本地工作区备份已损坏，无法导出，请保留此页面并反馈控制台中的诊断信息。", {
+        mirrorBytes: raw.length,
+        mirrorHead: raw.slice(0, 120),
+      });
+      void this.offerStoredProjects();
+      return;
+    }
+    const detail = {
+      mirrorBytes: raw.length,
+      packageVersion: pack.version,
+      exportedAt: pack.exportedAt,
+      students: pack.project.students.length,
+      assets: pack.assets.length,
+      fonts: pack.fonts.length,
+    };
+    try {
+      download(pack, `cengfan-recovery-${pack.exportedAt.slice(0, 10)}.json`);
+    } catch (reason) {
+      this.finishBackup("download-failed", `导出工程备份失败：${errorMessage(reason)}`, {
+        ...detail,
+        error: errorMessage(reason),
+      });
+      return;
+    }
+    this.finishBackup("exported", "已导出工程备份文件，可在恢复后通过「导入工程」重新载入。", detail);
+  };
+
+  /** 镜像没救时的第二条通道：只读列出本机项目库，交给用户逐个导出。 */
+  private async offerStoredProjects(): Promise<void> {
+    const store = this.props.projectStore;
+    if (!store) {
+      this.finishBackup(
+        "store-unavailable",
+        "崩溃屏没有拿到本机项目库通道，无法列出可导出的工程；请保留此页面并反馈控制台中的诊断信息。",
+        {},
+        true,
+      );
+      return;
+    }
+    let items;
+    try {
+      items = await store.list();
+    } catch (reason) {
+      this.finishBackup("store-unreadable", `本机项目库也读不出来：${errorMessage(reason)}`, {
+        error: errorMessage(reason),
+      }, true);
+      return;
+    }
+    // health 是打开失败之后才翻转的快照值，必须在 list() 之后再读。
+    const health = store.health;
+    this.listedHealth = health;
+    if (items.length === 0) {
+      if (health === "memory") {
+        this.finishBackup(
+          "store-degraded",
+          `${DEGRADED_PREFIX}：本次会话的内存副本里没有工程，磁盘上是否还有内容此刻无法确认，请不要清理浏览器数据。`,
+          { storeHealth: health, diskContentsKnown: false },
+          true,
+        );
+      } else {
+        this.finishBackup("store-empty", "本机项目库里也没有已保存的工程。", { storeHealth: health }, true);
+      }
+      return;
+    }
+    const projects: RecoverableProject[] = items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      updatedAt: item.updatedAt,
+      studentCount: item.studentCount,
+    }));
+    if (this.mounted) this.setState({ projects });
+    const message = health === "memory"
+      ? `${DEGRADED_PREFIX}：下面 ${projects.length} 个工程仅存在于本次会话内存中，请立刻导出，刷新或关闭页面后就会丢失。`
+      : `本机项目库里还有 ${projects.length} 个工程，可逐个导出。`;
+    this.finishBackup(
+      "store-listed",
+      message,
+      { storeHealth: health, diskContentsKnown: health === "persistent", projects: projects.length },
+      true,
+    );
+  }
+
+  private exportStoredProject(item: RecoverableProject): void {
+    void this.runStoredProjectExport(item);
+  }
+
+  /**
+   * get() 返回 null 有两种成因：磁盘上真的没有这一行，或者数据库已降级、读到的是空内存副本。
+   * 降级状态下不能说工程“已经不在本机项目库里”——它很可能还躺在打不开的库里。
+   */
+  private reportMissingProject(item: RecoverableProject, health: ProjectStoreHealth): void {
+    const degradedDuringRead = health === "memory" && this.listedHealth === "persistent";
+    const message = health === "persistent"
+      ? `「${item.name}」已经不在本机项目库里了。`
+      : degradedDuringRead
+        ? `列出「${item.name}」之后本机项目数据库掉线并降级为内存模式，现在读不到它；这不等于它被删除了，请不要清理浏览器数据。`
+        : `「${item.name}」不在本次会话的内存副本里；本机项目数据库仍处于降级状态，无法确认它是否还在磁盘上。`;
+    this.finishBackup("project-missing", message, {
+      projectId: item.id,
+      storeHealth: health,
+      listedHealth: this.listedHealth,
+      degradedDuringRead,
+    });
+  }
+
+  private async runStoredProjectExport(item: RecoverableProject): Promise<void> {
+    const store = this.props.projectStore;
+    if (!store) {
+      this.finishBackup("store-unavailable", `崩溃屏没有拿到本机项目库通道，无法导出「${item.name}」。`, {
+        projectId: item.id,
+      });
+      return;
+    }
+    const download = this.props.downloadPack ?? downloadProjectPackage;
+    let stored;
+    try {
+      stored = await store.get(item.id);
+    } catch (reason) {
+      this.finishBackup("store-unreadable", `读取「${item.name}」失败：${errorMessage(reason)}`, {
+        projectId: item.id,
+        error: errorMessage(reason),
+      });
+      return;
+    }
+    if (!stored) {
+      this.reportMissingProject(item, store.health);
+      return;
+    }
+    const detail = {
+      projectId: stored.id,
+      projectName: stored.name,
+      source: "project-store",
+      packageVersion: stored.pack.version,
+      exportedAt: stored.pack.exportedAt,
+      students: stored.pack.project.students.length,
+      assets: stored.pack.assets.length,
+      fonts: stored.pack.fonts.length,
+    };
+    try {
+      download(stored.pack, `cengfan-recovery-${filenameSafe(stored.name)}-${stored.updatedAt.slice(0, 10)}.json`);
+    } catch (reason) {
+      this.finishBackup("download-failed", `导出「${stored.name}」失败：${errorMessage(reason)}`, {
+        ...detail,
+        error: errorMessage(reason),
+      });
+      return;
+    }
+    this.finishBackup("exported", `已导出「${stored.name}」，可在恢复后通过「导入工程」重新载入。`, detail);
+  }
+
+  /** 软重置：只丢掉崩溃态，页面（以及共享 store 实例与它的内存副本）原地保留。 */
+  private clearCrashScreen = (): void => {
+    if (!this.mounted) return;
+    this.setState({ failed: false, backup: null, projects: [] });
+  };
+
+  /**
+   * 列出来的工程只存在于降级 store 的内存副本里：整页重载会连同这份堆内存
+   * 一起丢掉，而崩溃屏刚刚才让用户“立刻导出”它们。这种时候只切 hash，不重载。
+   */
+  private holdsMemoryOnlyProjects(): boolean {
+    return this.listedHealth === "memory" && this.state.projects.length > 0;
+  }
+
+  private returnToProjectList = (): void => {
+    const navigate = this.props.navigate ?? ((hash: string) => { window.location.hash = hash; });
+    const keepHeapAlive = this.holdsMemoryOnlyProjects();
+    navigate("#/");
+    if (!keepHeapAlive) {
+      (this.props.reload ?? (() => { window.location.reload(); }))();
+      return;
+    }
+    // hashchange 是异步派发的：在同一个宏任务里清崩溃态，只会把刚崩过的子树再渲染一遍。
+    // 等路由换完视图再重置，页面不重载，内存里的工程也就还在。
+    window.setTimeout(this.clearCrashScreen, 0);
+  };
+
   render(): ReactNode {
     if (!this.state.failed) return this.props.children;
+    const { backup, projects } = this.state;
     return (
       <main className="workbench-shell">
         <section className="workbench-error workbench-error--recover" role="alert">
@@ -30,7 +354,7 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, { faile
               type="button"
               className="primary-button"
               aria-label="重新加载界面"
-              onClick={() => this.setState({ failed: false })}
+              onClick={this.clearCrashScreen}
             >
               重新加载
             </button>
@@ -38,14 +362,40 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, { faile
               type="button"
               className="secondary-button"
               aria-label="返回项目列表"
-              onClick={() => {
-                window.location.hash = "#/";
-                window.location.reload();
-              }}
+              onClick={this.returnToProjectList}
             >
               返回项目列表
             </button>
+            <button
+              type="button"
+              className="secondary-button"
+              aria-label="导出工程备份"
+              onClick={this.exportBackup}
+            >
+              导出工程备份
+            </button>
           </div>
+          {backup ? <p role="status" data-tone={backup.tone}>{backup.message}</p> : null}
+          {projects.length > 0 ? (
+            <ul
+              aria-label="本机项目库工程"
+              style={{ display: "grid", gap: 8, margin: 0, padding: 0, listStyle: "none" }}
+            >
+              {projects.map((project) => (
+                <li key={project.id}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    data-project-id={project.id}
+                    aria-label={`导出「${project.name}」`}
+                    onClick={() => this.exportStoredProject(project)}
+                  >
+                    {project.name}（{project.studentCount} 人 · {project.updatedAt.slice(0, 10)}）
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </section>
       </main>
     );

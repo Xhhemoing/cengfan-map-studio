@@ -7,6 +7,8 @@ const STORE_NAME = "workspace";
 const PROJECT_STORE_NAME = "projects";
 const WORKSPACE_ID = "current";
 const MIRROR_KEY = "cengfan-map-studio:workspace-mirror";
+/** blocked 后留给其他连接响应 versionchange 并关闭的窗口。 */
+const BLOCKED_GRACE_MS = 3000;
 
 export interface SyncWorkspaceStore {
   get(): string | null;
@@ -75,6 +77,13 @@ function openWorkspaceDatabase(factory: IDBFactory): Promise<IDBDatabase> {
       let target = Math.max(version, DATABASE_VERSION);
       if (!hasStore) target = Math.max(target, version + 1);
       const request = factory.open(DATABASE_NAME, target);
+      let blockedTimer: ReturnType<typeof setTimeout> | null = null;
+      let abandoned = false;
+      const clearBlockedTimer = () => {
+        if (blockedTimer === null) return;
+        clearTimeout(blockedTimer);
+        blockedTimer = null;
+      };
       request.onupgradeneeded = () => {
         const opened = request.result;
         if (!opened.objectStoreNames.contains(STORE_NAME)) {
@@ -84,9 +93,31 @@ function openWorkspaceDatabase(factory: IDBFactory): Promise<IDBDatabase> {
           opened.createObjectStore(PROJECT_STORE_NAME);
         }
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error("IndexedDB 打开失败"));
-      request.onblocked = () => reject(new Error("IndexedDB 被其他标签页占用"));
+      request.onsuccess = () => {
+        clearBlockedTimer();
+        // 已按“被占用”失败返回过，迟到的连接必须关闭，否则会挡住后续升级。
+        if (abandoned) {
+          request.result.close();
+          return;
+        }
+        // 其他标签页请求升级时立刻让路，否则对方永远 blocked。
+        request.result.onversionchange = () => request.result.close();
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        clearBlockedTimer();
+        reject(request.error ?? new Error("IndexedDB 打开失败"));
+      };
+      request.onblocked = () => {
+        // blocked 只是过渡态：其他连接收到 versionchange 后会关闭，超过宽限窗口才判定被占用。
+        if (blockedTimer !== null) return;
+        blockedTimer = setTimeout(() => {
+          blockedTimer = null;
+          abandoned = true;
+          reject(new Error("IndexedDB 被其他标签页占用"));
+        }, BLOCKED_GRACE_MS);
+        (blockedTimer as unknown as { unref?: () => void }).unref?.();
+      };
     };
     probe.onerror = () => reject(probe.error ?? new Error("IndexedDB 打开失败"));
     // 全新库首次 open 也会触发 upgradeneeded（创建空库），无需中止；onsuccess 中会关闭并重新按需 open。
@@ -100,9 +131,12 @@ export function createIndexedDbWorkspaceStore(factory: IDBFactory = indexedDB): 
       const database = await openWorkspaceDatabase(factory);
       try {
         return await new Promise<ProjectPackage | null>((resolve, reject) => {
-          const request = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(WORKSPACE_ID);
+          const transaction = database.transaction(STORE_NAME, "readonly");
+          const request = transaction.objectStore(STORE_NAME).get(WORKSPACE_ID);
           request.onsuccess = () => resolve(parsePackage(request.result));
           request.onerror = () => reject(request.error ?? new Error("IndexedDB 读取失败"));
+          // 连接被回收时事务只会 abort，没有这一步 promise 永远悬挂。
+          transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB 读取中止"));
         });
       } finally {
         database.close();

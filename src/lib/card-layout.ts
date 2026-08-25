@@ -19,6 +19,7 @@ import {
   buildConnectorGeometry,
   connectorGeometriesIntersect,
   segmentIntersectsRect,
+  segmentsCross,
   type ConnectorGeometry,
   type ConnectorStyle,
 } from "./connector-geometry";
@@ -118,108 +119,317 @@ function overlaps(a: CardArea, b: CardArea, gap = 0): boolean {
     && a.y + a.height + gap > b.y;
 }
 
-function orientation(a: CardPoint, b: CardPoint, c: CardPoint): number {
-  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+/*
+ * Polygon obstacles are re-tested thousands of times per solve (every grid probe
+ * in `containFree`, every candidate rail in `buildCandidates`, every connector in
+ * `connectorMapIntersections`). Rings are therefore flattened once into typed
+ * coordinate arrays with per-ring bounding boxes, cached on the polygon object,
+ * and every predicate below runs on those scalars with a broad-phase reject
+ * first. `CardPolygon` itself is unchanged, so callers need no migration.
+ */
+
+interface PreparedRing {
+  /** Flat `[x0, y0, x1, y1, ...]` coordinates of the ring. */
+  points: Float64Array;
+  count: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
 }
 
-function pointOnSegment(point: CardPoint, start: CardPoint, end: CardPoint): boolean {
-  return Math.abs(orientation(start, end, point)) <= EPSILON
-    && point.x >= Math.min(start.x, end.x) - EPSILON
-    && point.x <= Math.max(start.x, end.x) + EPSILON
-    && point.y >= Math.min(start.y, end.y) - EPSILON
-    && point.y <= Math.max(start.y, end.y) + EPSILON;
+interface PreparedPolygon {
+  rings: PreparedRing[];
+  /** `null` for rings that cannot enclose an area (matches the legacy guard). */
+  bounds: CardArea | null;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
 }
 
-function segmentsIntersect(a: CardPoint, b: CardPoint, c: CardPoint, d: CardPoint): boolean {
-  const abC = orientation(a, b, c);
-  const abD = orientation(a, b, d);
-  const cdA = orientation(c, d, a);
-  const cdB = orientation(c, d, b);
-  if (((abC > EPSILON && abD < -EPSILON) || (abC < -EPSILON && abD > EPSILON))
-    && ((cdA > EPSILON && cdB < -EPSILON) || (cdA < -EPSILON && cdB > EPSILON))) return true;
-  return pointOnSegment(c, a, b)
-    || pointOnSegment(d, a, b)
-    || pointOnSegment(a, c, d)
-    || pointOnSegment(b, c, d);
+const preparedPolygons = new WeakMap<CardPolygon, PreparedPolygon>();
+
+function preparePolygon(polygon: CardPolygon): PreparedPolygon {
+  const cached = preparedPolygons.get(polygon);
+  if (cached) return cached;
+  const rings: PreparedRing[] = [];
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let total = 0;
+  for (const ring of polygon.rings) {
+    const count = ring.length;
+    const points = new Float64Array(count * 2);
+    let ringMinX = Infinity;
+    let ringMinY = Infinity;
+    let ringMaxX = -Infinity;
+    let ringMaxY = -Infinity;
+    for (let index = 0; index < count; index += 1) {
+      const point = ring[index]!;
+      points[index * 2] = point.x;
+      points[index * 2 + 1] = point.y;
+      if (point.x < ringMinX) ringMinX = point.x;
+      if (point.x > ringMaxX) ringMaxX = point.x;
+      if (point.y < ringMinY) ringMinY = point.y;
+      if (point.y > ringMaxY) ringMaxY = point.y;
+    }
+    total += count;
+    if (ringMinX < minX) minX = ringMinX;
+    if (ringMinY < minY) minY = ringMinY;
+    if (ringMaxX > maxX) maxX = ringMaxX;
+    if (ringMaxY > maxY) maxY = ringMaxY;
+    rings.push({ points, count, minX: ringMinX, minY: ringMinY, maxX: ringMaxX, maxY: ringMaxY });
+  }
+  const bounds = polygon.bounds
+    ?? (total >= 3 ? { x: minX, y: minY, width: maxX - minX, height: maxY - minY } : null);
+  const prepared: PreparedPolygon = {
+    rings,
+    bounds,
+    minX: bounds ? bounds.x : minX,
+    minY: bounds ? bounds.y : minY,
+    maxX: bounds ? bounds.x + bounds.width : maxX,
+    maxY: bounds ? bounds.y + bounds.height : maxY,
+  };
+  preparedPolygons.set(polygon, prepared);
+  return prepared;
 }
 
-function pointInRing(point: CardPoint, ring: CardPoint[]): boolean {
+/** Winding/on-edge test for one flattened ring. */
+function ringContains(ring: PreparedRing, x: number, y: number): boolean {
+  const { points, count } = ring;
   let inside = false;
-  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
-    const start = ring[previous]!;
-    const end = ring[index]!;
-    if (pointOnSegment(point, start, end)) return true;
-    if ((start.y > point.y) !== (end.y > point.y)) {
-      const x = start.x + (point.y - start.y) * (end.x - start.x) / (end.y - start.y);
-      if (x >= point.x - EPSILON) inside = !inside;
+  for (let index = 0, previous = count - 1; index < count; previous = index, index += 1) {
+    const startX = points[previous * 2]!;
+    const startY = points[previous * 2 + 1]!;
+    const endX = points[index * 2]!;
+    const endY = points[index * 2 + 1]!;
+    if (Math.abs((endX - startX) * (y - startY) - (endY - startY) * (x - startX)) <= EPSILON
+      && x >= Math.min(startX, endX) - EPSILON
+      && x <= Math.max(startX, endX) + EPSILON
+      && y >= Math.min(startY, endY) - EPSILON
+      && y <= Math.max(startY, endY) + EPSILON) return true;
+    if ((startY > y) !== (endY > y)) {
+      if (startX + (y - startY) * (endX - startX) / (endY - startY) >= x - EPSILON) inside = !inside;
     }
   }
   return inside;
 }
 
-function pointInPolygon(point: CardPoint, polygon: CardPolygon): boolean {
-  const [shell, ...holes] = polygon.rings;
-  return Boolean(shell && pointInRing(point, shell) && !holes.some((hole) => pointInRing(point, hole)));
+function preparedContainsPoint(prepared: PreparedPolygon, x: number, y: number): boolean {
+  const shell = prepared.rings[0];
+  if (!shell || !ringContains(shell, x, y)) return false;
+  for (let index = 1; index < prepared.rings.length; index += 1) {
+    if (ringContains(prepared.rings[index]!, x, y)) return false;
+  }
+  return true;
 }
 
 function polygonBounds(polygon: CardPolygon): CardArea | null {
-  if (polygon.bounds) return polygon.bounds;
-  const points = polygon.rings.flat();
-  if (points.length < 3) return null;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const point of points) {
-    minX = Math.min(minX, point.x);
-    minY = Math.min(minY, point.y);
-    maxX = Math.max(maxX, point.x);
-    maxY = Math.max(maxY, point.y);
+  return preparePolygon(polygon).bounds;
+}
+
+/** Does any ring edge cross the axis-aligned rectangle's outline? */
+function preparedCrossesRectangleEdges(
+  prepared: PreparedPolygon,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+): boolean {
+  for (const ring of prepared.rings) {
+    if (ring.count === 0) continue;
+    if (ring.maxX < minX - EPSILON || ring.minX > maxX + EPSILON
+      || ring.maxY < minY - EPSILON || ring.minY > maxY + EPSILON) continue;
+    const { points, count } = ring;
+    let ax = points[(count - 1) * 2]!;
+    let ay = points[(count - 1) * 2 + 1]!;
+    for (let index = 0; index < count; index += 1) {
+      // Legacy pairing walked (ring[i], ring[i + 1]); rotating the cursor keeps
+      // the same edge set while reading each coordinate once.
+      const bx = ax;
+      const by = ay;
+      ax = points[index * 2]!;
+      ay = points[index * 2 + 1]!;
+      if (Math.max(ax, bx) < minX - EPSILON || Math.min(ax, bx) > maxX + EPSILON
+        || Math.max(ay, by) < minY - EPSILON || Math.min(ay, by) > maxY + EPSILON) continue;
+      if (segmentsCross(ax, ay, bx, by, minX, minY, maxX, minY)
+        || segmentsCross(ax, ay, bx, by, maxX, minY, maxX, maxY)
+        || segmentsCross(ax, ay, bx, by, maxX, maxY, minX, maxY)
+        || segmentsCross(ax, ay, bx, by, minX, maxY, minX, minY)) return true;
+    }
   }
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  return false;
+}
+
+function preparedIntersectsRectangle(
+  prepared: PreparedPolygon,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+): boolean {
+  if (!prepared.bounds) return false;
+  if (!(minX < prepared.maxX && maxX > prepared.minX && minY < prepared.maxY && maxY > prepared.minY)) {
+    return false;
+  }
+  const shell = prepared.rings[0];
+  if (shell && shell.maxX >= minX - EPSILON && shell.minX <= maxX + EPSILON
+    && shell.maxY >= minY - EPSILON && shell.minY <= maxY + EPSILON) {
+    const { points, count } = shell;
+    for (let index = 0; index < count; index += 1) {
+      const x = points[index * 2]!;
+      const y = points[index * 2 + 1]!;
+      if (x >= minX - EPSILON && x <= maxX + EPSILON && y >= minY - EPSILON && y <= maxY + EPSILON) return true;
+    }
+  }
+  if (preparedCrossesRectangleEdges(prepared, minX, minY, maxX, maxY)) return true;
+  return preparedContainsPoint(prepared, minX, minY)
+    || preparedContainsPoint(prepared, maxX, minY)
+    || preparedContainsPoint(prepared, maxX, maxY)
+    || preparedContainsPoint(prepared, minX, maxY);
 }
 
 function rectangleIntersectsPolygon(card: CardArea, polygon: CardPolygon, gap: number): boolean {
-  const expanded = {
-    x: card.x - gap,
-    y: card.y - gap,
-    width: card.width + gap * 2,
-    height: card.height + gap * 2,
+  return preparedIntersectsRectangle(
+    preparePolygon(polygon),
+    card.x - gap,
+    card.y - gap,
+    card.x + card.width + gap,
+    card.y + card.height + gap,
+  );
+}
+
+/**
+ * Uniform-grid broad phase over polygon bounding boxes. A saturated poster
+ * carries one polygon per projected province ring (100+ on a China map) and
+ * every probe used to test all of them; bucketing turns that into a handful of
+ * candidates per query.
+ */
+interface PolygonIndex {
+  prepared: PreparedPolygon[];
+  columns: number;
+  rows: number;
+  originX: number;
+  originY: number;
+  cellWidth: number;
+  cellHeight: number;
+  buckets: Int32Array[];
+  visited: Int32Array;
+  epoch: number;
+}
+
+const polygonIndexes = new WeakMap<readonly CardPolygon[], PolygonIndex>();
+
+function buildPolygonIndex(polygons: readonly CardPolygon[]): PolygonIndex {
+  const prepared = polygons.map(preparePolygon);
+  let originX = Infinity;
+  let originY = Infinity;
+  let extentX = -Infinity;
+  let extentY = -Infinity;
+  for (const polygon of prepared) {
+    if (!polygon.bounds) continue;
+    if (polygon.minX < originX) originX = polygon.minX;
+    if (polygon.minY < originY) originY = polygon.minY;
+    if (polygon.maxX > extentX) extentX = polygon.maxX;
+    if (polygon.maxY > extentY) extentY = polygon.maxY;
+  }
+  const axis = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(prepared.length))));
+  const finite = Number.isFinite(originX) && Number.isFinite(originY)
+    && Number.isFinite(extentX) && Number.isFinite(extentY);
+  const columns = finite ? axis : 1;
+  const rows = finite ? axis : 1;
+  const cellWidth = finite ? Math.max(EPSILON, (extentX - originX) / columns) : 1;
+  const cellHeight = finite ? Math.max(EPSILON, (extentY - originY) / rows) : 1;
+  const lists: number[][] = Array.from({ length: columns * rows }, () => []);
+  for (let index = 0; index < prepared.length; index += 1) {
+    const polygon = prepared[index]!;
+    if (!polygon.bounds || !finite) {
+      for (const list of lists) list.push(index);
+      continue;
+    }
+    const minColumn = clamp(Math.floor((polygon.minX - originX) / cellWidth), 0, columns - 1);
+    const maxColumn = clamp(Math.floor((polygon.maxX - originX) / cellWidth), 0, columns - 1);
+    const minRow = clamp(Math.floor((polygon.minY - originY) / cellHeight), 0, rows - 1);
+    const maxRow = clamp(Math.floor((polygon.maxY - originY) / cellHeight), 0, rows - 1);
+    for (let row = minRow; row <= maxRow; row += 1) {
+      for (let column = minColumn; column <= maxColumn; column += 1) {
+        lists[row * columns + column]!.push(index);
+      }
+    }
+  }
+  return {
+    prepared,
+    columns,
+    rows,
+    originX: finite ? originX : 0,
+    originY: finite ? originY : 0,
+    cellWidth,
+    cellHeight,
+    buckets: lists.map((list) => Int32Array.from(list)),
+    visited: new Int32Array(prepared.length),
+    epoch: 0,
   };
-  const bounds = polygonBounds(polygon);
-  if (!bounds || !overlaps(expanded, bounds)) return false;
-  const corners = [
-    { x: expanded.x, y: expanded.y },
-    { x: expanded.x + expanded.width, y: expanded.y },
-    { x: expanded.x + expanded.width, y: expanded.y + expanded.height },
-    { x: expanded.x, y: expanded.y + expanded.height },
-  ];
-  if (corners.some((corner) => pointInPolygon(corner, polygon))) return true;
+}
 
-  const shell = polygon.rings[0] ?? [];
-  if (shell.some((point) => point.x >= expanded.x - EPSILON
-    && point.x <= expanded.x + expanded.width + EPSILON
-    && point.y >= expanded.y - EPSILON
-    && point.y <= expanded.y + expanded.height + EPSILON)) return true;
+function polygonIndexFor(polygons: readonly CardPolygon[]): PolygonIndex {
+  const cached = polygonIndexes.get(polygons);
+  if (cached) return cached;
+  const built = buildPolygonIndex(polygons);
+  polygonIndexes.set(polygons, built);
+  return built;
+}
 
-  const rectangleEdges = corners.map((corner, index) => [
-    corner,
-    corners[(index + 1) % corners.length]!,
-  ] as const);
-  return polygon.rings.some((ring) => ring.some((point, index) => {
-    const next = ring[(index + 1) % ring.length];
-    return Boolean(next && rectangleEdges.some(([start, end]) => segmentsIntersect(point, next, start, end)));
-  }));
+function polygonsHitRectangle(
+  polygons: readonly CardPolygon[],
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+): boolean {
+  if (polygons.length === 0) return false;
+  if (polygons.length <= 4) {
+    for (const polygon of polygons) {
+      if (preparedIntersectsRectangle(preparePolygon(polygon), minX, minY, maxX, maxY)) return true;
+    }
+    return false;
+  }
+  const index = polygonIndexFor(polygons);
+  const minColumn = clamp(Math.floor((minX - index.originX) / index.cellWidth), 0, index.columns - 1);
+  const maxColumn = clamp(Math.floor((maxX - index.originX) / index.cellWidth), 0, index.columns - 1);
+  const minRow = clamp(Math.floor((minY - index.originY) / index.cellHeight), 0, index.rows - 1);
+  const maxRow = clamp(Math.floor((maxY - index.originY) / index.cellHeight), 0, index.rows - 1);
+  index.epoch += 1;
+  const epoch = index.epoch;
+  for (let row = minRow; row <= maxRow; row += 1) {
+    for (let column = minColumn; column <= maxColumn; column += 1) {
+      for (const candidate of index.buckets[row * index.columns + column]!) {
+        if (index.visited[candidate] === epoch) continue;
+        index.visited[candidate] = epoch;
+        if (preparedIntersectsRectangle(index.prepared[candidate]!, minX, minY, maxX, maxY)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function centerOf(area: CardArea): { x: number; y: number } {
   return { x: area.x + area.width / 2, y: area.y + area.height / 2 };
 }
 
+const derivedZones = new WeakMap<CardLayoutBounds, CardArea[]>();
+const NO_ZONES: CardArea[] = [];
+
 function protectedZones(bounds: CardLayoutBounds): CardArea[] {
   if (bounds.occupiedAreas !== undefined) return bounds.occupiedAreas;
-  if (bounds.occupiedPolygons && bounds.occupiedPolygons.length) return [];
-  return bounds.allowMapOverlap ? [] : [bounds.map];
+  if (bounds.occupiedPolygons && bounds.occupiedPolygons.length) return NO_ZONES;
+  if (bounds.allowMapOverlap) return NO_ZONES;
+  const cached = derivedZones.get(bounds);
+  if (cached) return cached;
+  const zones = [bounds.map];
+  derivedZones.set(bounds, zones);
+  return zones;
 }
 
 function isInsideCanvas(card: CardArea, bounds: CardLayoutBounds): boolean {
@@ -230,13 +440,92 @@ function isInsideCanvas(card: CardArea, bounds: CardLayoutBounds): boolean {
 }
 
 function hitsProtected(card: CardArea, bounds: CardLayoutBounds): boolean {
-  return protectedZones(bounds).some((zone) => overlaps(card, zone, bounds.gap))
-    || (bounds.occupiedPolygons ?? []).some((polygon) =>
-      rectangleIntersectsPolygon(card, polygon, bounds.gap));
+  const gap = bounds.gap;
+  for (const zone of protectedZones(bounds)) {
+    if (overlaps(card, zone, gap)) return true;
+  }
+  const polygons = bounds.occupiedPolygons;
+  if (!polygons || polygons.length === 0) return false;
+  return polygonsHitRectangle(
+    polygons,
+    card.x - gap,
+    card.y - gap,
+    card.x + card.width + gap,
+    card.y + card.height + gap,
+  );
 }
 
 function hitsPlaced(card: CardArea, placed: CardArea[], gap: number): boolean {
-  return placed.some((other) => overlaps(card, other, gap));
+  for (const other of placed) {
+    if (overlaps(card, other, gap)) return true;
+  }
+  return false;
+}
+
+/**
+ * Uniform-grid broad phase over a fixed set of placed cards. Built once per
+ * repair scan so the 12px probe grid stops rescanning every prior placement.
+ */
+interface RectIndex {
+  hits(x: number, y: number, width: number, height: number, gap: number): boolean;
+}
+
+function buildRectIndex(rects: readonly CardArea[], bounds: CardLayoutBounds): RectIndex {
+  if (rects.length < 12) {
+    return {
+      hits(x, y, width, height, gap) {
+        for (const other of rects) {
+          if (x < other.x + other.width + gap
+            && x + width + gap > other.x
+            && y < other.y + other.height + gap
+            && y + height + gap > other.y) return true;
+        }
+        return false;
+      },
+    };
+  }
+  const axis = Math.max(1, Math.min(48, Math.ceil(Math.sqrt(rects.length))));
+  const cellWidth = Math.max(1, bounds.width / axis);
+  const cellHeight = Math.max(1, bounds.height / axis);
+  const lists: number[][] = Array.from({ length: axis * axis }, () => []);
+  for (let index = 0; index < rects.length; index += 1) {
+    const rect = rects[index]!;
+    const minColumn = clamp(Math.floor(rect.x / cellWidth), 0, axis - 1);
+    const maxColumn = clamp(Math.floor((rect.x + rect.width) / cellWidth), 0, axis - 1);
+    const minRow = clamp(Math.floor(rect.y / cellHeight), 0, axis - 1);
+    const maxRow = clamp(Math.floor((rect.y + rect.height) / cellHeight), 0, axis - 1);
+    for (let row = minRow; row <= maxRow; row += 1) {
+      for (let column = minColumn; column <= maxColumn; column += 1) {
+        lists[row * axis + column]!.push(index);
+      }
+    }
+  }
+  const buckets = lists.map((list) => Int32Array.from(list));
+  const visited = new Int32Array(rects.length);
+  let epoch = 0;
+  return {
+    hits(x, y, width, height, gap) {
+      const minColumn = clamp(Math.floor((x - gap) / cellWidth), 0, axis - 1);
+      const maxColumn = clamp(Math.floor((x + width + gap) / cellWidth), 0, axis - 1);
+      const minRow = clamp(Math.floor((y - gap) / cellHeight), 0, axis - 1);
+      const maxRow = clamp(Math.floor((y + height + gap) / cellHeight), 0, axis - 1);
+      epoch += 1;
+      for (let row = minRow; row <= maxRow; row += 1) {
+        for (let column = minColumn; column <= maxColumn; column += 1) {
+          for (const candidate of buckets[row * axis + column]!) {
+            if (visited[candidate] === epoch) continue;
+            visited[candidate] = epoch;
+            const other = rects[candidate]!;
+            if (x < other.x + other.width + gap
+              && x + width + gap > other.x
+              && y < other.y + other.height + gap
+              && y + height + gap > other.y) return true;
+          }
+        }
+      }
+      return false;
+    },
+  };
 }
 
 /**
@@ -460,25 +749,40 @@ function containFree(placement: CardPlacement, bounds: CardLayoutBounds, placed:
   }
   const step = 12;
   // Scan a fine grid of candidate anchors, keeping the nearest free one to the
-  // original probe so the card lands close to its preferred region.
-  let best: CardPlacement | null = null;
-  let bestDist = Infinity;
+  // original probe so the card lands close to its preferred region. Distance is
+  // compared squared and checked *before* any collision test, so once a free
+  // spot is known every farther probe (and every farther row) is skipped
+  // outright instead of paying for polygon and placement tests.
   const ox = placement.x;
   const oy = placement.y;
-  for (let ry = bounds.margin; ry <= bounds.height - bounds.margin - placement.height; ry += step) {
-    for (let rx = bounds.margin; rx <= bounds.width - bounds.margin - placement.width; rx += step) {
-      const cand: CardPlacement = { ...placement, x: rx, y: ry };
-      if (!isInsideCanvas(cand, bounds)) continue;
-      if (hitsProtected(cand, bounds)) continue;
-      if (hitsPlaced(cand, placed, bounds.gap)) continue;
-      const dist = Math.hypot(rx - ox, ry - oy);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = cand;
-      }
+  const maxRx = bounds.width - bounds.margin - placement.width;
+  const maxRy = bounds.height - bounds.margin - placement.height;
+  const occupied = buildRectIndex(placed, bounds);
+  const probe: CardArea = { x: 0, y: 0, width: placement.width, height: placement.height };
+  let bestX = 0;
+  let bestY = 0;
+  let bestDistance = Infinity;
+  let found = false;
+  for (let ry = bounds.margin; ry <= maxRy; ry += step) {
+    const dy = ry - oy;
+    const rowDistance = dy * dy;
+    if (rowDistance >= bestDistance) continue;
+    for (let rx = bounds.margin; rx <= maxRx; rx += step) {
+      const dx = rx - ox;
+      const distance = dx * dx + rowDistance;
+      if (!(distance < bestDistance)) continue;
+      probe.x = rx;
+      probe.y = ry;
+      if (!isInsideCanvas(probe, bounds)) continue;
+      if (hitsProtected(probe, bounds)) continue;
+      if (occupied.hits(rx, ry, placement.width, placement.height, bounds.gap)) continue;
+      bestDistance = distance;
+      bestX = rx;
+      bestY = ry;
+      found = true;
     }
   }
-  if (best) return best;
+  if (found) return { ...placement, x: bestX, y: bestY };
   // Last resort: stack at the margin along y, deduplicating so cards never
   // fully overlap. The card is guaranteed visible; overlaps here only happen
   // under total canvas saturation, reported as `fallback`.
@@ -611,7 +915,12 @@ function layoutGrid(cards: CardLayoutInput[], bounds: CardLayoutBounds): CardPla
 }
 
 function orderResult(cards: CardLayoutInput[], placements: CardPlacement[]): CardPlacement[] {
-  return cards.map((card) => placements.find((p) => p.id === card.id)!);
+  // Keeps `find`'s first-match semantics for duplicate ids without the O(n²) scan.
+  const byId = new Map<string, CardPlacement>();
+  for (const placement of placements) {
+    if (!byId.has(placement.id)) byId.set(placement.id, placement);
+  }
+  return cards.map((card) => byId.get(card.id)!);
 }
 
 function validateHard(placements: CardPlacement[], bounds: CardLayoutBounds): boolean {
@@ -674,29 +983,70 @@ function connectorIntersects(
     && connectorGeometriesIntersect(left, right, clearance);
 }
 
-function segmentIntersectsPolygon(
-  segment: { start: CardPoint; end: CardPoint },
-  polygon: CardPolygon,
+/**
+ * Does any part of the connector polyline touch the polygon? Equivalent to
+ * testing each segment individually, but the polygon's edges are walked once
+ * with a bounding-box reject against the whole connector instead of once per
+ * segment.
+ */
+function connectorIntersectsPolygon(
+  geometry: ConnectorGeometry,
+  geometryBounds: CardArea,
+  prepared: PreparedPolygon,
 ): boolean {
-  if (pointInPolygon(segment.start, polygon) || pointInPolygon(segment.end, polygon)) return true;
-  return polygon.rings.some((ring) => ring.some((point, index) => {
-    const next = ring[(index + 1) % ring.length];
-    return Boolean(next && segmentsIntersect(segment.start, segment.end, point, next));
-  }));
+  const segments = geometry.segments;
+  const minX = geometryBounds.x;
+  const minY = geometryBounds.y;
+  const maxX = geometryBounds.x + geometryBounds.width;
+  const maxY = geometryBounds.y + geometryBounds.height;
+  for (const segment of segments) {
+    if (preparedContainsPoint(prepared, segment.start.x, segment.start.y)) return true;
+    if (preparedContainsPoint(prepared, segment.end.x, segment.end.y)) return true;
+  }
+  for (const ring of prepared.rings) {
+    if (ring.count === 0) continue;
+    if (ring.maxX < minX - EPSILON || ring.minX > maxX + EPSILON
+      || ring.maxY < minY - EPSILON || ring.minY > maxY + EPSILON) continue;
+    const { points, count } = ring;
+    let ax = points[(count - 1) * 2]!;
+    let ay = points[(count - 1) * 2 + 1]!;
+    for (let index = 0; index < count; index += 1) {
+      const bx = ax;
+      const by = ay;
+      ax = points[index * 2]!;
+      ay = points[index * 2 + 1]!;
+      const edgeMinX = Math.min(ax, bx);
+      const edgeMaxX = Math.max(ax, bx);
+      const edgeMinY = Math.min(ay, by);
+      const edgeMaxY = Math.max(ay, by);
+      if (edgeMaxX < minX - EPSILON || edgeMinX > maxX + EPSILON
+        || edgeMaxY < minY - EPSILON || edgeMinY > maxY + EPSILON) continue;
+      for (const segment of segments) {
+        const sx = segment.start.x;
+        const sy = segment.start.y;
+        const ex = segment.end.x;
+        const ey = segment.end.y;
+        if (Math.max(sx, ex) < edgeMinX - EPSILON || Math.min(sx, ex) > edgeMaxX + EPSILON
+          || Math.max(sy, ey) < edgeMinY - EPSILON || Math.min(sy, ey) > edgeMaxY + EPSILON) continue;
+        if (segmentsCross(sx, sy, ex, ey, ax, ay, bx, by)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function connectorMapIntersections(
   geometry: ConnectorGeometry,
+  geometryBounds: CardArea,
   anchor: CardPoint,
   polygons: CardPolygon[],
 ): number {
-  const geometryArea = connectorBounds(geometry);
   let intersections = 0;
   for (const polygon of polygons) {
-    if (pointInPolygon(anchor, polygon)) continue;
-    const area = polygonBounds(polygon);
-    if (!area || !boundsTouch(geometryArea, area, 0)) continue;
-    if (geometry.segments.some((segment) => segmentIntersectsPolygon(segment, polygon))) intersections += 1;
+    const prepared = preparePolygon(polygon);
+    if (!prepared.bounds || !boundsTouch(geometryBounds, prepared.bounds, 0)) continue;
+    if (preparedContainsPoint(prepared, anchor.x, anchor.y)) continue;
+    if (connectorIntersectsPolygon(geometry, geometryBounds, prepared)) intersections += 1;
   }
   return intersections;
 }
@@ -884,12 +1234,14 @@ function buildCandidates(
       preferredSide: placement.side,
       style,
     });
+    const geometryBounds = connectorBounds(geometry);
     const candidate: LayoutCandidate = {
       placement,
       geometry,
-      geometryBounds: connectorBounds(geometry),
+      geometryBounds,
       mapIntersections: connectorMapIntersections(
         geometry,
+        geometryBounds,
         { x: card.anchorX, y: card.anchorY },
         bounds.occupiedPolygons ?? [],
       ),
@@ -911,9 +1263,21 @@ function buildCandidates(
     .slice(0, candidateLimit));
 }
 
-function connectorHitsCard(geometry: ConnectorGeometry, card: CardArea, clearance: number): boolean {
-  return boundsTouch(connectorBounds(geometry), card, clearance)
-    && geometry.segments.some((segment) => segmentIntersectsRect(segment, card, clearance));
+/**
+ * Callers already carry the connector's bounding box (candidates cache it,
+ * scoring precomputes it), so it is threaded in instead of recomputed per card.
+ */
+function connectorHitsCard(
+  geometry: ConnectorGeometry,
+  geometryBounds: CardArea,
+  card: CardArea,
+  clearance: number,
+): boolean {
+  if (!boundsTouch(geometryBounds, card, clearance)) return false;
+  for (const segment of geometry.segments) {
+    if (segmentIntersectsRect(segment, card, clearance)) return true;
+  }
+  return false;
 }
 
 function angularOrder(cards: CardLayoutInput[], bounds: CardLayoutBounds): CardLayoutInput[] {
@@ -956,8 +1320,8 @@ function scoreLayout(
         geometryBounds[right]!,
         clearance,
       )) crossings += 1;
-      if (connectorHitsCard(geometries[left]!, placements[right]!, clearance)) throughCards += 1;
-      if (connectorHitsCard(geometries[right]!, placements[left]!, clearance)) throughCards += 1;
+      if (connectorHitsCard(geometries[left]!, geometryBounds[left]!, placements[right]!, clearance)) throughCards += 1;
+      if (connectorHitsCard(geometries[right]!, geometryBounds[right]!, placements[left]!, clearance)) throughCards += 1;
       if (sameAnchorCluster(placements[left]!, placements[right]!)
         && placements[left]!.side !== placements[right]!.side) splitClusters += 1;
     }
@@ -979,6 +1343,7 @@ function scoreLayout(
   for (let index = 0; index < geometries.length; index += 1) {
     throughMap += connectorMapIntersections(
       geometries[index]!,
+      geometryBounds[index]!,
       { x: placements[index]!.anchorX, y: placements[index]!.anchorY },
       polygons,
     );
@@ -1045,8 +1410,8 @@ function optimizedLayout(
             geometryBounds[index]!,
             clearance,
           )) crossings += 1;
-          if (connectorHitsCard(candidate.geometry, placed[index]!, clearance)) throughCards += 1;
-          if (connectorHitsCard(geometries[index]!, candidate.placement, clearance)) throughCards += 1;
+          if (connectorHitsCard(candidate.geometry, candidate.geometryBounds, placed[index]!, clearance)) throughCards += 1;
+          if (connectorHitsCard(geometries[index]!, geometryBounds[index]!, candidate.placement, clearance)) throughCards += 1;
           if (sameAnchorCluster(candidate.placement, placed[index]!)
             && candidate.placement.side !== placed[index]!.side) splitClusters += 1;
         }

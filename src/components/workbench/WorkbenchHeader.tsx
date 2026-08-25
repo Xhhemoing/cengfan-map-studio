@@ -1,6 +1,7 @@
 import { FolderOpen, MapPinned, Plus } from "lucide-react";
 import type { RefObject } from "react";
 import { PROJECT_PACKAGE_FILE_ACCEPT } from "../../lib/project-package";
+import { HelpFeedbackMenu } from "../HelpFeedbackMenu";
 
 export function WorkbenchHeader({ importInputRef, onCreateProject, onImportProject }: {
   importInputRef: RefObject<HTMLInputElement | null>;
@@ -14,6 +15,7 @@ export function WorkbenchHeader({ importInputRef, onCreateProject, onImportProje
         <span><strong>蹭饭地图工作室</strong><small>项目工作台</small></span>
       </div>
       <div className="workbench-actions">
+        <HelpFeedbackMenu variant="workbench" />
         <button type="button" className="secondary-button" aria-label="导入工程包" onClick={() => importInputRef.current?.click()}>
           <FolderOpen size={16} /> 导入
         </button>

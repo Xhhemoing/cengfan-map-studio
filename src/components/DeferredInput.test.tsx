@@ -1,7 +1,26 @@
-import { describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { DeferredInput, DeferredTextarea } from "./DeferredInput";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function createTrackedRoot(container: HTMLElement): Root {
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return root;
+}
+
+// An assertion throwing before an inline unmount leaves the root mounted for the rest of
+// the run, so React's scheduler can wake up against a torn-down jsdom.
+afterEach(() => {
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -13,7 +32,7 @@ describe("DeferredInput", () => {
   it("keeps edits local until blur", () => {
     const onCommit = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(<DeferredInput id="title" value="原标题" onCommit={onCommit} />));
 
     const input = container.querySelector("#title") as HTMLInputElement;
@@ -25,13 +44,12 @@ describe("DeferredInput", () => {
     flushSync(() => input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(onCommit).toHaveBeenCalledOnce();
     expect(onCommit).toHaveBeenCalledWith("新标题");
-    root.unmount();
   });
 
   it("commits color pickers on the native change event (picker close) without blur", () => {
     const onCommit = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(<DeferredInput id="pick" type="color" value="#215d75" onCommit={onCommit} />));
 
     const input = container.querySelector("#pick") as HTMLInputElement;
@@ -59,13 +77,12 @@ describe("DeferredInput", () => {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(onCommit).not.toHaveBeenCalled();
-    root.unmount();
   });
 
   it("commits Enter once and restores the external value on Escape", () => {
     const onCommit = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(<DeferredInput id="amount" value="100" onCommit={onCommit} />));
 
     const input = container.querySelector("#amount") as HTMLInputElement;
@@ -83,13 +100,12 @@ describe("DeferredInput", () => {
     flushSync(() => input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(input.value).toBe("100");
     expect(onCommit).not.toHaveBeenCalled();
-    root.unmount();
   });
 
   it("commits multiline text on Enter and keeps Shift+Enter available for new lines", () => {
     const onCommit = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(<DeferredTextarea id="content" value="原文本" onCommit={onCommit} />));
 
     const textarea = container.querySelector("#content") as HTMLTextAreaElement;
@@ -106,6 +122,5 @@ describe("DeferredInput", () => {
     textarea.focus();
     flushSync(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true })));
     expect(onCommit).not.toHaveBeenCalled();
-    root.unmount();
   });
 });

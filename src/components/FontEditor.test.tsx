@@ -1,7 +1,26 @@
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FontEditor } from "./FontEditor";
+
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function createTrackedRoot(container: HTMLElement): Root {
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return root;
+}
+
+// An assertion throwing before an inline unmount leaves the root mounted for the rest of
+// the run, so React's scheduler can wake up against a torn-down jsdom.
+afterEach(() => {
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
 
 function selectValue(select: HTMLSelectElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
@@ -16,7 +35,7 @@ describe("FontEditor", () => {
     const onFontChange = vi.fn();
     const onSizeChange = vi.fn();
     const container = document.createElement("div");
-    const root = createRoot(container);
+    const root = createTrackedRoot(container);
     flushSync(() => root.render(
       <FontEditor
         id="test-font"
@@ -40,6 +59,5 @@ describe("FontEditor", () => {
 
     selectValue(container.querySelector("#test-font") as HTMLSelectElement, "font-system-kaiti");
     expect(onFontChange).toHaveBeenCalledWith("font-system-kaiti");
-    root.unmount();
   });
 });

@@ -1,0 +1,2 @@
+# Hash routing does not need /* → index.html. Do not mask /api/* as 200 HTML.
+/prototype /index.html 200

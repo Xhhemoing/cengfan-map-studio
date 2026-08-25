@@ -8,7 +8,9 @@ import type { DataViewId } from "./project-data";
 
 export const DRAFT_KEY = "cengfan-map-studio:draft";
 export const ROOM_ACCESS_STORAGE_PREFIX = "cengfan-map-studio:room-access:";
+/** Default room nickname; the per-device override lives in collaboration-identity.ts. */
 export const COLLABORATION_DISPLAY_NAME = "本机协作者";
+export const COLLABORATION_DISPLAY_NAME_KEY = "cengfan-map-studio:collaboration-display-name";
 export const DRAFT_SAVED_AT_KEY = "cengfan-map-studio:draft-saved-at";
 export const RENDER_SETTINGS_KEY = "cengfan-map-studio:render-settings";
 export const COLLABORATION_SEND_DELAY_MS = 600;

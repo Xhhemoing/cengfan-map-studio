@@ -1,5 +1,8 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+
+/** 隔离出来的坏状态文件最多留几份，与房间快照的 MAX_ROOM_SNAPSHOT_SIDECARS 对齐。 */
+const MAX_AI_STATE_SIDECARS = 5;
 
 export const AI_RUNTIME_STATE_VERSION = 1 as const;
 export const AI_RUNTIME_STATE_MAX_BYTES = 1024 * 1024;
@@ -24,7 +27,7 @@ export interface AiStateStore {
 
 export function emptyAiRuntimeState(): AiRuntimeState { return { version: 1, budgetLedger: [], rateLimits: {} }; }
 function cloneState(state: AiRuntimeState): AiRuntimeState { return { version: 1, budgetLedger: state.budgetLedger.map((entry) => ({ ...entry })), rateLimits: Object.fromEntries(Object.entries(state.rateLimits).map(([name, entries]) => [name, entries.map((entry) => ({ ...entry }))])) }; }
-class StateStoreFailure extends Error { constructor(readonly code: string, message: string) { super(message); this.name = "StateStoreFailure"; } }
+class StateStoreFailure extends Error { constructor(readonly code: string, message: string, options?: { cause?: unknown }) { super(message, options); this.name = "StateStoreFailure"; } }
 function safeInt(value: unknown, min = 0): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= min; }
 function bounded(value: unknown, pattern: RegExp, max: number, empty = false): value is string { return typeof value === "string" && (empty || value.length > 0) && value.length <= max && pattern.test(value); }
 function validLedger(value: unknown): value is PersistedBudgetLedgerEntry {
@@ -44,7 +47,47 @@ function parseState(value: unknown): AiRuntimeState {
   if (names.length > AI_RUNTIME_STATE_MAX_RATE_LIMIT_NAMES || names.some((name) => !/^[A-Za-z0-9._:-]{1,64}$/.test(name)) || Object.values(limits).some((entries) => !Array.isArray(entries) || entries.length > AI_RUNTIME_STATE_MAX_RATE_LIMIT_ENTRIES || !entries.every(validRate))) throw new StateStoreFailure("AI_STATE_CORRUPT", "AI 状态文件格式无效");
   return cloneState({ version: 1, budgetLedger: record.budgetLedger as PersistedBudgetLedgerEntry[], rateLimits: limits as Record<string, PersistedRateLimitEntry[]> });
 }
-function safeError(error: unknown, fallback: string): StateStoreFailure { return error instanceof StateStoreFailure ? error : new StateStoreFailure(fallback, "AI 状态持久化失败"); }
+/** 对外只暴露稳定的 code/message，原始 errno 挂在 cause 上，排障时才知道是磁盘满还是路径被占。 */
+function safeError(error: unknown, fallback: string): StateStoreFailure { return error instanceof StateStoreFailure ? error : new StateStoreFailure(fallback, "AI 状态持久化失败", { cause: error }); }
+
+/**
+ * 原子落盘：先写 `<file>.<pid>.tmp` 再改名。改名失败时临时文件仍躺在数据目录里，
+ * 而落盘故障（目标被目录占住、磁盘满）会反复发生，不收掉就是每个进程堆一份孤儿；
+ * 清理只是尽力而为，失败也绝不能顶替真正的 rename 错误。
+ */
+async function writeAiStateAtomically(filePath: string, contents: string): Promise<void> {
+  const temporary = `${filePath}.${process.pid}.tmp`;
+  await writeFile(temporary, contents, "utf8");
+  try {
+    await rename(temporary, filePath);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** 坏状态会反复出现，`.corrupt-*` 不设上限就会一直堆在数据目录里，只留最近的几份现场。 */
+async function pruneAiStateSidecars(filePath: string, keep = MAX_AI_STATE_SIDECARS): Promise<void> {
+  const directory = dirname(filePath);
+  const prefix = `${basename(filePath)}.corrupt-`;
+  try {
+    const names = (await readdir(directory)).filter((name) => name.startsWith(prefix));
+    if (names.length <= keep) return;
+    const sidecars = await Promise.all(names.map(async (name) => {
+      const path = join(directory, name);
+      return {
+        path,
+        modifiedAt: await stat(path).then((info) => info.mtimeMs, () => 0),
+        // 文件名里的隔离时间戳：mtime 撞在同一毫秒时用它兜底定序。
+        sequence: Number(name.slice(prefix.length)) || 0,
+      };
+    }));
+    sidecars.sort((a, b) => b.modifiedAt - a.modifiedAt || b.sequence - a.sequence);
+    for (const stale of sidecars.slice(keep)) await rm(stale.path, { force: true });
+  } catch {
+    // 清理不成功只是多留几份证据，不能反过来挡住加载。
+  }
+}
 
 function createStore(mode: "memory" | "file", initial: AiRuntimeState, persist: (state: AiRuntimeState) => Promise<void>, diskLoad?: () => Promise<AiRuntimeState>): AiStateStore {
   let state = cloneState(initial); let loaded = false; let recovered = false; let failure = false; let error: AiStateStoreErrorInfo | undefined; let queue = Promise.resolve();
@@ -66,11 +109,11 @@ export function createFileAiStateStore(filePath: string): AiStateStore {
   let recovered = false;
   const diskLoad = async (): Promise<AiRuntimeState> => {
     let raw: string;
-    try { raw = await readFile(filePath, "utf8"); } catch (cause) { if (cause && typeof cause === "object" && "code" in cause && cause.code === "ENOENT") return emptyAiRuntimeState(); throw new StateStoreFailure("AI_STATE_LOAD_FAILED", "AI 状态文件读取失败"); }
+    try { raw = await readFile(filePath, "utf8"); } catch (cause) { if (cause && typeof cause === "object" && "code" in cause && cause.code === "ENOENT") return emptyAiRuntimeState(); throw new StateStoreFailure("AI_STATE_LOAD_FAILED", "AI 状态文件读取失败", { cause }); }
     if (Buffer.byteLength(raw, "utf8") > AI_RUNTIME_STATE_MAX_BYTES) throw new StateStoreFailure("AI_STATE_CORRUPT", "AI 状态文件格式无效");
-    try { return parseState(JSON.parse(raw) as unknown); } catch (cause) { const safe = safeError(cause, "AI_STATE_CORRUPT"); if (safe.code === "AI_STATE_UNSUPPORTED_VERSION") throw safe; try { await rename(filePath, `${filePath}.corrupt-${Date.now()}`); } catch { throw new StateStoreFailure("AI_STATE_LOAD_FAILED", "AI 状态文件隔离失败"); } recovered = true; return emptyAiRuntimeState(); }
+    try { return parseState(JSON.parse(raw) as unknown); } catch (cause) { const safe = safeError(cause, "AI_STATE_CORRUPT"); if (safe.code === "AI_STATE_UNSUPPORTED_VERSION") throw safe; try { await rename(filePath, `${filePath}.corrupt-${Date.now()}`); } catch (renameCause) { throw new StateStoreFailure("AI_STATE_LOAD_FAILED", "AI 状态文件隔离失败", { cause: renameCause }); } await pruneAiStateSidecars(filePath); recovered = true; return emptyAiRuntimeState(); }
   };
-  const store = createStore("file", emptyAiRuntimeState(), async (state) => { await mkdir(dirname(filePath), { recursive: true }); const serialized = `${JSON.stringify(state)}\n`; if (Buffer.byteLength(serialized, "utf8") > AI_RUNTIME_STATE_MAX_BYTES) throw new StateStoreFailure("AI_STATE_TOO_LARGE", "AI 状态超出大小限制"); const temporary = `${filePath}.${process.pid}.tmp`; await writeFile(temporary, serialized, "utf8"); await rename(temporary, filePath); }, diskLoad);
+  const store = createStore("file", emptyAiRuntimeState(), async (state) => { await mkdir(dirname(filePath), { recursive: true }); const serialized = `${JSON.stringify(state)}\n`; if (Buffer.byteLength(serialized, "utf8") > AI_RUNTIME_STATE_MAX_BYTES) throw new StateStoreFailure("AI_STATE_TOO_LARGE", "AI 状态超出大小限制"); await writeAiStateAtomically(filePath, serialized); }, diskLoad);
   Object.defineProperty(store, "recovered", { get: () => recovered });
   return store;
 }

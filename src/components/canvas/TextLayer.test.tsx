@@ -1,6 +1,6 @@
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TextLayer } from "./TextLayer";
 import type { CanvasText } from "../../lib/scene-document";
 
@@ -18,10 +18,29 @@ const text: CanvasText = {
   visibility: true,
 };
 
+const mounted: Array<{ root: Root; container: HTMLElement }> = [];
+
+function trackedRoot() {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  return { container, root };
+}
+
+afterEach(() => {
+  // An assertion throwing before an inline unmount would leave the root mounted with
+  // its drag pointer handlers armed, racing jsdom teardown for the rest of the run.
+  flushSync(() => {
+    for (const { root, container } of mounted.splice(0)) {
+      root.unmount();
+      container.remove();
+    }
+  });
+});
+
 describe("TextLayer", () => {
   it("renders text properties and selection callback", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const onSelect = vi.fn();
     flushSync(() => root.render(<TextLayer textElements={[text]} onSelectText={onSelect} />));
 
@@ -34,14 +53,10 @@ describe("TextLayer", () => {
     expect(rendered.style.maxWidth).toBe("640px");
     flushSync(() => group.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
     expect(onSelect).toHaveBeenCalledWith("text-title");
-
-    root.unmount();
-    container.remove();
   });
 
   it("applies a selected uploaded font to canvas text", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <svg>
         <TextLayer
@@ -52,14 +67,10 @@ describe("TextLayer", () => {
     ));
 
     expect(container.querySelector("text")?.getAttribute("font-family")).toBe('"CanvasHand"');
-
-    root.unmount();
-    container.remove();
   });
 
   it("selects interactive text with the keyboard", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const onSelectText = vi.fn();
     flushSync(() => root.render(
       <TextLayer
@@ -75,14 +86,10 @@ describe("TextLayer", () => {
     flushSync(() => group.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })));
 
     expect(onSelectText).toHaveBeenCalledWith("text-title");
-
-    root.unmount();
-    container.remove();
   });
 
   it("selects a text box without moving it when the pointer is released without dragging", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const onMoveText = vi.fn();
     const onSelectText = vi.fn();
     flushSync(() => root.render(
@@ -119,14 +126,10 @@ describe("TextLayer", () => {
     expect(onSelectText).toHaveBeenCalledWith("text-title");
     expect(onMoveText).not.toHaveBeenCalled();
     expect(text).toMatchObject({ x: 72, y: 126 });
-
-    root.unmount();
-    container.remove();
   });
 
   it("preserves the pointer-to-text offset when dragging", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const onMoveText = vi.fn();
     flushSync(() => root.render(
       <svg>
@@ -156,13 +159,10 @@ describe("TextLayer", () => {
 
     expect(onMoveText).toHaveBeenCalledTimes(1);
     expect(onMoveText).toHaveBeenCalledWith("text-title", 272, 386);
-    root.unmount();
-    container.remove();
   });
 
   it("does not capture a double click so the text itself can be selected", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     const onSelectText = vi.fn();
     flushSync(() => root.render(<svg><TextLayer textElements={[text]} onSelectText={onSelectText} /></svg>));
 
@@ -174,13 +174,10 @@ describe("TextLayer", () => {
 
     expect(setPointerCapture).not.toHaveBeenCalled();
     expect(onSelectText).toHaveBeenCalledWith("text-title");
-    root.unmount();
-    container.remove();
   });
 
   it("omits hidden text and export selection overlays", () => {
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    const { container, root } = trackedRoot();
     flushSync(() => root.render(
       <TextLayer
         textElements={[text, { ...text, id: "hidden", visibility: false }]}
@@ -192,7 +189,5 @@ describe("TextLayer", () => {
     expect(container.querySelector('[data-text-id="hidden"]')).toBeNull();
     expect(container.querySelector("[data-selection-overlay]")).toBeNull();
     expect(container.querySelector('[data-text-id="text-title"]')?.classList.contains("editable-text")).toBe(false);
-    root.unmount();
-    container.remove();
   });
 });
