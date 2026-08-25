@@ -184,6 +184,34 @@ describe("Extracted render branches (R10-5)", () => {
   });
 });
 
+describe("Extracted render branches (R11-5)", () => {
+  // legacy 顶栏与导出工程弹层搬到 src/components/editor/*。这条 pin 从 App 这一侧
+  // 确认顶栏接缝没有改变品牌区、阶段导航插槽、工具栏分组顺序与导出按钮文案。
+  it("keeps the legacy topbar brand, workflow slot and toolbar groups in order", () => {
+    const container = renderLegacyApp();
+    const topbar = container.querySelector(".app-shell > .topbar")!;
+
+    expect(topbar.querySelector(".brand .brand-label__full")?.textContent).toBe("蹭饭地图工作室");
+    const compact = topbar.querySelector(".brand .brand-label__compact");
+    expect(compact?.textContent).toBe("蹭饭图");
+    expect(compact?.getAttribute("aria-hidden")).toBe("true");
+
+    const workflow = topbar.querySelector(".topbar-workflow")!;
+    expect(workflow.querySelector(".workflow-stage-stepper")).not.toBeNull();
+    const legacySlot = workflow.querySelector(".topbar-workflow__legacy");
+    expect(legacySlot?.getAttribute("aria-hidden")).toBe("true");
+
+    const groups = Array.from(topbar.querySelectorAll('.topbar-actions [role="group"]')).map((group) =>
+      group.getAttribute("aria-label"),
+    );
+    expect(groups.slice(0, 3)).toEqual(["历史与缩放", "属性面板", "界面主题"]);
+    expect(groups).toContain("导出");
+
+    const exportGroup = topbar.querySelector('[role="group"][aria-label="导出"]');
+    expect(exportGroup?.querySelector("button.primary-button")?.textContent).toContain("导出 PNG");
+  });
+});
+
 describe("Topbar action layering (T4)", () => {
   it("keeps global undo/redo visible in the topbar across every focused stage", () => {
     const container = renderPublicApp();
