@@ -1,21 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type {
   CardLayoutBounds,
-  CardLayoutOptions,
   CardPlacement,
 } from "./card-layout";
+import { solveCardLayout } from "./card-layout";
 import {
   buildConnectorGeometry,
   connectorGeometriesIntersect,
   type ConnectorStyle,
 } from "./connector-geometry";
-
-const layout = await import("./card-layout");
-const solveCardLayout = layout.solveCardLayout;
-
-type CrossingOptions = CardLayoutOptions & {
-  forbidConnectorCrossing?: boolean;
-};
 
 const crossingBounds: CardLayoutBounds = {
   width: 1000,
@@ -48,29 +41,8 @@ function countCrossings(
   return crossings;
 }
 
-const hasForbidConnectorCrossing = (() => {
-  let optionWasRead = false;
-  const options: CrossingOptions = {
-    mode: "quadrant",
-    connectorStyle: "straight",
-    connectorWidth: 0,
-  };
-  Object.defineProperty(options, "forbidConnectorCrossing", {
-    configurable: true,
-    get() {
-      optionWasRead = true;
-      return true;
-    },
-  });
-  solveCardLayout([
-    { id: "probe-a", anchorX: 410, anchorY: 245, width: 190, height: 88 },
-    { id: "probe-b", anchorX: 590, anchorY: 455, width: 190, height: 88 },
-  ], crossingBounds, options);
-  return optionWasRead;
-})();
-
 describe("card layout connector crossing boundary", () => {
-  it.skipIf(!hasForbidConnectorCrossing)(
+  it(
     "defaults to forbidding crossings for diagonally opposed anchors",
     () => {
       const cards = [
@@ -79,25 +51,54 @@ describe("card layout connector crossing boundary", () => {
       ];
 
       const constrained = solveCardLayout(cards, crossingBounds, {
-        mode: "quadrant",
+        mode: "proximity",
         connectorStyle: "straight",
         connectorWidth: 0,
       });
       const unconstrained = solveCardLayout(cards, crossingBounds, {
-        mode: "quadrant",
+        mode: "proximity",
         connectorStyle: "straight",
         connectorWidth: 0,
         forbidConnectorCrossing: false,
-      } as CrossingOptions);
+      });
       const constrainedCrossings = countCrossings(constrained.placements);
       const unconstrainedCrossings = countCrossings(unconstrained.placements);
 
       expect(constrained.placements).toHaveLength(cards.length);
       expect(unconstrained.placements).toHaveLength(cards.length);
-      expect(constrainedCrossings === 0 || constrained.status === "fallback").toBe(true);
-      expect(constrainedCrossings).toBeLessThanOrEqual(unconstrainedCrossings);
+      if (constrained.status === "solved") {
+        expect(constrainedCrossings).toBe(0);
+      } else {
+        expect(constrainedCrossings).toBeLessThanOrEqual(unconstrainedCrossings);
+      }
     },
   );
+
+  it("never makes dense columns cross more than the unconstrained baseline", () => {
+    const cards = Array.from({ length: 24 }, (_, index) => ({
+      id: `columns-${index}`,
+      anchorX: 350 + (index % 6) * 60,
+      anchorY: 190 + Math.floor(index / 6) * 80,
+      width: 110,
+      height: 52,
+    }));
+    const constrained = solveCardLayout(cards, crossingBounds, {
+      mode: "columns",
+      connectorStyle: "straight",
+      connectorWidth: 0,
+    });
+    const unconstrained = solveCardLayout(cards, crossingBounds, {
+      mode: "columns",
+      connectorStyle: "straight",
+      connectorWidth: 0,
+      forbidConnectorCrossing: false,
+    });
+
+    expect(constrained.placements).toHaveLength(cards.length);
+    expect(unconstrained.placements).toHaveLength(cards.length);
+    expect(countCrossings(constrained.placements))
+      .toBeLessThanOrEqual(countCrossings(unconstrained.placements));
+  });
 
   it("does not count a near-shared-anchor connector bouquet as a crossing failure", () => {
     const cards = [

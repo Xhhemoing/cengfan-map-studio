@@ -7,7 +7,6 @@ import { normalizeCardExpressionTemplates, type CardExpressionTemplates } from "
 import { DEFAULT_NAME_FORMAT, normalizeNameFormat } from "./name-format";
 import { normalizeDisplayFrame, type DisplayFrameDefinition } from "./display-frame";
 
-
 export type CanvasTextRole =
   | "eyebrow"
   | "title"
@@ -246,7 +245,8 @@ export interface CardSettings {
   /** Optimize the left/right split to balance column heights (quadrant / columns). */
   autoBalance?: boolean;
   /** Permit cards to cover map geometry / the other elements (guests, texts, decorations). Both default false. */
-  allowMapOverlap?: boolean; allowElementOverlap?: boolean;
+  allowMapOverlap?: boolean;
+  allowElementOverlap?: boolean;
   /** Show the matching province texture as a thumbnail inside destination cards. */
   showProvinceTexture?: boolean;
   /** Show the "N 人" count in the card header. Default true. */
@@ -537,7 +537,8 @@ export function createDefaultScene(templateId: MapTemplateId): SceneDocument {
       positions: {},
       layoutMode: "quadrant",
       autoBalance: true,
-      allowMapOverlap: false, allowElementOverlap: false,
+      allowMapOverlap: false,
+      allowElementOverlap: false,
       showProvinceTexture: false,
     },
     guests: createDefaultGuestPanel(template.canvas.height),
@@ -602,8 +603,7 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       ...scene.cards,
       preset: scene.cards.preset === "compact" ? "standard" : scene.cards.preset,
       presentation: normalizeCardPresentation(scene.cards.presentation),
-      // 老项目 preset: "compact" 在此被归一化为 standard + compactLayout，
-      // 保留模板回显 id，让模板选择器仍显示「超紧凑名单」。
+      // 老项目 preset: "compact" 归一化为 standard + compactLayout，保留模板回显 id 让选择器仍显示「超紧凑名单」。
       templateId: scene.cards.templateId ?? (scene.cards.preset === "compact" ? "compact" : undefined),
       compactLayout: scene.cards.compactLayout === true || scene.cards.preset === "compact",
       x: clamp(scene.cards.x, 0, canvasWidth, fallback.cards.x),
@@ -636,9 +636,9 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       ),
       layoutMode: normalizeLayoutMode(scene.cards.layoutMode),
       autoBalance: scene.cards.autoBalance !== false,
-      allowMapOverlap: scene.cards.allowMapOverlap === true, allowElementOverlap: scene.cards.allowElementOverlap === true,
+      allowMapOverlap: scene.cards.allowMapOverlap === true,
+      allowElementOverlap: scene.cards.allowElementOverlap === true,
       showProvinceTexture: scene.cards.showProvinceTexture === true,
-
       ...(scene.cards.displayFrame !== undefined
         ? { displayFrame: normalizeDisplayFrame(scene.cards.displayFrame, fallback.cards.displayFrame) }
         : {}),

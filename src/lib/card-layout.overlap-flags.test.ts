@@ -1,17 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { CardArea, CardLayoutBounds, CardPolygon } from "./card-layout";
+import {
+  clampCardPosition,
+  type CardArea,
+  type CardLayoutBounds,
+  type CardPolygon,
+} from "./card-layout";
 import { oracleRectHitsPolygon, overlaps } from "./card-layout-test-fixtures";
-
-const layout = await import("./card-layout");
-
-type ElementAwareBounds = CardLayoutBounds & {
-  elementAreas?: CardArea[];
-  allowElementOverlap?: boolean;
-};
 
 const requestedElementPosition = { x: 60, y: 60, width: 100, height: 60 };
 const elementArea: CardArea = { x: 40, y: 40, width: 150, height: 120 };
-const elementProbeBounds: ElementAwareBounds = {
+const elementProbeBounds: CardLayoutBounds = {
   width: 640,
   height: 440,
   map: { x: 250, y: 140, width: 200, height: 180 },
@@ -20,22 +18,6 @@ const elementProbeBounds: ElementAwareBounds = {
   elementAreas: [elementArea],
   allowMapOverlap: false,
 };
-
-const hasElementOverlap = (() => {
-  try {
-    const blocked = layout.clampCardPosition(requestedElementPosition, {
-      ...elementProbeBounds,
-      allowElementOverlap: false,
-    });
-    const allowed = layout.clampCardPosition(requestedElementPosition, {
-      ...elementProbeBounds,
-      allowElementOverlap: true,
-    });
-    return blocked.x !== allowed.x || blocked.y !== allowed.y;
-  } catch {
-    return false;
-  }
-})();
 
 describe("card layout overlap flags", () => {
   it("allows map polygon overlap only when allowMapOverlap is true", () => {
@@ -58,11 +40,11 @@ describe("card layout overlap flags", () => {
     };
     const requested = { x: 270, y: 180, width: 100, height: 60 };
 
-    const blocked = layout.clampCardPosition(requested, {
+    const blocked = clampCardPosition(requested, {
       ...bounds,
       allowMapOverlap: false,
     });
-    const allowed = layout.clampCardPosition(requested, {
+    const allowed = clampCardPosition(requested, {
       ...bounds,
       allowMapOverlap: true,
     });
@@ -72,14 +54,14 @@ describe("card layout overlap flags", () => {
     expect(oracleRectHitsPolygon({ ...requested, ...allowed }, mapPolygon, 0)).toBe(true);
   });
 
-  it.skipIf(!hasElementOverlap)(
+  it(
     "separates element overlap permission from map overlap permission",
     () => {
-      const blockedByElement = layout.clampCardPosition(requestedElementPosition, {
+      const blockedByElement = clampCardPosition(requestedElementPosition, {
         ...elementProbeBounds,
         allowElementOverlap: false,
       });
-      const allowedOverElement = layout.clampCardPosition(requestedElementPosition, {
+      const allowedOverElement = clampCardPosition(requestedElementPosition, {
         ...elementProbeBounds,
         allowElementOverlap: true,
       });
@@ -92,7 +74,7 @@ describe("card layout overlap flags", () => {
       expect(overlaps({ ...requestedElementPosition, ...allowedOverElement }, elementArea)).toBe(true);
 
       const requestedMapPosition = { x: 290, y: 190, width: 100, height: 60 };
-      const stillBlockedByMap = layout.clampCardPosition(requestedMapPosition, {
+      const stillBlockedByMap = clampCardPosition(requestedMapPosition, {
         ...elementProbeBounds,
         allowElementOverlap: true,
         allowMapOverlap: false,

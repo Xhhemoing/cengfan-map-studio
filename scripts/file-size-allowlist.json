@@ -17,7 +17,6 @@
   "src/data/china-universities.ts": 2951,
   "src/data/university-emblems.ts": 2944,
   "src/lib/agent-session.ts": 799,
-  "src/lib/card-layout.ts": 1662,
   "src/lib/collaboration-client.ts": 760,
   "src/lib/image-color.ts": 555,
   "src/lib/project-document.test.ts": 403,

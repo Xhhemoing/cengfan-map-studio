@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import * as cardLayoutModule from "./card-layout";
 import {
+  adaptCardLayout,
   solveCardLayout,
   type CardLayoutBounds,
   type CardLayoutInput,
@@ -24,13 +24,6 @@ const CARD_COUNTS = [8, 24, 48] as const;
 const SAMPLE_COUNT = 8;
 
 type ExpectedMode = (typeof EXPECTED_MODES)[number];
-type AdaptCardLayout = (
-  placements: CardPlacement[],
-  movedId: string,
-  nextPosition: { x: number; y: number },
-  bounds: CardLayoutBounds,
-  options?: unknown,
-) => unknown;
 
 function rectanglePolygon(x: number, y: number, width: number, height: number): CardPolygon {
   return {
@@ -75,16 +68,6 @@ function median(samples: number[]): number {
     : sorted[middle]!;
 }
 
-function supportsMode(mode: ExpectedMode): boolean {
-  if (!(CARD_LAYOUT_MODES as readonly string[]).includes(mode)) return false;
-  try {
-    const result = solveCardLayout([], probeBounds, { mode: mode as CardLayoutMode });
-    return result.mode === mode;
-  } catch {
-    return false;
-  }
-}
-
 function measureSolve(mode: ExpectedMode, cards: CardLayoutInput[]): {
   medianMs: number;
   sampleMs: number[];
@@ -98,9 +81,21 @@ function measureSolve(mode: ExpectedMode, cards: CardLayoutInput[]): {
       connectorWidth: 1.5,
     });
     sampleMs.push(performance.now() - startedAt);
+    expect(result.mode).toBe(mode);
     expect(result.placements).toHaveLength(cards.length);
   }
   return { medianMs: median(sampleMs), sampleMs };
+}
+
+function sameLayout(left: CardPlacement[], right: CardPlacement[]): boolean {
+  return left.length === right.length && left.every((placement, index) => {
+    const counterpart = right[index];
+    return counterpart !== undefined
+      && placement.id === counterpart.id
+      && placement.x === counterpart.x
+      && placement.y === counterpart.y
+      && placement.side === counterpart.side;
+  });
 }
 
 function countStraightConnectorCrossings(placements: CardPlacement[]): number {
@@ -122,11 +117,34 @@ function countStraightConnectorCrossings(placements: CardPlacement[]): number {
 }
 
 describe("card layout repeatable performance probe", () => {
+  it("keeps the probe mode list aligned with the production mode list", () => {
+    expect(CARD_LAYOUT_MODES).toEqual(EXPECTED_MODES);
+  });
+
+  for (const mode of ["proximity", "columns"] as const) {
+    it(`detects ${mode} from a real 24-card solve instead of an empty-layout feature check`, () => {
+      const cards = makeCards(24, 0xc205_524);
+      const options = {
+        connectorStyle: "straight" as const,
+        connectorWidth: 1.5,
+      };
+      const actual = solveCardLayout(cards, probeBounds, { ...options, mode });
+      const quadrant = solveCardLayout(cards, probeBounds, { ...options, mode: "quadrant" });
+      const matchesQuadrant = sameLayout(actual.placements, quadrant.placements);
+      console.info(
+        `[card-layout-perf] mode-detection mode=${mode} cards=24`
+          + ` resultMode=${actual.mode} matchesQuadrant=${matchesQuadrant}`,
+      );
+      expect(actual.mode).toBe(mode);
+      expect(actual.placements).toHaveLength(cards.length);
+      expect(matchesQuadrant).toBe(false);
+    });
+  }
+
   for (const mode of EXPECTED_MODES) {
-    const supported = supportsMode(mode);
     describe(mode, () => {
       for (const count of CARD_COUNTS) {
-        it.skipIf(!supported)(`records the ${count}-card median across ${SAMPLE_COUNT} solves`, () => {
+        it(`records the ${count}-card median across ${SAMPLE_COUNT} solves`, () => {
           const measurement = measureSolve(mode, makeCards(count));
           console.info(
             `[card-layout-perf] solve mode=${mode} cards=${count} median=${measurement.medianMs.toFixed(3)}ms`
@@ -134,6 +152,7 @@ describe("card layout repeatable performance probe", () => {
           );
           expect(Number.isFinite(measurement.medianMs)).toBe(true);
           expect(measurement.medianMs).toBeGreaterThanOrEqual(0);
+          expect(measurement.medianMs).toBeLessThan(1_000);
           if (count === 24 && measurement.medianMs >= 200) {
             console.warn(
               `[card-layout-perf] soft-threshold mode=${mode} cards=24 median=${measurement.medianMs.toFixed(3)}ms >= 200ms`,
@@ -142,7 +161,7 @@ describe("card layout repeatable performance probe", () => {
         });
       }
 
-      it.skipIf(!supported)("counts straight-connector crossings for 24 seeded random cards", () => {
+      it("counts straight-connector crossings for 24 seeded random cards", () => {
         const cards = makeCards(24, 0xc205_524);
         const result = solveCardLayout(cards, probeBounds, {
           mode: mode as CardLayoutMode,
@@ -157,11 +176,7 @@ describe("card layout repeatable performance probe", () => {
     });
   }
 
-  const adaptCardLayout = (
-    cardLayoutModule as unknown as { adaptCardLayout?: AdaptCardLayout }
-  ).adaptCardLayout;
-
-  it.skipIf(typeof adaptCardLayout !== "function")(
+  it(
     `records the 24-card adaptCardLayout median across ${SAMPLE_COUNT} moves`,
     () => {
       const cards = makeCards(24, 0xada9_2026);
@@ -174,7 +189,7 @@ describe("card layout repeatable performance probe", () => {
       for (let sample = 0; sample < SAMPLE_COUNT; sample += 1) {
         const placements = initial.map((placement) => ({ ...placement }));
         const startedAt = performance.now();
-        adaptCardLayout!(
+        adaptCardLayout(
           placements,
           moved.id,
           { x: moved.x + 24, y: moved.y + 12 },
@@ -189,6 +204,7 @@ describe("card layout repeatable performance probe", () => {
       );
       expect(Number.isFinite(medianMs)).toBe(true);
       expect(medianMs).toBeGreaterThanOrEqual(0);
+      expect(medianMs).toBeLessThan(1_000);
     },
   );
 });

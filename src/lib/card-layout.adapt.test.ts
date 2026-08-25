@@ -1,33 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  adaptCardLayout,
+  clampCardPosition,
+  solveCardLayout,
   type CardLayoutBounds,
   type CardLayoutInput,
-  type CardLayoutOptions,
   type CardLayoutResult,
   type CardPlacement,
 } from "./card-layout";
 import { overlapsWithGap } from "./card-layout-test-fixtures";
-import { CARD_LAYOUT_MODES } from "./scene-document";
-
-const layout = await import("./card-layout");
-
-type AdaptCardLayout = (
-  placements: CardPlacement[],
-  movedId: string,
-  nextPosition: { x: number; y: number },
-  bounds: CardLayoutBounds,
-  options?: CardLayoutOptions,
-) => CardPlacement[];
-
-type CompatibleSolve = (
-  cards: CardLayoutInput[],
-  bounds: CardLayoutBounds,
-  options?: CardLayoutOptions & { mode?: string },
-) => CardLayoutResult;
-
-const adaptCardLayout = (layout as Record<string, unknown>).adaptCardLayout as AdaptCardLayout | undefined;
-const hasAdaptCardLayout = typeof adaptCardLayout === "function";
-const solveCardLayout = layout.solveCardLayout as unknown as CompatibleSolve;
 
 const adaptBounds: CardLayoutBounds = {
   width: 900,
@@ -48,13 +29,6 @@ const determinismBounds: CardLayoutBounds = {
   allowMapOverlap: true,
 };
 
-function solverSupportsMode(mode: "proximity" | "columns"): boolean {
-  if (!(CARD_LAYOUT_MODES as readonly string[]).includes(mode)) return false;
-  const requested = solveCardLayout(determinismCards, determinismBounds, { mode });
-  const quadrant = solveCardLayout(determinismCards, determinismBounds, { mode: "quadrant" });
-  return JSON.stringify(requested.placements) !== JSON.stringify(quadrant.placements);
-}
-
 function placement(
   id: string,
   x: number,
@@ -74,7 +48,7 @@ function placement(
 }
 
 describe("adaptCardLayout drag boundaries", () => {
-  it.skipIf(!hasAdaptCardLayout)(
+  it(
     "keeps the moved card at its clamped target and pushes an overlapping neighbour away",
     () => {
       const initial = [
@@ -83,11 +57,11 @@ describe("adaptCardLayout drag boundaries", () => {
         placement("far", 600, 430),
       ];
       const target = { x: 600, y: 190 };
-      const expectedMoved = layout.clampCardPosition({
+      const expectedMoved = clampCardPosition({
         ...initial[0]!,
         ...target,
       }, adaptBounds);
-      const result = adaptCardLayout!(initial, "moved", target, adaptBounds);
+      const result = adaptCardLayout(initial, "moved", target, adaptBounds);
       const moved = result.find((card) => card.id === "moved")!;
       const neighbour = result.find((card) => card.id === "neighbour")!;
 
@@ -101,14 +75,14 @@ describe("adaptCardLayout drag boundaries", () => {
     },
   );
 
-  it.skipIf(!hasAdaptCardLayout)("clamps an off-canvas drag target", () => {
+  it("clamps an off-canvas drag target", () => {
     const initial = [placement("moved", 600, 80)];
     const target = { x: -500, y: 9_999 };
-    const expected = layout.clampCardPosition({
+    const expected = clampCardPosition({
       ...initial[0]!,
       ...target,
     }, adaptBounds);
-    const result = adaptCardLayout!(initial, "moved", target, adaptBounds);
+    const result = adaptCardLayout(initial, "moved", target, adaptBounds);
 
     expect(result).toHaveLength(1);
     expect({ x: result[0]!.x, y: result[0]!.y }).toEqual(expected);
@@ -145,9 +119,7 @@ describe("card layout saturation and new-mode determinism", () => {
   });
 
   describe.each(["proximity", "columns"] as const)("%s mode", (mode) => {
-    const hasMode = solverSupportsMode(mode);
-
-    it.skipIf(!hasMode)("is deterministic for repeated solves of identical inputs", () => {
+    it("is deterministic for repeated solves of identical inputs", () => {
       const first = solveCardLayout(determinismCards, determinismBounds, {
         mode,
         connectorStyle: "straight",

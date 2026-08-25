@@ -131,6 +131,9 @@ describe("CardsInspector", () => {
     ]);
     expect(mode.value).toBe("quadrant");
     expect(balance.disabled).toBe(false);
+    // The crossing constraint is best-effort, so the panel must not promise more than the solver delivers.
+    expect(container.textContent).toContain("当硬性要求去搜索，但不保证");
+    expect(container.textContent).toContain("交叉最少的一版");
 
     flushSync(() => {
       setter?.call(mode, "proximity");

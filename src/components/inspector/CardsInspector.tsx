@@ -164,6 +164,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
       <option key={option.id} value={option.id}>{option.label}</option>
     ))}</select></label>
     <label htmlFor="cards-auto-balance" className="boolean-control checkbox-row"><input id="cards-auto-balance" type="checkbox" checked={cards.autoBalance !== false} disabled={!AUTO_BALANCE_MODES.has(layoutMode)} onChange={() => onPatch({ autoBalance: cards.autoBalance === false })} />自动平衡左右</label>
+    <p className="property-panel__hint">自动排布把「连接线互不交叉」当硬性要求去搜索，但不保证每种排布方式、每份名单都能做到；排不开时会保留它找到的交叉最少的一版。看到交叉可以换一种排布方式、点顶栏「刷新展示框位置」重算，或手动拖开个别卡片。</p>
     <label htmlFor="cards-avoid-map-overlap" className="boolean-control checkbox-row"><input id="cards-avoid-map-overlap" type="checkbox" checked={cards.allowMapOverlap !== true} onChange={(event) => onPatch({ allowMapOverlap: !event.target.checked })} />禁止遮挡地图</label>
     <label htmlFor="cards-avoid-element-overlap" className="boolean-control checkbox-row"><input id="cards-avoid-element-overlap" type="checkbox" checked={cards.allowElementOverlap !== true} onChange={(event) => onPatch({ allowElementOverlap: !event.target.checked })} />禁止遮挡其他元素</label>
     <p className="property-panel__hint">遮挡开关同时作用于自动排布与手动拖拽：勾选后卡片与连接线会避开省份轮廓 / 嘉宾面板、文本、装饰素材。</p>

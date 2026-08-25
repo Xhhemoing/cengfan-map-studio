@@ -7,6 +7,7 @@ import {
   type CardPoint,
   type CardPolygon,
 } from "./card-layout";
+import { buildConnectorGeometry, connectorGeometriesIntersect } from "./connector-geometry";
 import {
   clamp,
   fuzzScenario,
@@ -16,16 +17,21 @@ import {
 } from "./card-layout-test-fixtures";
 
 describe("card layout hard-constraint properties", () => {
-  it("never violates margin, card spacing or polygon obstacles on any solved layout", () => {
+  it("never violates margin, card spacing or polygon obstacles, solved or not", () => {
+    // `fuzzScenario` always passes a `connectorStyle`, so the crossing constraint
+    // is always live and a majority of seeds land on `status: "fallback"`.
+    // Degrading to "fewest crossings" is allowed to give up on connectors; it is
+    // never allowed to give up on geometry, so these assertions run on every seed.
+    let solved = 0;
     for (let seed = 1; seed <= 180; seed += 1) {
       const { cards, bounds: layoutBounds, options } = fuzzScenario(seed);
-      const context = `seed=${seed} mode=${options.mode} cards=${cards.length}`;
       const result = solveCardLayout(cards, layoutBounds, options);
+      const context = `seed=${seed} mode=${options.mode} cards=${cards.length} status=${result.status}`;
+      if (result.status === "solved") solved += 1;
 
       expect(result.placements, context).toHaveLength(cards.length);
       expect(result.placements.map((placement) => placement.id), context)
         .toEqual(cards.map((card) => card.id));
-      if (result.status !== "solved") continue;
 
       const gap = layoutBounds.gap;
       for (const placement of result.placements) {
@@ -51,6 +57,35 @@ describe("card layout hard-constraint properties", () => {
         }
       }
     }
+    // Guard the guard: if every seed degraded, the geometry sweep above would
+    // still pass while saying nothing about the solved path.
+    expect(solved).toBeGreaterThan(0);
+  });
+
+  it("ships zero connector crossings on every seed it calls solved", () => {
+    let checked = 0;
+    for (let seed = 1; seed <= 180; seed += 1) {
+      const { cards, bounds: layoutBounds, options } = fuzzScenario(seed);
+      const result = solveCardLayout(cards, layoutBounds, options);
+      if (result.status !== "solved") continue;
+      checked += 1;
+      const context = `seed=${seed} mode=${options.mode} style=${options.connectorStyle}`;
+      const geometries = result.placements.map((placement) => buildConnectorGeometry({
+        card: placement,
+        anchor: { x: placement.anchorX, y: placement.anchorY },
+        preferredSide: placement.side,
+        style: options.connectorStyle,
+      }));
+      for (let left = 0; left < geometries.length; left += 1) {
+        for (let right = left + 1; right < geometries.length; right += 1) {
+          expect(
+            connectorGeometriesIntersect(geometries[left]!, geometries[right]!, options.connectorWidth),
+            `${context} pair ${left}/${right}`,
+          ).toBe(false);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 
   it("matches the naive oracle on every rectangle/polygon obstacle decision", () => {
@@ -180,7 +215,11 @@ describe("card layout hard-constraint properties", () => {
         const result = solveCardLayout(cards, layoutBounds, { mode: "quadrant" });
         const context = `gap=${gap} cards=${cardCount} status=${result.status}`;
         expect(result.placements, context).toHaveLength(cardCount);
-        if (result.status !== "solved") continue;
+        for (const placement of result.placements) {
+          for (const zone of layoutBounds.occupiedAreas ?? []) {
+            expect(overlapsWithGap(placement, zone, gap), `${context} zone`).toBe(false);
+          }
+        }
         for (let left = 0; left < result.placements.length; left += 1) {
           for (let right = left + 1; right < result.placements.length; right += 1) {
             expect(
