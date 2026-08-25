@@ -1,7 +1,7 @@
 # SOTA Continuous Optimization — Progress Ledger
 
 Integration branch: `agent/opt-continuous`  
-**Merge-all overlay (2026-08-25):** isolation `cursor/merge-all-branches-e17a` (fast models only). See `round-merge-all-r1.md` / `round-merge-all-r2.md`. GitHub PR: https://github.com/Xhhemoing/cengfan-map-studio/pull/44  
+**Merge-all overlay (2026-08-25):** isolation `cursor/merge-all-branches-e17a` (fast models only). See `round-merge-all-r1.md` / `round-merge-all-r2.md` / `round-merge-all-r3.md`. GitHub PR: https://github.com/Xhhemoing/cengfan-map-studio/pull/44  
 PR: https://github.com/Xhhemoing/cengfan-map-studio/pull/14  
 Base: `origin/main` @ `897a2a6`  
 Start: 2026-08-24  
