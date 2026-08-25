@@ -17,7 +17,6 @@
   "src/components/canvas/MapDataLayer.tsx": 508,
   "src/components/canvas/MapLayer.test.tsx": 647,
   "src/components/canvas/MapLayer.tsx": 475,
-  "src/components/canvas/PosterCanvas.test.tsx": 983,
   "src/components/canvas/PosterCanvas.tsx": 1588,
   "src/components/inspector/MapInspector.tsx": 555,
   "src/data/china-locations.ts": 416,
