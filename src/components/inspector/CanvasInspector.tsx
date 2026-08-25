@@ -34,7 +34,7 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
     <section className="property-panel">
       <InspectorHeader
         title="画布属性"
-        actions={<IconButton label="重置画布" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} />}
+        actions={<IconButton label="重置画布" icon={<RotateCcw size={15} aria-hidden />} variant="ghost" onClick={onReset} />}
       />
       <label htmlFor="canvas-size-preset">尺寸预设
         <select

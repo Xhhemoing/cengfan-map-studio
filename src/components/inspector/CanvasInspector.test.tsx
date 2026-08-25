@@ -97,3 +97,15 @@ describe("CanvasInspector print bleed", () => {
     flushSync(() => root.unmount());
   });
 });
+
+describe("CanvasInspector reset button accessibility", () => {
+  it("labels the 重置画布 button and hides its icon from assistive tech", () => {
+    const { container, root } = renderInspector();
+    const button = container.querySelector('button[aria-label="重置画布"]');
+    expect(button).not.toBeNull();
+    const icon = button?.querySelector("svg");
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    flushSync(() => root.unmount());
+  });
+});

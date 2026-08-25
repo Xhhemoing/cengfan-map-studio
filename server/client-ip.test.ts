@@ -23,6 +23,15 @@ describe("clientIp", () => {
     expect(clientIp(request, false)).toBe("127.0.0.1");
   });
 
+  it("ignores a quoted X-Forwarded-For hop when the proxy is not trusted", () => {
+    const request = requestWith(
+      { "x-forwarded-for": '"203.0.113.9"' },
+      "::ffff:192.0.2.10",
+    );
+
+    expect(clientIp(request, false)).toBe("192.0.2.10");
+  });
+
   it("uses the rightmost non-empty X-Forwarded-For hop before X-Real-IP", () => {
     const request = requestWith({
       "x-forwarded-for": "198.51.100.1, , 203.0.113.2, ",
@@ -30,6 +39,33 @@ describe("clientIp", () => {
     });
 
     expect(clientIp(request, true)).toBe("203.0.113.2");
+  });
+
+  it("unwraps a quoted IPv4 X-Forwarded-For hop", () => {
+    const request = requestWith({ "x-forwarded-for": '"203.0.113.9"' });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("unwraps a quoted bracketed IPv6 X-Forwarded-For hop", () => {
+    const request = requestWith({ "x-forwarded-for": '"[2001:db8::1]"' });
+
+    expect(clientIp(request, true)).toBe("2001:db8::1");
+  });
+
+  it("leaves an unquoted IPv4 X-Forwarded-For hop unchanged", () => {
+    const request = requestWith({ "x-forwarded-for": "203.0.113.9" });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("skips a malformed quoted X-Forwarded-For hop and falls through", () => {
+    const request = requestWith({
+      "x-forwarded-for": '"203.0.113.9',
+      "x-real-ip": "192.0.2.10",
+    });
+
+    expect(clientIp(request, true)).toBe("192.0.2.10");
   });
 
   it("skips a trailing unknown X-Forwarded-For hop", () => {
@@ -93,6 +129,12 @@ describe("clientIp", () => {
     });
 
     expect(clientIp(request, true)).toBe("203.0.113.2");
+  });
+
+  it("unwraps a quoted IPv4 X-Real-IP hop", () => {
+    const request = requestWith({ "x-real-ip": '"203.0.113.9"' });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
   });
 
   it("skips a trailing unknown X-Real-IP hop", () => {

@@ -529,12 +529,63 @@ describe("card layout", () => {
     }));
     const result = solveCardLayout(input, saturated, { mode: "quadrant" });
     expect(result.status).toBe("fallback");
-    expect(result.placements).toHaveLength(input.length);
+    // The area proof settles this board, so it is the short saturated path
+    // rather than the full contained ladder that has to keep caller order.
+    expect(__layoutDebug.last!.decision).toBe("skipped-infeasible");
+    expect(result.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
     for (const placement of result.placements) {
       expect(placement.x).toBeGreaterThanOrEqual(saturated.margin - 1e-6);
       expect(placement.y).toBeGreaterThanOrEqual(saturated.margin - 1e-6);
       expect(placement.x + placement.width).toBeLessThanOrEqual(saturated.width - saturated.margin + 1e-6);
       expect(placement.y + placement.height).toBeLessThanOrEqual(saturated.height - saturated.margin + 1e-6);
+    }
+  });
+
+  it("keeps caller order when obstacles, not area, are what make the canvas unsolvable", () => {
+    // The area proof passes — six cards need a fraction of the canvas — so the
+    // solve walks the whole ladder and lands in the contained fallback instead
+    // of the saturated shortcut. Nothing validates that result, so the order it
+    // ships is whatever the winning contained strategy happened to produce, and
+    // every one of those strategies packs in an order of its own.
+    const walled: CardLayoutBounds = {
+      width: 800,
+      height: 600,
+      map: { x: 20, y: 20, width: 760, height: 500 },
+      margin: 20,
+      gap: 10,
+      // Leaves a 60px strip below the wall: too shallow for any card, so no
+      // legal arrangement exists at all.
+      occupiedAreas: [{ x: 20, y: 20, width: 760, height: 500 }],
+    };
+    // Anchors descend, so reading order — what the sweep, the shelf and the
+    // layered pack all sort by — is the reverse of the input order.
+    const input = Array.from({ length: 6 }, (_, i) => cardInput({
+      id: `w-${i}`,
+      anchorX: 700 - i * 100,
+      anchorY: 520 - i * 80,
+      width: 200,
+      height: 100,
+    }));
+
+    // `grid` places by rule and degrades from there; the packing modes reach
+    // the same contained fallback after the repair ladder comes back empty.
+    const paths: Array<[CardLayoutMode, ConnectorSearchDecision]> = [
+      ["quadrant", "skipped-no-legal-layout"],
+      ["radial", "skipped-no-legal-layout"],
+      ["right-stack", "skipped-no-legal-layout"],
+      ["grid", "skipped-mode"],
+    ];
+    for (const [mode, decision] of paths) {
+      const result = solveCardLayout(input, walled, { mode });
+      expect({ mode, status: result.status, decision: __layoutDebug.last!.decision })
+        .toEqual({ mode, status: "fallback", decision });
+      expect(result.placements.map((placement) => placement.id)).toEqual(input.map((card) => card.id));
+      for (const placement of result.placements) {
+        expect(placement.x).toBeGreaterThanOrEqual(walled.margin - 1e-6);
+        expect(placement.y).toBeGreaterThanOrEqual(walled.margin - 1e-6);
+        expect(placement.x + placement.width).toBeLessThanOrEqual(walled.width - walled.margin + 1e-6);
+        expect(placement.y + placement.height).toBeLessThanOrEqual(walled.height - walled.margin + 1e-6);
+      }
     }
   });
 

@@ -17,9 +17,9 @@ function rightmostHop(value: HeaderValue, arrayMode: "join" | "last"): string | 
 
   const candidates = hops.split(",");
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
-    const hop = candidates[index].trim().replace(ipv4WithPort, "$1");
-    if (!hop || hop.toLowerCase() === "unknown" || hop.startsWith("_")) continue;
-    return unwrapBracketedAddress(hop);
+    const hop = normalizeForwardedAddress(candidates[index]);
+    if (!hop) continue;
+    return hop;
   }
   return undefined;
 }
@@ -60,11 +60,8 @@ function normalizeForwardedAddress(value: string): string | undefined {
     return undefined;
   }
 
-  const unwrappedAddress = unwrapBracketedAddress(address);
-  if (unwrappedAddress !== address) return unwrappedAddress;
-
   const ipv4WithPortMatch = address.match(ipv4WithPort);
-  return ipv4WithPortMatch?.[1] ?? address;
+  return unwrapBracketedAddress(ipv4WithPortMatch?.[1] ?? address);
 }
 
 function forwardedFor(value: HeaderValue): string | undefined {

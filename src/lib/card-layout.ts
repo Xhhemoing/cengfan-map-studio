@@ -159,6 +159,25 @@ function repairLadder(
 }
 
 /**
+ * Ship the least-bad of several contained candidates as a `fallback` result.
+ *
+ * The winner is put back into caller order the same way every solved path
+ * does. Input order is part of the public contract, and it is the one property
+ * a saturated result cannot get for free: `validateHard` never runs on this
+ * path, so a candidate strategy that packed in its own order would ship a
+ * permuted `placements` array with nothing left to catch it.
+ */
+function leastBad(
+  cards: CardLayoutInput[],
+  space: LayoutSpace,
+  mode: CardLayoutMode,
+  contained: CardPlacement[][],
+): CardLayoutResult {
+  const winner = contained.reduce((best, candidate) => betterLayout(best, candidate, space));
+  return { status: "fallback", placements: orderResult(cards, winner, space), mode };
+}
+
+/**
  * No legal arrangement was found, so the least-bad contained layout wins — a
  * card that covers the map still reads, a card buried under another one does
  * not.
@@ -170,18 +189,13 @@ function contain(
   attempt: CardPlacement[],
   swept: CardPlacement[] | null,
 ): CardLayoutResult {
-  const contained = [
+  return leastBad(cards, space, mode, [
     swept ?? sweepPack(cards, space),
     sweepPack(cards, space, { ignoreObstacles: true }),
     shelfLayout(cards, space),
     attempt,
     layeredPack(cards, space),
-  ];
-  return {
-    status: "fallback",
-    placements: contained.reduce((best, candidate) => betterLayout(best, candidate, space)),
-    mode,
-  };
+  ]);
 }
 
 function degrade(
@@ -244,12 +258,7 @@ function refine(
  * after paying for itself. Skip straight to the least-bad contained layout.
  */
 function saturated(cards: CardLayoutInput[], space: LayoutSpace, mode: CardLayoutMode): CardLayoutResult {
-  const contained = [shelfLayout(cards, space), layeredPack(cards, space)];
-  return {
-    status: "fallback",
-    placements: contained.reduce((best, candidate) => betterLayout(best, candidate, space)),
-    mode,
-  };
+  return leastBad(cards, space, mode, [shelfLayout(cards, space), layeredPack(cards, space)]);
 }
 
 function solve(
