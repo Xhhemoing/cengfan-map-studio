@@ -112,7 +112,7 @@ button { font: inherit; }
 .workflow-warning-list button { padding: 5px 6px; color: #98503e; text-align: left; background: #fff; border: 1px solid #e9c9bd; border-radius: 3px; cursor: pointer; font-size: 11px; }
 .workflow-warning-list button:hover { background: #fdf3ef; }
 .property-panel__advanced { margin-top: 12px; border-top: 1px solid #dce3e7; }
-.property-panel__advanced summary { padding: 10px 2px; color: #245d57; cursor: pointer; font-size: 12px; font-weight: 600; list-style: none; }
+.property-panel__advanced summary { display: list-item; padding: 10px 2px; color: #245d57; cursor: pointer; font-size: 12px; font-weight: 600; list-style: none; }
 .property-panel__advanced summary::-webkit-details-marker { display: none; }
 .property-panel__advanced summary::before { content: "▸ "; }
 .property-panel__advanced[open] summary::before { content: "▾ "; }
@@ -128,7 +128,7 @@ button { font: inherit; }
 .inspector-global-entry { width: 100%; margin-bottom: 12px; padding: 8px 10px; color: #245d57; background: #eef6f4; border: 1px solid #cfe2de; border-radius: 5px; cursor: pointer; font-size: 12px; }
 .inspector-global-entry:hover { background: #e0f0ec; }
 .inspector-global-typography { margin-top: 14px; padding-top: 4px; border-top: 1px solid #dce3e7; }
-.inspector-global-typography summary { padding: 8px 2px; color: #245d57; cursor: pointer; font-size: 12px; font-weight: 600; list-style: none; }
+.inspector-global-typography summary { display: list-item; padding: 8px 2px; color: #245d57; cursor: pointer; font-size: 12px; font-weight: 600; list-style: none; }
 .inspector-global-typography summary::-webkit-details-marker { display: none; }
 .inspector-global-typography summary::before { content: "▸ "; }
 .inspector-global-typography[open] summary::before { content: "▾ "; }
@@ -2823,6 +2823,7 @@ button.data-overview__metric:hover {
   font-size: 11px;
 }
 .studio-stage-guide summary {
+  display: list-item;
   cursor: pointer;
   color: var(--editor-ink);
   font-weight: 600;
