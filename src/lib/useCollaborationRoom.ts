@@ -9,10 +9,8 @@
  * collaboration ref.
  */
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
-import {
-  COLLABORATION_DISPLAY_NAME,
-  ROOM_ACCESS_STORAGE_PREFIX,
-} from "./app-constants";
+import { ROOM_ACCESS_STORAGE_PREFIX } from "./app-constants";
+import { loadDisplayName } from "./collaboration-identity";
 import {
   CollaborationClientError,
   createRoom,
@@ -577,7 +575,8 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
     setCollaborationStatus("connecting");
     setCollaborationMessage("正在创建房间");
     try {
-      const allocated = await createRoom<ProjectPackage>({ clientId, displayName: COLLABORATION_DISPLAY_NAME, signal });
+      // The local nickname is read at request time so edits apply to the next create/join.
+      const allocated = await createRoom<ProjectPackage>({ clientId, displayName: loadDisplayName(), signal });
       const { room, access } = allocated;
       notePersistence(allocated);
       roomClosedRef.current = room.closed ?? false;
@@ -635,7 +634,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
           roomId: normalizedRoomId,
           inviteToken: inviteTokenInput.trim(),
           clientId,
-          displayName: COLLABORATION_DISPLAY_NAME,
+          displayName: loadDisplayName(),
           signal,
         }).then((joined) => {
           joinedPersistence = { persistedAtLastFlush: joined.persistedAtLastFlush, persistence: joined.persistence };

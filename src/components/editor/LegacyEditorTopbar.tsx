@@ -118,8 +118,8 @@ export function LegacyEditorTopbar({
         {projectExportActions}
 
         <ToolbarGroup label="导出">
-          <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}>
-            <ImageDown size={16} /> {posterExport.exportingPng ? "导出中..." : "导出 PNG"}
+          <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportState === "exporting"}>
+            <ImageDown size={16} /> {posterExport.exportingPng || posterExport.exportState === "exporting" ? "导出中..." : "导出 PNG"}
           </button>
         </ToolbarGroup>
       </div>

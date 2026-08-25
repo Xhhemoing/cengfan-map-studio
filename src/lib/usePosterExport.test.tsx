@@ -80,7 +80,7 @@ interface Harness {
   render: () => void;
 }
 
-function mountHook(options: { withPoster?: boolean } = {}): Harness {
+function mountHook(options: { withPoster?: boolean; getProjectName?: () => string | null } = {}): Harness {
   const statuses: string[] = [];
   const imported: ProjectPackage[] = [];
   let latest: UsePosterExportResult | null = null;
@@ -100,6 +100,7 @@ function mountHook(options: { withPoster?: boolean } = {}): Harness {
       renderSettings: { mode: "normal", fixedFps: 20 },
       applyImportedPackage: (pack) => imported.push(pack),
       reportStatus: (message) => statuses.push(message),
+      getProjectName: options.getProjectName,
     });
     return null;
   }
@@ -148,7 +149,7 @@ describe("usePosterExport", () => {
     await act(async () => { await harness.result().exportPng(); });
 
     expect(downloads).toHaveLength(1);
-    expect(downloads[0]?.filename).toBe("我的毕业去向图.png");
+    expect(downloads[0]?.filename).toBe("我的毕业去向图-1x.png");
     expect(downloads[0]?.blob.type).toBe("image/png");
     expect(harness.result().exportState).toBe("success");
     expect(harness.result().exportError).toBeUndefined();
@@ -289,5 +290,14 @@ describe("usePosterExport", () => {
     expect(harness.result().exportState).toBe("success");
     expect(downloads).toHaveLength(1);
     expect(harness.statuses.at(-1)).toContain("完整工程包已导出");
+  });
+
+  it("names exports after the current project and publishes the file name", async () => {
+    const harness = mountHook({ getProjectName: () => "高三3班" });
+
+    await act(async () => { await harness.result().exportPng(); });
+
+    expect(downloads[0]?.filename).toBe("高三3班-1x.png");
+    expect(harness.result().lastExportFileName).toBe("高三3班-1x.png");
   });
 });

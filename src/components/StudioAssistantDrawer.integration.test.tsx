@@ -45,7 +45,7 @@ function renderDrawerWithRail(overrides: Partial<StudioAssistantRailProps> = {})
       stage: "data",
       progressStatus: "ready",
       cards: [
-        { id: "data-clean", question: "名单数据健康", status: "0 人 · 无缺失、无重复、全部可定位", severity: "ok" },
+        { id: "data-clean", question: "名单数据健康", status: "12 人 · 无缺失、无重复、全部可定位", severity: "ok" },
       ],
     },
     onStageOverviewAction: vi.fn(),

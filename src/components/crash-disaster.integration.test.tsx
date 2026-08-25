@@ -257,7 +257,7 @@ describe("降级会话里的崩溃灾难演练", () => {
 
     const files = stubDownloads();
     editor.querySelector<HTMLButtonElement>('button[aria-label="导出当前项目"]')?.click();
-    await vi.waitFor(() => expect(files).toEqual([`${SAMPLE_PROJECT_NAME}-${sample?.updatedAt.slice(0, 10)}.json`]));
+    await vi.waitFor(() => expect(files).toEqual([`${SAMPLE_PROJECT_NAME}-工程包-${sample?.updatedAt.slice(0, 10)}.json`]));
     expect(editor.querySelector(".workbench-storage-notice-error")).toBeNull();
 
     // —— 4. 界面崩溃：工作区镜像是空的，崩溃屏只能回落到共享项目库。

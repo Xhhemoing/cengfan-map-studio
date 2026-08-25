@@ -182,9 +182,9 @@ describe("ProjectRoute", () => {
     expect(button.getAttribute("aria-label")).toBe("导出当前项目");
     button.click();
 
-    await vi.waitFor(() => expect(files).toEqual(["一班-2026-08-24.json"]));
+    await vi.waitFor(() => expect(files).toEqual(["一班-工程包-2026-08-24.json"]));
     await Promise.resolve();
-    expect(files).toEqual(["一班-2026-08-24.json"]);
+    expect(files).toEqual(["一班-工程包-2026-08-24.json"]);
   });
 
   it("keeps a failed export visible instead of a dead button", async () => {

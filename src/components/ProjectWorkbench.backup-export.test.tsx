@@ -30,13 +30,13 @@ describe("ProjectWorkbench degraded storage backup export", () => {
     expect(exportButtons[0].getAttribute("aria-label")).toBe("导出「备份项目」");
     exportButtons[0].click();
 
-    await vi.waitFor(() => expect(files).toEqual(["备份项目-2026-08-24.json"]));
+    await vi.waitFor(() => expect(files).toEqual(["备份项目-工程包-2026-08-24.json"]));
     // 一次手势只落一个文件。
     await Promise.resolve();
-    expect(files).toEqual(["备份项目-2026-08-24.json"]);
+    expect(files).toEqual(["备份项目-工程包-2026-08-24.json"]);
 
     notice.querySelector<HTMLButtonElement>('button[aria-label="导出「第二个项目」"]')?.click();
-    await vi.waitFor(() => expect(files).toEqual(["备份项目-2026-08-24.json", "第二个项目-2026-08-23.json"]));
+    await vi.waitFor(() => expect(files).toEqual(["备份项目-工程包-2026-08-24.json", "第二个项目-工程包-2026-08-23.json"]));
   });
 
   it("lists a just-created project among the notice export actions while the workbench stays mounted", async () => {
@@ -95,7 +95,7 @@ describe("ProjectWorkbench degraded storage backup export", () => {
     exportButton().click();
 
     // 一次手势一份文件,重试成功后横幅不能继续挂着上一次的失败。
-    await vi.waitFor(() => expect(files).toEqual(["备份项目-2026-08-24.json"]));
+    await vi.waitFor(() => expect(files).toEqual(["备份项目-工程包-2026-08-24.json"]));
     expect(storageNotice(container)?.querySelector('[role="alert"]')).toBeNull();
   });
 

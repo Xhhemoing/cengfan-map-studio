@@ -10,6 +10,7 @@
  * `svgToPngDataUrl` + `downloadDataUrl` 并删掉 generation 判断。
  */
 import { useRef, useState, type RefObject } from "react";
+import { buildExportFileName } from "./export-filename";
 import { downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
 import { assertProjectPackageSize, createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
@@ -30,12 +31,16 @@ export interface UsePosterExportOptions {
   applyImportedPackage: (pack: ProjectPackage) => void;
   /** Reports user-facing status messages. */
   reportStatus: (message: string) => void;
+  /** Reads the latest project name when an export starts. */
+  getProjectName?: () => string | null;
 }
 
 export interface UsePosterExportResult {
   exportingPng: boolean;
   exportState: DeliveryExportState;
   exportError: string | undefined;
+  /** File name written by the most recent successful export; undefined once a new export starts. */
+  lastExportFileName: string | undefined;
   pngScale: number;
   transparentExport: boolean;
   showProjectExportDialog: boolean;
@@ -53,10 +58,21 @@ export interface UsePosterExportResult {
 }
 
 export function usePosterExport(options: UsePosterExportOptions): UsePosterExportResult {
-  const { posterRef, project, userAssets, userFonts, customTemplates, renderSettings, applyImportedPackage, reportStatus } = options;
+  const {
+    posterRef,
+    project,
+    userAssets,
+    userFonts,
+    customTemplates,
+    renderSettings,
+    applyImportedPackage,
+    reportStatus,
+    getProjectName,
+  } = options;
   const [exportingPng, setExportingPng] = useState(false);
   const [exportState, setExportState] = useState<DeliveryExportState>("idle");
   const [exportError, setExportError] = useState<string>();
+  const [lastExportFileName, setLastExportFileName] = useState<string>();
   const lastExportRef = useRef<"png" | "svg" | "project">("png");
   // PNG 导出是异步的：连点两次、或失败后立刻重试时，先发起的那次落地后不能再
   // 改状态，否则用户看到的是上一轮的结果（旧错误覆盖新成功，或反过来）。
@@ -71,11 +87,14 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     exportGenerationRef.current += 1;
     setExportState("exporting");
     setExportError(undefined);
+    setLastExportFileName(undefined);
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
-      downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
+      const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "svg" });
+      downloadText(source, fileName, "image/svg+xml;charset=utf-8");
+      setLastExportFileName(fileName);
       setExportState("success");
       reportStatus("SVG 已导出");
     } catch (error) {
@@ -96,17 +115,25 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     exportGenerationRef.current += 1;
     setExportState("exporting");
     setExportError(undefined);
+    setLastExportFileName(undefined);
     try {
       const exportedAssets = includeResourcesInProjectExport ? userAssets : [];
       const exportedFonts = includeResourcesInProjectExport ? userFonts : [];
-      downloadProjectPackage(createProjectPackage({
+      const pack = createProjectPackage({
         project,
         assets: exportedAssets,
         fonts: exportedFonts,
         customTemplates,
         renderSettings,
-      }));
+      });
+      const fileName = buildExportFileName({
+        projectName: getProjectName?.(),
+        kind: "project",
+        date: pack.exportedAt.slice(0, 10),
+      });
+      downloadProjectPackage(pack, fileName);
       setShowProjectExportDialog(false);
+      setLastExportFileName(fileName);
       setExportState("success");
       reportStatus(includeResourcesInProjectExport
         ? `完整工程包已导出：${project.students.length} 条名单、${exportedAssets.length} 个素材、${exportedFonts.length} 个字体、${customTemplates.length} 个模板`
@@ -152,6 +179,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     setExportingPng(true);
     setExportState("exporting");
     setExportError(undefined);
+    setLastExportFileName(undefined);
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
@@ -163,7 +191,9 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
         transparentBackground: transparentExport,
       });
       if (!isCurrent()) return;
-      downloadBlob(blob, "我的毕业去向图.png");
+      const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "png", scale: pngScale });
+      downloadBlob(blob, fileName);
+      setLastExportFileName(fileName);
       setExportState("success");
       reportStatus("PNG 已导出");
     } catch (error) {
@@ -187,6 +217,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     exportingPng,
     exportState,
     exportError,
+    lastExportFileName,
     pngScale,
     transparentExport,
     showProjectExportDialog,

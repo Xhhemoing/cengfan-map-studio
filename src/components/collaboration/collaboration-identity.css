@@ -1,0 +1,8 @@
+/* 从 src/styles.css 搬出：协作昵称与成员角色徽标。样式随组件走，主样式表只留全局外壳。 */
+/* Collaboration identity: local nickname input and role-text roster badges. */
+.collaboration-display-name { display: grid; gap: 4px; font-size: 11px; color: #315b67; }
+.collaboration-display-name input { min-width: 0; height: 30px; padding: 0 9px; border: 1px solid #cbd6dc; border-radius: 4px; }
+.collaboration-display-name input:disabled { color: #6a7c8b; background: #f2f6f7; }
+.collaboration-roster { display: grid; gap: 4px; }
+.collaboration-members__name { overflow: hidden; text-overflow: ellipsis; }
+.collaboration-members__role { margin-left: auto; flex-shrink: 0; padding: 1px 6px; color: #33625d; background: #e4efec; border: 1px solid #c4dbd5; border-radius: 999px; font-size: 10px; }

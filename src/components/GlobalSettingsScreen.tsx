@@ -13,6 +13,8 @@ import { TypographyPanel } from "./TypographyPanel";
 import type { TypographyTarget } from "../lib/typography";
 import type { WorkflowProgress, WorkflowStepId, WorkflowStepStatus } from "../lib/workflow-progress";
 import { TemplatePicker } from "./TemplatePicker";
+import { TemplateExchange } from "./TemplateExchange";
+import type { CustomTemplateRecord } from "../lib/template-store";
 import { CardPresentationSettings } from "./CardPresentationSettings";
 import { ThemeToggle } from "./ThemeToggle";
 import type { ResolvedTheme, ThemeMode } from "../lib/theme";
@@ -114,6 +116,9 @@ export function GlobalSettingsScreen({
   onApplyTemplate,
   onApplyCustomTemplate,
   onSaveTemplate,
+  customTemplateRecords,
+  onImportTemplateRecord,
+  templateAuthor,
   onOpenGlobalData,
   themeMode,
   resolvedTheme,
@@ -152,6 +157,12 @@ export function GlobalSettingsScreen({
   onApplyTemplate: (id: MapTemplateId) => void;
   onApplyCustomTemplate: (record: { id: string; name: string; scope: "visual" | "layout" }) => void;
   onSaveTemplate: () => void;
+  /** Full template records, needed to export a `.cengfan-template` file. */
+  customTemplateRecords?: CustomTemplateRecord[];
+  /** Receives an imported template and feeds it into the existing template save path. */
+  onImportTemplateRecord?: (record: CustomTemplateRecord) => void;
+  /** Local nickname written into the exported file as a signature. */
+  templateAuthor?: string;
   onOpenGlobalData?: () => void;
   themeMode?: ThemeMode;
   resolvedTheme?: ResolvedTheme;
@@ -304,6 +315,13 @@ export function GlobalSettingsScreen({
                     onApplyTemplate={onApplyTemplate}
                     onApplyCustomTemplate={onApplyCustomTemplate}
                     onSaveTemplate={onSaveTemplate}
+                    exchange={onImportTemplateRecord ? (
+                      <TemplateExchange
+                        customTemplates={customTemplateRecords ?? []}
+                        onImport={onImportTemplateRecord}
+                        author={templateAuthor}
+                      />
+                    ) : undefined}
                   />
                   <CardsInspector
                     cards={project.cards}

@@ -65,6 +65,7 @@ import { LegacyEditorStage } from "./components/editor/LegacyEditorStage";
 import { LegacyEditorTopbar } from "./components/editor/LegacyEditorTopbar";
 import { MissingProjectShell } from "./components/editor/MissingProjectShell";
 import { ProjectLoadingShell } from "./components/editor/ProjectLoadingShell";
+import { EditorTopbarActions } from "./components/editor/EditorTopbarActions";
 import { StageLayoutScreen } from "./components/editor/StageLayoutScreen";
 
 import { ToolbarButton, ToolbarGroup } from "./components/StudioUi";
@@ -75,8 +76,6 @@ import {
 } from "./lib/workflow-stages";
 import { deriveStageOverviewModel } from "./lib/stage-overview";
 import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession } from "./lib/workspace-session";
-import { ThemeToggle } from "./components/ThemeToggle";
-import { SkinSelector } from "./components/SkinSelector";
 import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
 import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
 import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
@@ -96,7 +95,7 @@ import {
   loadCustomTemplates,
   type CustomTemplateRecord,
 } from "./lib/template-store";
-import { createTemplateCaptureAction } from "./lib/editor-template-capture-action";
+import { createEditorTemplateActions } from "./lib/editor-template-actions";
 import { createProjectResetActions } from "./lib/editor-project-reset-actions";
 import { type SceneSelection } from "./lib/scene-document";
 
@@ -348,6 +347,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       setSelection({ type: "canvas" });
     },
     reportStatus: setStatusMessage,
+    getProjectName: () => projectRecord.nameRef.current,
   });
 
   const { canUndo, canRedo, undoLabel, redoLabel } = describeHistoryActions(project);
@@ -507,10 +507,13 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildProjectLayoutHealthInput(project)), [project]);
 
-  const saveCurrentTemplate = createTemplateCaptureAction({
+  const templateActions = createEditorTemplateActions({
     project,
+    currentTemplateId: template,
     customTemplates,
     setCustomTemplates,
+    applySystemTemplate,
+    applyCustomTemplateRecord,
     reportStatus: setStatusMessage,
   });
 
@@ -675,14 +678,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
   );
 
   const projectActionsNode = (
-    <>
-      {projectId && <WorkbenchBackButton onClick={() => void backToWorkbench()} />}
-      {projectExportActions}
-      <ToolbarGroup label="界面主题" className="topbar-action-group--theme">
-        <SkinSelector skin={skin} onChange={setSkin} />
-        <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-      </ToolbarGroup>
-    </>
+    <EditorTopbarActions
+      backButton={projectId ? <WorkbenchBackButton onClick={() => void backToWorkbench()} /> : null}
+      exportActions={projectExportActions}
+      appearance={{ skin, themeMode, resolvedTheme, onSkinChange: setSkin, onThemeChange: setThemeMode }}
+      onCopyEnvironment={() => setStatusMessage("已复制环境信息")}
+    />
   );
 
   const workflowNavNode = (
@@ -709,8 +710,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         skin={skin}
         project={project}
         userFonts={userFonts}
-        currentTemplateId={template}
-        customTemplates={customTemplates}
+        templateActions={templateActions}
         dataWorkspaceProps={dataWorkspaceProps}
         workflowNav={workflowNavNode}
         backButton={projectId ? <WorkbenchBackButton onClick={() => void backToWorkbench()} /> : null}
@@ -730,9 +730,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onApplyFont={applyFont}
         onUploadFont={uploadUserFont}
         onDeleteUserFont={deleteUserFont}
-        onApplyTemplate={applySystemTemplate}
-        onApplyCustomTemplate={applyCustomTemplateRecord}
-        onSaveTemplate={saveCurrentTemplate}
         onOpenGlobalData={openGlobalData}
       />
     );
@@ -784,6 +781,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onResizeAsset={resizeAsset}
         onMoveCard={moveCard}
         onMoveGuests={moveGuests}
+        templateActions={templateActions}
         onApplyFont={applyFont}
         onUploadFont={uploadUserFont}
         onDeleteUserFont={deleteUserFont}
@@ -858,7 +856,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onReportStatus={setStatusMessage}
           onApplySystemTemplate={applySystemTemplate}
           onApplyCustomTemplate={applyCustomTemplateRecord}
-          onSaveTemplate={saveCurrentTemplate}
+          onSaveTemplate={templateActions.onSaveTemplate}
           onApplyBackground={applyBackgroundAsset}
           onCreateLandmark={createLandmark}
           onCreateDecoration={createDecoration}

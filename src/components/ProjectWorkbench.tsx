@@ -170,6 +170,15 @@ export function ProjectWorkbench({ store, health, recoverError, navigate, public
     }
   };
 
+  const loadSampleProject = async () => {
+    try {
+      await store.put(createSampleProject());
+      await refresh();
+    } catch (reason) {
+      reportFailure(reason, "载入示例项目失败");
+    }
+  };
+
   const renameProject = async (project: Pick<ProjectListItem, "id" | "name">) => {
     const name = window.prompt("请输入新项目名称", project.name);
     if (name === null || !name.trim()) return;
@@ -311,6 +320,7 @@ export function ProjectWorkbench({ store, health, recoverError, navigate, public
         onDuplicate={(project) => void duplicateProject(project)}
         onExport={(project) => void exportProject(project)}
         onDelete={(project) => void deleteProject(project)}
+        onLoadSample={() => void loadSampleProject()}
       />
     </main>
   );

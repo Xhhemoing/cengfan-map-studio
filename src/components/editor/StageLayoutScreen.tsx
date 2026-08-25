@@ -8,6 +8,7 @@ import type { ProjectDocument } from "../../lib/project-document";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
 import type { SceneSelection } from "../../lib/scene-document";
 import { STAGE_METADATA } from "../../lib/stage-metadata";
+import { templatePickerProps, type EditorTemplateActions } from "../../lib/editor-template-actions";
 import type { UsePosterExportResult } from "../../lib/usePosterExport";
 import type { WorkflowStageId } from "../../lib/workflow-stages";
 import { CardsInspector } from "../inspector/CardsInspector";
@@ -33,6 +34,7 @@ import { MapStyleRail, MapStyleWorkspace, type MapStyleWorkspaceProps } from "..
 import { ReferenceCardStyleWorkspace } from "../workspaces/ReferenceCardStyleWorkspace";
 
 type CardsInspectorProps = ComponentProps<typeof CardsInspector>;
+
 
 export interface StageLayoutScreenProps {
   stage: WorkflowStageId;
@@ -78,6 +80,7 @@ export interface StageLayoutScreenProps {
   onResizeAsset: NonNullable<ContentLayoutWorkspaceProps["onResizeAsset"]>;
   onMoveCard: NonNullable<ContentLayoutWorkspaceProps["onMoveCard"]>;
   onMoveGuests: NonNullable<ContentLayoutWorkspaceProps["onMoveGuests"]>;
+  templateActions: EditorTemplateActions;
   onApplyFont: NonNullable<ContentLayoutWorkspaceProps["onApplyFont"]>;
   onUploadFont: NonNullable<ContentLayoutWorkspaceProps["onUploadFont"]>;
   onDeleteUserFont: NonNullable<ContentLayoutWorkspaceProps["onDeleteUserFont"]>;
@@ -164,6 +167,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
     onResizeAsset,
     onMoveCard,
     onMoveGuests,
+    templateActions,
     onApplyFont,
     onUploadFont,
     onDeleteUserFont,
@@ -199,7 +203,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             project={project}
             summary={dataHealth}
             issues={dataIssues}
-            dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true, hideTemplateDownload: true }}
+            dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true }}
             assetPanelProps={assetPanelProps}
             onCreateDecoration={onCreateDecoration}
             onSelectStudent={onSelectStudent}
@@ -288,6 +292,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             includeResources={posterExport.includeResourcesInProjectExport}
             exportState={posterExport.exportState}
             exportError={posterExport.exportError}
+            lastExportFileName={posterExport.lastExportFileName}
             onPngScaleChange={posterExport.setPngScale}
             onTransparentExportChange={posterExport.setTransparentExport}
             onIncludeResourcesChange={posterExport.setIncludeResourcesInProjectExport}
@@ -312,6 +317,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             includeResources={posterExport.includeResourcesInProjectExport}
             exportState={posterExport.exportState}
             exportError={posterExport.exportError}
+            lastExportFileName={posterExport.lastExportFileName}
             onPngScaleChange={posterExport.setPngScale}
             onTransparentExportChange={posterExport.setTransparentExport}
             onIncludeResourcesChange={posterExport.setIncludeResourcesInProjectExport}
@@ -343,6 +349,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             onApplyFont={onApplyFont}
             onUploadFont={onUploadFont}
             onDeleteUserFont={onDeleteUserFont}
+            {...templatePickerProps(templateActions)}
           />
         ),
         workspace: (

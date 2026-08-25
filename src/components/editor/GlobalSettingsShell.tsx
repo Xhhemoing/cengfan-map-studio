@@ -3,8 +3,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { provinceNames } from "../../lib/app-constants";
 import type { UserFont } from "../../lib/fonts";
 import type { ProjectDocument } from "../../lib/project-document";
-import { createSystemTemplate } from "../../lib/template-document";
-import type { CustomTemplateRecord } from "../../lib/template-store";
+import { templatePickerProps, type EditorTemplateActions } from "../../lib/editor-template-actions";
 import type { ResolvedTheme, ThemeMode } from "../../lib/theme";
 import type { WorkflowProgress, WorkflowStepId } from "../../lib/workflow-progress";
 import { GlobalSettingsScreen, type GlobalSettingsSection } from "../GlobalSettingsScreen";
@@ -17,16 +16,13 @@ type DataWorkspaceProps = ComponentProps<typeof DataWorkspace> & {
   onChangeDataView: GlobalSettingsScreenProps["onChangeDataView"];
 };
 
-const SYSTEM_TEMPLATE_IDS = ["original", "cartoon", "grain", "q", "scenery"] as const;
-
 export interface GlobalSettingsShellProps {
   section: GlobalSettingsSection;
   theme: ResolvedTheme;
   skin: string;
   project: ProjectDocument;
   userFonts: UserFont[];
-  currentTemplateId: string;
-  customTemplates: CustomTemplateRecord[];
+  templateActions: EditorTemplateActions;
   dataWorkspaceProps: DataWorkspaceProps;
   workflowNav: ReactNode;
   backButton: ReactNode;
@@ -46,9 +42,6 @@ export interface GlobalSettingsShellProps {
   onApplyFont: GlobalSettingsScreenProps["onApplyFont"];
   onUploadFont: NonNullable<GlobalSettingsScreenProps["onUploadFont"]>;
   onDeleteUserFont: NonNullable<GlobalSettingsScreenProps["onDeleteUserFont"]>;
-  onApplyTemplate: GlobalSettingsScreenProps["onApplyTemplate"];
-  onApplyCustomTemplate: (record: CustomTemplateRecord) => void;
-  onSaveTemplate: () => void;
   onOpenGlobalData: () => void;
 }
 
@@ -62,8 +55,7 @@ export function GlobalSettingsShell({
   skin,
   project,
   userFonts,
-  currentTemplateId,
-  customTemplates,
+  templateActions,
   dataWorkspaceProps,
   workflowNav,
   backButton,
@@ -83,9 +75,6 @@ export function GlobalSettingsShell({
   onApplyFont,
   onUploadFont,
   onDeleteUserFont,
-  onApplyTemplate,
-  onApplyCustomTemplate,
-  onSaveTemplate,
   onOpenGlobalData,
 }: GlobalSettingsShellProps) {
   return (
@@ -132,18 +121,7 @@ export function GlobalSettingsShell({
         onDeleteUserFont={onDeleteUserFont}
         workflowProgress={workflowProgress}
         workflowActiveStep={workflowActiveStep}
-        templates={SYSTEM_TEMPLATE_IDS.map((templateId) => ({
-          id: templateId,
-          name: createSystemTemplate(templateId).name,
-        }))}
-        currentTemplateId={currentTemplateId}
-        customTemplates={customTemplates.map(({ id, name, scope }) => ({ id, name, scope }))}
-        onApplyTemplate={onApplyTemplate}
-        onApplyCustomTemplate={(record) => {
-          const full = customTemplates.find((item) => item.id === record.id);
-          if (full) onApplyCustomTemplate(full);
-        }}
-        onSaveTemplate={onSaveTemplate}
+        {...templatePickerProps(templateActions)}
         onOpenGlobalData={onOpenGlobalData}
         themeMode={themeMode}
         resolvedTheme={theme}

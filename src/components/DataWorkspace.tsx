@@ -18,6 +18,7 @@ import {
 } from "../lib/binary-import";
 import type { WorkbookImportRequest, WorkbookImportResponse } from "../workers/workbook-import.worker";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
+import { DataMessageRegions } from "./DataMessageRegions";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
 import { findDuplicateStudentGroups } from "../lib/data-duplicate";
@@ -754,8 +755,7 @@ export function DataWorkspace({
         </div>
       )}
 
-      {replaceConfirmation && <p className="panel-note data-message">替换摘要：当前 {replaceConfirmation.currentCount} 条，新 {replaceConfirmation.nextCount} 条</p>}
-      {message && <p className="panel-note data-message">{message}</p>}
+      <DataMessageRegions message={message} replaceConfirmation={replaceConfirmation} />
 
       <div className="student-actions">
         <input

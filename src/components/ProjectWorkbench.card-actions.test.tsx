@@ -3,7 +3,13 @@
 // 共享挂载装置见 src/components/project-workbench-test-harness.tsx。
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryProjectStore, createSampleProject } from "../lib/project-store";
-import { installProjectWorkbenchTestHarness, renderWorkbench } from "./project-workbench-test-harness";
+import { PROJECT_PACKAGE_FILE_ACCEPT } from "../lib/project-package";
+import { fileMatchesAccept } from "../lib/file-accept";
+import {
+  installProjectWorkbenchTestHarness,
+  renderWorkbench,
+  stubDownloads,
+} from "./project-workbench-test-harness";
 
 installProjectWorkbenchTestHarness();
 
@@ -86,5 +92,36 @@ describe("ProjectWorkbench card menu actions", () => {
     const projects = await store.list();
     expect(projects).toHaveLength(1);
     expect(projects[0].name).toBe(sample.name);
+  });
+
+  it("exports a project package named after the project and its update day", async () => {
+    const store = createMemoryProjectStore();
+    // 斜杠是 Windows/macOS 都拒收的路径分隔符,文件名必须先洗掉再落盘。
+    await store.put({ ...createSampleProject(), name: "高三3班/毕业", updatedAt: "2026-08-24T09:30:00.000Z" });
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
+    await vi.waitFor(() => expect(container.textContent).toContain("导出工程包"));
+    const files = stubDownloads();
+
+    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("导出工程包"))?.click();
+
+    await vi.waitFor(() => expect(files).toEqual(["高三3班毕业-工程包-2026-08-24.json"]));
+    expect(fileMatchesAccept(new File(["{}"], files[0]!), PROJECT_PACKAGE_FILE_ACCEPT)).toBe(true);
+  });
+
+  it("falls back to the default base name when the project name is blank", async () => {
+    const store = createMemoryProjectStore();
+    await store.put({ ...createSampleProject(), name: "   ", updatedAt: "2026-08-24T09:30:00.000Z" });
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.querySelector('[aria-label="项目菜单"]')).not.toBeNull());
+    container.querySelector<HTMLButtonElement>('[aria-label="项目菜单"]')?.click();
+    await vi.waitFor(() => expect(container.textContent).toContain("导出工程包"));
+    const files = stubDownloads();
+
+    Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("导出工程包"))?.click();
+
+    await vi.waitFor(() => expect(files).toEqual(["我的毕业去向图-工程包-2026-08-24.json"]));
+    expect(fileMatchesAccept(new File(["{}"], files[0]!), PROJECT_PACKAGE_FILE_ACCEPT)).toBe(true);
   });
 });

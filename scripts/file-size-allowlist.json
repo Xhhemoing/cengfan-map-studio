@@ -4,7 +4,7 @@
   "server/collaboration.ts": 1011,
   "server/index.ts": 979,
   "src/App.collaboration-terminal.test.tsx": 402,
-  "src/App.tsx": 936,
+  "src/App.tsx": 934,
   "src/components/AgentAssistant.tsx": 705,
   "src/components/AppErrorBoundary.tsx": 403,
   "src/components/AssetPanel.tsx": 754,
@@ -26,6 +26,6 @@
   "src/lib/project-store.ts": 748,
   "src/lib/scene-document.test.ts": 401,
   "src/lib/scene-document.ts": 766,
-  "src/lib/useCollaborationRoom.ts": 847,
+  "src/lib/useCollaborationRoom.ts": 846,
   "src/styles.css": 3820
 }

@@ -1,12 +1,22 @@
 /**
  * Project menu popover for the studio top bar: project management, poster
  * export options, incremental collaboration, and project file I/O.
- * Pure presentation — all state and callbacks flow in through props.
+ * Pure presentation — all state and callbacks flow in through props, except
+ * the room nickname, a device-local preference read/written here.
  */
+import { useState } from "react";
 import { Copy, Download, FolderOpen, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
 import type { CollaborationRole, RoomAccessAction, RoomMember, RoomPersistenceOutcome } from "../lib/collaboration-client";
+import {
+  describeRole,
+  loadDisplayName,
+  mergeRoomRoster,
+  saveDisplayName,
+} from "../lib/collaboration-identity";
 import type { LocalOverwriteStatus } from "../lib/incremental-workspace-sync";
 import { PROJECT_PACKAGE_FILE_ACCEPT } from "../lib/project-package";
+import { DisplayNameInput } from "./collaboration/DisplayNameInput";
+import { RoomRoster } from "./collaboration/RoomRoster";
 
 export type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error" | "closed";
 
@@ -139,9 +149,16 @@ export function ProjectMenu({
   // 那是两个各自成立的事实。终局与离线仍然把它压下去——房间已经没了的时候"及时导出备份"
   // 无从执行,断线的时候连接本身更急。
   const showPersistFailureNote = roomPersistFailureAt !== null && Boolean(roomId) && terminalKind === undefined && !isOffline;
+  // Raw input stays in state for a natural typing feel; storage always holds
+  // the normalized value, and the hook normalizes again on create/join.
+  const [displayName, setDisplayName] = useState(() => loadDisplayName());
+  const handleDisplayNameChange = (next: string) => {
+    setDisplayName(next);
+    saveDisplayName(next);
+  };
   return (
     <details className="project-menu">
-      <summary className="secondary-button" aria-label="打开项目菜单">
+      <summary className="secondary-button" aria-label="打开项目与协作菜单">
         <FolderOpen size={16} /> <span>项目</span>
       </summary>
       <div className="project-menu__popover">
@@ -185,18 +202,9 @@ export function ProjectMenu({
                       <b>{roomId}</b>
                       <button type="button" aria-label="复制房间码" onClick={() => void navigator.clipboard?.writeText(roomId)}><Copy size={15} /></button>
                     </div>
-                    <small>{roomRole === "owner" ? "创建者" : roomRole === "editor" ? "编辑者" : roomRole === "viewer" ? "仅查看" : "正在确认权限"} · {members.length} 位成员</small>
-                    {members.length > 0 && (
-                      <ul className="collaboration-members" aria-label="房间成员">
-                        {members.map((member) => (
-                          <li key={member.clientId} data-member-role={member.role}>
-                            {member.role === "owner" && "👑 "}
-                            {member.clientId === ownClientId ? "我" : `成员 ${member.clientId.slice(0, 6)}`}
-                            {member.role === "owner" ? "（创建者）" : member.role === "viewer" ? "（仅查看）" : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    <DisplayNameInput value={displayName} connected onChange={handleDisplayNameChange} />
+                    <small>{describeRole(roomRole).label} · {members.length} 位成员</small>
+                    <RoomRoster entries={mergeRoomRoster({ members, ownClientId, ownDisplayName: displayName })} />
                     <small>模式：{roomClosed ? "已关闭" : roomExpired ? "已失效" : roomReadonly ? "只读" : "可编辑"}</small>
                     {roomClosed ? (
                       <p className="collaboration-closed">房间已关闭，无法继续同步或编辑。</p>
@@ -247,6 +255,7 @@ export function ProjectMenu({
                 ) : (
                   <>
                     <p>未连接时不会上传或覆盖工程。创建者可生成可编辑或仅查看的一次性邀请凭证。</p>
+                    <DisplayNameInput value={displayName} connected={false} onChange={handleDisplayNameChange} />
                     <button type="button" className="collaboration-create" disabled={collaborationStatus === "connecting"} onClick={onStartRoom}><Share2 size={14} /> 创建房间</button>
                     <div className="collaboration-join">
                       <input aria-label="协作房间码" value={roomInput} maxLength={12} placeholder="输入房间码" onChange={(event) => onRoomInputChange(event.target.value.toUpperCase())} />

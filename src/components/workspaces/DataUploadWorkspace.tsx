@@ -125,7 +125,6 @@ export function DataUploadWorkspace({
           <DataWorkspace
             {...dataWorkspaceProps}
             hideDataExpression
-            hideTemplateDownload
             compactRosterControls
             selectedStudentId={dataWorkspaceProps.selectedStudentId}
             onSelectStudent={handleSelectStudent}

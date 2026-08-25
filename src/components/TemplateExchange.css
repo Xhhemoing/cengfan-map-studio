@@ -1,0 +1,13 @@
+/* 从 src/styles.css 搬出：整体模板导入导出。样式随组件走，主样式表只留全局外壳。 */
+.template-exchange { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--editor-line, #d5dee3); }
+.template-exchange__title { margin: 0; color: var(--editor-ink, #314d60); font-size: 12px; }
+.template-exchange__note, .template-exchange__hint { margin: 0; color: var(--editor-ink-muted, #687887); font-size: 11px; line-height: 1.5; }
+.template-exchange__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.template-exchange__select { min-width: 120px; max-width: 100%; flex: 1 1 120px; padding: 4px 6px; border: 1px solid var(--editor-line, #d5dee3); border-radius: 4px; font-size: 11px; }
+.template-exchange__export, .template-exchange__import { display: inline-flex; min-height: 28px; align-items: center; padding: 0 10px; color: var(--editor-ink, #314d60); background: var(--editor-surface-muted, #f5f8f9); border: 1px solid var(--editor-line, #d5dee3); border-radius: 4px; cursor: pointer; font-size: 11px; }
+.template-exchange__export:disabled { cursor: not-allowed; opacity: 0.6; }
+.template-exchange__import input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.template-exchange__import:focus-within { outline: 2px solid var(--editor-accent, #245d57); outline-offset: 1px; }
+.template-exchange__status { margin: 0; color: var(--editor-ink, #314d60); font-size: 11px; line-height: 1.5; }
+/* 常驻 live region：无消息时收成不可见的 1px，既不撑出空行也不离开无障碍树。 */
+.template-exchange__status:empty { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; background: none; border: 0; clip-path: inset(50%); }

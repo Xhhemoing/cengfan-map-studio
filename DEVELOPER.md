@@ -42,9 +42,9 @@ src/
 │   └── ...                 # 其他 UI 组件
 ├── lib/                    # 纯函数工具（场景文档、ID 生成、布局算法）
 ├── data/                   # 静态省/市数据
-├── server/                 # Node API（认证、协作、AI）
 └── styles.css              # 全局样式
 
+server/                     # Node API（认证、协作、AI），位于仓库根目录
 scripts/                    # 构建、开发、数据同步脚本
 docs/                       # 设计文档、宣发策略、案例模板
 public/                     # 静态资源（Logo、校徽）
@@ -72,12 +72,12 @@ public/                     # 静态资源（Logo、校徽）
 - 按省份绑定
 - 实时预览
 
-### 4. 协作（src/server/collaboration.ts）
+### 4. 协作（server/collaboration.ts）
 - 创建房间 + 邀请码
 - 实时同步（WebSocket）
 - 权限控制（编辑/查看）
 
-### 5. AI 助手（src/server/ai/）
+### 5. AI 助手（server/ai/）
 - OpenAI 兼容接口
 - 场景化指令白名单
 - 流式响应
@@ -126,7 +126,7 @@ public/                     # 静态资源（Logo、校徽）
 3. 写测试验证边界数据
 
 ### 扩展 AI 指令
-1. 在 `src/server/ai/whitelist.ts` 添加白名单指令
+1. 在 `server/ai/tool-registry.ts` 的 `AGENT_TOOLS` 添加工具定义
 2. 实现对应的 handler
 3. 写集成测试
 

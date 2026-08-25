@@ -40,7 +40,8 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function stripStudentData(value: unknown): unknown {
+/** Recursively drops every `students` key so roster data can never ride along with a template. */
+export function stripStudentData(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripStudentData);
   if (!isRecord(value)) return value;
 
@@ -112,7 +113,8 @@ function isTemplateDocument(value: unknown): value is TemplateDocument {
   );
 }
 
-function sanitizeCustomTemplateRecord(value: unknown): CustomTemplateRecord | null {
+/** Strips roster data, validates the template document and returns a whitelisted record (or null). */
+export function sanitizeCustomTemplateRecord(value: unknown): CustomTemplateRecord | null {
   const sanitized = stripStudentData(value);
   if (!isRecord(sanitized)) return null;
 

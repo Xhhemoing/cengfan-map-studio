@@ -458,6 +458,11 @@ button { font: inherit; }
 .data-summary span { color: #7a8b9c; font-size: 10px; }
 .data-summary__warning strong { color: #c95c49; }
 .data-message { padding: 8px 10px; background: #edf6f4; border: 1px solid #9fc6be; border-radius: 4px; color: #2a6b5e; }
+.data-message--alert { color: #9c4a3c; background: #fdf3ef; border-color: #e9c9bd; }
+/* 常驻 live region：无消息时收成不可见的 1px，既不撑出空框也不离开无障碍树。 */
+.data-message:empty { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; background: none; border: 0; clip-path: inset(50%); }
+.data-message__line { display: block; }
+.data-message__line + .data-message__line { margin-top: 4px; }
 .search-combobox { position: relative; }
 .search-combobox__list { position: absolute; z-index: 20; right: 0; left: 0; max-height: 168px; overflow: auto; background: #fff; border: 1px solid #9dafbb; border-radius: 4px; box-shadow: 0 5px 14px rgb(37 57 73 / 18%); }
 .search-combobox__list button { display: flex; align-items: baseline; width: 100%; gap: 3px; padding: 7px 9px; color: #385066; text-align: left; background: #fff; border: 0; border-bottom: 1px solid #edf1f3; cursor: pointer; font: inherit; font-size: 11px; }
@@ -2477,7 +2482,6 @@ button.data-overview__metric:hover {
   font-family: "Noto Serif SC", serif;
   font-weight: 600;
 }
-.app-shell[data-editor-skin="atelier"] .template-workspace__catalog-heading h2,
 .app-shell[data-editor-skin="atelier"] .delivery-workspace__checks-title,
 .app-shell[data-editor-skin="atelier"] .data-upload-workspace__title strong,
 .app-shell[data-editor-skin="atelier"] .display-frame-editor__heading strong,
@@ -2546,7 +2550,6 @@ button.data-overview__metric:hover {
   background: var(--editor-surface);
   border-right: 1px solid var(--editor-line);
 }
-.studio-stage-shell .template-workspace,
 .studio-stage-shell .data-upload-workspace,
 .studio-stage-shell .map-style-workspace,
 .studio-stage-shell .display-frame-workspace,
@@ -2852,7 +2855,6 @@ button.data-overview__metric:hover {
   .studio-stage-shell__main { overflow: visible; }
   /* 窄屏下左侧 AI/总览栏收起，由顶栏 AI 入口的抽屉替代。 */
   .studio-stage-shell .studio-sidebar { display: none; }
-  .studio-stage-shell .template-workspace,
   .studio-stage-shell .data-upload-workspace,
   .studio-stage-shell .map-style-workspace,
   .studio-stage-shell .display-frame-workspace,
@@ -2873,7 +2875,6 @@ button.data-overview__metric:hover {
 }
 
 /* Atelier stage workbenches inherit the stable workflow rail rather than each rendering a second top-level navigation system. */
-.app-shell[data-editor-skin="atelier"] .studio-stage-shell .template-workspace,
 .app-shell[data-editor-skin="atelier"] .studio-stage-shell .data-upload-workspace,
 .app-shell[data-editor-skin="atelier"] .studio-stage-shell .map-style-workspace,
 .app-shell[data-editor-skin="atelier"] .studio-stage-shell .display-frame-workspace,
@@ -2886,7 +2887,6 @@ button.data-overview__metric:hover {
   height: 100%;
 }
 @media (max-width: 760px) {
-  .app-shell[data-editor-skin="atelier"] .studio-stage-shell .template-workspace,
   .app-shell[data-editor-skin="atelier"] .studio-stage-shell .data-upload-workspace,
   .app-shell[data-editor-skin="atelier"] .studio-stage-shell .map-style-workspace,
   .app-shell[data-editor-skin="atelier"] .studio-stage-shell .display-frame-workspace,

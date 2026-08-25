@@ -9,7 +9,7 @@ import { ProjectCard } from "./ProjectCard";
  */
 export type ProjectGridItem = Pick<ProjectListItem, "id" | "name" | "updatedAt" | "pack">;
 
-export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete }: {
+export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete, onLoadSample }: {
   projects: ProjectGridItem[];
   loading: boolean;
   hasError: boolean;
@@ -21,6 +21,7 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
   onDuplicate: (project: ProjectGridItem) => void;
   onExport: (project: ProjectGridItem) => void;
   onDelete: (project: ProjectGridItem) => void;
+  onLoadSample: () => void;
 }) {
   return <section className="workbench-grid" aria-label="项目列表">
     {loading && projects.length === 0 ? (
@@ -34,6 +35,7 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
         <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} /></span>
         <strong>还没有项目</strong>
         <p>点击「新建项目」或「导入」，做毕业去向、开学合影或校庆班级图。</p>
+        <button type="button" className="secondary-button" aria-label="载入示例项目" onClick={onLoadSample}>载入示例项目</button>
       </div>
     ) : projects.map((project) => (
       <ProjectCard

@@ -1,4 +1,5 @@
 import type { UserAsset } from "./assets";
+import { buildExportFileName } from "./export-filename";
 import { BUILT_IN_FONTS, type UserFont } from "./fonts";
 import { restoreProjectDocument, serializeProjectDocument, type ProjectDocument } from "./project-document";
 import { createResourcePack } from "./resource-pack";
@@ -378,7 +379,10 @@ export function projectPackageDisplayName(filename: string): string {
   return filename.replace(/\.(json|cengfan)$/i, "") || "导入的项目";
 }
 
-export function downloadProjectPackage(pack: ProjectPackage, filename = `cengfan-project-${pack.exportedAt.slice(0, 10)}.json`): void {
+export function downloadProjectPackage(
+  pack: ProjectPackage,
+  filename = buildExportFileName({ kind: "project", date: pack.exportedAt.slice(0, 10) }),
+): void {
   const blob = new Blob([serializeProjectPackage(pack)], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
