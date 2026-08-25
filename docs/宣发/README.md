@@ -9,6 +9,7 @@
 | [投放文案-用户侧.md](投放文案-用户侧.md) | 小红书开学季 / 知乎 / 视频号 |
 | [反馈收集SOP.md](反馈收集SOP.md) | 48h SLA、置顶征求意见帖 |
 | [Gitee镜像清单.md](Gitee镜像清单.md) | 国内镜像 |
+| [../deployment/public-demo.md](../deployment/public-demo.md) | Cloudflare Pages / GitHub Pages / 可选容器 |
 | [good-first-issues.md](good-first-issues.md) | 可建的新手 Issue |
 | [../开源与收费边界.md](../开源与收费边界.md) | AGPL、模板手续费、支付不进仓 |
 | [../产品/市场化与实用化优化.md](../产品/市场化与实用化优化.md) | 产品收口：Demo、印刷、场景包 |

@@ -1,5 +1,9 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_PUBLIC_DEMO?: string;
+}
+
 declare module "*.geojson" {
   const value: {
     type: "FeatureCollection";

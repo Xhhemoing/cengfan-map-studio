@@ -21,12 +21,19 @@ export function mountElement(element: ReactElement): HTMLElement {
   return container;
 }
 
-export function renderWorkbench(store: ProjectStore, navigate = vi.fn(), health?: ProjectStoreHealth) {
+export function renderWorkbench(
+  store: ProjectStore,
+  navigate = vi.fn(),
+  health?: ProjectStoreHealth,
+  options: { publicDemo?: boolean } = {},
+) {
   const container = document.createElement("div");
   const root = createRoot(container);
   roots.push({ root, container });
   const render = (nextHealth = health) => {
-    flushSync(() => root.render(<ProjectWorkbench store={store} navigate={navigate} health={nextHealth} />));
+    flushSync(() => root.render(
+      <ProjectWorkbench store={store} navigate={navigate} health={nextHealth} publicDemo={options.publicDemo} />,
+    ));
   };
   render();
   return { container, navigate, rerender: render };

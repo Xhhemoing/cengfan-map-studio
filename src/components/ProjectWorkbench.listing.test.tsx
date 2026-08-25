@@ -26,6 +26,15 @@ describe("ProjectWorkbench listing", () => {
     expect(await store.list()).toHaveLength(1);
   });
 
+  it("explains the static demo limits when publicDemo is on", async () => {
+    const store = createMemoryProjectStore();
+    const { container } = renderWorkbench(store, vi.fn(), undefined, { publicDemo: true });
+    await vi.waitFor(() => expect(container.querySelector(".workbench-notice")).not.toBeNull());
+    expect(container.querySelector(".workbench-notice")?.textContent).toContain("公开演示站");
+    expect(container.querySelector(".workbench-notice a")?.getAttribute("href")).toContain("cengfan-map-studio");
+    expect(container.querySelector(".workbench-notice a")?.getAttribute("target")).toBe("_blank");
+  });
+
   it("renders existing projects as cards", async () => {
     const store = createMemoryProjectStore();
     await store.put(createSampleProject());

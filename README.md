@@ -73,6 +73,18 @@ npm run dev
 
 ---
 
+## 在线试用（给参观用）
+
+编辑器本身是静态网页：导入、排版、导出都在浏览器里完成，名单进 IndexedDB，**不必**先有一台常驻 Node。
+
+- **推荐**：Cloudflare Pages 或 GitHub Pages（HTTPS、免费、进程不用常开）。
+- **不要**：把现在的 `server/` 原样丢进 Cloudflare Workers（它依赖 Node `http` 和本地文件）。
+- **完整 API**（协作房间、智能助手）：本机 `npm run dev`，或单实例容器 / VPS。
+
+配置步骤、GitHub Pages 地址、Dockerfile 见 [docs/deployment/public-demo.md](docs/deployment/public-demo.md)。启用 Pages 后打开 https://xhhemoing.github.io/cengfan-map-studio/ 。
+
+---
+
 ## 功能
 
 | 功能 | 做什么 |

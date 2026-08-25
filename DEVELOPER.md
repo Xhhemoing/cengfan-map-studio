@@ -13,7 +13,7 @@ npm install
 npm run dev          # 前端 5173 + API 8787
 ```
 
-打开 http://localhost:5173 即可开始体验。
+打开 http://localhost:5173 即可开始体验。公开演示站（无 Node API）见 [docs/deployment/public-demo.md](docs/deployment/public-demo.md)。
 
 ---
 

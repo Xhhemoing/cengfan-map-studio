@@ -1,4 +1,5 @@
 import type { CollaborationOperation } from "./collaboration-operations";
+import { STATIC_HOST_API_HINT } from "./public-base-path";
 
 export type CollaborationRole = "owner" | "editor" | "viewer";
 
@@ -257,6 +258,11 @@ async function sendOnce(
     return await Promise.race([
       (async (): Promise<RawResponse> => {
         const response = await request(url, { ...init, signal: controller.signal });
+        const contentType = response.headers.get("content-type") ?? "";
+        // 静态站(Pages)对 /api/* 常回 HTML:要先于 JSON 解析给出「没有后端」而不是解析失败。
+        if (contentType && !contentType.includes("application/json")) {
+          throw new CollaborationClientError("API_UNAVAILABLE", STATIC_HOST_API_HINT);
+        }
         // 代理/门户可能回非 JSON:body 解析失败不该盖掉真正的状态码。
         const body = await response.json().catch(() => null) as RawResponse["body"];
         return { ok: response.ok, status: response.status, body };

@@ -13,6 +13,7 @@ import { assertProjectPackageSize, downloadProjectPackage, parseProjectPackage, 
 import { projectPackageFileName } from "../lib/project-package-file-name";
 import { createId } from "../lib/ids";
 import { loadLocalWorkspaceEntry, type LocalWorkspaceEntry } from "../lib/local-workspace-entry";
+import { isPublicDemoBuild, PROJECT_SOURCE_URL } from "../lib/public-base-path";
 import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
@@ -26,6 +27,7 @@ interface ProjectWorkbenchProps {
   /** 路由层订阅到的最近一次写回失败；配额耗尽的处置建议要和编辑器路由一样出现在横幅里。 */
   recoverError?: ProjectStoreError | null;
   navigate?: (hash: string) => void;
+  publicDemo?: boolean;
 }
 
 /** 存储层已把失败翻译成可直接展示的中文，再套一层通用前缀只会盖掉真正的处置建议。 */
@@ -45,7 +47,7 @@ function formatUpdatedAt(value: string): string {
     : new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 }
 
-export function ProjectWorkbench({ store, health, recoverError, navigate }: ProjectWorkbenchProps) {
+export function ProjectWorkbench({ store, health, recoverError, navigate, publicDemo = isPublicDemoBuild() }: ProjectWorkbenchProps) {
   const go = navigate ?? ((hash: string) => { window.location.hash = hash; });
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -283,6 +285,14 @@ export function ProjectWorkbench({ store, health, recoverError, navigate }: Proj
             </>
           )}
         />
+      )}
+
+      {publicDemo && (
+        <section className="workbench-notice" role="note">
+          这是公开演示站：导入、排版、导出都在你的浏览器完成，名单不会上传。协作房间和智能助手需要自建 Node API，本站未开启。
+          {" "}
+          <a href={PROJECT_SOURCE_URL} rel="noopener noreferrer" target="_blank">源码（AGPL-3.0）</a>
+        </section>
       )}
 
       {error && <section className="workbench-error" role="alert">{error}</section>}

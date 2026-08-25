@@ -1,0 +1,6 @@
+# Cloudflare Pages: static public demo (editor + IndexedDB).
+# Dashboard: build command `npm ci && npm run build`, output `dist`,
+# env VITE_PUBLIC_DEMO=1. Do not run server/ on Workers — it needs Node http + files.
+name = "cengfan-map-studio"
+compatibility_date = "2026-08-19"
+pages_build_output_dir = "./dist"
