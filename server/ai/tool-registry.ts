@@ -140,7 +140,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       name: "auto_layout",
       description: "使用真实自动排版算法重新计算所有卡片位置。会覆盖手工卡片位置，若已有手工位置属于高风险。",
       parameters: objectParameters("自动排版选项。", {
-        mode: { type: "string", enum: ["quadrant", "radial", "right-stack", "grid"] },
+        mode: { type: "string", enum: ["proximity", "columns", "quadrant", "radial", "right-stack", "grid"] },
       }),
     },
   },

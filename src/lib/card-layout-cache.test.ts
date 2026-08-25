@@ -88,6 +88,34 @@ describe("card layout cache", () => {
     })).not.toBe(base);
   });
 
+  it("separates the two overlap switches and the newer layout modes", () => {
+    const base = createCardLayoutCacheKey({ cards, bounds, options });
+    const keyWith = (overrides: Partial<CardLayoutBounds>) =>
+      createCardLayoutCacheKey({ cards, bounds: { ...bounds, ...overrides }, options });
+
+    // Element obstacles live in their own array; moving a decoration must miss the cache even
+    // though every map rect stayed where it was.
+    const elementAreas = [{ x: 10, y: 20, width: 30, height: 40 }];
+    expect(keyWith({ elementAreas })).not.toBe(base);
+    expect(keyWith({ elementAreas: [{ ...elementAreas[0]!, y: 21 }] })).not.toBe(keyWith({ elementAreas }));
+    expect(keyWith({ occupiedAreas: elementAreas })).not.toBe(keyWith({ elementAreas }));
+
+    // Same obstacle arrays, different obstacle rules: the solver output differs, so the key must.
+    expect(keyWith({ allowMapOverlap: true })).not.toBe(base);
+    expect(keyWith({ allowElementOverlap: true })).not.toBe(base);
+    expect(keyWith({ allowElementOverlap: true })).not.toBe(keyWith({ allowMapOverlap: true }));
+    expect(keyWith({ allowElementOverlap: false })).toBe(base);
+    expect(keyWith({ allowMapOverlap: true, allowElementOverlap: true }))
+      .not.toBe(keyWith({ allowMapOverlap: true }));
+
+    // Typed loosely so the new modes can be keyed before the solver union names them.
+    const keyForMode = (mode: string) =>
+      createCardLayoutCacheKey({ cards, bounds, options: { ...options, mode } as CardLayoutOptions });
+    expect(keyForMode("proximity")).not.toBe(base);
+    expect(keyForMode("columns")).not.toBe(base);
+    expect(keyForMode("proximity")).not.toBe(keyForMode("columns"));
+  });
+
   it("does not reuse a key for equal-size polygon geometry with different coordinates", () => {
     const firstGeometry = [{
       rings: [[{ x: 0, y: 0 }, { x: 2, y: 2 }, { x: 4, y: 0 }]],

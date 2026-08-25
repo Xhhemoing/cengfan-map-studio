@@ -306,6 +306,18 @@ describe("dragging on the canvas", () => {
     expect(committed[0]!.history.past.at(-1)?.label).toBe("调整数据框位置");
   });
 
+  it("writes a drop that pushed neighbours aside as one undoable step", () => {
+    const { actions, committed } = harness({ snap: (x, y) => ({ x: Math.round(x / 10) * 10, y: Math.round(y / 10) * 10 }) });
+    // Adapted positions already clear the obstacles; snapping them again would push a neighbour back.
+    actions.moveCard("card-1", 12, 27, { "card-1": { x: 12, y: 27 }, "card-2": { x: 44, y: 96 } });
+    expect(committed).toHaveLength(1);
+    expect(committed[0]!.cards.positions).toEqual({ "card-1": { x: 12, y: 27 }, "card-2": { x: 44, y: 96 } });
+    expect(committed[0]!.history.past.at(-1)?.label).toBe("调整数据框位置");
+    // Nothing else moved: back to the snapped single-card commit.
+    actions.moveCard("card-1", 12, 27, { "card-1": { x: 12, y: 27 } });
+    expect(committed[1]!.cards.positions).toEqual({ "card-1": { x: 10, y: 30 } });
+  });
+
   it("skips a drag that lands an asset back where it already was", () => {
     const base = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const project = applyTransaction(base, {

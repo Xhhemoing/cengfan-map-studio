@@ -119,8 +119,12 @@ export function createCardLayoutCacheKey(input: CardLayoutCacheInput): string {
       map: areaKey(bounds.map),
       margin: bounds.margin,
       gap: bounds.gap,
+      // Both overlap switches change which obstacles the solver honours without changing the
+      // obstacle arrays themselves, so both belong in the key alongside the two arrays they gate.
       allowMapOverlap: bounds.allowMapOverlap === true,
+      allowElementOverlap: bounds.allowElementOverlap === true,
       occupiedAreas: (bounds.occupiedAreas ?? []).map(areaKey),
+      elementAreas: (bounds.elementAreas ?? []).map(areaKey),
     },
     options: {
       mode: options.mode ?? "quadrant",

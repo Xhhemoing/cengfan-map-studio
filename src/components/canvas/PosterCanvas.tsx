@@ -16,7 +16,7 @@ import { computeMapContentBounds, computeMapOccupiedAreas } from "../../lib/map-
 import { buildLayoutGroups } from "../../lib/layout";
 import { buildProvinceSummary, getVisibleStudents } from "../../lib/project-data";
 import { CANVAS_LAYER_Z } from "../../lib/scene-document";
-import type { AssetElement, CanvasText, CardFontField, SceneSelection } from "../../lib/scene-document";
+import type { AssetElement, CardFontField, SceneSelection } from "../../lib/scene-document";
 import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame } from "../../lib/display-frame";
 import type { ProjectDocument } from "../../lib/project-document";
 import { resolveStudentLocation } from "../../lib/student-data";
@@ -40,6 +40,7 @@ import {
 } from "../../lib/destination-card-metrics";
 import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
 import { computeGuestPanelLayout, DEFAULT_GUEST_PANEL } from "../../lib/guest-panel-layout";
+import { collectElementObstacles } from "./card-layout-obstacles";
 import { DecorationLayer } from "./DecorationLayer";
 import { DestinationCardsLayer, type DestinationCardsAppearance, type PlacedDestinationCard } from "./DestinationCardsLayer";
 import { GuestsLayer } from "./GuestsLayer";
@@ -55,6 +56,7 @@ const HEAT_COLORS = ["#d9f0e5", "#8ccfb6", "#4da184", "#17675e"] as const;
 const LANDMARK_ASSET_KINDS: AssetElement["kind"][] = ["landmark"];
 const EMPTY_USER_FONTS: UserFont[] = [];
 const EMPTY_CARD_POLYGONS: CardPolygon[] = [];
+const EMPTY_CARD_AREAS: CardArea[] = [];
 
 const MemoizedMapLayer = memo(MapLayer);
 const MemoizedRegionalAssetLayer = memo(RegionalAssetLayer);
@@ -136,25 +138,11 @@ export interface PosterCanvasProps {
   mapSelected?: boolean;
   selectedStudentId?: string | null;
   onSelectStudent?: (id: string) => void;
-  onMoveCard?: (id: string, x: number, y: number) => void;
+  /** `adapted` carries the neighbours a drop rearranged; see `DestinationCardsLayer`. */
+  onMoveCard?: (id: string, x: number, y: number, adapted?: Record<string, { x: number; y: number }>) => void;
   onMoveGuests?: (x: number, y: number) => void;
   /** Reports current card locations so a parent can freeze them before a map edit. */
   onCardPositionsResolved?: (positions: Record<string, { x: number; y: number }>) => void;
-}
-
-function textLayoutObstacle(text: CanvasText): CardArea | null {
-  if (!text.visibility || !text.content.trim()) return null;
-  const x = text.textAlign === "right"
-    ? text.x - text.maxWidth
-    : text.textAlign === "center"
-      ? text.x - text.maxWidth / 2
-      : text.x;
-  return {
-    x,
-    y: text.y - text.fontSize,
-    width: text.maxWidth,
-    height: text.fontSize * 1.3,
-  };
 }
 
 /**
@@ -356,17 +344,24 @@ function PosterCanvasView({
     [guests, lineHeightMultiplier],
   );
   const guestHeight = guestLayout.height;
-  const layoutOccupiedAreas = useMemo(() => {
-    const textAreas = project.textElements.flatMap((text) => {
-      const area = textLayoutObstacle(text);
-      return area ? [area] : [];
-    });
-    const guestAreas = guests.visibility === false
-      ? []
-      : [{ x: guests.x, y: guests.y, width: guests.width, height: guestHeight }];
-    const protectedMapAreas = project.cards.allowMapOverlap === true ? [] : nonProvinceMapAreas;
-    return [...protectedMapAreas, ...textAreas, ...guestAreas];
-  }, [guestHeight, guests.visibility, guests.width, guests.x, guests.y, nonProvinceMapAreas, project.cards.allowMapOverlap, project.textElements]);
+  const decorationAssets = useMemo(
+    () => project.assetElements.filter((asset) => asset.kind === "decoration"),
+    [project.assetElements],
+  );
+  // Two 禁止遮挡 switches, two disjoint obstacle sets: the map rects are filtered here, while the
+  // element rects always reach the solver and `allowElementOverlap` decides there. Visible
+  // decorations were missing entirely, so auto-layout used to bury them under the cards.
+  const layoutOccupiedAreas = useMemo(
+    () => project.cards.allowMapOverlap === true ? EMPTY_CARD_AREAS : nonProvinceMapAreas,
+    [nonProvinceMapAreas, project.cards.allowMapOverlap],
+  );
+  const layoutElementAreas = useMemo(() => collectElementObstacles({
+    texts: project.textElements,
+    decorations: decorationAssets,
+    guests: guests.visibility === false
+      ? null
+      : { x: guests.x, y: guests.y, width: guests.width, height: guestHeight },
+  }), [decorationAssets, guestHeight, guests.visibility, guests.width, guests.x, guests.y, project.textElements]);
   const layoutOccupiedPolygons = useMemo(
     () => project.cards.allowMapOverlap === true ? EMPTY_CARD_POLYGONS : provincePolygons,
     [project.cards.allowMapOverlap, provincePolygons],
@@ -566,17 +561,21 @@ function PosterCanvasView({
     height: project.canvas.height,
     map: mapContentBounds,
     occupiedAreas: layoutOccupiedAreas,
+    elementAreas: layoutElementAreas,
     occupiedPolygons: layoutOccupiedPolygons,
     allowMapOverlap: project.cards.allowMapOverlap === true,
+    allowElementOverlap: project.cards.allowElementOverlap === true,
     margin: project.canvas.safeMargin,
     gap: Math.max(10, project.cards.gap),
   }), [
+    layoutElementAreas,
     layoutOccupiedAreas,
     layoutOccupiedPolygons,
     mapContentBounds,
     project.canvas.height,
     project.canvas.safeMargin,
     project.canvas.width,
+    project.cards.allowElementOverlap,
     project.cards.allowMapOverlap,
     project.cards.gap,
   ]);
@@ -673,10 +672,6 @@ function PosterCanvasView({
     filterPrefix: "connector-edge",
   }), [project.cards.connectorColor, project.cards.connectorDash, project.cards.connectorWidth]);
 
-  const decorationAssets = useMemo(
-    () => project.assetElements.filter((asset) => asset.kind === "decoration"),
-    [project.assetElements],
-  );
   const mapPins = useMemo(
     () => project.dataView === "pins" ? pins : selectedStudentId ? pins.filter((pin) => pin.id === selectedStudentId) : [],
     [pins, project.dataView, selectedStudentId],

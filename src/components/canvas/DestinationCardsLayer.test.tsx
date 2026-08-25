@@ -3,6 +3,23 @@ import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const renderCounts = vi.hoisted(() => ({ card: 0, reference: 0 }));
+// Drop adaptation is the solver's job; stubbing it keeps these tests about what the layer
+// forwards and commits rather than about which neighbour the real solver picks.
+const adapt = vi.hoisted(() => ({
+  impl: null as null | ((...args: unknown[]) => unknown),
+  calls: [] as unknown[][],
+}));
+
+vi.mock("../../lib/card-layout-adapt", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/card-layout-adapt")>();
+  return {
+    ...actual,
+    adaptCardLayout: (...args: unknown[]) => {
+      adapt.calls.push(args);
+      return adapt.impl ? adapt.impl(...args) : args[0];
+    },
+  };
+});
 
 // Plain (unmemoized) stubs: they re-run exactly when the layer body re-runs, which makes
 // them the probe for the layer's own memo.
@@ -21,7 +38,7 @@ vi.mock("./ReferenceCardVisual", () => ({
 }));
 
 import { DestinationCardsLayer, type DestinationCardsAppearance, type DestinationCardsLayerProps, type PlacedDestinationCard } from "./DestinationCardsLayer";
-import type { CardLayoutBounds } from "../../lib/card-layout";
+import type { CardLayoutBounds, CardPlacement } from "../../lib/card-layout";
 import type { DestinationCardStyle } from "./DestinationCard";
 import { resolveEdgeStyle } from "../../lib/edge-styles";
 
@@ -114,6 +131,8 @@ afterEach(() => {
   vi.useRealTimers();
   renderCounts.card = 0;
   renderCounts.reference = 0;
+  adapt.impl = null;
+  adapt.calls.length = 0;
   while (mounted.length > 0) {
     const entry = mounted.pop()!;
     flushSync(() => entry.root.unmount());
@@ -215,6 +234,63 @@ describe("DestinationCardsLayer", () => {
     expect(onMoveCard).not.toHaveBeenCalled();
 
     flushSync(() => node.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 })));
+    expect(onMoveCard).toHaveBeenCalledWith("北京市", 290, 390);
+  });
+
+  it("commits the neighbours a drop pushed aside in the same call", () => {
+    vi.useFakeTimers();
+    const neighbour = card({
+      group: { key: "浙江省", title: "浙江省", count: 1, students: [] },
+      province: "浙江省",
+      placement: { id: "浙江省", anchorX: 620, anchorY: 300, x: 300, y: 380, width: 180, height: 120, side: "left" },
+    });
+    const still = card({
+      group: { key: "广东省", title: "广东省", count: 1, students: [] },
+      province: "广东省",
+      placement: { id: "广东省", anchorX: 620, anchorY: 300, x: 700, y: 900, width: 180, height: 120, side: "right" },
+    });
+    // Stands in for the solver: the dragged card lands on its target, the neighbour steps aside.
+    adapt.impl = (placements, movedId, nextPosition) => (placements as CardPlacement[]).map((placement) =>
+      placement.id === movedId
+        ? { ...placement, ...(nextPosition as { x: number; y: number }) }
+        : placement.id === "浙江省" ? { ...placement, y: 520.4 } : placement);
+    const onMoveCard = vi.fn();
+    const { container } = render({ cards: [card(), neighbour, still], onMoveCard, renderIntervalMs: 100 });
+    const node = draggable(container);
+
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 110, clientY: 210 })));
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 300, clientY: 400 })));
+    flushSync(() => vi.advanceTimersByTime(100));
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 })));
+
+    // The adapter sees the clamped drop position and the same protected geometry the drag used.
+    expect(adapt.calls[0]?.[1]).toBe("北京市");
+    expect(adapt.calls[0]?.[2]).toEqual({ x: 290, y: 390 });
+    expect(adapt.calls[0]?.[3]).toBe(DRAG_BOUNDS);
+    // One call, so one undo step: the dragged card and the neighbour that stepped aside.
+    expect(onMoveCard).toHaveBeenCalledTimes(1);
+    expect(onMoveCard).toHaveBeenCalledWith("北京市", 290, 390, {
+      "北京市": { x: 290, y: 390 },
+      "浙江省": { x: 300, y: 520 },
+    });
+  });
+
+  it("keeps the single-card commit when the drop rearranges nothing else", () => {
+    vi.useFakeTimers();
+    const neighbour = card({
+      group: { key: "浙江省", title: "浙江省", count: 1, students: [] },
+      province: "浙江省",
+      placement: { id: "浙江省", anchorX: 620, anchorY: 300, x: 700, y: 900, width: 180, height: 120, side: "right" },
+    });
+    const onMoveCard = vi.fn();
+    const { container } = render({ cards: [card(), neighbour], onMoveCard, renderIntervalMs: 100 });
+    const node = draggable(container);
+
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 110, clientY: 210 })));
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 300, clientY: 400 })));
+    flushSync(() => vi.advanceTimersByTime(100));
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 })));
+
     expect(onMoveCard).toHaveBeenCalledWith("北京市", 290, 390);
   });
 

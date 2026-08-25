@@ -25,6 +25,8 @@ export interface ProjectDigest {
     preset: string;
     grouping: string;
     layoutMode?: string;
+    allowMapOverlap: boolean;
+    allowElementOverlap: boolean;
     visibleFields: string[];
     fontSize: number;
     gap: number;
@@ -102,6 +104,8 @@ export function buildProjectDigest(project: ProjectDocument): ProjectDigest {
       preset: project.cards.preset,
       grouping: project.cards.grouping,
       layoutMode: project.cards.layoutMode,
+      allowMapOverlap: project.cards.allowMapOverlap === true,
+      allowElementOverlap: project.cards.allowElementOverlap === true,
       visibleFields: [...project.cards.visibleFields],
       fontSize: project.cards.fontSize,
       gap: project.cards.gap,

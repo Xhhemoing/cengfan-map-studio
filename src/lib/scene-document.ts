@@ -242,11 +242,11 @@ export interface CardSettings {
   nameFormat?: string;
   positions?: Record<string, { x: number; y: number }>;
   /** Auto-layout algorithm. Default "quadrant" (four-sided isotonic packing). */
-  layoutMode?: "quadrant" | "radial" | "right-stack" | "grid";
-  /** Optimize the left/right split to balance column heights (quadrant only). */
+  layoutMode?: CardLayoutModeValue;
+  /** Optimize the left/right split to balance column heights (quadrant / columns). */
   autoBalance?: boolean;
-  /** Permit destination cards to overlap map geometry. Default false. */
-  allowMapOverlap?: boolean;
+  /** Permit cards to cover map geometry / the other elements (guests, texts, decorations). Both default false. */
+  allowMapOverlap?: boolean; allowElementOverlap?: boolean;
   /** Show the matching province texture as a thumbnail inside destination cards. */
   showProvinceTexture?: boolean;
   /** Show the "N 人" count in the card header. Default true. */
@@ -466,7 +466,7 @@ function normalizeFieldTypography(value: unknown): Partial<Record<CardFontField,
   }));
 }
 
-export const CARD_LAYOUT_MODES = ["quadrant", "radial", "right-stack", "grid"] as const;
+export const CARD_LAYOUT_MODES = ["proximity", "columns", "quadrant", "radial", "right-stack", "grid"] as const;
 export type CardLayoutModeValue = (typeof CARD_LAYOUT_MODES)[number];
 
 export function normalizeLayoutMode(value: unknown): CardLayoutModeValue {
@@ -537,7 +537,7 @@ export function createDefaultScene(templateId: MapTemplateId): SceneDocument {
       positions: {},
       layoutMode: "quadrant",
       autoBalance: true,
-      allowMapOverlap: false,
+      allowMapOverlap: false, allowElementOverlap: false,
       showProvinceTexture: false,
     },
     guests: createDefaultGuestPanel(template.canvas.height),
@@ -636,7 +636,7 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       ),
       layoutMode: normalizeLayoutMode(scene.cards.layoutMode),
       autoBalance: scene.cards.autoBalance !== false,
-      allowMapOverlap: scene.cards.allowMapOverlap === true,
+      allowMapOverlap: scene.cards.allowMapOverlap === true, allowElementOverlap: scene.cards.allowElementOverlap === true,
       showProvinceTexture: scene.cards.showProvinceTexture === true,
 
       ...(scene.cards.displayFrame !== undefined

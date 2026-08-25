@@ -8,6 +8,7 @@ import type { CardPreset } from "../../lib/template-document";
 import { DestinationCard, type DestinationCardStyle } from "./DestinationCard";
 import { ReferenceCardVisual, referenceCardColor, type ReferenceCardPresentation } from "./ReferenceCardVisual";
 import { clearCanvasPreview, createCanvasPreviewScheduler, scheduleCanvasPreview } from "./CanvasDragPreview";
+import { adaptCardDrop, type CardDropPositions } from "./card-drop-adapt";
 
 /** A prepared card with the placement auto-layout (or a manual drag) resolved for it. */
 export interface PlacedDestinationCard extends PreparedCard {
@@ -50,7 +51,12 @@ export interface DestinationCardsLayerProps {
   /** Converts a pointer event into canvas user-space coordinates. */
   canvasPoint: (event: PointerEvent<SVGGElement>) => { x: number; y: number } | null;
   onSelectCards?: () => void;
-  onMoveCard?: (id: string, x: number, y: number) => void;
+  /**
+   * Commits a finished drag. `adapted` carries every card the drop moved (the dragged card
+   * plus the neighbours that stepped aside) so the whole rearrangement is one undo step; it
+   * is omitted when the drop moves nothing but the dragged card.
+   */
+  onMoveCard?: (id: string, x: number, y: number, adapted?: CardDropPositions) => void;
 }
 
 /** Extend a connector path so it runs from the card center to its boundary port. The
@@ -195,13 +201,27 @@ function DestinationCardsLayerView({
     scheduleCardPreview({ id: drag.id, x: drag.x, y: drag.y });
   }, [canvasPoint, dragBounds, scheduleCardPreview]);
 
+  // Adapting on every pointermove would fight the pointer; the drag stays a plain clamp and
+  // the neighbours only rearrange once, on release.
+  const adaptOnDrop = useCallback(
+    (id: string, x: number, y: number) => adaptCardDrop(cards.map(({ placement }) => placement), id, { x, y }, dragBounds),
+    [cards, dragBounds],
+  );
+
   const handleCardPointerUp = useCallback((event: PointerEvent<SVGGElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     const drag = cardDrag.current;
-    if (drag) onMoveCard?.(drag.id, drag.x, drag.y);
+    if (drag) {
+      const adapted = adaptOnDrop(drag.id, drag.x, drag.y);
+      // Kept as a plain three-argument call when nothing else moved, so a drop that only
+      // relocates one card commits exactly the way it always has.
+      const dropped = adapted?.[drag.id] ?? { x: drag.x, y: drag.y };
+      if (adapted) onMoveCard?.(drag.id, dropped.x, dropped.y, adapted);
+      else onMoveCard?.(drag.id, dropped.x, dropped.y);
+    }
     clearCardPreview();
     cardDrag.current = null;
-  }, [clearCardPreview, onMoveCard]);
+  }, [adaptOnDrop, clearCardPreview, onMoveCard]);
 
   const handleCardPointerCancel = useCallback(() => {
     const drag = cardDrag.current;

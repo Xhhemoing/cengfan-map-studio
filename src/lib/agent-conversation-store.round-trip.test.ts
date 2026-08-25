@@ -11,6 +11,7 @@ import {
   createStorageDouble as storage,
   createStoreProject,
 } from "./agent-conversation-store-test-fixtures";
+import { CARD_LAYOUT_MODES } from "./scene-document";
 
 describe("agent-conversation-store round-trip", () => {
   it("round-trips bounded conversation state with a project binding", () => {
@@ -63,7 +64,7 @@ describe("agent-conversation-store round-trip", () => {
     expect(restored.steps[0]?.arguments).toEqual({ mode: "quadrant" });
   });
 
-  it.each(["quadrant", "radial", "right-stack", "grid"] as const)("round-trips and replays update_cards layoutMode %s", (layoutMode) => {
+  it.each(CARD_LAYOUT_MODES)("round-trips and replays update_cards layoutMode %s", (layoutMode) => {
     const project = createStoreProject();
     const target = storage();
     const step = { id: `cards-layout-${layoutMode}`, name: "update_cards", arguments: { patch: { layoutMode } }, risk: "medium" as const };
@@ -83,6 +84,26 @@ describe("agent-conversation-store round-trip", () => {
 
     const restored = AgentSession.restore(project, loaded!.snapshot!, { mode: "conservative" });
     expect(restored.shadowProject.cards.layoutMode).toBe(layoutMode);
+  });
+
+  it("round-trips and replays the two card overlap switches", () => {
+    const project = createStoreProject();
+    const target = storage();
+    const patch = { allowMapOverlap: true, allowElementOverlap: true };
+    const step = { id: "cards-overlap", name: "update_cards", arguments: { patch }, risk: "medium" as const };
+    const snapshot = new AgentSession(project, { mode: "conservative" }).exportSnapshot();
+
+    saveAssistantConversationState(target, project, state([record(project, {
+      steps: [step],
+      selectedStepIds: [step.id],
+      snapshot: { ...snapshot, steps: [step], completed: true },
+    })]));
+
+    const loaded = loadAssistantConversationState(target, project)?.conversations[0];
+    expect(loaded?.steps[0]?.arguments).toEqual({ patch });
+
+    const restored = AgentSession.restore(project, loaded!.snapshot!, { mode: "conservative" });
+    expect(restored.shadowProject.cards).toMatchObject(patch);
   });
 
   it("persists safe boolean and numeric style fields", () => {

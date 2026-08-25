@@ -123,15 +123,18 @@ describe("App student editing", () => {
     expect(compact?.checked).toBe(true);
   });
 
-  it("exposes the map-overlap switch in the primary block-style workflow", () => {
+  it("exposes both overlap switches in the primary block-style workflow", () => {
     const container = renderApp();
     openGlobalSettingsSection(container, "cards");
 
-    const toggle = container.querySelector<HTMLInputElement>("#cards-allow-map-overlap");
-    expect(toggle).not.toBeNull();
-    expect(toggle?.checked).toBe(false);
-    click(toggle!);
-    expect(toggle?.checked).toBe(true);
+    for (const id of ["#cards-avoid-map-overlap", "#cards-avoid-element-overlap"]) {
+      const toggle = container.querySelector<HTMLInputElement>(id);
+      expect(toggle).not.toBeNull();
+      // Both protections are on by default, so the 禁止 boxes start checked.
+      expect(toggle?.checked).toBe(true);
+      click(toggle!);
+      expect(toggle?.checked).toBe(false);
+    }
   });
 
   it("reads visual controls from canonical scene state", () => {

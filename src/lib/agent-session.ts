@@ -1,5 +1,5 @@
 import { applyDataViewChange } from "./catalog-usage";
-import { solveCardLayout, type CardLayoutInput, type CardLayoutMode } from "./card-layout";
+import { solveCardLayout, type CardLayoutBounds, type CardLayoutInput, type CardLayoutMode } from "./card-layout";
 import { checkLayoutHealth, type LayoutHealthInput, type LayoutHealthObject } from "./layout-health";
 import type { StudioAsset } from "./assets";
 import { duplicateStudentIds } from "./data-duplicate";
@@ -95,7 +95,7 @@ const SCENE_DOMAIN_PROPS: Record<SceneDomain, readonly string[]> = {
   canvas: ["width", "height", "safeMargin", "backgroundColor", "backgroundImageSrc", "backgroundFit", "backgroundOpacity", "lineHeight"],
   map: ["x", "y", "width", "height", "scale", "zIndex", "opacity", "landColor", "activeColor", "edgeColor", "edgeStyle", "edgeWidth", "showProvinceLabels", "provinceLabelFontId", "provinceLabelTypography", "collapseSouthChinaSea", "fillMode", "heatScale", "emptyProvinceFill", "renderSource", "provinceStyles", "provinceTextureUniformSize"],
   province: ["fill", "textureSrc", "visible", "labelFontId", "appearance"],
-  cards: ["preset", "displayFrame", "compactLayout", "x", "y", "maxWidth", "padding", "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity", "textColor", "fontSize", "fieldFonts", "fieldTypography", "connectorStyle", "connectorColor", "connectorWidth", "connectorDash", "visibleFields", "noWrapFields", "citySubgroups", "expressionTemplates", "nameFormat", "layoutMode", "autoBalance", "allowMapOverlap", "showProvinceTexture", "showCount", "zIndex"],
+  cards: ["preset", "displayFrame", "compactLayout", "x", "y", "maxWidth", "padding", "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity", "textColor", "fontSize", "fieldFonts", "fieldTypography", "connectorStyle", "connectorColor", "connectorWidth", "connectorDash", "visibleFields", "noWrapFields", "citySubgroups", "expressionTemplates", "nameFormat", "layoutMode", "autoBalance", "allowMapOverlap", "allowElementOverlap", "showProvinceTexture", "showCount", "zIndex"],
   guests: ["title", "x", "y", "width", "padding", "background", "opacity", "textColor", "fontSize", "titleFontId", "peopleFontId", "titleTypography", "peopleTypography", "displayMode", "customText", "visibility", "people"],
   text: ["role", "content", "x", "y", "fontSize", "color", "fontWeight", "fontId", "textAlign", "maxWidth", "visibility"],
   asset: ["assetId", "label", "kind", "province", "x", "y", "width", "height", "rotation", "opacity", "zIndex", "visibility"],
@@ -343,11 +343,11 @@ function runAutoLayout(project: ProjectDocument, mode: string): { project: Proje
     width: project.canvas.width,
     height: project.canvas.height,
     map: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale },
-    margin: project.canvas.safeMargin,
-    gap: Math.max(10, project.cards.gap),
-    occupiedAreas: project.guests.visibility ? [{ x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 }] : [],
-    allowMapOverlap: project.cards.allowMapOverlap === true,
-  }, { mode: (mode || project.cards.layoutMode || "quadrant") as CardLayoutMode, autoBalance: project.cards.autoBalance !== false });
+    margin: project.canvas.safeMargin, gap: Math.max(10, project.cards.gap),
+    // Guests go in the set the element switch relaxes; an unset occupiedAreas keeps the map frame protected.
+    elementAreas: project.guests.visibility ? [{ x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 }] : [],
+    allowMapOverlap: project.cards.allowMapOverlap === true, allowElementOverlap: project.cards.allowElementOverlap === true,
+  } as CardLayoutBounds, { mode: (mode || project.cards.layoutMode || "quadrant") as CardLayoutMode, autoBalance: project.cards.autoBalance !== false });
   const positions = Object.fromEntries(result.placements.map((placement) => [placement.id, { x: placement.x, y: placement.y }]));
   return {
     project: { ...project, cards: { ...project.cards, positions } },

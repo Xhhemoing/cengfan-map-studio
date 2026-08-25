@@ -11,6 +11,7 @@ import {
   deleteTextElementTransaction,
   duplicateAssetElementTransaction,
   moveCardTransaction,
+  moveCardsTransaction,
   refreshDisplayFramePositionsTransaction,
   replaceAssetElementSourceTransaction,
   sceneResetPatch,
@@ -181,6 +182,20 @@ describe("layout and typography transactions", () => {
     const next = moveCardTransaction("card-b", { x: 3, y: 4 }).apply(seeded);
 
     expect(next.cards.positions).toMatchObject({ "card-a": { x: 1, y: 2 }, "card-b": { x: 3, y: 4 } });
+  });
+
+  it("writes a whole adapted group in one step and keeps untouched cards", () => {
+    const project = documentFixture();
+    const seeded = moveCardTransaction("card-a", { x: 1, y: 2 }).apply(project);
+
+    const next = moveCardsTransaction({ "card-b": { x: 3, y: 4 }, "card-c": { x: 5, y: 6 } }).apply(seeded);
+
+    expect(next.cards.positions).toEqual({
+      "card-a": { x: 1, y: 2 },
+      "card-b": { x: 3, y: 4 },
+      "card-c": { x: 5, y: 6 },
+    });
+    expect(next.cards.positions).not.toBe(seeded.cards.positions);
   });
 
   it("clears every manual card position so automatic layout takes over again", () => {

@@ -20,7 +20,7 @@ export const SCENE_DOMAIN_PROPS: Record<SceneDomain, readonly string[]> = {
     "textColor", "fontSize", "fieldFonts", "fieldTypography", "connectorStyle",
     "connectorColor", "connectorWidth", "connectorDash", "visibleFields", "noWrapFields",
     "citySubgroups", "expressionTemplates", "nameFormat", "layoutMode", "autoBalance",
-    "allowMapOverlap", "showProvinceTexture", "showCount", "zIndex",
+    "allowMapOverlap", "allowElementOverlap", "showProvinceTexture", "showCount", "zIndex",
   ],
   guests: [
     "title", "x", "y", "width", "padding", "background", "opacity", "textColor",

@@ -165,6 +165,22 @@ export function moveCardTransaction(id: string, position: CanvasPosition): Proje
 }
 
 /**
+ * 拖一张卡片会把让开的邻居一起推走。逐张提交的话,一次拖拽会在撤销栈里留下几步,
+ * 撤销要按好几下才回到原样,所以整组落点合成一次事务。
+ */
+export function moveCardsTransaction(positions: Record<string, CanvasPosition>): ProjectTransaction {
+  return {
+    id: createId("tx-card-positions"),
+    label: "调整数据框位置",
+    source: "manual",
+    apply: (current) => ({
+      ...current,
+      cards: { ...current.cards, positions: { ...current.cards.positions, ...positions } },
+    }),
+  };
+}
+
+/**
  * 清空手工位置即可让展示框回到自动布局:保留旧位置的话,刷新按钮只是换个说法的空操作。
  */
 export function refreshDisplayFramePositionsTransaction(): ProjectTransaction {

@@ -17,6 +17,7 @@ import {
   deleteTextElementTransaction,
   duplicateAssetElementTransaction,
   moveCardTransaction,
+  moveCardsTransaction,
   refreshDisplayFramePositionsTransaction,
   sceneResetPatch,
 } from "./canvas-edit-transactions";
@@ -178,8 +179,21 @@ export function createEditorCanvasActions(deps: EditorCanvasActionDeps) {
       setStatusMessage(`已应用 ${entries.length} 个省份智能底色`);
     },
 
-    moveCard: (id: string, x: number, y: number) => {
-      commitProject(applyTransaction(project, moveCardTransaction(id, snap(x, y))));
+    /**
+     * `adapted` 是画布在松手时算出的整组落点(被拖的卡 + 让开的邻居)。它已经过
+     * 求解器夹紧,不能再按网格吸附一次,否则邻居会被推回它刚让开的障碍里。
+     */
+    moveCard: (id: string, x: number, y: number, adapted?: CardPositions) => {
+      const dragged = snap(x, y);
+      const others = Object.entries(adapted ?? {}).filter(([key]) => key !== id);
+      if (others.length === 0) {
+        commitProject(applyTransaction(project, moveCardTransaction(id, dragged)));
+        return;
+      }
+      commitProject(applyTransaction(project, moveCardsTransaction({
+        ...Object.fromEntries(others),
+        [id]: adapted?.[id] ?? dragged,
+      })));
     },
 
     moveText: (id: string, x: number, y: number) => {

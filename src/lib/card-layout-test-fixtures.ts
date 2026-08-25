@@ -167,7 +167,14 @@ export function seededRandom(seed: number): () => number {
   };
 }
 
-export const FUZZ_MODES: CardLayoutMode[] = ["quadrant", "radial", "right-stack", "grid"];
+export const FUZZ_MODES: CardLayoutMode[] = [
+  "proximity",
+  "columns",
+  "quadrant",
+  "radial",
+  "right-stack",
+  "grid",
+];
 
 export function fuzzScenario(seed: number) {
   const random = seededRandom(seed);

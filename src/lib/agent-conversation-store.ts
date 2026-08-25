@@ -16,7 +16,7 @@ const PERSISTABLE_WRITE_TOOLS = new Set(["update_canvas", "update_map", "update_
 const SAFE_PATCH_KEYS: Record<string, ReadonlySet<string>> = {
   update_canvas: new Set(["width", "height", "safeMargin", "backgroundColor", "backgroundFit", "backgroundOpacity", "lineHeight"]),
   update_map: new Set(["x", "y", "width", "height", "scale", "zIndex", "opacity", "landColor", "activeColor", "edgeColor", "edgeStyle", "edgeWidth", "showProvinceLabels", "collapseSouthChinaSea", "fillMode", "emptyProvinceFill"]),
-  update_cards: new Set(["preset", "compactLayout", "x", "y", "maxWidth", "padding", "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity", "textColor", "fontSize", "connectorStyle", "connectorColor", "connectorWidth", "connectorDash", "layoutMode", "autoBalance", "allowMapOverlap", "showProvinceTexture", "showCount", "zIndex"]),
+  update_cards: new Set(["preset", "compactLayout", "x", "y", "maxWidth", "padding", "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity", "textColor", "fontSize", "connectorStyle", "connectorColor", "connectorWidth", "connectorDash", "layoutMode", "autoBalance", "allowMapOverlap", "allowElementOverlap", "showProvinceTexture", "showCount", "zIndex"]),
 };
 const SAFE_STYLE_KEYS = new Set(["backgroundColor", "landColor", "activeColor", "edgeColor", "background", "textColor", "connectorColor"]);
 const SAFE_ENUMS: Record<string, ReadonlySet<string>> = {
@@ -143,7 +143,7 @@ function sanitizedReplayStep(step: AgentSessionReplayStep, facts: readonly strin
   }
   if (step.name === "auto_layout") {
     if (Object.keys(step.arguments).length === 0) return { ...structuredClone(step), arguments: { mode: "quadrant" } };
-    return Object.keys(step.arguments).length === 1 && typeof step.arguments.mode === "string" && ["quadrant", "radial", "right-stack", "grid"].includes(step.arguments.mode)
+    return Object.keys(step.arguments).length === 1 && typeof step.arguments.mode === "string" && (CARD_LAYOUT_MODES as readonly string[]).includes(step.arguments.mode)
       ? { ...structuredClone(step), arguments: { mode: step.arguments.mode } }
       : null;
   }

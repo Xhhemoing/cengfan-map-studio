@@ -146,6 +146,8 @@ describe("project document persistence", () => {
       ...project.cards,
       citySubgroups: false,
       allowMapOverlap: true,
+      allowElementOverlap: true,
+      layoutMode: "columns",
       expressionTemplates: {
         title: "{group} / {count}",
         city: "城市：{city}",
@@ -166,6 +168,8 @@ describe("project document persistence", () => {
     expect(restored.cards.visibleFields).toEqual(["name", "university"]);
     expect(restored.cards.citySubgroups).toBe(false);
     expect(restored.cards.allowMapOverlap).toBe(true);
+    expect(restored.cards.allowElementOverlap).toBe(true);
+    expect(restored.cards.layoutMode).toBe("columns");
     expect(restored.cards.expressionTemplates).toEqual(project.cards.expressionTemplates);
     expect(restored.textElements.find((item) => item.id === "text-1")).toMatchObject({
       role: "custom",

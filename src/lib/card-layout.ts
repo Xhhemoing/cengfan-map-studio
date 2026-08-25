@@ -25,7 +25,13 @@ import {
 } from "./connector-geometry";
 
 export type CardSide = "left" | "right" | "top" | "bottom";
-export type CardLayoutMode = "quadrant" | "radial" | "right-stack" | "grid";
+export type CardLayoutMode =
+  | "proximity"
+  | "columns"
+  | "quadrant"
+  | "radial"
+  | "right-stack"
+  | "grid";
 
 export interface CardLayoutInput {
   id: string;
@@ -63,10 +69,18 @@ export interface CardLayoutBounds {
   gap: number;
   /** Protected canvas areas. Falls back to the map frame when absent. */
   occupiedAreas?: CardArea[];
+  /**
+   * Non-map obstacles (guest panels, text blocks, decoration assets). Kept apart
+   * from {@link occupiedAreas} so the two overlap switches stay independent:
+   * these are the only areas `allowElementOverlap` relaxes.
+   */
+  elementAreas?: CardArea[];
   /** Projected province geometry used for pixel-accurate vector-map avoidance. */
   occupiedPolygons?: CardPolygon[];
   /** Allow cards to overlap map geometry while preserving other occupied areas. */
   allowMapOverlap?: boolean;
+  /** Allow cards to overlap {@link elementAreas} while preserving map avoidance. */
+  allowElementOverlap?: boolean;
 }
 
 export interface CardPlacement extends CardLayoutInput {
@@ -87,6 +101,11 @@ export interface CardLayoutOptions {
   connectorStyle?: ConnectorStyle;
   /** Clearance used while comparing connector geometry. */
   connectorWidth?: number;
+  /**
+   * Treat two connectors crossing mid-span as a hard failure. Defaults to true;
+   * enforcement needs a {@link connectorStyle} to build the geometry from.
+   */
+  forbidConnectorCrossing?: boolean;
   /** @deprecated no backtracking budget anymore; accepted for back-compat. */
   searchBudget?: number;
 }
@@ -419,8 +438,14 @@ function centerOf(area: CardArea): { x: number; y: number } {
 }
 
 const derivedZones = new WeakMap<CardLayoutBounds, CardArea[]>();
+const mergedZones = new WeakMap<CardLayoutBounds, CardArea[]>();
 const NO_ZONES: CardArea[] = [];
 
+/**
+ * Map-side obstacles: caller-supplied `occupiedAreas` plus, when nothing more
+ * precise is available, the map frame itself. `allowMapOverlap` only relaxes
+ * the derived frame — callers drop map rects from `occupiedAreas` themselves.
+ */
 function protectedZones(bounds: CardLayoutBounds): CardArea[] {
   if (bounds.occupiedAreas !== undefined) return bounds.occupiedAreas;
   if (bounds.occupiedPolygons && bounds.occupiedPolygons.length) return NO_ZONES;
@@ -432,6 +457,26 @@ function protectedZones(bounds: CardLayoutBounds): CardArea[] {
   return zones;
 }
 
+/** Element obstacles, relaxed by the second (independent) overlap switch. */
+function elementZones(bounds: CardLayoutBounds): CardArea[] {
+  if (bounds.allowElementOverlap) return NO_ZONES;
+  const areas = bounds.elementAreas;
+  return areas && areas.length > 0 ? areas : NO_ZONES;
+}
+
+/** Every rectangle a card must avoid under the current pair of switches. */
+function obstacleZones(bounds: CardLayoutBounds): CardArea[] {
+  const map = protectedZones(bounds);
+  const elements = elementZones(bounds);
+  if (elements.length === 0) return map;
+  if (map.length === 0) return elements;
+  const cached = mergedZones.get(bounds);
+  if (cached) return cached;
+  const merged = [...map, ...elements];
+  mergedZones.set(bounds, merged);
+  return merged;
+}
+
 function isInsideCanvas(card: CardArea, bounds: CardLayoutBounds): boolean {
   return card.x >= bounds.margin - EPSILON
     && card.y >= bounds.margin - EPSILON
@@ -441,7 +486,7 @@ function isInsideCanvas(card: CardArea, bounds: CardLayoutBounds): boolean {
 
 function hitsProtected(card: CardArea, bounds: CardLayoutBounds): boolean {
   const gap = bounds.gap;
-  for (const zone of protectedZones(bounds)) {
+  for (const zone of obstacleZones(bounds)) {
     if (overlaps(card, zone, gap)) return true;
   }
   const polygons = bounds.occupiedPolygons;
@@ -665,6 +710,26 @@ function classifyRightStack(cards: CardLayoutInput[]): SideAssignment[] {
   return [{ side: "right", cards }];
 }
 
+/**
+ * Two tidy columns hugging the map's left and right outer edges. The split line
+ * is the map centre, or the height-balancing line when `autoBalance` is on.
+ */
+function classifyColumns(
+  cards: CardLayoutInput[],
+  bounds: CardLayoutBounds,
+  options: CardLayoutOptions,
+): SideAssignment[] {
+  const content = bounds.map;
+  const splitX = options.autoBalance ? autoSplitX(cards, bounds) : content.x + content.width / 2;
+  const left: CardLayoutInput[] = [];
+  const right: CardLayoutInput[] = [];
+  for (const card of cards) {
+    if (card.anchorX < splitX) left.push(card);
+    else right.push(card);
+  }
+  return [{ side: "left", cards: left }, { side: "right", cards: right }];
+}
+
 /** Primary-axis span for a side: the range along which cards are packed. */
 function primarySpan(side: CardSide, bounds: CardLayoutBounds): { start: number; end: number } {
   if (side === "left" || side === "right") {
@@ -725,7 +790,7 @@ function resolveObstacles(
   placed: CardPlacement[],
 ): CardPlacement {
   let { x, y } = placement;
-  const zones = protectedZones(bounds);
+  const zones = obstacleZones(bounds);
   const allPlaced = [...placed];
   for (let step = 0; step < 24; step += 1) {
     const cur: CardArea = { x, y, width: placement.width, height: placement.height };
@@ -818,7 +883,7 @@ function repackAll(cards: CardLayoutInput[], bounds: CardLayoutBounds): CardPlac
     [...indexed].sort((a, b) => b.card.height - a.card.height || a.index - b.index),
     [...indexed].sort((a, b) => b.card.width - a.card.width || a.index - b.index),
   ];
-  const zones = protectedZones(bounds);
+  const zones = obstacleZones(bounds);
   const seenOrders = new Set<string>();
 
   for (const order of candidateOrders) {
@@ -923,8 +988,10 @@ function orderResult(cards: CardLayoutInput[], placements: CardPlacement[]): Car
   return cards.map((card) => byId.get(card.id)!);
 }
 
-function validateHard(placements: CardPlacement[], bounds: CardLayoutBounds): boolean {
+/** Canvas containment, card spacing and obstacle avoidance. */
+function validateGeometry(placements: CardPlacement[], bounds: CardLayoutBounds): boolean {
   for (const card of placements) {
+    if (!card) return false;
     if (!isInsideCanvas(card, bounds)) return false;
     if (hitsProtected(card, bounds)) return false;
   }
@@ -934,6 +1001,67 @@ function validateHard(placements: CardPlacement[], bounds: CardLayoutBounds): bo
     }
   }
   return true;
+}
+
+/**
+ * Crossing connectors are a hard constraint whenever the caller declares a
+ * connector style; without one there is no line to cross.
+ */
+function crossingsEnforced(options: CardLayoutOptions): boolean {
+  return options.forbidConnectorCrossing !== false && options.connectorStyle !== undefined;
+}
+
+function countConnectorCrossings(
+  placements: CardPlacement[],
+  style: ConnectorStyle,
+  clearance: number,
+): number {
+  const geometries = placements.map((placement) => buildConnectorGeometry({
+    card: placement,
+    anchor: { x: placement.anchorX, y: placement.anchorY },
+    preferredSide: placement.side,
+    style,
+  }));
+  const geometryBounds = geometries.map(connectorBounds);
+  let crossings = 0;
+  for (let left = 0; left < geometries.length; left += 1) {
+    for (let right = left + 1; right < geometries.length; right += 1) {
+      if (connectorIntersects(
+        geometries[left]!,
+        geometryBounds[left]!,
+        geometries[right]!,
+        geometryBounds[right]!,
+        clearance,
+      )) crossings += 1;
+    }
+  }
+  return crossings;
+}
+
+interface HardCheck {
+  /** Geometry and, when enforced, the no-crossing rule are both satisfied. */
+  feasible: boolean;
+  /** Crossing count, or `Infinity` when the geometry itself already failed. */
+  crossings: number;
+}
+
+/**
+ * Full hard-constraint check. Crossings are reported alongside the verdict so a
+ * caller with no crossing-free layout can still rank its options by them.
+ */
+function validateHard(
+  placements: CardPlacement[],
+  bounds: CardLayoutBounds,
+  options: CardLayoutOptions = {},
+): HardCheck {
+  if (!validateGeometry(placements, bounds)) return { feasible: false, crossings: Infinity };
+  if (!crossingsEnforced(options)) return { feasible: true, crossings: 0 };
+  const crossings = countConnectorCrossings(
+    placements,
+    options.connectorStyle!,
+    Math.max(0, options.connectorWidth ?? 1.5),
+  );
+  return { feasible: crossings === 0, crossings };
 }
 
 interface LayoutCandidate {
@@ -1116,7 +1244,7 @@ function buildCandidates(
   const preferredY = card.anchorY - card.height / 2;
   const xRails = new Set<number>();
   const yRails = new Set<number>();
-  const zones = protectedZones(bounds);
+  const zones = obstacleZones(bounds);
   const map = bounds.map;
 
   for (const x of [
@@ -1299,6 +1427,7 @@ function scoreLayout(
   clearance: number,
   polygons: CardPolygon[],
   bounds: CardLayoutBounds,
+  crossingFirst: boolean,
 ): number[] {
   const geometries = placements.map((placement) => buildConnectorGeometry({
     card: placement,
@@ -1352,7 +1481,10 @@ function scoreLayout(
     const load = normalizedSideLoad(sideLoads.get(side)!, side, bounds);
     return sum + load * load;
   }, 0);
-  return [splitClusters, crossings, throughCards, throughMap, sideDeviation, sideLoad, distance];
+  const cohesion = crossingFirst
+    ? [crossings, splitClusters]
+    : [splitClusters, crossings];
+  return [...cohesion, throughCards, throughMap, sideDeviation, sideLoad, distance];
 }
 
 function optimizedLayout(
@@ -1363,6 +1495,9 @@ function optimizedLayout(
 ): CardPlacement[] | null {
   const style = options.connectorStyle ?? "curve";
   const clearance = Math.max(0, options.connectorWidth ?? 1.5);
+  // When crossings are a hard constraint they outrank the soft cluster-cohesion
+  // goal, so a crossing-free candidate can never lose to a crossing one.
+  const crossingFirst = crossingsEnforced(options);
   const assignedSides = homeSides(cards, bounds, mode, options);
   const candidates = new Map(cards.map((card) => [
     card.id,
@@ -1416,8 +1551,7 @@ function optimizedLayout(
             && candidate.placement.side !== placed[index]!.side) splitClusters += 1;
         }
         const score = [
-          splitClusters,
-          crossings,
+          ...(crossingFirst ? [crossings, splitClusters] : [splitClusters, crossings]),
           throughCards,
           candidate.mapIntersections,
           candidate.sideDeviation,
@@ -1447,7 +1581,7 @@ function optimizedLayout(
       );
     }
 
-    if (placed.length !== cards.length || !validateHard(placed, bounds)) continue;
+    if (placed.length !== cards.length || !validateGeometry(placed, bounds)) continue;
     const score = scoreLayout(
       placed,
       assignedSides,
@@ -1455,6 +1589,7 @@ function optimizedLayout(
       clearance,
       bounds.occupiedPolygons ?? [],
       bounds,
+      crossingFirst,
     );
     if (!bestScore || compareScores(score, bestScore) < 0) {
       best = placed;
@@ -1464,42 +1599,204 @@ function optimizedLayout(
   return best ? orderResult(cards, best) : null;
 }
 
-export function solveCardLayout(
+const PROXIMITY_CANDIDATE_LIMIT = 24;
+const PROXIMITY_MAX_PROBES = 4200;
+
+interface ProximitySpot {
+  x: number;
+  y: number;
+  /** Squared distance from the card centre to its anchor. */
+  distance: number;
+}
+
+/**
+ * The obstacle-free positions closest to a card's anchor, nearest first.
+ *
+ * Probes walk outward in square rings around the ideal (anchor-centred) spot,
+ * so the shortlist fills with genuinely near positions immediately and the
+ * scan stops as soon as no farther ring can beat the worst kept candidate.
+ */
+function proximitySpots(card: CardLayoutInput, bounds: CardLayoutBounds): ProximitySpot[] {
+  const maxX = bounds.width - bounds.margin - card.width;
+  const maxY = bounds.height - bounds.margin - card.height;
+  const centre = centerOf(bounds.map);
+  const anchorX = Number.isFinite(card.anchorX) ? card.anchorX : centre.x;
+  const anchorY = Number.isFinite(card.anchorY) ? card.anchorY : centre.y;
+  const idealX = clamp(anchorX - card.width / 2, bounds.margin, maxX);
+  const idealY = clamp(anchorY - card.height / 2, bounds.margin, maxY);
+  const extent = Math.min(card.width, card.height);
+  const step = Number.isFinite(extent) ? clamp(extent / 2, 8, 28) : 16;
+
+  const spots: ProximitySpot[] = [];
+  const seen = new Set<string>();
+  let worst = Infinity;
+  let probes = 0;
+
+  const consider = (rawX: number, rawY: number) => {
+    const x = clamp(rawX, bounds.margin, maxX);
+    const y = clamp(rawY, bounds.margin, maxY);
+    const key = `${x.toFixed(3)}:${y.toFixed(3)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const dx = x + card.width / 2 - anchorX;
+    const dy = y + card.height / 2 - anchorY;
+    const distance = dx * dx + dy * dy;
+    if (spots.length >= PROXIMITY_CANDIDATE_LIMIT && distance >= worst) return;
+    probes += 1;
+    const area: CardArea = { x, y, width: card.width, height: card.height };
+    if (!isInsideCanvas(area, bounds) || hitsProtected(area, bounds)) return;
+    spots.push({ x, y, distance });
+    spots.sort((left, right) => left.distance - right.distance || left.y - right.y || left.x - right.x);
+    if (spots.length > PROXIMITY_CANDIDATE_LIMIT) spots.length = PROXIMITY_CANDIDATE_LIMIT;
+    worst = spots[spots.length - 1]!.distance;
+  };
+
+  const ringsX = Math.ceil(Math.max(idealX - bounds.margin, maxX - idealX) / step);
+  const ringsY = Math.ceil(Math.max(idealY - bounds.margin, maxY - idealY) / step);
+  const maxRing = Math.max(0, Math.min(400, Math.max(ringsX, ringsY)));
+  for (let ring = 0; ring <= maxRing; ring += 1) {
+    if (probes > PROXIMITY_MAX_PROBES) break;
+    if (spots.length >= PROXIMITY_CANDIDATE_LIMIT) {
+      const reach = Math.max(0, (ring - 1) * step);
+      if (reach * reach >= worst) break;
+    }
+    if (ring === 0) {
+      consider(idealX, idealY);
+      continue;
+    }
+    for (let row = -ring; row <= ring; row += 1) {
+      const edgeRow = row === -ring || row === ring;
+      const y = idealY + row * step;
+      if (y < bounds.margin - step || y > maxY + step) continue;
+      for (let column = -ring; column <= ring; column += 1) {
+        if (!edgeRow && column !== -ring && column !== ring) continue;
+        const x = idealX + column * step;
+        if (x < bounds.margin - step || x > maxX + step) continue;
+        consider(x, y);
+      }
+    }
+  }
+  return spots;
+}
+
+/**
+ * `proximity` mode: every card takes the legal position closest to its anchor,
+ * larger cards first so they claim the tight spots. Crossing-free candidates
+ * always beat crossing ones, so a solvable board never ships a crossing.
+ */
+function layoutProximity(
   cards: CardLayoutInput[],
   bounds: CardLayoutBounds,
-  options: CardLayoutOptions = {},
-): CardLayoutResult {
-  const mode: CardLayoutMode = options.mode ?? "quadrant";
-  if (cards.length === 0) return { status: "solved", placements: [], mode };
+  options: CardLayoutOptions,
+): CardPlacement[] {
+  const style = options.connectorStyle ?? "curve";
+  const clearance = Math.max(0, options.connectorWidth ?? 1.5);
+  const order = cards
+    .map((card, index) => ({ card, index }))
+    .sort((left, right) =>
+      right.card.width * right.card.height - left.card.width * left.card.height
+      || left.index - right.index);
 
-  if (mode === "grid") {
-    const grid = layoutGrid(cards, bounds);
-    const orderedGrid = orderResult(cards, grid);
-    if (validateHard(orderedGrid, bounds)) return { status: "solved", placements: orderedGrid, mode };
-    const repacked = repackAll(cards, bounds);
-    return repacked
-      ? { status: "solved", placements: repacked, mode }
-      : { status: "fallback", placements: orderedGrid, mode };
+  const placed: CardPlacement[] = [];
+  const geometries: ConnectorGeometry[] = [];
+  const geometryBounds: CardArea[] = [];
+
+  for (const { card } of order) {
+    const anchor = { x: card.anchorX, y: card.anchorY };
+    let selected: CardPlacement | null = null;
+    let selectedGeometry: ConnectorGeometry | null = null;
+    let selectedBounds: CardArea | null = null;
+    let selectedScore: number[] | null = null;
+
+    for (const spot of proximitySpots(card, bounds)) {
+      const area: CardArea = { x: spot.x, y: spot.y, width: card.width, height: card.height };
+      if (hitsPlaced(area, placed, bounds.gap)) continue;
+      const placement: CardPlacement = { ...card, x: spot.x, y: spot.y, side: sideForPlacement(area, bounds) };
+      const geometry = buildConnectorGeometry({ card: placement, anchor, preferredSide: placement.side, style });
+      const currentBounds = connectorBounds(geometry);
+      let crossings = 0;
+      let throughCards = 0;
+      for (let index = 0; index < placed.length; index += 1) {
+        if (connectorIntersects(
+          geometry,
+          currentBounds,
+          geometries[index]!,
+          geometryBounds[index]!,
+          clearance,
+        )) crossings += 1;
+        if (connectorHitsCard(geometry, currentBounds, placed[index]!, clearance)) throughCards += 1;
+        if (connectorHitsCard(geometries[index]!, geometryBounds[index]!, placement, clearance)) throughCards += 1;
+      }
+      const score = [crossings, throughCards, spot.distance, spot.y, spot.x];
+      if (!selectedScore || compareScores(score, selectedScore) < 0) {
+        selected = placement;
+        selectedGeometry = geometry;
+        selectedBounds = currentBounds;
+        selectedScore = score;
+      }
+      // Nothing farther can beat a crossing-free, card-free nearest candidate.
+      if (crossings === 0 && throughCards === 0) break;
+    }
+
+    if (!selected) {
+      const probe: CardPlacement = {
+        ...card,
+        x: clamp(card.anchorX - card.width / 2, bounds.margin, bounds.width - bounds.margin - card.width),
+        y: clamp(card.anchorY - card.height / 2, bounds.margin, bounds.height - bounds.margin - card.height),
+        side: "right",
+      };
+      const free = containFree(probe, bounds, placed);
+      selected = { ...free, side: sideForPlacement(free, bounds) };
+      selectedGeometry = buildConnectorGeometry({
+        card: selected,
+        anchor,
+        preferredSide: selected.side,
+        style,
+      });
+      selectedBounds = connectorBounds(selectedGeometry);
+    }
+
+    placed.push(selected);
+    geometries.push(selectedGeometry!);
+    geometryBounds.push(selectedBounds!);
   }
 
-  if ((mode === "quadrant" || mode === "radial")
-    && cards.length <= MAX_OPTIMIZED_CARDS
-    && ((bounds.occupiedAreas?.length ?? 0) > 0
-      || (bounds.occupiedPolygons?.length ?? 0) > 0)) {
-    const optimized = optimizedLayout(cards, bounds, mode, options);
-    if (optimized) return { status: "solved", placements: optimized, mode };
-  }
+  return orderResult(cards, placed);
+}
 
+/** Neighbouring side that absorbs cards a side could not fit. */
+function overflowSide(side: CardSide, mode: CardLayoutMode): CardSide {
+  if (mode === "columns") return side === "right" ? "left" : "right";
+  if (side === "right") return "bottom";
+  if (side === "left") return "top";
+  if (side === "top") return "left";
+  return "right";
+}
+
+/**
+ * Isotonic side packing shared by `quadrant`, `radial`, `right-stack` and
+ * `columns`: classify anchors onto sides, then pack each side as one block.
+ */
+function sidePackLayout(
+  cards: CardLayoutInput[],
+  bounds: CardLayoutBounds,
+  mode: CardLayoutMode,
+  options: CardLayoutOptions,
+): CardPlacement[] {
   const assignments = mode === "radial"
     ? classifyRadial(cards, bounds)
     : mode === "right-stack"
       ? classifyRightStack(cards)
-      : classifyQuadrant(cards, bounds, options);
+      : mode === "columns"
+        ? classifyColumns(cards, bounds, options)
+        : classifyQuadrant(cards, bounds, options);
 
   // Pack each side once, collecting only cards that land in a valid,
   // non-overlapping spot. Cards that don't fit their side overflow to a
   // neighbor side and are re-packed there next round.
-  const order: CardSide[] = ["right", "left", "top", "bottom"];
+  const order: CardSide[] = mode === "columns"
+    ? ["right", "left"]
+    : ["right", "left", "top", "bottom"];
   let placed: CardPlacement[] = [];
   let pending = assignments.map((a) => ({ ...a, cards: [...a.cards] }));
   for (let round = 0; round < 4 && pending.some((a) => a.cards.length > 0); round += 1) {
@@ -1524,7 +1821,7 @@ export function solveCardLayout(
         }
       }
       placed = placed.concat(accepted);
-      const neighbor: CardSide = side === "right" ? "bottom" : side === "left" ? "top" : side === "top" ? "left" : "right";
+      const neighbor = overflowSide(side, mode);
       pending = pending.map((a) => {
         if (a.side === side) return { ...a, cards: [] };
         if (a.side === neighbor) return { ...a, cards: [...a.cards, ...rejected] };
@@ -1543,12 +1840,62 @@ export function solveCardLayout(
     placedIds.add(card.id);
   }
 
-  const ordered = orderResult(cards, placed);
-  if (validateHard(ordered, bounds)) return { status: "solved", placements: ordered, mode };
-  const repacked = repackAll(cards, bounds);
-  return repacked
-    ? { status: "solved", placements: repacked, mode }
-    : { status: "fallback", placements: ordered, mode };
+  return orderResult(cards, placed);
+}
+
+/**
+ * Run the mode's attempts in preference order and pick the first hard-feasible
+ * one. Attempts after the first geometrically valid layout are saturation
+ * recovery only, so they are never paid for once a board is packable; when no
+ * attempt is crossing-free the least-crossing layout ships as `fallback`.
+ */
+function chooseLayout(
+  cards: CardLayoutInput[],
+  bounds: CardLayoutBounds,
+  options: CardLayoutOptions,
+  mode: CardLayoutMode,
+  attempts: Array<() => CardPlacement[] | null>,
+): CardLayoutResult {
+  let firstProduced: CardPlacement[] | null = null;
+  for (const produce of attempts) {
+    const placements = produce();
+    if (!placements || placements.length !== cards.length) continue;
+    firstProduced ??= placements;
+    const check = validateHard(placements, bounds, options);
+    if (check.feasible) return { status: "solved", placements, mode };
+    // Geometry holds but connectors cross: later attempts only recover from
+    // saturation, so this is already the least-crossing layout on offer.
+    if (Number.isFinite(check.crossings)) return { status: "fallback", placements, mode };
+  }
+  return { status: "fallback", placements: firstProduced ?? [], mode };
+}
+
+export function solveCardLayout(
+  cards: CardLayoutInput[],
+  bounds: CardLayoutBounds,
+  options: CardLayoutOptions = {},
+): CardLayoutResult {
+  const mode: CardLayoutMode = options.mode ?? "quadrant";
+  if (cards.length === 0) return { status: "solved", placements: [], mode };
+
+  const attempts: Array<() => CardPlacement[] | null> = [];
+  if (mode === "grid") {
+    attempts.push(() => orderResult(cards, layoutGrid(cards, bounds)));
+  } else if (mode === "proximity") {
+    attempts.push(() => layoutProximity(cards, bounds, options));
+  } else {
+    if ((mode === "quadrant" || mode === "radial")
+      && cards.length <= MAX_OPTIMIZED_CARDS
+      && ((bounds.occupiedAreas?.length ?? 0) > 0
+        || elementZones(bounds).length > 0
+        || (bounds.occupiedPolygons?.length ?? 0) > 0)) {
+      attempts.push(() => optimizedLayout(cards, bounds, mode, options));
+    }
+    attempts.push(() => sidePackLayout(cards, bounds, mode, options));
+  }
+  attempts.push(() => repackAll(cards, bounds));
+
+  return chooseLayout(cards, bounds, options, mode, attempts);
 }
 
 export function layoutCards(
@@ -1568,9 +1915,10 @@ export function clampCardPosition(
   position: { x: number; y: number; width: number; height: number },
   bounds: CardLayoutBounds,
 ): { x: number; y: number } {
-  const blockers = bounds.allowMapOverlap
-    ? [...(bounds.occupiedAreas ?? [])]
-    : [...protectedZones(bounds)];
+  const blockers = [
+    ...(bounds.allowMapOverlap ? (bounds.occupiedAreas ?? []) : protectedZones(bounds)),
+    ...elementZones(bounds),
+  ];
   const polygons = bounds.allowMapOverlap ? [] : (bounds.occupiedPolygons ?? []);
   const minX = bounds.margin;
   const minY = bounds.margin;
@@ -1616,6 +1964,12 @@ export function clampCardPosition(
   }
   return best ?? origin;
 }
+
+/**
+ * Drag-time local repair, re-exported so callers keep a single layout entry
+ * point. Lives in its own module to keep this file from growing further.
+ */
+export { adaptCardLayout, type CardLayoutAdaptOptions } from "./card-layout-adapt";
 
 // ----- Back-compat aliases (drop-in for the previous destination-layout API) -----
 

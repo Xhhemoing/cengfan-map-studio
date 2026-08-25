@@ -90,6 +90,8 @@ export interface StageLayoutScreenProps {
   onLocateDeliveryIssue: (issue: DeliveryIssue) => void;
 }
 
+const REFRESH_POSITIONS_HINT = "清空手工摆放的数据框位置，按当前排布方式与两个禁止遮挡设置重新计算。";
+
 /**
  * 聚焦阶段的整屏分支:按阶段装配 `StudioLayoutTemplate` 的右栏 / 工作区 / 阶段动作三个插槽。
  * App 只交出数据与回调,插槽装配(含 map/province/cards 的 patch 目标构造)留在这里。
@@ -252,7 +254,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
       return {
         stageActions: (
           <>
-            <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={onRefreshPositions} />
+            <ToolbarButton label="刷新展示框位置" title={REFRESH_POSITIONS_HINT} icon={<RefreshCw size={18} />} onClick={onRefreshPositions} />
           </>
         ),
         rightRail: (
@@ -337,7 +339,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
       return {
         stageActions: (
           <>
-            <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={onRefreshPositions} />
+            <ToolbarButton label="刷新展示框位置" title={REFRESH_POSITIONS_HINT} icon={<RefreshCw size={18} />} onClick={onRefreshPositions} />
             <ToolbarButton label="返回地图" icon={<MapPinned size={18} />} onClick={onBackToMap} />
           </>
         ),

@@ -11,7 +11,7 @@
   "src/components/DataWorkspace.tsx": 865,
   "src/components/canvas/MapDataLayer.tsx": 508,
   "src/components/canvas/MapLayer.tsx": 606,
-  "src/components/canvas/PosterCanvas.tsx": 948,
+  "src/components/canvas/PosterCanvas.tsx": 943,
   "src/components/inspector/MapInspector.tsx": 555,
   "src/data/china-locations.ts": 416,
   "src/data/china-universities.ts": 2951,

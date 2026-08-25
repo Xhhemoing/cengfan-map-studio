@@ -112,7 +112,7 @@ describe("CardsInspector", () => {
     }));
   });
 
-  it("switches layout modes and limits auto balance to quadrant mode", () => {
+  it("switches layout modes and limits auto balance to the column-packing modes", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
     const { container, root } = trackedRoot();
@@ -121,19 +121,27 @@ describe("CardsInspector", () => {
     const mode = container.querySelector("#cards-layout-mode") as HTMLSelectElement;
     const balance = container.querySelector("#cards-auto-balance") as HTMLInputElement;
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-    expect(Array.from(mode.options).map((option) => option.value)).toEqual([
-      "quadrant",
-      "radial",
-      "right-stack",
-      "grid",
+    expect(Array.from(mode.options).map((option) => [option.value, option.textContent])).toEqual([
+      ["proximity", "省份近"],
+      ["columns", "分列整齐"],
+      ["quadrant", "四周整齐（默认）"],
+      ["radial", "极角环绕"],
+      ["right-stack", "右侧单列"],
+      ["grid", "边缘网格"],
     ]);
+    expect(mode.value).toBe("quadrant");
     expect(balance.disabled).toBe(false);
 
     flushSync(() => {
-      setter?.call(mode, "radial");
+      setter?.call(mode, "proximity");
       mode.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    expect(onPatch).toHaveBeenCalledWith({ layoutMode: "radial" });
+    expect(onPatch).toHaveBeenCalledWith({ layoutMode: "proximity" });
+
+    flushSync(() => root.render(
+      <CardsInspector cards={{ ...project.cards, layoutMode: "columns" }} onPatch={onPatch} onReset={vi.fn()} />,
+    ));
+    expect((container.querySelector("#cards-auto-balance") as HTMLInputElement).disabled).toBe(false);
 
     flushSync(() => root.render(
       <CardsInspector cards={{ ...project.cards, layoutMode: "radial" }} onPatch={onPatch} onReset={vi.fn()} />,
@@ -141,17 +149,44 @@ describe("CardsInspector", () => {
     expect((container.querySelector("#cards-auto-balance") as HTMLInputElement).disabled).toBe(true);
   });
 
-  it("offers an explicit switch for allowing cards over the map", () => {
+  it("states the two overlap rules as positive 禁止 checkboxes over the legacy allow flags", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();
     const { container, root } = trackedRoot();
     flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} />));
 
-    const toggle = container.querySelector("#cards-allow-map-overlap") as HTMLInputElement;
-    expect(toggle).not.toBeNull();
-    expect(toggle.checked).toBe(false);
-    flushSync(() => toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    // The retired 「允许卡片覆盖地图」 wording must not linger next to its replacement.
+    expect(container.querySelector("#cards-allow-map-overlap")).toBeNull();
+    expect(container.textContent).not.toContain("允许卡片覆盖地图");
+
+    const map = container.querySelector("#cards-avoid-map-overlap") as HTMLInputElement;
+    const element = container.querySelector("#cards-avoid-element-overlap") as HTMLInputElement;
+    expect(map.closest("label")?.textContent).toBe("禁止遮挡地图");
+    expect(element.closest("label")?.textContent).toBe("禁止遮挡其他元素");
+    expect(map.checked).toBe(true);
+    expect(element.checked).toBe(true);
+
+    flushSync(() => map.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ allowMapOverlap: true });
+    flushSync(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onPatch).toHaveBeenCalledWith({ allowElementOverlap: true });
+
+    onPatch.mockClear();
+    flushSync(() => root.render(
+      <CardsInspector
+        cards={{ ...project.cards, allowMapOverlap: true, allowElementOverlap: true }}
+        onPatch={onPatch}
+        onReset={vi.fn()}
+      />,
+    ));
+    const permissiveMap = container.querySelector("#cards-avoid-map-overlap") as HTMLInputElement;
+    const permissiveElement = container.querySelector("#cards-avoid-element-overlap") as HTMLInputElement;
+    expect(permissiveMap.checked).toBe(false);
+    expect(permissiveElement.checked).toBe(false);
+    flushSync(() => permissiveMap.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onPatch).toHaveBeenCalledWith({ allowMapOverlap: false });
+    flushSync(() => permissiveElement.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(onPatch).toHaveBeenCalledWith({ allowElementOverlap: false });
   });
 
   it("offers an opt-in switch for province textures in data cards", () => {

@@ -5,7 +5,7 @@
 
 ## 状态
 
-- Round 1: 进行中
+- Round 1: 完成（见 `cycle4/ROUND1-BRIEF.md`）
 - Round 2: 未开始
 - Round 3: 未开始
 

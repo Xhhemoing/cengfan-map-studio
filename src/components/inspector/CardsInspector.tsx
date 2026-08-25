@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, RotateCcw } from "lucide-react";
-import type { CardFontField, CardSettings } from "../../lib/scene-document";
-import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
+import type { CardFontField, CardLayoutModeValue, CardSettings } from "../../lib/scene-document";
+import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE, normalizeLayoutMode } from "../../lib/scene-document";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { DEFAULT_FONT_ID, type UserFont } from "../../lib/fonts";
 import { applyCardTemplate, getCardTemplateById, getLegacyPresetTemplateId, listCardTemplates } from "../../lib/card-templates";
@@ -19,6 +19,16 @@ const fontFields: Array<{ id: CardFontField; label: string }> = [
   { id: "university", label: "院校" },
   { id: "city", label: "城市" },
 ];
+const layoutModes: Array<{ id: CardLayoutModeValue; label: string }> = [
+  { id: "proximity", label: "省份近" },
+  { id: "columns", label: "分列整齐" },
+  { id: "quadrant", label: "四周整齐（默认）" },
+  { id: "radial", label: "极角环绕" },
+  { id: "right-stack", label: "右侧单列" },
+  { id: "grid", label: "边缘网格" },
+];
+/** 只有按左右两列打包的算法才有「平衡左右」可言。 */
+const AUTO_BALANCE_MODES = new Set<CardLayoutModeValue>(["quadrant", "columns"]);
 
 export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode = "all", collapsible = false }: {
   cards: CardSettings;
@@ -30,6 +40,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
   collapsible?: boolean;
 }) {
   const templates = listCardTemplates();
+  const layoutMode = normalizeLayoutMode(cards.layoutMode);
   const currentTemplateId = cards.templateId
     ?? (getCardTemplateById(cards.preset)?.id || getLegacyPresetTemplateId(cards.preset) || "standard");
   const handleTemplateChange = (templateId: string) => {
@@ -149,9 +160,13 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     <label htmlFor="cards-show-count" className="boolean-control checkbox-row"><input id="cards-show-count" type="checkbox" checked={cards.showCount !== false} onChange={(event) => onPatch({ showCount: event.target.checked })} />显示人数</label>
     <label htmlFor="cards-grouping">分组<select id="cards-grouping" value={cards.grouping} onChange={(event) => onPatch({ grouping: event.target.value as CardSettings["grouping"] })}><option value="province">省份</option><option value="city">城市</option><option value="university">院校</option></select></label>
     <label htmlFor="cards-city-subgroups" className="boolean-control checkbox-row"><input id="cards-city-subgroups" type="checkbox" checked={cards.citySubgroups !== false} disabled={cards.grouping !== "province"} onChange={(event) => onPatch({ citySubgroups: event.target.checked })} />省份卡片内按城市分类</label>
-    <label htmlFor="cards-layout-mode">排布方式<select id="cards-layout-mode" value={cards.layoutMode ?? "quadrant"} onChange={(event) => onPatch({ layoutMode: event.target.value as CardSettings["layoutMode"] })}><option value="quadrant">四象限（默认）</option><option value="radial">极角环绕</option><option value="right-stack">右侧单列</option><option value="grid">边缘网格</option></select></label>
-    <label htmlFor="cards-auto-balance" className="boolean-control checkbox-row"><input id="cards-auto-balance" type="checkbox" checked={cards.autoBalance !== false} disabled={(cards.layoutMode ?? "quadrant") !== "quadrant"} onChange={() => onPatch({ autoBalance: cards.autoBalance === false })} />自动平衡左右</label>
-    <label htmlFor="cards-allow-map-overlap" className="boolean-control checkbox-row"><input id="cards-allow-map-overlap" type="checkbox" checked={cards.allowMapOverlap === true} onChange={(event) => onPatch({ allowMapOverlap: event.target.checked })} />允许卡片覆盖地图</label>
+    <label htmlFor="cards-layout-mode">排布方式<select id="cards-layout-mode" value={layoutMode} onChange={(event) => onPatch({ layoutMode: event.target.value as CardSettings["layoutMode"] })}>{layoutModes.map((option) => (
+      <option key={option.id} value={option.id}>{option.label}</option>
+    ))}</select></label>
+    <label htmlFor="cards-auto-balance" className="boolean-control checkbox-row"><input id="cards-auto-balance" type="checkbox" checked={cards.autoBalance !== false} disabled={!AUTO_BALANCE_MODES.has(layoutMode)} onChange={() => onPatch({ autoBalance: cards.autoBalance === false })} />自动平衡左右</label>
+    <label htmlFor="cards-avoid-map-overlap" className="boolean-control checkbox-row"><input id="cards-avoid-map-overlap" type="checkbox" checked={cards.allowMapOverlap !== true} onChange={(event) => onPatch({ allowMapOverlap: !event.target.checked })} />禁止遮挡地图</label>
+    <label htmlFor="cards-avoid-element-overlap" className="boolean-control checkbox-row"><input id="cards-avoid-element-overlap" type="checkbox" checked={cards.allowElementOverlap !== true} onChange={(event) => onPatch({ allowElementOverlap: !event.target.checked })} />禁止遮挡其他元素</label>
+    <p className="property-panel__hint">遮挡开关同时作用于自动排布与手动拖拽：勾选后卡片与连接线会避开省份轮廓 / 嘉宾面板、文本、装饰素材。</p>
     <label htmlFor="cards-show-province-texture" className="boolean-control checkbox-row"><input id="cards-show-province-texture" type="checkbox" checked={cards.showProvinceTexture === true} onChange={(event) => onPatch({ showProvinceTexture: event.target.checked })} />数据框显示省份贴图</label>
     {mode !== "global" && cardPlacementControls}
     {mode !== "global" && layerControl()}
