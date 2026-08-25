@@ -1,9 +1,5 @@
 import {
   Bot,
-  ImageDown,
-  MapPinned,
-  PanelRight,
-  PanelRightClose,
   Redo2,
   Undo2,
 } from "lucide-react";
@@ -59,15 +55,15 @@ import { StudioAssistantRail } from "./components/StudioAssistantRail";
 import "./components/workflow-workspaces.css";
 import type { GlobalSettingsSection } from "./components/GlobalSettingsScreen";
 import type { ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
+import { ExportProjectDialog } from "./components/editor/ExportProjectDialog";
 import { GlobalSettingsShell } from "./components/editor/GlobalSettingsShell";
 import { LegacyEditorSidebar } from "./components/editor/LegacyEditorSidebar";
+import { LegacyEditorTopbar } from "./components/editor/LegacyEditorTopbar";
 import { MissingProjectShell } from "./components/editor/MissingProjectShell";
 import { ProjectLoadingShell } from "./components/editor/ProjectLoadingShell";
 import { StageLayoutScreen } from "./components/editor/StageLayoutScreen";
 
 import { ToolbarButton, ToolbarGroup } from "./components/StudioUi";
-import { ZoomControls } from "./components/ZoomControls";
-import { WorkflowStepper } from "./components/WorkflowStepper";
 import {
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
   deriveWorkflowStageProgress,
@@ -808,106 +804,32 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   return (
     <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
-      <header className="topbar">
-        <div className="brand">
-          <MapPinned size={24} />
-          <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-          <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-          <em>Beta</em>
-        </div>
-        <div className="topbar-workflow">
-          <WorkflowStageStepper activeId={activeStage} project={project} progress={workflowProgress} onChange={changeWorkflowStage} />
-          <div className="topbar-workflow__legacy" aria-hidden="true">
-            <WorkflowStepper activeId={activePanel} progress={workflowProgress} onChange={changeWorkflowPanel} />
-          </div>
-        </div>
-        <div className="topbar-actions">
-          {projectId && <WorkbenchBackButton onClick={() => void backToWorkbench()} />}
-          <ToolbarGroup label="历史与缩放">
-            <ToolbarButton
-              label={undoLabel}
-              icon={<Undo2 size={18} />}
-              disabled={!canUndo}
-              onClick={handleUndo}
-            />
-            <ToolbarButton
-              label={redoLabel}
-              icon={<Redo2 size={18} />}
-              disabled={!canRedo}
-              onClick={handleRedo}
-            />
-            <ZoomControls
-              zoomPercent={zoomPercent}
-              onZoomOut={() => setZoomPercent((v) => Math.max(25, v - 10))}
-              onZoomIn={() => setZoomPercent((v) => Math.min(300, v + 10))}
-            />
-          </ToolbarGroup>
+      <LegacyEditorTopbar
+        workflowNav={workflowNavNode}
+        legacyActivePanel={activePanel}
+        workflowProgress={workflowProgress}
+        backButton={projectId ? <WorkbenchBackButton onClick={() => void backToWorkbench()} /> : null}
+        projectExportActions={projectExportActions}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        undoLabel={undoLabel}
+        redoLabel={redoLabel}
+        zoomPercent={zoomPercent}
+        inspectorOpen={mobileInspectorOpen}
+        skin={skin}
+        themeMode={themeMode}
+        resolvedTheme={resolvedTheme}
+        posterExport={posterExport}
+        onChangeLegacyPanel={changeWorkflowPanel}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onZoomPercentChange={setZoomPercent}
+        onToggleInspector={() => setMobileInspectorOpen((open) => !open)}
+        onSkinChange={setSkin}
+        onThemeChange={setThemeMode}
+      />
 
-          <ToolbarGroup label="属性面板" className="inspector-toggle-group">
-            <ToolbarButton
-              className="inspector-toggle"
-              label={mobileInspectorOpen ? "关闭属性面板" : "打开属性面板"}
-              icon={mobileInspectorOpen ? <PanelRightClose size={17} /> : <PanelRight size={17} />}
-              aria-expanded={mobileInspectorOpen}
-              aria-controls="editor-inspector"
-              onClick={() => setMobileInspectorOpen((open) => !open)}
-            />
-          </ToolbarGroup>
-
-          <ToolbarGroup label="界面主题">
-            <SkinSelector skin={skin} onChange={setSkin} />
-            <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={setThemeMode} />
-          </ToolbarGroup>
-
-          {projectExportActions}
-
-          <ToolbarGroup label="导出">
-            <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportingPng}>
-              <ImageDown size={16} /> {posterExport.exportingPng ? "导出中..." : "导出 PNG"}
-            </button>
-          </ToolbarGroup>
-        </div>
-      </header>
-
-
-      {posterExport.showProjectExportDialog && (
-        <div className="dialog-backdrop" onMouseDown={() => posterExport.setShowProjectExportDialog(false)}>
-          <section
-            className="export-project-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label="导出工程确认"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <div>
-                <h2>确认导出工程</h2>
-                <p>工程文件会保存当前画布、名单、模板和渲染设置。</p>
-              </div>
-              <button type="button" aria-label="关闭导出工程确认" onClick={() => posterExport.setShowProjectExportDialog(false)}>×</button>
-            </header>
-            <label className="export-resource-option boolean-control checkbox-row">
-              <input
-                type="checkbox"
-                aria-label="导出时包含资源包"
-                checked={posterExport.includeResourcesInProjectExport}
-                onChange={(event) => posterExport.setIncludeResourcesInProjectExport(event.target.checked)}
-              />
-              <span>
-                <strong>包含资源包</strong>
-                <small>一并打包地图背景、地图贴图、素材和字体；导入后会立刻同步到画布与素材库。</small>
-              </span>
-            </label>
-            {!posterExport.includeResourcesInProjectExport && (
-              <p className="export-resource-warning">未包含资源包时，其他设备可能缺少素材库条目和自定义字体。</p>
-            )}
-            <footer>
-              <button type="button" className="secondary-button" onClick={() => posterExport.setShowProjectExportDialog(false)}>取消</button>
-              <button type="button" className="primary-button" aria-label="确认导出工程" onClick={posterExport.exportProjectPackage}>确认导出</button>
-            </footer>
-          </section>
-        </div>
-      )}
+      <ExportProjectDialog posterExport={posterExport} />
 
       <section
         className="workspace"
