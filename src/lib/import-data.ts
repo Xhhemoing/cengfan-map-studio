@@ -116,8 +116,8 @@ function joinQuotedLines(lines: string[]): SourceLine[] {
   return joined;
 }
 
-/** Delimiters a paste may use, in the order they are believed. Only the fullwidth ： and ／, never the ASCII : of a time or a URL, nor the ASCII / of 2026/08/24 or 哈佛大学/肯尼迪学院. */
-const CELL_DELIMITERS = ["\t", ",", "，", ";", "；", "|", "｜", "／", "：", "、", "﹑"];
+/** Delimiters a paste may use, in the order they are believed. Only the fullwidth ： and ／, never the ASCII : of a time or a URL, nor the ASCII / of 2026/08/24 or 哈佛大学/肯尼迪学院. The small forms ﹔ and ﹑ a CJK-width paste ships stand for ； and 、. */
+const CELL_DELIMITERS = ["\t", ",", "，", ";", "；", "﹔", "|", "｜", "／", "：", "、", "﹑"];
 
 /** The "1." / "2、" / "３)" / "４．" / "５）" / "６。" opening a numbered list: a marker, never a cell. */
 const LIST_MARKER = /^\p{Nd}+[.．。、﹑)）]\s*(?=[^\p{Nd}])/u;
@@ -126,7 +126,8 @@ const LIST_MARKER = /^\p{Nd}+[.．。、﹑)）]\s*(?=[^\p{Nd}])/u;
  * `、` and its small form `﹑`, which a CJK-width paste ships in its place, are believed only from
  * their second occurrence on: the mark is also the Chinese enumeration mark *inside* one cell
  * ("北京、上海") and the marker of a numbered list, and a row needs three cells to describe a
- * student, so a lone 、 opens no column the positional reader could use.
+ * student, so a lone 、 opens no column the positional reader could use. Every other delimiter,
+ * `﹔` included — a semicolon separates, it never enumerates — needs only a second cell.
  */
 function detectDelimiter(line: string): string | null {
   const content = line.replace(LIST_MARKER, "");
@@ -183,11 +184,10 @@ const SERIAL_CELL = /^\p{Nd}+(?:[.．]\p{Nd}+)?$/u;
  * so a number column only ever goes from a paste without one, and never when it
  * would leave too few columns: "001,北京大学,北京市" may be an anonymized name.
  *
- * A cell blank on only some lines is the opposite: a gap in a column the rest of
- * the paste uses. Dropping that one pulls every later cell of the row a column
- * left, which imported "林舟,,北京市,海外" as a student studying at 北京市 in
- * 海外 — a complete-looking record nothing warned about. So the gap stays,
- * {@link toCandidate} sees the blank, and the row is reported instead.
+ * A cell blank on only some lines is the opposite: a gap in a column the rest of the paste uses.
+ * Dropping that one pulls every later cell of the row a column left, which imported
+ * "林舟,,北京市,海外" as a student studying at 北京市 in 海外 — a complete-looking record nothing
+ * warned about. So the gap stays, {@link toCandidate} sees the blank, and the row is reported.
  */
 function usableColumnsByDelimiter(lines: readonly SourceLine[]): UsableColumns {
   const filled = new Map<string, Set<number>>();

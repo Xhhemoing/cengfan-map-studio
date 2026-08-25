@@ -68,4 +68,21 @@ describe("TextInspector", () => {
     expect(container.textContent).not.toContain("删除文本");
     flushSync(() => root.unmount());
   });
+
+  it("hides header action icons from the accessibility tree while keeping accessible names", () => {
+    const note = renderInspector();
+    const deleteButton = note.container.querySelector("button");
+    expect(deleteButton?.getAttribute("aria-label")).toBe("删除文本");
+    expect(deleteButton?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    flushSync(() => note.root.unmount());
+
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<TextInspector text={project.textElements.find((item) => item.id === "text-title")!} onPatch={vi.fn()} onDelete={vi.fn()} />));
+    const toggleButton = container.querySelector("button");
+    expect(["隐藏文本", "显示文本"]).toContain(toggleButton?.getAttribute("aria-label"));
+    expect(toggleButton?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    flushSync(() => root.unmount());
+  });
 });

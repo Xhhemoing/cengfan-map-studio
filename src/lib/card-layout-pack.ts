@@ -50,8 +50,8 @@ export function orderResult(
 }
 
 /** Candidate coordinates ordered by closeness to `target`, capped for cost. */
-function nearestValues(values: Iterable<number>, target: number, limit = MAX_RAILS_PER_AXIS): number[] {
-  return [...new Set(values)]
+function nearestValues(values: Set<number>, target: number, limit = MAX_RAILS_PER_AXIS): number[] {
+  return [...values]
     .filter((value) => Number.isFinite(value))
     .sort((left, right) => Math.abs(left - target) - Math.abs(right - target) || left - right)
     .slice(0, limit);

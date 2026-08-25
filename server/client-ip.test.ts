@@ -54,6 +54,15 @@ describe("clientIp", () => {
     expect(clientIp(request, true)).toBe("203.0.113.9");
   });
 
+  it.each([
+    "[2001:db8::1]",
+    "[2001:db8::1]:4711",
+  ])("unwraps a bracketed IPv6 X-Forwarded-For hop from %s", (forwardedFor) => {
+    const request = requestWith({ "x-forwarded-for": forwardedFor });
+
+    expect(clientIp(request, true)).toBe("2001:db8::1");
+  });
+
   it("strips the port from the rightmost X-Forwarded-For hop", () => {
     const request = requestWith({
       "x-forwarded-for": "198.51.100.1:1, 203.0.113.9:2",
@@ -98,6 +107,12 @@ describe("clientIp", () => {
     const request = requestWith({ "x-real-ip": "203.0.113.9:54321" });
 
     expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("unwraps a bracketed IPv6 X-Real-IP hop", () => {
+    const request = requestWith({ "x-real-ip": "[2001:db8::1]" });
+
+    expect(clientIp(request, true)).toBe("2001:db8::1");
   });
 
   it("splits only the last X-Real-IP array element into hops", () => {

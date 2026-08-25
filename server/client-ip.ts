@@ -3,6 +3,11 @@ import type http from "node:http";
 type HeaderValue = string | string[] | undefined;
 
 const ipv4WithPort = /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/;
+const bracketedAddress = /^\[([^\]]+)\](?::\d+)?$/;
+
+function unwrapBracketedAddress(value: string): string {
+  return value.match(bracketedAddress)?.[1] ?? value;
+}
 
 function rightmostHop(value: HeaderValue, arrayMode: "join" | "last"): string | undefined {
   const hops = Array.isArray(value)
@@ -14,7 +19,7 @@ function rightmostHop(value: HeaderValue, arrayMode: "join" | "last"): string | 
   for (let index = candidates.length - 1; index >= 0; index -= 1) {
     const hop = candidates[index].trim().replace(ipv4WithPort, "$1");
     if (!hop || hop.toLowerCase() === "unknown" || hop.startsWith("_")) continue;
-    return hop;
+    return unwrapBracketedAddress(hop);
   }
   return undefined;
 }
@@ -55,8 +60,8 @@ function normalizeForwardedAddress(value: string): string | undefined {
     return undefined;
   }
 
-  const bracketed = address.match(/^\[([^\]]+)\](?::\d+)?$/);
-  if (bracketed) return bracketed[1];
+  const unwrappedAddress = unwrapBracketedAddress(address);
+  if (unwrappedAddress !== address) return unwrappedAddress;
 
   const ipv4WithPortMatch = address.match(ipv4WithPort);
   return ipv4WithPortMatch?.[1] ?? address;

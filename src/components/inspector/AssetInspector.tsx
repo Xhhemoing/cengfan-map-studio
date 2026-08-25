@@ -54,7 +54,7 @@ export function AssetInspector({
       <InspectorHeader
         title="素材属性"
         meta={`${kindLabel} · ${label}`}
-        actions={<IconButton label="删除素材" icon={<Trash2 size={15} />} variant="danger" onClick={() => onDelete(id)} />}
+        actions={<IconButton label="删除素材" icon={<Trash2 size={15} aria-hidden />} variant="danger" onClick={() => onDelete(id)} />}
       />
       {isTexture && (
         <p className="panel-note">
@@ -84,9 +84,9 @@ export function AssetInspector({
         <input id="asset-visible" type="checkbox" checked={visibility} onChange={(event) => onPatch({ visibility: event.target.checked })} />
       </label>
       <ActionGroup label="素材操作" className="inspector-actions">
-        <IconButton label="素材上移" icon={<ArrowUp size={14} />} onClick={() => onLayerChange(1)} />
-        <IconButton label="素材下移" icon={<ArrowDown size={14} />} onClick={() => onLayerChange(-1)} />
-        <IconButton label="复制素材" icon={<Copy size={14} />} onClick={() => onDuplicate(id)} />
+        <IconButton label="素材上移" icon={<ArrowUp size={14} aria-hidden />} onClick={() => onLayerChange(1)} />
+        <IconButton label="素材下移" icon={<ArrowDown size={14} aria-hidden />} onClick={() => onLayerChange(-1)} />
+        <IconButton label="复制素材" icon={<Copy size={14} aria-hidden />} onClick={() => onDuplicate(id)} />
       </ActionGroup>
     </section>
   );

@@ -19,8 +19,8 @@ export function TextInspector({ text, userFonts = [], onPatch, onDelete }: {
   );
   const deletable = text.role === "custom" || text.role === "note";
   return <section className="property-panel"><InspectorHeader title="文本属性" actions={deletable
-    ? <IconButton label="删除文本" text="删除文本" icon={<Trash2 size={15} />} variant="danger" onClick={onDelete} />
-    : <IconButton label={text.visibility ? "隐藏文本" : "显示文本"} text={text.visibility ? "隐藏文本" : "显示文本"} icon={text.visibility ? <EyeOff size={15} /> : <Eye size={15} />} variant="ghost" onClick={() => onPatch({ visibility: !text.visibility })} />}
+    ? <IconButton label="删除文本" text="删除文本" icon={<Trash2 size={15} aria-hidden />} variant="danger" onClick={onDelete} />
+    : <IconButton label={text.visibility ? "隐藏文本" : "显示文本"} text={text.visibility ? "隐藏文本" : "显示文本"} icon={text.visibility ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />} variant="ghost" onClick={() => onPatch({ visibility: !text.visibility })} />}
   />
     <label htmlFor="text-content">内容<DeferredTextarea id="text-content" value={text.content} onCommit={(content) => onPatch({ content })} /></label>
     <div className="property-panel__pair" data-property-pair="text-position">{number("x", text.x, 0, 6000, "X", "text-x")}{number("y", text.y, 0, 6000, "Y", "text-y")}</div>

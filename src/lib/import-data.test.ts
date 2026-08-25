@@ -837,6 +837,51 @@ describe("、 | ； separated pastes", () => {
     ]);
     expect(result.unparsed).toEqual([]);
   });
+
+  it("reads a roster headed by the small semicolon a CJK-width paste ships", () => {
+    // ﹔ (U+FE54) is the small form of ；, so a roster typed with it held no
+    // delimiter the splitter knew and every row stayed a single field.
+    const result = parseStudentText([
+      "姓名﹔院校﹔城市﹔去向类型",
+      "苏禾﹔浙江大学﹔杭州市﹔",
+      "周晴﹔哈佛大学﹔波士顿﹔海外",
+      "林舟﹔﹔北京市﹔",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "周晴", university: "哈佛大学", city: "波士顿", locationScope: "international" }),
+    ]);
+    expect(result.candidates[0]?.locationScope).toBeUndefined();
+    expect(result.unparsed).toEqual([
+      { sourceLine: 4, rawLine: "林舟﹔﹔北京市﹔", reason: "缺少院校" },
+    ]);
+  });
+
+  it("reads a ﹔-separated roster without a header and reports its gap", () => {
+    const result = parseStudentText("苏禾﹔浙江大学﹔杭州市\n林舟﹔﹔北京市");
+
+    expect(result.candidates).toEqual([expect.objectContaining({ name: "苏禾", city: "杭州市" })]);
+    expect(result.unparsed).toEqual([
+      { sourceLine: 2, rawLine: "林舟﹔﹔北京市", reason: "无法识别学生名称、录取院校和城市" },
+    ]);
+  });
+
+  it("keeps a ﹔ inside one cell from splitting a row another delimiter already divides", () => {
+    // The header names the comma as the delimiter, so a 城市 that lists two
+    // places must stay one cell instead of opening a column of its own.
+    const result = parseStudentText([
+      "姓名,院校,城市",
+      "苏禾,浙江大学,杭州市",
+      "周晴,哈佛大学,波士顿﹔剑桥",
+    ].join("\n"));
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "周晴", university: "哈佛大学", city: "波士顿﹔剑桥" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
 });
 
 describe("／ separated pastes", () => {

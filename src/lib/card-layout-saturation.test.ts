@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { marginSeat } from "./card-layout-pack";
 import { layeredPack, slotPlacements } from "./card-layout-saturation";
 import { LayoutSpace } from "./card-layout-space";
 import type { CardLayoutInput } from "./card-layout-types";
@@ -31,6 +32,12 @@ describe("slotPlacements fallback", () => {
     // The margin-corner seat sits left of the map center, so the leader must
     // point right toward the map — the old hardcoded "right" pointed away.
     expect(placement!.side).toBe("left");
+  });
+
+  it("seats a slotless card exactly where every other leftover path seats it", () => {
+    const orphan = card("orphan", { width: 2000, height: 1800 });
+    const [placement] = slotPlacements([], [orphan], standardBoard);
+    expect(placement).toEqual(marginSeat(orphan, standardBoard));
   });
 
   it("points the leader up when a wide, shallow map sits below the seat", () => {

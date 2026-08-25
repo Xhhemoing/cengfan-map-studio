@@ -15,7 +15,7 @@
  * reads. {@link betterLayout} is the single place that decides this; flipping
  * the last two entries of {@link layoutQuality} reverses the trade.
  */
-import { readingOrder, overlapPairs } from "./card-layout-pack";
+import { marginSeat, readingOrder, overlapPairs } from "./card-layout-pack";
 import type { LayoutSpace } from "./card-layout-space";
 import {
   EPSILON,
@@ -274,12 +274,11 @@ function forcedOverlaps(slots: readonly Slot[]): number {
  * Materialize slot assignments into concrete placements.
  *
  * A card no slot claims — defensive only, {@link layeredPack} slots every card
- * — is parked at the margin corner, and its connector side is read off that
- * seat's geometry with {@link LayoutSpace.sideOf}, the same rule slotted cards
- * use. A hardcoded side would point the leader away from the map: the corner
- * seat is typically left of the map center, or above it when the map is wide
- * and shallow. Exported so tests can reproduce the slotless fallback, which is
- * unreachable through {@link layeredPack}.
+ * — gets the shared {@link marginSeat}, so its connector side is read off that
+ * seat's geometry rather than hardcoded. A fixed side would point the leader
+ * away from the map: the corner seat is typically left of the map center, or
+ * above it when the map is wide and shallow. Exported so tests can reproduce
+ * the slotless fallback, which is unreachable through {@link layeredPack}.
  */
 export function slotPlacements(slots: readonly Slot[], cards: readonly CardLayoutInput[], space: LayoutSpace): CardPlacement[] {
   const placements = new Map<string, CardPlacement[]>();
@@ -299,14 +298,7 @@ export function slotPlacements(slots: readonly Slot[], cards: readonly CardLayou
   }
   return cards.map((card) => {
     const seated = placements.get(card.id)?.shift();
-    if (seated) return seated;
-    const seat = {
-      x: space.clampX(space.margin, card.width),
-      y: space.clampY(space.margin, card.height),
-      width: card.width,
-      height: card.height,
-    };
-    return { ...card, x: seat.x, y: seat.y, side: space.sideOf(seat) };
+    return seated ?? marginSeat(card, space);
   });
 }
 
