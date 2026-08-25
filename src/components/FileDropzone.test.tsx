@@ -96,6 +96,17 @@ describe("FileDropzone", () => {
     expect(container.querySelector(`label[for="${input.id}"]`)).not.toBeNull();
   });
 
+  it("keeps the file input focusable so the dropzone is reachable by keyboard", () => {
+    const { container } = renderDropzone();
+    const input = container.querySelector<HTMLInputElement>("#test-upload")!;
+
+    expect(input.hidden).toBe(false);
+    expect(input.className).toContain("file-dropzone__input");
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    expect(container.querySelector("[data-file-dropzone]")!.contains(document.activeElement)).toBe(true);
+  });
+
   it("does not accept drops while disabled", () => {
     const { container, onFile } = renderDropzone({ disabled: true });
     const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;

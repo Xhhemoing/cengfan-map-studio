@@ -276,6 +276,45 @@ describe("DataWorkspace roster actions", () => {
     expect(container.querySelector('input[aria-label="编辑学生名称"]')).not.toBeNull();
   });
 
+  it("gives an empty roster a starting point instead of a header-only table", () => {
+    const container = render(
+      <DataWorkspace
+        students={[]}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+        compactRosterControls
+      />,
+    );
+
+    // 空名单强制展开导入区：粘贴名单是主动作，不该藏在折叠钮后面。
+    expect(container.querySelector("textarea")).not.toBeNull();
+    expect(container.querySelector(".student-table__empty")?.textContent).toContain("下载 XLSX 模板");
+  });
+
+  it("explains an empty filter result and offers a way back", () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+
+    changeInput(getInput(container, "筛选学生"), "火星");
+    expect(container.querySelector(".student-table__empty")?.textContent).toContain("没有匹配「火星」的记录");
+
+    click(container.querySelector<HTMLButtonElement>(".student-table__empty button")!);
+    expect(container.querySelector(".student-table__empty")).toBeNull();
+  });
+
   it("uses one batch callback to change all visibility", () => {
     const onSetStudentsVisibility = vi.fn();
     const container = render(

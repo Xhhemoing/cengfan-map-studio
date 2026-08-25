@@ -153,7 +153,9 @@ export function FileDropzone({
           id={inputId}
           type="file"
           accept={accept}
-          hidden
+          // 视觉隐藏而不是 hidden：hidden 会把 input 踢出焦点序，
+          // 整个拖放区就只剩鼠标可用，:focus-within 的焦点环也永远不会亮。
+          className="file-dropzone__input"
           disabled={inactive}
           onChange={(event) => {
             emitFile(event.target.files?.[0]);

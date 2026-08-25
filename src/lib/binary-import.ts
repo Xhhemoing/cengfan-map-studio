@@ -110,8 +110,17 @@ function rowFallbackLine(cells: string[]): string {
   return lastFilled < 0 ? "" : cells.slice(0, lastFilled + 1).join("\t");
 }
 
-function describeColumns(fields: readonly StudentColumn[]): string {
+/** 面板与提示里点名列时统一走这里，标签口径与 XLSX 模板表头一致。 */
+export function describeStudentColumns(fields: readonly StudentColumn[]): string {
   return fields.map((field) => STUDENT_COLUMN_LABELS[field]).join("、");
+}
+
+/**
+ * 缺列提示里回显「还认得哪些写法」。只列中文别名：
+ * 英文表头对班委没有参考价值，列出来反而把提示撑长。
+ */
+export function describeHeaderAliases(field: StudentColumn): string {
+  return HEADER_ALIASES[field].filter((alias) => /[\u4e00-\u9fa5]/.test(alias)).join(" / ");
 }
 
 function emptyMetadata(): Pick<ExcelImportResult, "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {
@@ -244,7 +253,7 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
 
   if (metadata.missingRequiredFields.length > 0) {
     // 表头认出来了但缺必填列：按列位硬读只会把「备注」当成城市，整表报未识别更诚实。
-    const reason = `${MISSING_HEADER_COLUMNS_REASON}：${describeColumns(metadata.missingRequiredFields)}`;
+    const reason = `${MISSING_HEADER_COLUMNS_REASON}：${describeStudentColumns(metadata.missingRequiredFields)}`;
     return {
       candidates: [],
       unparsed: dataRows.map(({ cells, sourceLine }) => ({ sourceLine, rawLine: rowRawLine(cells), reason })),
@@ -263,7 +272,7 @@ export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
     const rawLine = rowRawLine(cells);
     const missing = REQUIRED_COLUMNS.filter((field) => !values[field]);
     if (missing.length > 0) {
-      unparsed.push({ sourceLine, rawLine, reason: `${MISSING_ROW_FIELDS_REASON}：${describeColumns(missing)}` });
+      unparsed.push({ sourceLine, rawLine, reason: `${MISSING_ROW_FIELDS_REASON}：${describeStudentColumns(missing)}` });
       continue;
     }
     const scopeIndex = header.indexes.locationScope;

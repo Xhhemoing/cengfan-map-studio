@@ -11,6 +11,8 @@ import {
 import { parseStudentText, type ImportCandidate, type UnparsedLine } from "../lib/import-data";
 import {
   createImportTemplateSheets,
+  describeHeaderAliases,
+  describeStudentColumns,
   isCsvFile,
   parseOcrLikeText,
   STUDENT_COLUMN_LABELS,
@@ -272,7 +274,8 @@ export function DataWorkspace({
   }, [reviewRows]);
 
 
-  const [showImport, setShowImport] = useState(!compactRosterControls);
+  // 空名单没有起点可言：粘贴/上传是这一屏唯一能做的事，收起来等于让人对着空表发呆。
+  const [showImport, setShowImport] = useState(!compactRosterControls || students.length === 0);
   const [showNewStudent, setShowNewStudent] = useState(!compactRosterControls);
 
   const setCandidates = (
@@ -286,8 +289,13 @@ export function DataWorkspace({
     setExcelRecognition(recognition?.headerRowIndex !== undefined ? recognition : null);
     setUnparsedRows(unparsed);
     const droppedNote = unparsed.length ? `，另有 ${unparsed.length} 行未识别` : "";
+    const missingColumns = recognition?.missingRequiredFields ?? [];
     if (candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入数据${droppedNote}${note}`);
+      // 缺列是整表读空里最常见也最好修的一种，直接点名缺哪一列，
+      // 别让人从「未识别」四个字里猜自己的表哪儿不对。
+      setMessage(missingColumns.length > 0
+        ? `这张表里没有「${describeStudentColumns(missingColumns)}」这一列，所以一个人都没导进来。补上这一列，或下载模板照着填再上传。`
+        : `没有从${sourceLabel}识别到可导入数据${droppedNote}${note}`);
       setReviewRows([]);
       return;
     }
@@ -606,6 +614,21 @@ export function DataWorkspace({
       </section>
 
       <div className="import-box">
+        {!hideTemplateDownload && (
+          // 「先下载模板照着填」是最省事的一条路，不能藏在折叠面板里：
+          // 名单阶段 compactRosterControls 让导入区默认收起，模板入口必须活在收起之外。
+          <div className="import-box__template">
+            <CompactButton
+              variant="secondary"
+              aria-label="下载学生数据 XLSX 模板"
+              icon={<Download size={16} aria-hidden />}
+              onClick={() => { void downloadImportTemplate(); }}
+            >
+              下载 XLSX 模板
+            </CompactButton>
+            <span className="import-box__template-hint">没有现成表格？下载模板照着填，再上传最省事。</span>
+          </div>
+        )}
         <button
           type="button"
           className="wide-button secondary import-toggle"
@@ -644,14 +667,6 @@ export function DataWorkspace({
                 icon={<FileUp size={16} aria-hidden />}
                 onFile={(file) => { void handleExcelFile(file); }}
               />
-              {!hideTemplateDownload && <CompactButton
-                variant="secondary"
-                aria-label="下载学生数据 XLSX 模板"
-                icon={<Download size={16} aria-hidden />}
-                onClick={() => { void downloadImportTemplate(); }}
-              >
-                下载 XLSX 模板
-              </CompactButton>}
             </div>
           </>
         )}
@@ -670,10 +685,31 @@ export function DataWorkspace({
             ))}
           </div>
           {excelRecognition.unmappedHeaders.length > 0 && (
-            <p className="import-recognition__note">未使用：{excelRecognition.unmappedHeaders.join("、")}</p>
+            <p className="import-recognition__note">这些列没用上：{excelRecognition.unmappedHeaders.join("、")}</p>
           )}
           {excelRecognition.missingRequiredFields.length > 0 && (
-            <p className="import-recognition__warning">缺少必填列：{excelRecognition.missingRequiredFields.map((field) => STUDENT_COLUMN_LABELS[field]).join("、")}</p>
+            <div className="import-recognition__warning">
+              <p className="import-recognition__warning-title">
+                这张表里没有「{describeStudentColumns(excelRecognition.missingRequiredFields)}」这一列，所以一个人都没导进来。
+              </p>
+              <ul className="import-recognition__warning-fixes">
+                {excelRecognition.missingRequiredFields.map((field) => (
+                  <li key={field}>
+                    把某一列的表头改成「{STUDENT_COLUMN_LABELS[field]}」就行；写成 {describeHeaderAliases(field)} 也认得。
+                  </li>
+                ))}
+              </ul>
+              {!hideTemplateDownload && (
+                <CompactButton
+                  variant="secondary"
+                  aria-label="下载 XLSX 模板重新整理表格"
+                  icon={<Download size={14} aria-hidden />}
+                  onClick={() => { void downloadImportTemplate(); }}
+                >
+                  下载模板重新整理
+                </CompactButton>
+              )}
+            </div>
           )}
         </section>
       )}
@@ -769,6 +805,18 @@ export function DataWorkspace({
             </tr>
           </thead>
           <tbody>
+            {filteredStudents.length === 0 && (
+              <tr className="student-table__empty">
+                <td colSpan={5}>
+                  {students.length === 0
+                    ? "还没有学生。上面「下载 XLSX 模板」照着填完再上传，或者直接粘贴「姓名 学校 城市」，一行一个人。"
+                    : `没有匹配「${filter.trim()}」的记录。`}
+                  {students.length > 0 && (
+                    <CompactButton variant="ghost" onClick={() => setFilter("")}>清空筛选</CompactButton>
+                  )}
+                </td>
+              </tr>
+            )}
             {filteredStudents.map((student) => {
               const isEditing = editingStudentId === student.id;
               const isVisible = student.visibility !== false;

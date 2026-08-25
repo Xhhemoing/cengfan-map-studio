@@ -335,8 +335,17 @@ button { font: inherit; }
 .data-upload-workspace--expanded .import-box { padding: 0; background: transparent; border: 0; }
 .data-upload-workspace--expanded .import-box .import-toggle { min-height: 32px; margin: 0; border-style: solid; }
 .data-upload-workspace--expanded .import-box > :not(.import-toggle) { margin-top: 8px; }
+.data-upload-workspace--expanded .import-box > .import-box__template:first-child { margin-top: 0; }
 .data-upload-workspace--expanded .import-recognition,
 .data-upload-workspace--expanded .import-review { grid-column: 1 / -1; order: 4; }
+/* 识别面板此前只有 grid-column 覆盖，正文一直是浏览器默认样式。 */
+.import-recognition__note { margin: 6px 0 0; color: #7a8b99; font-size: 11px; line-height: 1.5; }
+.import-recognition__warning { display: grid; gap: 6px; margin-top: 8px; padding: 10px; color: #9c4a3c; background: #fdf3ef; border: 1px solid #e9c9bd; border-radius: 6px; }
+.import-recognition__warning-title { margin: 0; font-size: 12px; font-weight: 700; line-height: 1.5; }
+.import-recognition__warning-fixes { margin: 0; padding-left: 18px; font-size: 11px; line-height: 1.6; }
+.import-recognition__warning .compact-button { justify-self: start; }
+.student-table__empty td { padding: 20px 12px; color: #7a8b99; text-align: center; white-space: normal; }
+.student-table__empty td .compact-button { margin-left: 8px; }
 .data-upload-workspace--expanded .student-table { min-width: 720px; }
 .data-upload-workspace--expanded .data-list { max-height: none; }
 .data-upload-workspace--expanded .data-upload-workspace__data .data-list { max-height: none; }
@@ -606,12 +615,15 @@ button { font: inherit; }
 .style-controls { display: grid; gap: 10px; margin: 12px 0; }
 .style-controls label { display: grid; gap: 5px; font-size: 12px; color: #4d6072; }
 .style-controls select, .style-controls input[type="color"], .style-controls input[type="range"] { width: 100%; }
-.file-import-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.file-import-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.import-box__template { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.import-box__template-hint { color: #7a8b99; font-size: 11px; line-height: 1.4; }
 .data-workspace .file-import-row .wide-button { font-size: 11px; }
 
 /* Unified file dropzone */
 .file-dropzone-wrap { display: grid; gap: 4px; width: 100%; }
 .file-dropzone {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -635,6 +647,17 @@ button { font: inherit; }
 .file-dropzone:focus-within {
   outline: 2px solid #7db5a9;
   outline-offset: 2px;
+}
+.file-dropzone__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .file-dropzone.is-dragging {
   border-color: #2f8f7c;

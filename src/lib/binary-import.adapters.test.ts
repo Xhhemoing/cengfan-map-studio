@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   createImportTemplateSheets,
+  describeHeaderAliases,
+  describeStudentColumns,
   parseExcelArrayBuffer,
   parseExcelWorkbookRows,
   parseOcrLikeText,
 } from "./binary-import";
 
 describe("binary import adapters", () => {
+  it("lists only the Chinese header aliases for the missing-column hint", () => {
+    expect(describeHeaderAliases("city")).toBe("城市 / 所在城市 / 目的地城市");
+    expect(describeStudentColumns(["name", "city"])).toBe("学生姓名、城市");
+  });
+
   it("parses excel-like row matrix into candidates", () => {
     const result = parseExcelArrayBuffer([
       ["姓名", "录取院校", "城市"],

@@ -61,6 +61,14 @@ describe("DataUploadWorkspace template download", () => {
     expect(button?.textContent).toContain("下载 XLSX 模板");
   });
 
+  it("keeps the template download reachable before the import section is expanded", () => {
+    // 不调用 expandImport：「先下载模板照着填」是最省事的一条路，不能藏在折叠面板里。
+    const container = render();
+
+    expect(container.querySelector<HTMLButtonElement>(TEMPLATE_BUTTON)).not.toBeNull();
+    expect(container.querySelector('button[aria-label="展开导入名单"]')).not.toBeNull();
+  });
+
   it("lets the caller decide instead of forcing the flag on", () => {
     const container = render({ hideTemplateDownload: true });
     expandImport(container);

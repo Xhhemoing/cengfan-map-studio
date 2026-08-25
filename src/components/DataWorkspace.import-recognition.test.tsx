@@ -73,7 +73,46 @@ describe("DataWorkspace import recognition", () => {
     expect(container.querySelector(".import-recognition")?.textContent).toContain("学生姓名");
     expect(container.querySelector(".import-recognition")?.textContent).toContain("苏禾");
     expect(container.querySelector(".import-recognition")?.textContent).toContain("录取学校");
-    expect(container.querySelector(".import-recognition")?.textContent).toContain("未使用");
+    expect(container.querySelector(".import-recognition")?.textContent).toContain("没用上");
+  });
+
+  it("explains a missing required column in plain language and offers the template", async () => {
+    const container = render(
+      <DataWorkspace
+        students={students}
+        onAppendStudents={vi.fn()}
+        onReplaceStudents={vi.fn()}
+        onUpdateStudent={vi.fn()}
+        onToggleVisibility={vi.fn()}
+        onDeleteStudent={vi.fn()}
+        onSetStudentsVisibility={vi.fn()}
+      />,
+    );
+    const xlsx = await import("xlsx");
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(
+      workbook,
+      xlsx.utils.aoa_to_sheet([
+        ["学生姓名", "录取院校", "备注"],
+        ["苏禾", "浙江大学", "保研"],
+      ]),
+      "学生数据",
+    );
+    const bytes = xlsx.write(workbook, { type: "array", bookType: "xlsx" });
+    const file = new File([], "缺城市.xlsx");
+    Object.defineProperty(file, "arrayBuffer", { value: async () => bytes });
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { files: [file] } });
+    flushSync(() => dropzone.dispatchEvent(event));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    flushSync(() => {});
+
+    const warning = container.querySelector(".import-recognition__warning")!;
+    expect(warning.textContent).toContain("没有「城市」这一列");
+    expect(warning.textContent).toContain("所在城市");
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain("一个人都没导进来");
+    expect(warning.querySelector('button[aria-label="下载 XLSX 模板重新整理表格"]')).not.toBeNull();
   });
 
   it("clears stale Excel recognition after one-click text import", async () => {
