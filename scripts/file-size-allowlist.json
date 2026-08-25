@@ -5,7 +5,6 @@
   "server/index.ts": 979,
   "src/App.collaboration-terminal.test.tsx": 402,
   "src/App.tsx": 988,
-  "src/components/AgentAssistant.test.tsx": 569,
   "src/components/AgentAssistant.tsx": 705,
   "src/components/AppErrorBoundary.test.tsx": 613,
   "src/components/AppErrorBoundary.tsx": 403,
