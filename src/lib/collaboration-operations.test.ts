@@ -132,6 +132,43 @@ describe("collaboration operations", () => {
     ]);
   });
 
+  it("treats undefined-valued keys as absent so a wire round-trip emits no ghost upsert", () => {
+    // 名单经序列化往返后 `province: undefined` 消失，两侧内容其实一致。
+    const local = { students: [{ id: "1", name: "甲", province: undefined }] };
+    const roundTripped = { students: [{ id: "1", name: "甲" }] };
+
+    expect(diffCollaborationDocument(local, roundTripped)).toEqual([]);
+    expect(diffCollaborationDocument(roundTripped, local)).toEqual([]);
+    expect(diffCollaborationDocument({ meta: { title: "同", fontId: undefined } }, { meta: { title: "同" } })).toEqual([]);
+    // 真正的差异仍要报出来。
+    expect(diffCollaborationDocument(roundTripped, { students: [{ id: "1", name: "甲", province: "北京" }] })).toEqual([
+      { type: "array-upsert", path: ["students"], item: { id: "1", name: "甲", province: "北京" } },
+    ]);
+  });
+
+  it("treats an undefined array element as null the way serialization does", () => {
+    expect(diffCollaborationDocument({ marks: [1, undefined, 3] }, { marks: [1, null, 3] })).toEqual([]);
+    expect(diffCollaborationDocument({ marks: [1, undefined, 3] }, { marks: [1, 2, 3] })).toEqual([
+      { type: "set", path: ["marks"], value: [1, 2, 3] },
+    ]);
+  });
+
+  it("does not resurrect a remotely removed student when only key order and undefined keys differ", () => {
+    const baseline = { students: [{ id: "1", name: "甲" }, { id: "2", name: "乙" }] };
+    const current = { students: [{ name: "甲", id: "1", province: undefined }, { name: "乙", id: "2" }] };
+
+    const rebased = rebaseRemoteCollaborationOperations(baseline, current, [
+      { type: "array-remove", path: ["students"], itemId: "1" },
+    ]);
+
+    expect(rebased.baseline.students.map((student: { id: string }) => student.id)).toEqual(["2"]);
+    expect(rebased.current.students.map((student: { id: string }) => student.id)).toEqual(["2"]);
+    // 该成员随后改了另一名学生，被删的那位不得跟着回传复活。
+    expect(diffCollaborationDocument(rebased.baseline, { students: [{ id: "2", name: "乙改" }] })).toEqual([
+      { type: "array-upsert", path: ["students"], item: { id: "2", name: "乙改" } },
+    ]);
+  });
+
   it("keeps arrays without unique non-empty string ids as atomic set operations", () => {
     expect(diffCollaborationDocument({ visibleFields: ["name", "city"] }, { visibleFields: ["name"] })).toEqual([
       { type: "set", path: ["visibleFields"], value: ["name"] },

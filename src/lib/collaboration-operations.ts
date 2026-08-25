@@ -60,9 +60,21 @@ function forgetObjectPair(left: object, right: object, seen: SeenObjectPairs): v
   seen.get(left)?.delete(right);
 }
 
+/** Own keys that survive JSON serialization: `undefined` values are dropped. */
+function definedKeys(record: Record<string, unknown>): string[] {
+  return Object.keys(record).filter((key) => record[key] !== undefined);
+}
+
 /**
  * Compares JSON-shaped values in one traversal without materializing strings.
  * Revisited object pairs are treated as equal so circular input terminates.
+ *
+ * Comparison follows JSON semantics rather than JavaScript's: a key whose value
+ * is `undefined` counts as absent and an `undefined` array element counts as
+ * `null`, because a document that round-trips through the wire loses both. Were
+ * they distinguished, restoring a package would report every such key as a
+ * change and emit ghost `array-upsert`s that resurrect items other members
+ * already removed.
  */
 function structurallyEqual(
   left: unknown,
@@ -81,18 +93,18 @@ function structurallyEqual(
     const rightArray = right as unknown[];
     if (leftArray.length !== rightArray.length) return false;
     for (let index = 0; index < leftArray.length; index += 1) {
-      if (!structurallyEqual(leftArray[index], rightArray[index], seen)) return false;
+      if (!structurallyEqual(leftArray[index] ?? null, rightArray[index] ?? null, seen)) return false;
     }
     return true;
   }
 
   const leftRecord = left as Record<string, unknown>;
   const rightRecord = right as Record<string, unknown>;
-  const leftKeys = Object.keys(leftRecord);
-  const rightKeys = Object.keys(rightRecord);
+  const leftKeys = definedKeys(leftRecord);
+  const rightKeys = definedKeys(rightRecord);
   if (leftKeys.length !== rightKeys.length) return false;
   for (const key of leftKeys) {
-    if (!Object.hasOwn(rightRecord, key)
+    if (rightRecord[key] === undefined
       || !structurallyEqual(leftRecord[key], rightRecord[key], seen)) return false;
   }
   return true;
@@ -123,12 +135,14 @@ export function diffCollaborationDocument(before: unknown, after: unknown): Coll
     if (isRecord(left) && isRecord(right)) {
       // A repeated pair is a circular edge already covered by an ancestor.
       if (objectPairWasSeen(left, right, activeRecordPairs)) return;
-      const keys = Array.from(new Set([...Object.keys(left), ...Object.keys(right)])).sort();
+      // Same JSON key semantics as structurallyEqual: an explicitly `undefined`
+      // key is absent, so it never becomes a ghost delete or a set-to-undefined.
+      const keys = Array.from(new Set([...definedKeys(left), ...definedKeys(right)])).sort();
       for (const key of keys) {
         if (BLOCKED_PATH_PARTS.has(key)) continue;
-        if (!Object.hasOwn(right, key)) {
+        if (right[key] === undefined) {
           operations.push({ type: "delete", path: [...path, key] });
-        } else if (!Object.hasOwn(left, key)) {
+        } else if (left[key] === undefined) {
           operations.push({ type: "set", path: [...path, key], value: structuredClone(right[key]) });
         } else {
           visit(left[key], right[key], [...path, key]);
