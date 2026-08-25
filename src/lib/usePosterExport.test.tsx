@@ -124,23 +124,32 @@ function mountHook(options: { withPoster?: boolean; getProjectName?: () => strin
 
 /**
  * 卡住下一次 SVG 解码，制造一个「PNG 还在导出」的窗口，好让别的导出插进来。
- * 装置只作用于此刻发起的那一次：拿到句柄后立即换回真实 Image。
+ * 装置只作用于此刻发起的那一次：等它接上这次导出的 Image 之后立刻换回真实 Image。
  */
-function startGatedPngExport(harness: Harness): { settled: Promise<void>; release: () => void } {
+async function startGatedPngExport(
+  harness: Harness,
+  settleAs: "load" | "error" = "load",
+): Promise<{ settled: Promise<void>; release: () => void }> {
   const originalImage = window.Image;
   let release: (() => void) | undefined;
   class GatedImage {
     onload: (() => void) | null = null;
     onerror: (() => void) | null = null;
     set src(_value: string) {
-      release = () => this.onload?.();
+      release = () => (settleAs === "load" ? this.onload?.() : this.onerror?.());
     }
   }
   vi.stubGlobal("Image", GatedImage);
   let settled: Promise<void> | undefined;
-  act(() => { settled = harness.result().exportPng(); });
+  await act(async () => {
+    settled = harness.result().exportPng();
+    // 导出要先 await 字体加载才会碰 Image：装置没接上就换回真实 Image 的话，这次
+    // 导出会在用例回头看它之前自己跑完，窗口是假的。
+    for (let tick = 0; tick < 100 && !release; tick += 1) await Promise.resolve();
+  });
   vi.stubGlobal("Image", originalImage);
   if (!settled) throw new Error("png export did not start");
+  if (!release) throw new Error("png export never reached the image gate");
   return { settled, release: () => release?.() };
 }
 
@@ -246,28 +255,17 @@ describe("usePosterExport", () => {
 
   it("ignores a stale png export that settles after a newer one", async () => {
     const harness = mountHook();
-    let releaseFirst: (() => void) | undefined;
-    const originalImage = window.Image;
-    class GatedImage {
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      set src(_value: string) {
-        releaseFirst = () => this.onerror?.();
-      }
-    }
-    vi.stubGlobal("Image", GatedImage);
-
-    let stale: Promise<void> | undefined;
-    act(() => { stale = harness.result().exportPng(); });
-    vi.stubGlobal("Image", originalImage);
+    const stale = await startGatedPngExport(harness, "error");
 
     await act(async () => { await harness.result().exportPng(); });
     expect(harness.result().exportState).toBe("success");
 
     // 先发起的那次这时才失败：它不能把后一次的成功状态改写成错误。
+    // blob 通道解不出来会降级到 data URL 通道再试一次，两条都得判失败才是「这次导出失败了」。
+    imageBehavior = "error";
     await act(async () => {
-      releaseFirst?.();
-      await stale;
+      stale.release();
+      await stale.settled;
     });
 
     expect(harness.result().exportState).toBe("success");
@@ -276,9 +274,24 @@ describe("usePosterExport", () => {
     expect(downloads).toHaveLength(1);
   });
 
+  it("writes only the newest png when an earlier one is still encoding", async () => {
+    const harness = mountHook();
+    const stale = await startGatedPngExport(harness);
+
+    // 上一条用例里先发起的那次是解码失败，走不到落盘；这里两次都能成功编码，
+    // 靠倍率区分文件名——「更晚的 PNG 让先发起的那份成为多余文件」这一条才真的被钉住。
+    act(() => { harness.result().setPngScale(2); });
+    await act(async () => { await harness.result().exportPng(); });
+    await act(async () => { stale.release(); await stale.settled; });
+
+    expect(downloads.map((entry) => entry.filename)).toEqual(["我的毕业去向图-2x.png"]);
+    expect(harness.result().exportState).toBe("success");
+    expect(harness.result().lastExportFileName).toBe("我的毕业去向图-2x.png");
+  });
+
   it("still writes the png when another kind of export starts mid-flight", async () => {
     const harness = mountHook();
-    const png = startGatedPngExport(harness);
+    const png = await startGatedPngExport(harness);
 
     // SVG 是另一份文件，不是这次 PNG 的替代品：它可以接管导出状态，但不能吃掉用户已经要过的 PNG。
     act(() => { harness.result().exportSvg(); });
@@ -296,12 +309,25 @@ describe("usePosterExport", () => {
 
   it("releases the png busy flag even when a later export supersedes it", async () => {
     const harness = mountHook();
-    const png = startGatedPngExport(harness);
+    const png = await startGatedPngExport(harness);
     expect(harness.result().exportingPng).toBe(true);
 
     act(() => { harness.result().exportProjectPackage(); });
     await act(async () => { png.release(); await png.settled; });
 
+    expect(harness.result().exportingPng).toBe(false);
+  });
+
+  it("keeps the png busy flag raised until every in-flight png settles", async () => {
+    const harness = mountHook();
+    const first = await startGatedPngExport(harness);
+    const second = await startGatedPngExport(harness);
+
+    // 「有没有 PNG 在途」是个计数问题：被顶掉的第一次交还占用后，第二次还在跑。
+    await act(async () => { first.release(); await first.settled; });
+    expect(harness.result().exportingPng).toBe(true);
+
+    await act(async () => { second.release(); await second.settled; });
     expect(harness.result().exportingPng).toBe(false);
   });
 
