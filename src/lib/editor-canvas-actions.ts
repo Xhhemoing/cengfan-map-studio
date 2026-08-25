@@ -20,11 +20,12 @@ import {
   refreshDisplayFramePositionsTransaction,
   sceneResetPatch,
 } from "./canvas-edit-transactions";
+import { cardLayoutModeLabel } from "./card-layout-modes";
 import type { ImageThemeResult } from "./image-color";
 import { createProvinceThemeTransaction, createSceneTransaction } from "./inspector-operations";
 import type { MapTemplateId } from "./project-data";
 import { applyTransaction, type ProjectDocument, type ProjectTransaction } from "./project-document";
-import type { SceneSelection } from "./scene-document";
+import type { CardLayoutModeValue, SceneSelection } from "./scene-document";
 import type { CustomTemplateRecord } from "./template-store";
 import type { TypographyTarget } from "./typography";
 
@@ -91,13 +92,15 @@ export function createEditorCanvasActions(deps: EditorCanvasActionDeps) {
       commitTransaction(applyFontTransaction(target, fontId, applyToAll));
     },
 
-    /** 手动摆过卡片的工程要先问一句:刷新会把手摆的位置一起算掉。 */
-    refreshDisplayFramePositions: () => {
+    /** 手动摆过卡片的工程要先问一句:刷新会把手摆的位置一起算掉。选算法时同一事务切模式并重算。 */
+    refreshDisplayFramePositions: (layoutMode?: CardLayoutModeValue) => {
       if (typeof window !== "undefined" && Object.keys(project.cards.positions ?? {}).length > 0
         && !window.confirm("刷新展示框位置会重新按当前地图计算数据框位置，是否继续？")) return;
       deps.clearCardPositions();
-      commitTransaction(refreshDisplayFramePositionsTransaction());
-      setStatusMessage("已刷新展示框位置");
+      commitTransaction(refreshDisplayFramePositionsTransaction(layoutMode));
+      setStatusMessage(layoutMode
+        ? `已按${cardLayoutModeLabel(layoutMode)}重算展示框位置`
+        : "已刷新展示框位置");
     },
 
     addText: () => {

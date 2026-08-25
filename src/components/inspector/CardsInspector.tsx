@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, RotateCcw } from "lucide-react";
 import type { CardFontField, CardSettings } from "../../lib/scene-document";
 import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
+import { CARD_LAYOUT_MODE_OPTIONS } from "../../lib/card-layout-modes";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { DEFAULT_FONT_ID, type UserFont } from "../../lib/fonts";
 import { applyCardTemplate, getCardTemplateById, getLegacyPresetTemplateId, listCardTemplates } from "../../lib/card-templates";
@@ -149,7 +150,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     <label htmlFor="cards-show-count" className="boolean-control checkbox-row"><input id="cards-show-count" type="checkbox" checked={cards.showCount !== false} onChange={(event) => onPatch({ showCount: event.target.checked })} />显示人数</label>
     <label htmlFor="cards-grouping">分组<select id="cards-grouping" value={cards.grouping} onChange={(event) => onPatch({ grouping: event.target.value as CardSettings["grouping"] })}><option value="province">省份</option><option value="city">城市</option><option value="university">院校</option></select></label>
     <label htmlFor="cards-city-subgroups" className="boolean-control checkbox-row"><input id="cards-city-subgroups" type="checkbox" checked={cards.citySubgroups !== false} disabled={cards.grouping !== "province"} onChange={(event) => onPatch({ citySubgroups: event.target.checked })} />省份卡片内按城市分类</label>
-    <label htmlFor="cards-layout-mode">排布方式<select id="cards-layout-mode" value={cards.layoutMode ?? "quadrant"} onChange={(event) => onPatch({ layoutMode: event.target.value as CardSettings["layoutMode"] })}><option value="quadrant">四象限（默认）</option><option value="radial">极角环绕</option><option value="right-stack">右侧单列</option><option value="grid">边缘网格</option></select></label>
+    <label htmlFor="cards-layout-mode">排布方式<select id="cards-layout-mode" value={cards.layoutMode ?? "quadrant"} onChange={(event) => onPatch({ layoutMode: event.target.value as CardSettings["layoutMode"] })}>{CARD_LAYOUT_MODE_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.id === "quadrant" ? `${option.label}（默认）` : option.label}</option>)}</select></label>
     <label htmlFor="cards-auto-balance" className="boolean-control checkbox-row"><input id="cards-auto-balance" type="checkbox" checked={cards.autoBalance !== false} disabled={(cards.layoutMode ?? "quadrant") !== "quadrant"} onChange={() => onPatch({ autoBalance: cards.autoBalance === false })} />自动平衡左右</label>
     <label htmlFor="cards-allow-map-overlap" className="boolean-control checkbox-row"><input id="cards-allow-map-overlap" type="checkbox" checked={cards.allowMapOverlap === true} onChange={(event) => onPatch({ allowMapOverlap: event.target.checked })} />允许卡片覆盖地图</label>
     <label htmlFor="cards-show-province-texture" className="boolean-control checkbox-row"><input id="cards-show-province-texture" type="checkbox" checked={cards.showProvinceTexture === true} onChange={(event) => onPatch({ showProvinceTexture: event.target.checked })} />数据框显示省份贴图</label>

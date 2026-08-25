@@ -192,6 +192,17 @@ describe("layout and typography transactions", () => {
     expect(next.cards.positions).toEqual({});
     expect(seeded.cards.positions).toMatchObject({ "card-a": { x: 1, y: 2 } });
   });
+
+  it("switches the layout algorithm in the same refresh transaction", () => {
+    const project = documentFixture();
+    const seeded = moveCardTransaction("card-a", { x: 1, y: 2 }).apply(project);
+    const transaction = refreshDisplayFramePositionsTransaction("radial");
+
+    expect(transaction.label).toBe("按极角环绕重算展示框");
+    const next = transaction.apply(seeded);
+    expect(next.cards.layoutMode).toBe("radial");
+    expect(next.cards.positions).toEqual({});
+  });
 });
 
 describe("sceneResetPatch", () => {

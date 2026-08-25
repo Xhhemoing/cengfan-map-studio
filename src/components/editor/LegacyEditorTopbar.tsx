@@ -1,6 +1,7 @@
 import { ImageDown, MapPinned, PanelRight, PanelRightClose, Redo2, Undo2 } from "lucide-react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { ActivePanel } from "../../lib/app-constants";
+import type { CardLayoutModeValue } from "../../lib/scene-document";
 import type { ResolvedTheme, StudioSkin, ThemeMode } from "../../lib/theme";
 import type { UsePosterExportResult } from "../../lib/usePosterExport";
 import type { WorkflowProgress } from "../../lib/workflow-progress";
@@ -9,6 +10,7 @@ import { ToolbarButton, ToolbarGroup } from "../StudioUi";
 import { ThemeToggle } from "../ThemeToggle";
 import { WorkflowStepper } from "../WorkflowStepper";
 import { ZoomControls } from "../ZoomControls";
+import { LayoutRecalcMenu } from "./LayoutRecalcMenu";
 
 export interface LegacyEditorTopbarProps {
   workflowNav: ReactNode;
@@ -33,6 +35,8 @@ export interface LegacyEditorTopbarProps {
   onToggleInspector: () => void;
   onSkinChange: (skin: StudioSkin) => void;
   onThemeChange: (mode: ThemeMode) => void;
+  layoutMode?: CardLayoutModeValue;
+  onRefreshPositions: (mode?: CardLayoutModeValue) => void;
 }
 
 /**
@@ -62,6 +66,8 @@ export function LegacyEditorTopbar({
   onToggleInspector,
   onSkinChange,
   onThemeChange,
+  layoutMode,
+  onRefreshPositions,
 }: LegacyEditorTopbarProps) {
   return (
     <header className="topbar">
@@ -98,6 +104,8 @@ export function LegacyEditorTopbar({
             onZoomIn={() => onZoomPercentChange((v) => Math.min(300, v + 10))}
           />
         </ToolbarGroup>
+
+        <LayoutRecalcMenu layoutMode={layoutMode} onRecalc={onRefreshPositions} />
 
         <ToolbarGroup label="属性面板" className="inspector-toggle-group">
           <ToolbarButton

@@ -208,7 +208,7 @@ describe("Extracted render branches (R11-5)", () => {
     const groups = Array.from(topbar.querySelectorAll('.topbar-actions [role="group"]')).map((group) =>
       group.getAttribute("aria-label"),
     );
-    expect(groups.slice(0, 3)).toEqual(["历史与缩放", "属性面板", "界面主题"]);
+    expect(groups.slice(0, 4)).toEqual(["历史与缩放", "重算展示框", "属性面板", "界面主题"]);
     expect(groups).toContain("导出");
 
     const exportGroup = topbar.querySelector('[role="group"][aria-label="导出"]');
