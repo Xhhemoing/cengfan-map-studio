@@ -375,16 +375,10 @@ export function restoreProjectPackage(value: unknown, options: ProjectPackagePar
 /** File picker filter for `.json` / `.cengfan` project packages. */
 export const PROJECT_PACKAGE_FILE_ACCEPT = "application/json,.json,.cengfan";
 
-/**
- * 与 `buildExportFileName` 的「项目名-工程包-YYYY-MM-DD」互为逆运算，
- * 顺带认早期只带日期后缀的导出文件。剥掉这段后缀才能在重新导入时还原
- * 用户起的项目名，而不是把导出那天的日期一并当成名字的一部分。
- */
-const EXPORT_NAME_SUFFIX = /-(?:工程包-)?\d{4}-\d{2}-\d{2}$/;
-
+/** 与 `buildExportFileName` 互逆：剥掉「-[工程包-]YYYY-MM-DD」，重新导入自家导出文件时还原项目名而非连日期一起当名字。 */
 export function projectPackageDisplayName(filename: string): string {
   const withoutExtension = filename.replace(/\.(json|cengfan)$/i, "");
-  return withoutExtension.replace(EXPORT_NAME_SUFFIX, "") || withoutExtension || "导入的项目";
+  return withoutExtension.replace(/-(?:工程包-)?\d{4}-\d{2}-\d{2}$/, "") || withoutExtension || "导入的项目";
 }
 
 export function downloadProjectPackage(

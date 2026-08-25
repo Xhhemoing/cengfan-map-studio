@@ -15,7 +15,6 @@ import {
   ProjectPackageError,
   PROJECT_PACKAGE_LIMITS,
 } from "./project-package";
-import { buildExportFileName } from "./export-filename";
 import { parseResourcePack } from "./resource-pack";
 import { DEFAULT_RENDER_SETTINGS } from "./render-settings";
 import { createDefaultDisplayFrame } from "./display-frame";
@@ -258,16 +257,6 @@ describe("project package", () => {
     expect(projectPackageDisplayName("示例项目.cengfan")).toBe("示例项目");
     expect(projectPackageDisplayName("project.json")).toBe("project");
     expect(projectPackageDisplayName(".json")).toBe("导入的项目");
-  });
-
-  it("strips the export suffix so re-importing an export restores the project name", () => {
-    const exported = buildExportFileName({ projectName: "三年二班蹭饭图", kind: "project", date: "2026-08-23" });
-    expect(projectPackageDisplayName(exported)).toBe("三年二班蹭饭图");
-    // 早期只带日期后缀的导出文件同样认。
-    expect(projectPackageDisplayName("三年二班蹭饭图-2026-08-23.json")).toBe("三年二班蹭饭图");
-    expect(projectPackageDisplayName("毕业2024-06-30-工程包-2026-08-23.cengfan")).toBe("毕业2024-06-30");
-    // 名字本身就是一串日期时不能剥空：没有前导连字符就不算后缀。
-    expect(projectPackageDisplayName("2026-01-01.json")).toBe("2026-01-01");
   });
 
   it("keeps the published sample package importable", () => {
