@@ -28,8 +28,6 @@ export interface ContentLayoutWorkspaceProps {
   onSelect: (selection: SceneSelection) => void;
   onPatch: (target: SceneSelection, patch: Record<string, unknown>) => void;
   onReset: (target: Extract<SceneSelection, { type: "canvas" | "map" | "cards" }>) => void;
-  onRefreshPositions: () => void;
-  onBackToMap: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onMoveText?: (id: string, x: number, y: number) => void;
@@ -80,12 +78,12 @@ function selectionLabel(selection: SceneSelection): string {
  * (labelled aside + resizer + mobile drawer); this component supplies the
  * 当前对象 inspector and the 素材库 (the primary asset-management entry of
  * the whole flow — the roster stage no longer exposes one). History and the
- * position-refresh / back-to-map actions live in the topbar instead.
+ * shared layout-recalc control live in the topbar instead.
  */
 export type ContentLayoutRailProps = Omit<
   ContentLayoutWorkspaceProps,
   | "canUndo" | "canRedo" | "undoLabel" | "redoLabel"
-  | "onRefreshPositions" | "onBackToMap" | "onUndo" | "onRedo"
+  | "onUndo" | "onRedo"
   | "onSelect" | "onSelectStudent" | "selectedStudentId"
   | "onMoveText" | "onMoveAsset" | "onResizeAsset"
   | "onMoveProvinceTexture" | "onResizeMapImage"
@@ -177,8 +175,7 @@ export function ContentLayoutRail({
 /**
  * Center content of the content stage: the poster canvas preview. The
  * 当前对象 inspector and 素材库 context live in the unified right rail
- * (`ContentLayoutRail`); undo/redo, 刷新展示框位置 and 返回地图 actions
- * live in the topbar's stage-actions slot.
+ * (`ContentLayoutRail`); undo/redo and 刷新展示框位置 live in the shared topbar.
  */
 export function ContentLayoutWorkspace({
   project,

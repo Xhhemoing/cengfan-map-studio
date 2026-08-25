@@ -124,7 +124,9 @@ describe("App student editing", () => {
 
     const topbar = container.querySelector(".topbar-actions")!;
     expect(topbar.querySelector('[aria-label="历史"]')).not.toBeNull();
+    expect(topbar.querySelector('[aria-label="重算展示框"]')).not.toBeNull();
     expect(topbar.querySelector('[aria-label="界面主题"]')).not.toBeNull();
+    expect(topbar.querySelector('summary[aria-label="选择排布算法"]')).not.toBeNull();
 
     click(workflowStage(container, "内容"));
     expect(container.querySelector('main[aria-label="版式"]')).toBeNull();
@@ -230,5 +232,30 @@ describe("App student editing", () => {
     expect(container.querySelector(".topbar")).not.toBeNull();
     expect(container.querySelector(".workspace")).not.toBeNull();
     expect(container.querySelector("#canvas-width")).toBeNull();
+  });
+
+  it("keeps the same layout-recalc control on every focused stage and on the legacy content topbar", () => {
+    const publicEditor = renderPublicApp();
+    for (const label of ["名单", "地图", "版式", "内容", "交付"]) {
+      click(workflowStage(publicEditor, label));
+      const topbar = publicEditor.querySelector(".topbar")!;
+      expect(topbar.querySelector('button[aria-label="刷新展示框位置"]')).not.toBeNull();
+      expect(topbar.querySelector('summary[aria-label="选择排布算法"]')).not.toBeNull();
+      expect(topbar.querySelector('button[aria-label="返回地图"]')).toBeNull();
+    }
+
+    const legacy = renderApp();
+    expect(legacy.querySelector('.topbar button[aria-label="刷新展示框位置"]')).not.toBeNull();
+    expect(legacy.querySelector('.topbar summary[aria-label="选择排布算法"]')).not.toBeNull();
+  });
+
+  it("applies a layout algorithm from the topbar recalc menu", () => {
+    const container = renderPublicApp();
+    click(workflowStage(container, "版式"));
+    click(container.querySelector<HTMLElement>('summary[aria-label="选择排布算法"]')!);
+    click(container.querySelector<HTMLButtonElement>('[data-layout-mode="radial"]')!);
+
+    expect(container.querySelector<HTMLSelectElement>("#cards-layout-mode")?.value).toBe("radial");
+    expect(container.querySelector('[data-layout-mode="radial"]')?.getAttribute("aria-checked")).toBe("true");
   });
 });

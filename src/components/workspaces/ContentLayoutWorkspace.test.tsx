@@ -2,6 +2,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "../../lib/project-document";
+import { LayoutRecalcMenu } from "../editor/LayoutRecalcMenu";
 import { StudioTopbar } from "../StudioTopbar";
 import { ToolbarButton, ToolbarGroup } from "../StudioUi";
 import { ContentLayoutRail, ContentLayoutWorkspace } from "./ContentLayoutWorkspace";
@@ -17,12 +18,10 @@ afterEach(() => {
 });
 
 /**
- * Shell harness: renders the topbar (with undo/redo, the position-refresh and
- * the back-to-map actions in the stage-actions slot), the center canvas
- * preview workspace and the object-property right rail, mirroring how App
- * composes the content stage.
+ * Shell harness: renders the topbar (undo/redo plus the shared layout-recalc
+ * control), the center canvas preview and the object-property right rail.
  */
-function renderWorkspace(onRefreshPositions = vi.fn(), onBackToMap = vi.fn()) {
+function renderWorkspace(onRefreshPositions = vi.fn()) {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -42,8 +41,7 @@ function renderWorkspace(onRefreshPositions = vi.fn(), onBackToMap = vi.fn()) {
               <ToolbarButton label="撤销内容修改" icon={null} disabled={false} onClick={vi.fn()} />
               <ToolbarButton label="重做内容修改" icon={null} disabled={false} onClick={vi.fn()} />
             </ToolbarGroup>
-            <ToolbarButton label="刷新展示框位置" icon={null} onClick={onRefreshPositions} />
-            <ToolbarButton label="返回地图" icon={null} onClick={onBackToMap} />
+            <LayoutRecalcMenu layoutMode={project.cards.layoutMode} onRecalc={onRefreshPositions} />
           </>
         }
         projectActions={<></>}
@@ -60,8 +58,6 @@ function renderWorkspace(onRefreshPositions = vi.fn(), onBackToMap = vi.fn()) {
         onSelect={vi.fn()}
         onPatch={onPatch}
         onReset={vi.fn()}
-        onRefreshPositions={onRefreshPositions}
-        onBackToMap={onBackToMap}
         onUndo={vi.fn()}
         onRedo={vi.fn()}
         assetPanelProps={{ onApplyBackground: vi.fn() }}
@@ -116,21 +112,21 @@ describe("ContentLayoutWorkspace", () => {
     expect(container.querySelector('button[aria-label="返回编辑器"]')).toBeNull();
   });
 
-  it("exposes refresh and back-to-map actions in the topbar stage actions", () => {
+  it("exposes refresh and algorithm choices in the topbar stage actions", () => {
     const onRefreshPositions = vi.fn();
-    const onBackToMap = vi.fn();
-    const { container } = renderWorkspace(onRefreshPositions, onBackToMap);
+    const { container } = renderWorkspace(onRefreshPositions);
 
     const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="刷新展示框位置"]');
     expect(refresh?.closest(".topbar")).not.toBeNull();
-    const backToMap = container.querySelector<HTMLButtonElement>('button[aria-label="返回地图"]');
-    expect(backToMap?.closest(".topbar")).not.toBeNull();
+    expect(container.querySelector('summary[aria-label="选择排布算法"]')?.closest(".topbar")).not.toBeNull();
+    expect(container.querySelector('button[aria-label="返回地图"]')).toBeNull();
     expect(container.querySelector(".content-layout-workspace__header")).toBeNull();
 
     flushSync(() => refresh?.click());
-    flushSync(() => backToMap?.click());
     expect(onRefreshPositions).toHaveBeenCalledTimes(1);
-    expect(onBackToMap).toHaveBeenCalledTimes(1);
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-layout-mode="radial"]')!.click());
+    expect(onRefreshPositions).toHaveBeenCalledWith("radial");
   });
 
   it("collapses the asset library by default while an object is selected", () => {

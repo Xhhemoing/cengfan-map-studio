@@ -121,7 +121,8 @@ describe("App student editing", () => {
     expect(container.querySelector("#cards-maxWidth")).not.toBeNull();
     expect(container.querySelector("#cards-layout-mode")).not.toBeNull();
     expect(container.querySelector('button[aria-label="一键智能排版"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="刷新展示框位置"]')).toBeNull();
+    expect(container.querySelector('.property-panel button[aria-label="刷新展示框位置"]')).toBeNull();
+    expect(container.querySelector('.topbar button[aria-label="刷新展示框位置"]')).not.toBeNull();
 
     click(container.querySelector<SVGGElement>('[aria-label="特邀嘉宾"]')!);
     expect(container.querySelector("#guests-x")).not.toBeNull();

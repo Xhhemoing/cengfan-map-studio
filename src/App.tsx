@@ -777,10 +777,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onUndo={handleUndo}
         onRedo={handleRedo}
         onRefreshPositions={refreshDisplayFramePositions}
-        onBackToMap={() => {
-          setActiveStage("map");
-          setActivePanel("map");
-        }}
         onLocateDeliveryIssue={locateDeliveryIssue}
       />
     );
@@ -812,6 +808,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onToggleInspector={() => setMobileInspectorOpen((open) => !open)}
         onSkinChange={setSkin}
         onThemeChange={setThemeMode}
+        layoutMode={project.cards.layoutMode}
+        onRefreshPositions={refreshDisplayFramePositions}
       />
 
       <ExportProjectDialog posterExport={posterExport} />

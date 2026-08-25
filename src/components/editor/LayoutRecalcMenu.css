@@ -1,0 +1,78 @@
+/* 顶栏重算 + 算法选择：拆成主按钮与下拉，五个阶段共用同一套控件。 */
+.layout-recalc { gap: 0; }
+.layout-recalc .toolbar-button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.layout-recalc__menu { position: relative; display: inline-flex; }
+.layout-recalc__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-height: 30px;
+  padding: 0;
+  list-style: none;
+  cursor: pointer;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.layout-recalc__toggle::-webkit-details-marker { display: none; }
+.layout-recalc__menu[open] > .layout-recalc__toggle {
+  border-color: var(--editor-accent, #245d57);
+}
+.layout-recalc__popover {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  gap: 4px;
+  min-width: 168px;
+  padding: 8px;
+  color: var(--editor-ink, #263b4e);
+  background: var(--editor-surface-raised, #fff);
+  border: 1px solid var(--editor-line, #bdcbd3);
+  border-radius: 6px;
+  box-shadow: 0 16px 38px rgb(12 31 56 / 24%);
+}
+.layout-recalc__current {
+  margin: 0 0 2px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--editor-ink-muted, #617485);
+}
+.layout-recalc__popover button {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--editor-ink, #314d60);
+  background: var(--editor-surface-muted, #f5f8f9);
+  border: 1px solid var(--editor-line, #d5dee3);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.layout-recalc__popover button:hover,
+.layout-recalc__popover button[aria-checked="true"] {
+  border-color: var(--editor-accent, #245d57);
+}
+.layout-recalc__popover button[aria-checked="true"] {
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .topbar-actions .layout-recalc,
+  .topbar-actions .layout-recalc .icon-button,
+  .topbar-actions .layout-recalc__toggle {
+    display: inline-flex;
+  }
+  .topbar-actions .layout-recalc .icon-button,
+  .topbar-actions .layout-recalc__toggle {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

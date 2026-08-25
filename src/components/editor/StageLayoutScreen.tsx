@@ -1,4 +1,3 @@
-import { MapPinned, RefreshCw } from "lucide-react";
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import type { UserAsset } from "../../lib/assets";
 import type { DataHealthSummary, DataIssue } from "../../lib/data-health";
@@ -6,14 +5,14 @@ import type { UserFont } from "../../lib/fonts";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
-import type { SceneSelection } from "../../lib/scene-document";
+import type { CardLayoutModeValue, SceneSelection } from "../../lib/scene-document";
 import { STAGE_METADATA } from "../../lib/stage-metadata";
 import { templatePickerProps, type EditorTemplateActions } from "../../lib/editor-template-actions";
 import type { UsePosterExportResult } from "../../lib/usePosterExport";
 import type { WorkflowStageId } from "../../lib/workflow-stages";
 import { CardsInspector } from "../inspector/CardsInspector";
 import { StudioLayoutTemplate, type StageSlots } from "../StudioLayoutTemplate";
-import { ToolbarButton } from "../StudioUi";
+import { LayoutRecalcMenu } from "./LayoutRecalcMenu";
 import {
   ContentLayoutRail,
   ContentLayoutWorkspace,
@@ -85,14 +84,13 @@ export interface StageLayoutScreenProps {
   onDeleteUserFont: NonNullable<ContentLayoutWorkspaceProps["onDeleteUserFont"]>;
   onUndo: () => void;
   onRedo: () => void;
-  onRefreshPositions: () => void;
-  onBackToMap: () => void;
+  onRefreshPositions: (mode?: CardLayoutModeValue) => void;
   onLocateDeliveryIssue: (issue: DeliveryIssue) => void;
 }
 
 /**
- * 聚焦阶段的整屏分支:按阶段装配 `StudioLayoutTemplate` 的右栏 / 工作区 / 阶段动作三个插槽。
- * App 只交出数据与回调,插槽装配(含 map/province/cards 的 patch 目标构造)留在这里。
+ * 聚焦阶段的整屏分支:按阶段装配 `StudioLayoutTemplate` 的右栏与工作区。
+ * 顶栏重算控件五个阶段共用,不再按阶段分叉。App 只交出数据与回调,插槽装配留在这里。
  */
 export function StageLayoutScreen(props: StageLayoutScreenProps) {
   const {
@@ -117,7 +115,9 @@ export function StageLayoutScreen(props: StageLayoutScreenProps) {
       stage={stage}
       assistantEntry={assistantEntry}
       historyActions={historyActions}
-      stageActions={slots.stageActions}
+      stageActions={(
+        <LayoutRecalcMenu layoutMode={props.project.cards.layoutMode} onRecalc={props.onRefreshPositions} />
+      )}
       projectActions={projectActions}
       workflowNav={workflowNav}
       leftRail={leftRail}
@@ -171,8 +171,6 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
     onDeleteUserFont,
     onUndo,
     onRedo,
-    onRefreshPositions,
-    onBackToMap,
     onLocateDeliveryIssue,
   } = props;
 
@@ -250,11 +248,6 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
     case "frame": {
       const framePicker = templatePickerProps(templateActions);
       return {
-        stageActions: (
-          <>
-            <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={onRefreshPositions} />
-          </>
-        ),
         rightRail: (
           <ReferenceCardStyleRail
             cards={project.cards}
@@ -335,12 +328,6 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
       };
     case "content":
       return {
-        stageActions: (
-          <>
-            <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={onRefreshPositions} />
-            <ToolbarButton label="返回地图" icon={<MapPinned size={18} />} onClick={onBackToMap} />
-          </>
-        ),
         rightRail: (
           <ContentLayoutRail
             project={renderProject}
@@ -370,8 +357,6 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             onSelect={onSelect}
             onPatch={onPatch}
             onReset={onReset}
-            onRefreshPositions={onRefreshPositions}
-            onBackToMap={onBackToMap}
             onUndo={onUndo}
             onRedo={onRedo}
             selectedStudentId={selectedStudentId}

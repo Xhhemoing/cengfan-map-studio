@@ -5,7 +5,8 @@ import { createId } from "./ids";
 import { deleteAsset, deleteText } from "./inspector-operations";
 import type { ProjectTransaction } from "./project-document";
 import type { MapTemplateId } from "./project-data";
-import { createDefaultScene, type AssetElement } from "./scene-document";
+import { cardLayoutModeLabel } from "./card-layout-modes";
+import { createDefaultScene, normalizeLayoutMode, type AssetElement, type CardLayoutModeValue } from "./scene-document";
 import { applyCustomTemplateToProject, type CustomTemplateRecord } from "./template-store";
 import { createSystemTemplate } from "./template-document";
 import { applyTypographyFont, type TypographyTarget } from "./typography";
@@ -166,13 +167,22 @@ export function moveCardTransaction(id: string, position: CanvasPosition): Proje
 
 /**
  * 清空手工位置即可让展示框回到自动布局:保留旧位置的话,刷新按钮只是换个说法的空操作。
+ * 传入算法时同一事务切到该算法，避免「改排布方式」和「重算」分成两步撤销。
  */
-export function refreshDisplayFramePositionsTransaction(): ProjectTransaction {
+export function refreshDisplayFramePositionsTransaction(layoutMode?: CardLayoutModeValue): ProjectTransaction {
+  const mode = layoutMode === undefined ? undefined : normalizeLayoutMode(layoutMode);
   return {
     id: createId("tx-display-frame-position-refresh"),
-    label: "刷新展示框位置",
+    label: mode ? `按${cardLayoutModeLabel(mode)}重算展示框` : "刷新展示框位置",
     source: "manual",
-    apply: (current) => ({ ...current, cards: { ...current.cards, positions: {} } }),
+    apply: (current) => ({
+      ...current,
+      cards: {
+        ...current.cards,
+        ...(mode ? { layoutMode: mode } : {}),
+        positions: {},
+      },
+    }),
   };
 }
 

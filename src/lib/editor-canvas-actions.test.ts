@@ -260,6 +260,24 @@ describe("map changes and card positions", () => {
     expect(messages).toEqual(["已刷新展示框位置"]);
   });
 
+  it("applies a chosen layout algorithm and clears positions in one step", () => {
+    const base = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const project = applyTransaction(base, {
+      id: "tx-seed",
+      label: "seed",
+      source: "manual",
+      apply: (current) => ({ ...current, cards: { ...current.cards, positions: { "card-1": { x: 5, y: 6 } } } }),
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { actions, transactions, messages } = harness({ project });
+
+    actions.refreshDisplayFramePositions("right-stack");
+
+    expect(transactions[0]!.label).toBe("按右侧单列重算展示框");
+    expect(transactions[0]!.apply(project).cards).toMatchObject({ layoutMode: "right-stack", positions: {} });
+    expect(messages).toEqual(["已按右侧单列重算展示框位置"]);
+  });
+
   it("does nothing when the user declines the refresh", () => {
     const base = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const project = applyTransaction(base, {
