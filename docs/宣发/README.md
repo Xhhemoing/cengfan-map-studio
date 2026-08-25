@@ -11,6 +11,8 @@
 | [Gitee镜像清单.md](Gitee镜像清单.md) | 国内镜像 |
 | [good-first-issues.md](good-first-issues.md) | 可建的新手 Issue |
 | [../开源与收费边界.md](../开源与收费边界.md) | AGPL、模板手续费、支付不进仓 |
+| [../产品/市场化与实用化优化.md](../产品/市场化与实用化优化.md) | 产品收口：Demo、印刷、场景包 |
+| [../deployment/static-demo.md](../deployment/static-demo.md) | 静态 HTTPS Demo 怎么挂 |
 | [../宣发政策-小红书与社交平台.md](../宣发政策-小红书与社交平台.md) | 高峰季内容公式 |
 | [../宣发执行流程-4周启动计划.md](../宣发执行流程-4周启动计划.md) | 仅 5–7 月 |
 
