@@ -126,6 +126,7 @@ export function DeliveryRail({
       <CheckSection title="排版问题" issues={layoutIssues.map((issue) => ({ kind: "layout", issue }))} onLocate={onLocate} />
       <CheckSection title="资源缺失" issues={resourceIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
       <CheckSection title="字体问题" issues={fontIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
+      {exportState === "exporting" && <div className="delivery-workspace__progress" role="status"><span>正在导出，请稍候…</span></div>}
       {exportState === "success" && <div className="delivery-workspace__result" role="status"><CheckCircle2 size={16} aria-hidden /><span>{lastExportFileName ? `已导出 ${lastExportFileName}` : "已导出，请到浏览器下载目录查看"}</span><button type="button" aria-label="再次导出" onClick={onRetry}><RotateCcw size={15} aria-hidden /> 再次导出</button></div>}
       {exportState === "error" && <div className="delivery-workspace__error" role="alert"><strong>导出失败</strong><span>{exportError ?? "请检查浏览器下载权限后重试"}</span><button type="button" aria-label="重试导出" onClick={onRetry}><RotateCcw size={15} aria-hidden /> 重试</button></div>}
       <section className="delivery-workspace__controls" aria-label="导出设置">
@@ -136,7 +137,7 @@ export function DeliveryRail({
         <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="工程包包含资源" checked={includeResources} onChange={(event) => onIncludeResourcesChange(event.target.checked)} />工程包包含资源</label>
       </section>
       <div className="delivery-workspace__actions" role="group" aria-label="导出操作" aria-busy={exportState === "exporting"}>
-        <button type="button" className="primary-button" onClick={onExportPng} disabled={exportState === "exporting"}><ImageDown size={16} aria-hidden />PNG</button>
+        <button type="button" className="primary-button" aria-label="导出 PNG" onClick={onExportPng} disabled={exportState === "exporting"}><ImageDown size={16} aria-hidden />{exportState === "exporting" ? "导出中…" : "PNG"}</button>
         <button type="button" className="secondary-button" aria-label="导出 SVG" onClick={onExportSvg} disabled={exportState === "exporting"}><Download size={16} aria-hidden />SVG</button>
         <button type="button" className="secondary-button" aria-label="导出工程包" onClick={onExportProjectPackage} disabled={exportState === "exporting"}><PackageOpen size={16} aria-hidden />工程包</button>
       </div>

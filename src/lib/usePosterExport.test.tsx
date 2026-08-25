@@ -16,13 +16,18 @@ beforeEach(resetPosterExportEnvironment);
 afterEach(teardownPosterExportEnvironment);
 
 describe("usePosterExport", () => {
+  it("defaults to the 2× PNG the delivery contract promises", () => {
+    // 不动任何设置就点主导出，拿到的必须是 2×（frontUI2 §5.6 / §13.3）。
+    expect(mountHook().result().pngScale).toBe(2);
+  });
+
   it("exports a png blob and reports success", async () => {
     const harness = mountHook();
 
     await act(async () => { await harness.result().exportPng(); });
 
     expect(env.downloads).toHaveLength(1);
-    expect(env.downloads[0]?.filename).toBe("我的毕业去向图-1x.png");
+    expect(env.downloads[0]?.filename).toBe("我的毕业去向图-2x.png");
     expect(env.downloads[0]?.blob.type).toBe("image/png");
     expect(harness.result().exportState).toBe("success");
     expect(harness.result().exportError).toBeUndefined();
@@ -138,7 +143,7 @@ describe("usePosterExport", () => {
 
     await act(async () => { await harness.result().exportPng(); });
 
-    expect(env.downloads[0]?.filename).toBe("高三3班-1x.png");
-    expect(harness.result().lastExportFileName).toBe("高三3班-1x.png");
+    expect(env.downloads[0]?.filename).toBe("高三3班-2x.png");
+    expect(harness.result().lastExportFileName).toBe("高三3班-2x.png");
   });
 });

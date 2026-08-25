@@ -83,7 +83,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   // 「正在导出 PNG」问的是有没有 PNG 在途，与代次无关：被 SVG / 工程包顶掉代次的
   // 那一轮同样要交还自己的占用，否则这个标记永远回不到 false。
   const pngExportsInFlightRef = useRef(0);
-  const [pngScale, setPngScale] = useState(1);
+  // 主导出的契约默认值是 2×：不动任何设置直接导出，拿到的应当是能印的那一份。
+  const [pngScale, setPngScale] = useState(2);
   const [transparentExport, setTransparentExport] = useState(false);
   const [showProjectExportDialog, setShowProjectExportDialog] = useState(false);
   const [includeResourcesInProjectExport, setIncludeResourcesInProjectExport] = useState(true);

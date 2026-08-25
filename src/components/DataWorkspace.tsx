@@ -194,7 +194,7 @@ export function DataWorkspace({
         };
         deadlineTimer = setTimeout(() => {
           terminateWorkbookWorker(worker);
-          rejectOnce(new Error("解析超时，文件可能已损坏"));
+          rejectOnce(new Error("解析超时：等了 30 秒还没读完，这个文件可能已损坏。用 Excel / WPS 重新另存一份 .xlsx 再试。"));
         }, WORKBOOK_PARSE_DEADLINE_MS);
         activeWorkbookImportRef.current = { worker, requestId, deadlineTimer, reject: rejectOnce };
         worker.onmessage = (event: MessageEvent<WorkbookImportResponse>) => {
@@ -413,7 +413,7 @@ export function DataWorkspace({
     setExcelRecognition(null);
     const csv = isCsvFile(file);
     if (file.size > MAX_WORKBOOK_FILE_BYTES) {
-      setMessage("文件过大，Excel / CSV 最大支持 25 MB");
+      setMessage("文件过大：Excel / CSV 最多 25 MB。删掉表里无关的工作表和图片后另存一份，再上传。");
       return;
     }
     try {

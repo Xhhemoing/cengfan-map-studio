@@ -170,4 +170,16 @@ describe("DataUploadWorkspace", () => {
     expect(mapping?.textContent).toContain("城市与省份已全部定位");
     expect(mapping?.querySelector('[aria-label="省份分布"]')?.textContent).toContain("北京市");
   });
+
+  it("does not congratulate an empty roster for having every province resolved", () => {
+    const { container } = renderWorkspace({
+      project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
+      summary: { total: 0, visible: 0, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 },
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), students: [] },
+    });
+
+    const mapping = container.querySelector('section[aria-label="地图映射"]');
+    expect(mapping?.textContent).not.toContain("城市与省份已全部定位");
+    expect(mapping?.textContent).toContain("名单还是空的");
+  });
 });

@@ -32,7 +32,7 @@ describe("DataWorkspace import fidelity", () => {
     dropFile(container, file);
     await settle();
 
-    expect(container.textContent).toContain("最大支持 25 MB");
+    expect(container.textContent).toContain("Excel / CSV 最多 25 MB");
     expect(read).not.toHaveBeenCalled();
     expect(FakeWorkbookWorker.instances).toHaveLength(0);
   });
@@ -89,7 +89,7 @@ describe("DataWorkspace import fidelity", () => {
     });
 
     expect(DeferredWorkbookWorker.instances[0]?.terminated).toBe(true);
-    expect(container.textContent).toContain("解析超时，文件可能已损坏");
+    expect(container.textContent).toContain("解析超时：等了 30 秒还没读完，这个文件可能已损坏。");
 
     globalWithWorker.Worker = FakeWorkbookWorker;
     dropFile(

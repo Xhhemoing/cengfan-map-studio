@@ -135,6 +135,16 @@ describe("DeliveryWorkspace", () => {
     expect(Array.from(idle?.querySelectorAll<HTMLButtonElement>("button") ?? []).filter((button) => button.disabled)).toHaveLength(0);
   });
 
+  it("says out loud that an export is running instead of only greying out the buttons", () => {
+    const container = renderWorkspace({ exportState: "exporting" });
+
+    const progress = container.querySelector('[role="status"]');
+    expect(progress?.classList).toContain("delivery-workspace__progress");
+    expect(progress?.textContent).toContain("正在导出");
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="导出 PNG"]')?.textContent).toContain("导出中");
+    expect(renderWorkspace().querySelector<HTMLButtonElement>('button[aria-label="导出 PNG"]')?.textContent).toContain("PNG");
+  });
+
   it("keeps the success bar readable when the file name is unknown and hides it otherwise", () => {
     const withoutName = renderWorkspace({ exportState: "success" });
     const bar = withoutName.querySelector('[role="status"]');
@@ -142,7 +152,9 @@ describe("DeliveryWorkspace", () => {
     expect(withoutName.querySelector('button[aria-label="再次导出"]')).not.toBeNull();
 
     expect(renderWorkspace({ exportState: "idle" }).querySelector('[role="status"]')).toBeNull();
-    expect(renderWorkspace({ exportState: "exporting" }).querySelector('[role="status"]')).toBeNull();
+    // 忙碌时出现的必须是进度条而不是「已导出」——原断言守的是「别错报成功」，这里保住原意。
+    expect(renderWorkspace({ exportState: "exporting" }).querySelector('[role="status"]')?.classList)
+      .toContain("delivery-workspace__progress");
     expect(renderWorkspace({ exportState: "error", exportError: "PNG 导出失败" }).querySelector('[role="status"]')).toBeNull();
   });
 

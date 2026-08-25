@@ -46,13 +46,13 @@ describe("usePosterExport export generations", () => {
 
     // 上一条用例里先发起的那次是解码失败，走不到落盘；这里两次都能成功编码，
     // 靠倍率区分文件名——「更晚的 PNG 让先发起的那份成为多余文件」这一条才真的被钉住。
-    act(() => { harness.result().setPngScale(2); });
+    act(() => { harness.result().setPngScale(3); });
     await act(async () => { await harness.result().exportPng(); });
     await act(async () => { stale.release(); await stale.settled; });
 
-    expect(downloadedFileNames()).toEqual(["我的毕业去向图-2x.png"]);
+    expect(downloadedFileNames()).toEqual(["我的毕业去向图-3x.png"]);
     expect(harness.result().exportState).toBe("success");
-    expect(harness.result().lastExportFileName).toBe("我的毕业去向图-2x.png");
+    expect(harness.result().lastExportFileName).toBe("我的毕业去向图-3x.png");
   });
 
   it("still writes the png when another kind of export starts mid-flight", async () => {
@@ -63,7 +63,7 @@ describe("usePosterExport export generations", () => {
     act(() => { harness.result().exportSvg(); });
     await act(async () => { png.release(); await png.settled; });
 
-    expect(downloadedFileNames()).toEqual(["我的毕业去向图.svg", "我的毕业去向图-1x.png"]);
+    expect(downloadedFileNames()).toEqual(["我的毕业去向图.svg", "我的毕业去向图-2x.png"]);
     // 代次守卫仍然生效：落地晚的 PNG 不改写 SVG 已经写下的状态与提示。
     expect(harness.result().exportState).toBe("success");
     expect(harness.result().lastExportFileName).toBe("我的毕业去向图.svg");

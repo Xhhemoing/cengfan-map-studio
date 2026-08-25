@@ -198,7 +198,14 @@ export function DataUploadRail({
               </span>
             ))}
           </div>
-          {mappingIssues.length === 0 ? (
+          {project.students.length === 0 ? (
+            // 0 条记录不是「全部定位成功」。stage-overview 的 data-clean 早就只在 total>0 时给，这边漏了同一个坑。
+            <div className="data-quality-empty" data-empty-roster>
+              <MapPinned size={20} aria-hidden />
+              <strong>名单还是空的</strong>
+              <span>先导入名单，这里才会显示城市与省份的定位结果。</span>
+            </div>
+          ) : mappingIssues.length === 0 ? (
             <div className="data-quality-empty">
               <CheckCircle2 size={20} aria-hidden />
               <strong>城市与省份已全部定位</strong>

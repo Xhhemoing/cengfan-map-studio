@@ -1,4 +1,5 @@
 import type { ComponentProps } from "react";
+import { provinceNames } from "../../lib/app-constants";
 import type { UserAsset } from "../../lib/assets";
 import type { UserFont } from "../../lib/fonts";
 import type { ProjectDocument } from "../../lib/project-document";
@@ -135,6 +136,9 @@ export function ContentLayoutRail({
           project={project}
           selection={selection}
           userFonts={userFonts}
+          // 不传就是空列表：「字体排版 → 省份」下拉一个选项都没有，
+          // 不勾「应用到全部」改字体会写进 provinceStyles[""]，画布毫无反应。
+          provinces={provinceNames}
           onPatch={onPatch}
           onReset={onReset}
           onApplyFont={onApplyFont}

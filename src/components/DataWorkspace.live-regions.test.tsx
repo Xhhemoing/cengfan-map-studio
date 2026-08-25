@@ -10,6 +10,8 @@ import {
   settle,
   click,
   changeInput,
+  dropFile,
+  fileWithBytes,
 } from "./data-workspace-test-harness";
 
 installDataWorkspaceTestHarness();
@@ -71,6 +73,17 @@ describe("DataWorkspace import live regions", () => {
 
     // 同一个节点被复用，说明 alert region 没有随消息一起挂载/卸载
     expect(container.querySelector('[role="alert"].data-message')).toBe(alertRegion);
+  });
+
+  it("routes an oversized workbook to the alert region", async () => {
+    const container = renderWorkspace();
+    const big = fileWithBytes("超大名单.xlsx", async () => new ArrayBuffer(0));
+    Object.defineProperty(big, "size", { value: 26 * 1024 * 1024 });
+    dropFile(container, big);
+    await settle();
+
+    expect(container.querySelector('[role="alert"].data-message')!.textContent).toContain("文件过大");
+    expect(container.querySelector('[role="status"].data-message')!.textContent).toBe("");
   });
 
   it("empties the alert region when a later success message arrives", async () => {

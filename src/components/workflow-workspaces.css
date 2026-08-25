@@ -26,7 +26,8 @@
 .delivery-workspace__checks { display: grid; align-content: start; gap: 10px; }
 .delivery-workspace__checks-title { margin: 0 0 2px; font-size: 16px; }
 .delivery-workspace__all-clear { margin: 0; padding: 10px 12px; color: #1d5b41; font-size: 12px; background: #eef7f0; border: 1px solid #bcdcc6; border-radius: 7px; }
-.delivery-workspace__check, .delivery-workspace__controls, .delivery-workspace__error, .delivery-workspace__result { padding: 14px; background: var(--editor-surface); border: 1px solid var(--editor-line); border-radius: 7px; }
+.delivery-workspace__check, .delivery-workspace__controls, .delivery-workspace__error, .delivery-workspace__progress, .delivery-workspace__result { padding: 14px; background: var(--editor-surface); border: 1px solid var(--editor-line); border-radius: 7px; }
+.delivery-workspace__progress { color: #33566b; background: #f4f8fb; border-color: #c3d6e2; }
 .delivery-workspace__check header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .delivery-workspace__check header div { display: flex; gap: 8px; align-items: baseline; }
 .delivery-workspace__check small { color: #6b7d83; }

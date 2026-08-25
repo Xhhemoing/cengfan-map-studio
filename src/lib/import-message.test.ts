@@ -34,6 +34,14 @@ describe("isImportFailureMessage", () => {
     expect(isImportFailureMessage(text)).toBe(false);
   });
 
+  it("treats size and timeout rejections as failures", () => {
+    // 这两条是最该打断人的阻断，此前一个失败关键词都不含，被判成功后只进 polite 区。
+    expect(isImportFailureMessage("文件过大：Excel / CSV 最多 25 MB。删掉表里无关的工作表和图片后另存一份，再上传。")).toBe(true);
+    expect(isImportFailureMessage("解析超时：等了 30 秒还没读完，这个文件可能已损坏。用 Excel / WPS 重新另存一份 .xlsx 再试。")).toBe(true);
+    expect(isImportFailureMessage("文件格式不支持")).toBe(true);
+    expect(isImportFailureMessage("已追加 3 条学生数据，跳过 1 行")).toBe(false);
+  });
+
   it("treats an empty message as non-failure so the alert region stays silent", () => {
     expect(isImportFailureMessage("")).toBe(false);
   });

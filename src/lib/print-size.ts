@@ -57,8 +57,19 @@ export function describePhysicalSize(widthPx: number, heightPx: number, dpi = DE
   return `${formatCentimeters(pxToMm(widthPx, dpi))} × ${formatCentimeters(pxToMm(heightPx, dpi))} cm @ ${dpi}dpi`;
 }
 
-/** Hint next to PNG export: exported pixels, spoken as print-shop centimetres. */
+/**
+ * Hint next to PNG export: exported pixels, spoken as print-shop centimetres.
+ *
+ * 画布已经是一块具名板子时，倍率买到的是精度而不是更大的板子：尺寸钉死在用户选的
+ * 那块上，dpi 随倍率走。否则放大后的像素匹配不上任何具名尺寸，会掉进 150dpi 兜底，
+ * 把 100dpi 的 90×60 展板说成「120 × 80 cm」——既不是原尺寸也不是整数倍。
+ */
 export function describeExportPrintHint(widthPx: number, heightPx: number, scale: number): string {
   const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  const named = matchNamedPrintSize(widthPx, heightPx);
+  if (named) {
+    const dpi = Math.round(named.dpi * safeScale);
+    return `约合印刷：${named.label} · ${formatCentimeters(named.widthMm)} × ${formatCentimeters(named.heightMm)} cm @ ${dpi}dpi`;
+  }
   return `约合印刷：${describePhysicalSize(widthPx * safeScale, heightPx * safeScale)}`;
 }

@@ -1,6 +1,7 @@
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { UserFont } from "../../lib/fonts";
 import { createProjectDocument } from "../../lib/project-document";
 import { StudioTopbar } from "../StudioTopbar";
 import { ToolbarButton, ToolbarGroup } from "../StudioUi";
@@ -154,6 +155,45 @@ describe("ContentLayoutWorkspace", () => {
     const details = container.querySelector<HTMLDetailsElement>('details[aria-label="素材库"]');
     expect(details).not.toBeNull();
     expect(details?.open).toBe(false);
+  });
+
+  it("fills the province selector so a single-province font change lands on a real province", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push({ root, container });
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const onApplyFont = vi.fn();
+    const userFont: UserFont = {
+      id: "font-user-1",
+      label: "手写体",
+      family: "font-user-1",
+      src: "data:font/ttf;base64,AA==",
+      format: "truetype",
+      source: "user",
+    };
+    flushSync(() => root.render(
+      <ContentLayoutRail
+        project={project}
+        selection={{ type: "canvas" }}
+        userAssets={[]}
+        userFonts={[userFont]}
+        onPatch={vi.fn()}
+        onReset={vi.fn()}
+        onApplyFont={onApplyFont}
+        assetPanelProps={{ onApplyBackground: vi.fn() }}
+      />,
+    ));
+
+    const province = container.querySelector<HTMLSelectElement>("#typography-province")!;
+    expect(province.options.length).toBeGreaterThan(0);
+    expect(province.value).not.toBe("");
+
+    const fontSelect = container.querySelector<HTMLSelectElement>("#typography-province-font")!;
+    fontSelect.value = userFont.id;
+    flushSync(() => fontSelect.dispatchEvent(new Event("change", { bubbles: true })));
+    // 不勾「应用到全部」时省份必须是真省份，否则写进 provinceStyles[""] 谁也看不见。
+    expect(onApplyFont).toHaveBeenCalledWith({ type: "province-label", province: province.value }, userFont.id, false);
   });
 
   it("keeps layout management out of the canvas workspace", () => {
