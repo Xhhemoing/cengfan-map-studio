@@ -110,6 +110,7 @@ export function ReferenceCardStyleRail({
         onReset={onResetCards}
         mode="global"
         collapsible
+        showPresentationSettings
       />
     </aside>
   );

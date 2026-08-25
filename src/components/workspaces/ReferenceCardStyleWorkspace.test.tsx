@@ -118,6 +118,18 @@ describe("ReferenceCardStyleWorkspace", () => {
     expect(onSaveTemplate).toHaveBeenCalledTimes(1);
   });
 
+  it("reaches name masking and field templates from the rail's advanced section", () => {
+    // 默认路径没有全局设置整页，姓名脱敏与字段模板此前完全无 UI 可达。
+    const { container, onPatch } = renderStage();
+
+    const advanced = container.querySelector('aside[aria-label="版式与展示框样式"] .property-panel__advanced')!;
+    expect(advanced.querySelector(".cards-name-format")).not.toBeNull();
+    expect(advanced.querySelector(".cards-expressions")).not.toBeNull();
+
+    click([...advanced.querySelectorAll(".cards-name-format__presets button")].find((button) => button.textContent === "姓*某")!);
+    expect(onPatch).toHaveBeenCalledWith({ nameFormat: "{surname}*{last}" });
+  });
+
   it("forwards canvas selection to the shared scene handler", () => {
     const { container, onSelect } = renderStage();
 

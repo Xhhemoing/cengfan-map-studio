@@ -283,6 +283,18 @@ describe("CardsInspector", () => {
     expect(container.querySelector(".property-panel__advanced #cards-connector-color")).toBeNull();
   });
 
+  it("hosts the presentation settings inside the advanced section when asked", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const { container, root } = trackedRoot();
+    flushSync(() => root.render(
+      <CardsInspector cards={project.cards} onPatch={vi.fn()} onReset={vi.fn()} mode="global" collapsible showPresentationSettings />,
+    ));
+
+    const details = container.querySelector<HTMLDetailsElement>(".property-panel__advanced");
+    expect(details?.querySelector(".cards-expressions")).not.toBeNull();
+    expect(details?.querySelector(".cards-name-format")).not.toBeNull();
+  });
+
   it("keeps remaining advanced controls open by default", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();

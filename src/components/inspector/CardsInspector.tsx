@@ -4,6 +4,7 @@ import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { DEFAULT_FONT_ID, type UserFont } from "../../lib/fonts";
 import { applyCardTemplate, getCardTemplateById, getLegacyPresetTemplateId, listCardTemplates } from "../../lib/card-templates";
+import { CardPresentationSettings } from "../CardPresentationSettings";
 import { DeferredInput } from "../DeferredInput";
 import { FontEditor } from "../FontEditor";
 import { ActionGroup, IconButton, InspectorHeader } from "../StudioUi";
@@ -20,7 +21,7 @@ const fontFields: Array<{ id: CardFontField; label: string }> = [
   { id: "city", label: "城市" },
 ];
 
-export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode = "all", collapsible = false }: {
+export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode = "all", collapsible = false, showPresentationSettings = false }: {
   cards: CardSettings;
   userFonts?: UserFont[];
   onPatch: (patch: Partial<CardSettings>) => void;
@@ -28,6 +29,11 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
   mode?: "all" | "global" | "placement";
   /** 折叠低频设置（内容表达、留白细节、字段字体、线条纹理、显示字段）。 */
   collapsible?: boolean;
+  /**
+   * 把字段模板与姓名脱敏一并放进高级设置。默认路径没有全局设置整页，
+   * 这两组字段仍被渲染与 AI 通道消费，不给个入口就成了「AI 能改、人改不了」。
+   */
+  showPresentationSettings?: boolean;
 }) {
   const templates = listCardTemplates();
   const currentTemplateId = cards.templateId
@@ -133,6 +139,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
       <fieldset><legend>显示字段</legend>{fields.map((field) => <label key={field.id} htmlFor={`cards-visible-${field.id}`} className="boolean-control checkbox-row"><input id={`cards-visible-${field.id}`} type="checkbox" checked={cards.visibleFields.includes(field.id)} onChange={() => onPatch({ visibleFields: cards.visibleFields.includes(field.id) ? cards.visibleFields.filter((item) => item !== field.id) : [...cards.visibleFields, field.id] })} />{field.label}</label>)}</fieldset>
       <fieldset><legend>不分行字段</legend>{fields.map((field) => <label key={field.id} htmlFor={`cards-nowrap-${field.id}`} className="boolean-control checkbox-row"><input id={`cards-nowrap-${field.id}`} type="checkbox" checked={(cards.noWrapFields ?? []).includes(field.id)} disabled={!cards.visibleFields.includes(field.id)} onChange={() => onPatch({ noWrapFields: (cards.noWrapFields ?? []).includes(field.id) ? (cards.noWrapFields ?? []).filter((item) => item !== field.id) : [...(cards.noWrapFields ?? []), field.id] })} />{field.label}</label>)}
         <p className="property-panel__hint">勾选后该字段内容在卡片内保持完整，不会被拆到两行。</p></fieldset>
+      {showPresentationSettings && <CardPresentationSettings cards={cards} onPatch={onPatch} />}
     </>
   );
 
@@ -177,7 +184,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     <label htmlFor="cards-connector-color">线条颜色<DeferredInput id="cards-connector-color" type="color" value={cards.connectorColor} onCommit={(connectorColor) => onPatch({ connectorColor })} /></label>
     <label htmlFor="cards-connector-width">线条粗细<DeferredInput id="cards-connector-width" type="number" min="0.5" max="8" step="0.5" value={cards.connectorWidth} onCommit={(connectorWidth) => onPatch({ connectorWidth: Number(connectorWidth) })} /></label>
     {collapsible
-      ? <details className="property-panel__advanced"><summary>高级设置：留白、间距、连接线、显示字段</summary><div className="property-panel__advanced-title">高级设置<small>留白 · 间距 · 连接线纹理 · 显示字段 · 不分行字段</small></div>{advancedControls}</details>
+      ? <details className="property-panel__advanced"><summary>{showPresentationSettings ? "高级设置：留白、间距、连接线、显示字段、字段模板与姓名展示" : "高级设置：留白、间距、连接线、显示字段"}</summary><div className="property-panel__advanced-title">高级设置<small>留白 · 间距 · 连接线纹理 · 显示字段 · 不分行字段{showPresentationSettings ? " · 字段模板 · 姓名展示" : ""}</small></div>{advancedControls}</details>
       : advancedControls}
   </section>;
 }
