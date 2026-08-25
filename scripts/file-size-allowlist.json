@@ -24,7 +24,6 @@
   "src/data/china-universities.ts": 2951,
   "src/data/university-emblems.ts": 2944,
   "src/lib/agent-conversation-store.test.ts": 464,
-  "src/lib/agent-session.test.ts": 696,
   "src/lib/agent-session.ts": 799,
   "src/lib/binary-import.test.ts": 471,
   "src/lib/card-layout.test.ts": 958,
