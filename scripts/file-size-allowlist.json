@@ -12,7 +12,6 @@
   "src/components/AssetPanel.test.tsx": 587,
   "src/components/AssetPanel.tsx": 754,
   "src/components/DataWorkspace.tsx": 885,
-  "src/components/ProjectWorkbench.test.tsx": 564,
   "src/components/canvas/MapDataLayer.tsx": 508,
   "src/components/canvas/MapLayer.test.tsx": 647,
   "src/components/canvas/MapLayer.tsx": 475,
