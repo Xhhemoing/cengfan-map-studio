@@ -13,7 +13,7 @@
  * card the user positioned deliberately, and would also disagree with what the
  * canvas actually draws.
  */
-import { finiteOr, sideForPlacement } from "./card-layout-geometry";
+import { finiteOr } from "./card-layout-geometry";
 import { orderResult } from "./card-layout-pack";
 import { LayoutSpace, normalizeBounds, protectedZones } from "./card-layout-space";
 import {
@@ -59,6 +59,9 @@ export function planPinnedCards(
   const free: CardLayoutInput[] = [];
   const slots: (CardPlacement | null)[] = [];
   const reserved: CardArea[] = [];
+  // Built on the first pin, so a roster with nothing pinned does not pay for
+  // the obstacle indexes a LayoutSpace raises in its constructor.
+  let space: LayoutSpace | null = null;
   for (const card of cards) {
     const point = pinnedPoint(positions, card.id);
     if (!point) {
@@ -73,7 +76,10 @@ export function planPinnedCards(
       height: Math.max(0, finiteOr(card.height, 0)),
     };
     reserved.push(area);
-    slots.push({ ...card, x: area.x, y: area.y, side: sideForPlacement(area, normalized.map) });
+    // The same entrance every other placement uses, so a pinned seat and a
+    // solved one cannot disagree about which side of the map they sit on.
+    space ??= new LayoutSpace(normalized);
+    slots.push({ ...card, x: area.x, y: area.y, side: space.sideOf(area) });
   }
   if (reserved.length === 0) return null;
   return {

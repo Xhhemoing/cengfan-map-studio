@@ -93,5 +93,5 @@ export function clientIp(
     ? forwardedFor(request.headers.forwarded)
     : undefined;
   return (forwardedIp || realIp || standardForwardedIp || request.socket.remoteAddress || "unknown")
-    .replace(/^::ffff:/, "");
+    .replace(/^::ffff:/i, "");
 }

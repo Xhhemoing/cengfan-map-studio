@@ -38,6 +38,24 @@ describe("pasted html tables", () => {
     expect(result.unparsed).toEqual([]);
   });
 
+  it("reads a name padded with the figure and hair spaces a Word export writes", () => {
+    // Word aligns a name against the digits of a column with &numsp;, and closes a tight pair
+    // with &hairsp;; both used to survive the decode and end up inside the name.
+    const result = parseHtmlTable(
+      "<table><tr><th>姓名</th><th>院校</th><th>城市</th></tr>"
+      + "<tr><td>苏&numsp;禾</td><td>浙江大学</td><td>杭州市</td></tr>"
+      + "<tr><td>林&hairsp;舟</td><td>北京大学</td><td>北京市</td></tr>"
+      + "<tr><td>顾&numsp;&hairsp;言</td><td>宁波大学</td><td>宁波市</td></tr></table>",
+    );
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏 禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "林 舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "顾 言", university: "宁波大学", city: "宁波市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("leaves an entity that is not whitespace alone", () => {
     // Only the spacing entities become a space: a quote decodes to itself, and an entity
     // nobody knows stays as written instead of silently losing a character of the cell.

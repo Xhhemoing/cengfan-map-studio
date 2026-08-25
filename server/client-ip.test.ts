@@ -23,6 +23,10 @@ describe("clientIp", () => {
     expect(clientIp(request, false)).toBe("127.0.0.1");
   });
 
+  it("strips a mixed-case IPv4-mapped prefix from the untrusted proxy socket", () => {
+    expect(clientIp(requestWith({}, "::FFFF:127.0.0.1"), false)).toBe("127.0.0.1");
+  });
+
   it("ignores a quoted X-Forwarded-For hop when the proxy is not trusted", () => {
     const request = requestWith(
       { "x-forwarded-for": '"203.0.113.9"' },
@@ -39,6 +43,24 @@ describe("clientIp", () => {
     });
 
     expect(clientIp(request, true)).toBe("203.0.113.2");
+  });
+
+  it("strips a mixed-case IPv4-mapped prefix from X-Forwarded-For", () => {
+    const request = requestWith({ "x-forwarded-for": "::FFFF:203.0.113.9" });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("continues to strip a lowercase IPv4-mapped prefix", () => {
+    const request = requestWith({ "x-forwarded-for": "::ffff:203.0.113.9" });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("leaves a real IPv6 address unchanged", () => {
+    const request = requestWith({ "x-forwarded-for": "2001:db8::1" });
+
+    expect(clientIp(request, true)).toBe("2001:db8::1");
   });
 
   it("unwraps a quoted IPv4 X-Forwarded-For hop", () => {

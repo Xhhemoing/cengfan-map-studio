@@ -175,7 +175,7 @@ export function buildStageSlots(stage: WorkflowStageId, ctx: StageSlotsContext):
     case "frame":
       return {
         stageActions: (
-          <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={ctx.onRefreshDisplayFramePositions} />
+          <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} aria-hidden />} onClick={ctx.onRefreshDisplayFramePositions} />
         ),
         rightRail: (
           <CardsInspector
@@ -251,8 +251,8 @@ export function buildStageSlots(stage: WorkflowStageId, ctx: StageSlotsContext):
       return {
         stageActions: (
           <>
-            <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={ctx.onRefreshDisplayFramePositions} />
-            <ToolbarButton label="返回地图样式" icon={<MapPinned size={18} />} onClick={ctx.onBackToMapStage} />
+            <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} aria-hidden />} onClick={ctx.onRefreshDisplayFramePositions} />
+            <ToolbarButton label="返回地图样式" icon={<MapPinned size={18} aria-hidden />} onClick={ctx.onBackToMapStage} />
           </>
         ),
         rightRail: (

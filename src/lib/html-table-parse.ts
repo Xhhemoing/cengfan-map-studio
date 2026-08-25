@@ -17,7 +17,8 @@ import { trimImportCell } from "./import-data";
  * that separates the characters — left undecoded they became part of the name itself.
  */
 const HTML_NAMED_ENTITIES: Record<string, string> = {
-  amp: "&", apos: "'", emsp: " ", ensp: " ", gt: ">", lt: "<", nbsp: " ", quot: '"', thinsp: " ",
+  amp: "&", apos: "'", emsp: " ", ensp: " ", gt: ">", hairsp: " ", lt: "<",
+  nbsp: " ", numsp: " ", quot: '"', thinsp: " ",
 };
 
 const MAX_HTML_SPAN = 512;

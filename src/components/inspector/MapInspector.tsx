@@ -105,7 +105,7 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
     <section className="property-panel" aria-label={mode === "placement" ? "地图位置与尺寸" : "地图属性"}>
       <InspectorHeader
         title={mode === "placement" ? "地图位置与尺寸" : "地图属性"}
-        actions={showGlobal ? <IconButton label="重置地图" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} /> : undefined}
+        actions={showGlobal ? <IconButton label="重置地图" icon={<RotateCcw size={15} aria-hidden />} variant="ghost" onClick={onReset} /> : undefined}
       />
       {showPlacement && <>
         <div className="property-panel__pair" data-property-pair="map-position" role="group" aria-label="地图位置">
@@ -133,10 +133,10 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
           />
         </label>
         <ActionGroup label="地图层级" className="inspector-actions">
-          <IconButton label="地图上移" text="上移" icon={<ArrowUp size={14} />} onClick={() => onPatch({ zIndex: Math.min(CANVAS_LAYER_Z_RANGE.max, (map.zIndex ?? CANVAS_LAYER_Z.map) + 1) })} />
-          <IconButton label="地图下移" text="下移" icon={<ArrowDown size={14} />} onClick={() => onPatch({ zIndex: Math.max(CANVAS_LAYER_Z_RANGE.min, (map.zIndex ?? CANVAS_LAYER_Z.map) - 1) })} />
-          <IconButton label="地图置顶" text="置顶" icon={<ChevronsUp size={14} />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.max })} />
-          <IconButton label="地图置底" text="置底" icon={<ChevronsDown size={14} />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.min })} />
+          <IconButton label="地图上移" text="上移" icon={<ArrowUp size={14} aria-hidden />} onClick={() => onPatch({ zIndex: Math.min(CANVAS_LAYER_Z_RANGE.max, (map.zIndex ?? CANVAS_LAYER_Z.map) + 1) })} />
+          <IconButton label="地图下移" text="下移" icon={<ArrowDown size={14} aria-hidden />} onClick={() => onPatch({ zIndex: Math.max(CANVAS_LAYER_Z_RANGE.min, (map.zIndex ?? CANVAS_LAYER_Z.map) - 1) })} />
+          <IconButton label="地图置顶" text="置顶" icon={<ChevronsUp size={14} aria-hidden />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.max })} />
+          <IconButton label="地图置底" text="置底" icon={<ChevronsDown size={14} aria-hidden />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.min })} />
         </ActionGroup>
         <p className="property-panel__hint">数值越大越靠上。参照：数据框 10 · 嘉宾面板 20 · 装饰素材 30 · 文本 40。置顶/置底即相对全部画布层。</p>
       </>}

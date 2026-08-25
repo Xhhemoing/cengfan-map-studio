@@ -376,6 +376,24 @@ describe("MapInspector", () => {
     root.unmount();
   });
 
+  it("keeps names on layer and reset buttons while hiding their icons from assistive tech", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <MapInspector map={baseMap} onPatch={vi.fn()} onReset={() => undefined} />,
+    ));
+
+    for (const label of ["重置地图", "地图上移", "地图下移", "地图置顶", "地图置底"]) {
+      const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      expect(button, `button named ${label}`).not.toBeNull();
+      const svg = button!.querySelector("svg");
+      expect(svg, `icon of ${label}`).not.toBeNull();
+      expect(svg!.getAttribute("aria-hidden"), `icon of ${label}`).toBe("true");
+    }
+
+    root.unmount();
+  });
+
   it("names the panel section, control groups, and the edge-style picker state for assistive tech", () => {
     const container = document.createElement("div");
     const root = createRoot(container);
