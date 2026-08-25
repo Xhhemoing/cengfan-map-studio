@@ -5,7 +5,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { createBudgetReceiptLedger, createBudgetReceiptSigner, type BudgetReceiptLedger } from "./ai/budget-receipt";
 import { createFileAiStateStore, createMemoryAiStateStore, emptyAiRuntimeState, type AiRuntimeState, type AiStateStore } from "./ai/ai-state-store";
 import { createServerLifecycle, validateProductionConfig } from "./production";
-import { join, normalize, resolve } from "node:path";
+import { dirname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -23,7 +23,7 @@ import {
   proposeEditsRequestSchema,
 } from "./ai/schemas";
 import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomPersistOutcome, type RoomStore, type RoomStoreOptions, type RoomStoreSnapshot } from "./collaboration";
-import { createRoomSnapshotWriter, isRestorableRoomSnapshot, loadRoomSnapshot, sweepStaleTemporaryFiles, writeFileAtomically } from "./room-snapshot-store";
+import { createRoomSnapshotWriter, isRestorableRoomSnapshot, loadRoomSnapshot, sweepStaleTemporaryFiles, sweepStaleTemporaryFilesBesideFile, writeFileAtomically } from "./room-snapshot-store";
 import { createRoomErrorSender, createRoomRoutes, roomAccessToken } from "./room-routes";
 import { corsHeaders, securityHeaders, sendJson, serveStatic } from "./static-files";
 
@@ -1089,7 +1089,7 @@ export async function createReadyAiServer(options: AiServerOptions = {}): Promis
   const config = options.productionConfig ?? validateProductionConfig(process.env);
   if (!config.ok) throw new Error(`生产配置无效: ${config.errors.join(",")}`);
   const dataDir = resolve(options.dataDir ?? config.config?.dataDir ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR); await sweepStaleTemporaryFiles(dataDir);
-  const stateFile = process.env.AI_STATE_FILE ?? config.config?.aiStateFile ?? join(dataDir, "ai-runtime-state.json");
+  const stateFile = process.env.AI_STATE_FILE ?? config.config?.aiStateFile ?? join(dataDir, "ai-runtime-state.json"); if (resolve(dirname(stateFile)) !== dataDir) await sweepStaleTemporaryFilesBesideFile(stateFile);
   const store = options.aiStateStore ?? createFileAiStateStore(stateFile);
   const state = await store.load();
   const roomSnapshotFile = join(dataDir, "collaboration-rooms.json");

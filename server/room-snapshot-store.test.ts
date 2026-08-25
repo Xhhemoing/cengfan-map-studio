@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import type http from "node:http";
 import { attachServerLifecycle, createReadyAiServer } from "./index";
+import { sweepStaleTemporaryFilesBesideFile } from "./room-snapshot-store";
 
 async function startServer(server: http.Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -277,6 +278,53 @@ describe("room snapshot store", () => {
 
     expect((await fetch(`${await startServer(server)}/api/live`)).status).toBe(200);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("workspace.json.42.tmp"), expect.anything());
+  });
+
+  it("sweeps only the given file's own temporaries beside it, leaving another program's alone", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "cengfan-beside-sweep-"));
+    directories.push(stateDir);
+    const stateFile = join(stateDir, "ai-runtime-state.json");
+    const survivors = [
+      // 同样是 `<任意名>.<pid>.tmp`，但不是这个文件的：状态文件可能被指进共享目录，这些是别人的。
+      "someone-elses.json.4.tmp",
+      "ai-runtime-state.jsonx.4.tmp",
+      // 名字形状不对，来历不明一律不动。
+      "ai-runtime-state.json.abc.tmp",
+      "ai-runtime-state.json.4.tmp.bak",
+      // 状态文件本体与它的事故现场。
+      "ai-runtime-state.json",
+      "ai-runtime-state.json.corrupt-1700000000000",
+    ];
+    for (const name of survivors) await writeFile(join(stateDir, name), `keep-${name}`, "utf8");
+    for (const name of ["ai-runtime-state.json.4.tmp", `ai-runtime-state.json.${process.pid}.tmp`]) {
+      await writeFile(join(stateDir, name), "half-written", "utf8");
+    }
+
+    await sweepStaleTemporaryFilesBesideFile(stateFile);
+
+    expect((await readdir(stateDir)).sort()).toEqual([...survivors].sort());
+  });
+
+  it("stays quiet when the file's directory does not exist yet", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "cengfan-beside-sweep-missing-"));
+    directories.push(stateDir);
+
+    await expect(sweepStaleTemporaryFilesBesideFile(join(stateDir, "absent", "ai-runtime-state.json")))
+      .resolves.toBeUndefined();
+  });
+
+  it("keeps going when a temporary beside the file cannot be removed", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "cengfan-beside-sweep-fail-"));
+    directories.push(stateDir);
+    // 名字对上了却是个非空目录：rm 不带 recursive 会失败，扫地失败不能把启动挡下来。
+    await mkdir(join(stateDir, "ai-runtime-state.json.42.tmp"));
+    await writeFile(join(stateDir, "ai-runtime-state.json.42.tmp", "inner"), "x", "utf8");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(sweepStaleTemporaryFilesBesideFile(join(stateDir, "ai-runtime-state.json")))
+      .resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("ai-runtime-state.json.42.tmp"), expect.anything());
   });
 
   it("writes the room snapshot as a private file", async () => {

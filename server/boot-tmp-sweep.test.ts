@@ -60,4 +60,41 @@ describe("boot-time atomic-write temporary sweep", () => {
     expect(seenAtLoad).toEqual([[]]);
     expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
+
+  it("sweeps the state file's own orphaned temporaries when it is configured outside the data directory", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-boot-sweep-data-"));
+    const stateDir = await mkdtemp(join(tmpdir(), "cengfan-boot-sweep-state-"));
+    directories.push(dataDir, stateDir);
+    const stateFile = join(stateDir, "ai-runtime-state.json");
+    // 上一次进程崩在状态文件的 write 与 rename 之间；这份孤儿不在 dataDir 里，扫 dataDir 的那一轮够不着。
+    await writeFile(`${stateFile}.4.tmp`, "half-written", "utf8");
+    // 运维完全可能把状态文件指进一个共享目录：同样形状但不是我们文件名的临时文件是别人的，一根汗毛都不能动。
+    await writeFile(join(stateDir, "someone-elses.json.4.tmp"), "not ours", "utf8");
+    const seenAtLoad: string[][] = [];
+    const aiStateStore: AiStateStore = {
+      mode: "memory",
+      ready: true,
+      recovered: false,
+      failure: false,
+      load: async () => {
+        seenAtLoad.push((await readdir(stateDir)).filter((name) => name.endsWith(".tmp")).sort());
+        return emptyAiRuntimeState();
+      },
+      update: async () => undefined,
+      flush: async () => undefined,
+    };
+
+    const previous = process.env.AI_STATE_FILE;
+    process.env.AI_STATE_FILE = stateFile;
+    try {
+      servers.push(await createReadyAiServer({ dataDir, aiStateStore }));
+    } finally {
+      if (previous === undefined) delete process.env.AI_STATE_FILE;
+      else process.env.AI_STATE_FILE = previous;
+    }
+
+    // 状态文件的读者也排在扫地之后，而邻居的临时文件必须原样留着。
+    expect(seenAtLoad).toEqual([["someone-elses.json.4.tmp"]]);
+    expect((await readdir(stateDir)).filter((name) => name.endsWith(".tmp"))).toEqual(["someone-elses.json.4.tmp"]);
+  });
 });
