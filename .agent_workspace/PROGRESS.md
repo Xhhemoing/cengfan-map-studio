@@ -27,7 +27,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 8 | CLOSED | R8-1–R8-9 + R8-3b + R8-10 | — | 197/1846/2; lint 0/1; CI `553d5c1`; fable 9 ACCEPT + 1 NITS; no blocker. |
 | 9 | CLOSED | R9-1–R9-9 + R9-10 | — | 222/1905/2; lint 0/1; CI `7834c47`; fable 8 ACCEPT + 1 NITS; no blocker. |
 | 10 | CLOSED | R10-1–R10-9 + fable/R10-10 | — | 238/1942/2; lint 0/1; fable 5 ACCEPT + 4 NITS; no blocker. |
-| 11 | IN_PROGRESS | R11-1, R11-2 | — | Load-path errno; out-of-dataDir sweep; AI routes; index.test split; App topbar; four test splits. |
+| 11 | IN_PROGRESS | R11-1–R11-3, R11-5–R11-9 | — | Remaining: R11-4 index.test split, R11-10 closeout. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -209,6 +209,13 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - Headline: AI-state load-path `cause` drop; boot sweep misses `AI_STATE_FILE` outside `dataDir`; index.ts 1146 / App.tsx 1066 / index.test.ts 2378.
 - R11-1 (`af32785` / `f03e64c`+`b40cf32`): load-path `StateStoreFailure` carries `{ cause }`. Rollback: revert `af32785`.
 - R11-2 (`6a8775b` / `f54f3d0`): `sweepStaleTemporaryFilesBesideFile` for `AI_STATE_FILE` outside `dataDir`; index.ts stays 1146. Rollback: revert `6a8775b`. Must land before R11-3.
+- R11-3 (`243a039` / `a9ff943`+`f17be4a`): AI HTTP routes → `server/ai-routes.ts`. index.ts 1146→979. Rollback: revert `243a039`. Must land before R11-4.
+- R11-5 (`d8df503` / `b620318`+`bd38107`): topbar + export dialog → editor components. App.tsx 1066→988 (gate ≤990). Rollback: revert `d8df503`.
+- R11-6 (`c0e320a` / `46cd6ff`): PosterCanvas tests split; allowlist entry deleted. Rollback: revert `c0e320a`.
+- R11-7 (`6d82b38` / `41c2761`): card-layout tests split; allowlist entry deleted. Rollback: revert `6d82b38`.
+- R11-8 (`9b6ef55` / `65fd7ef`): agent-session tests split; allowlist entry deleted. Rollback: revert `9b6ef55`.
+- R11-9 (`dfbbeae` / `5ba2aca`+`547f47c`): project-store tests split; allowlist entry deleted. Rollback: revert `dfbbeae`.
+- Allowlist after these: 38 entries. index.ts 979; App.tsx 988; index.test.ts still 2378 (R11-4).
 
 ## Round Briefings
 
