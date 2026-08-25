@@ -28,6 +28,35 @@ export async function writeFileAtomically(file: string, contents: string, mode?:
   }
 }
 
+/** `writeFileAtomically` 造出来的临时名：`<任意文件名>.<纯数字 pid>.tmp`，别的 .tmp 一概不认。 */
+const ATOMIC_TEMPORARY_FILE = /^.+\.\d+\.tmp$/;
+
+/**
+ * 启动时收掉上一次进程崩在 write 与 rename 之间留下的 `<file>.<pid>.tmp`。
+ * R9-1 的清理只跑在本进程 rename 失败的 catch 里，被 SIGKILL 打断的那份没人认领，
+ * 会一直堆在数据目录里。必须在任何写者上膛之前跑：那一刻连与本进程同号的 pid 名
+ * 也只可能来自上一次启动。清理纯属尽力而为，扫不动也绝不能挡住启动。
+ */
+export async function sweepStaleTemporaryFiles(dataDir: string): Promise<void> {
+  let names: string[];
+  try {
+    names = await readdir(dataDir);
+  } catch {
+    // 首次启动时数据目录还不存在，没有孤儿可扫。
+    return;
+  }
+  for (const name of names) {
+    // 只认原子写的名字形状：.bad / .corrupt-* 是事故现场，正常数据文件更不能碰。
+    if (!ATOMIC_TEMPORARY_FILE.test(name)) continue;
+    const path = join(dataDir, name);
+    try {
+      await rm(path, { force: true });
+    } catch (error) {
+      console.warn(`清理残留临时文件失败，跳过: ${path}`, error instanceof Error ? error.message : error);
+    }
+  }
+}
+
 /** 坏快照的隔离路径：已有 .bad 时带上时间戳，绝不覆盖上一次的事故现场。 */
 function roomSnapshotQuarantinePath(file: string): string {
   if (!existsSync(`${file}.bad`)) return `${file}.bad`;
