@@ -61,6 +61,15 @@ export const CANVAS_LAYER_Z = {
 /** 层级数值允许范围（置顶/置底按钮使用其边界）。 */
 export const CANVAS_LAYER_Z_RANGE = { min: -100, max: 100 } as const;
 
+/** 地图边界安全距离（展示框/卡片避开地图内容的空隙）的取值范围与默认值。 */
+export const MAP_BOUNDARY_MARGIN_RANGE = { min: 0, max: 200 } as const;
+export const DEFAULT_MAP_BOUNDARY_MARGIN = 16;
+
+/** 画布安全边距上限 = 画布短边的一半。归一化与画布检查器共用，避免输入被静默收回。 */
+export function maxCanvasSafeMargin(canvasWidth: number, canvasHeight: number): number {
+  return Math.floor(Math.min(canvasWidth, canvasHeight) / 2);
+}
+
 export interface MapSettings {
   x: number;
   y: number;
@@ -507,6 +516,7 @@ export function createDefaultScene(templateId: MapTemplateId): SceneDocument {
       renderSource: { kind: "vector" },
       provinceStyles: { ...template.map.provinceStyles },
       provinceTextureUniformSize: { ...DEFAULT_PROVINCE_TEXTURE_UNIFORM_SIZE },
+      mapBoundaryMargin: DEFAULT_MAP_BOUNDARY_MARGIN,
     },
     cards: {
       preset: template.cards.preset,
@@ -555,7 +565,7 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       ...scene.canvas,
       width: canvasWidth,
       height: canvasHeight,
-      safeMargin: clamp(scene.canvas.safeMargin, 0, Math.min(canvasWidth, canvasHeight) / 2, 36),
+      safeMargin: clamp(scene.canvas.safeMargin, 0, maxCanvasSafeMargin(canvasWidth, canvasHeight), 36),
       backgroundOpacity: clamp(scene.canvas.backgroundOpacity, 0, 1, 1),
       lineHeight: clamp(scene.canvas.lineHeight, 0.8, 2.5, 1),
     },
@@ -597,6 +607,12 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
         }];
       })),
       provinceTextureUniformSize: normalizeProvinceTextureUniformSize(scene.map.provinceTextureUniformSize),
+      mapBoundaryMargin: clamp(
+        scene.map.mapBoundaryMargin,
+        MAP_BOUNDARY_MARGIN_RANGE.min,
+        MAP_BOUNDARY_MARGIN_RANGE.max,
+        DEFAULT_MAP_BOUNDARY_MARGIN,
+      ),
     },
     cards: {
       ...scene.cards,

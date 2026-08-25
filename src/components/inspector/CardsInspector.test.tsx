@@ -283,6 +283,34 @@ describe("CardsInspector", () => {
     expect(container.querySelector(".property-panel__advanced #cards-connector-color")).toBeNull();
   });
 
+  it("commits frame whitespace edits from inside the opened advanced details", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const onPatch = vi.fn();
+    const { container, root } = trackedRoot();
+    flushSync(() => root.render(
+      <CardsInspector cards={project.cards} onPatch={onPatch} onReset={vi.fn()} mode="global" collapsible />,
+    ));
+
+    // 展开高级设置后，展示框留白（写入派生 displayFrame.style.padding）必须能提交
+    const details = container.querySelector<HTMLDetailsElement>(".property-panel__advanced")!;
+    flushSync(() => { details.open = true; });
+    expect(details.open).toBe(true);
+
+    const padding = details.querySelector("#cards-padding") as HTMLInputElement;
+    padding.focus();
+    flushSync(() => setInputValue(padding, "20"));
+    expect(onPatch).not.toHaveBeenCalled();
+    flushSync(() => padding.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(onPatch).toHaveBeenCalledWith({ padding: 20 });
+
+    onPatch.mockClear();
+    const gap = details.querySelector("#cards-gap") as HTMLInputElement;
+    gap.focus();
+    flushSync(() => setInputValue(gap, "18"));
+    flushSync(() => gap.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(onPatch).toHaveBeenCalledWith({ gap: 18 });
+  });
+
   it("keeps remaining advanced controls open by default", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();

@@ -251,6 +251,40 @@ describe("MapInspector", () => {
     }));
   });
 
+  it("keeps the display-frame clearance editable in global mode without exposing placement", () => {
+    const onPatch = vi.fn();
+    const { container, root } = trackedRoot();
+    flushSync(() => root.render(
+      <MapInspector map={baseMap} onPatch={onPatch} onReset={() => undefined} mode="global" collapsible />,
+    ));
+
+    // 位置/尺寸仍按阶段拆分隐藏；边界安全距离是展示框布局约束，全局必须可改
+    expect(container.querySelector("#map-x")).toBeNull();
+    expect(container.querySelector("#map-width")).toBeNull();
+    const margin = container.querySelector("#map-mapBoundaryMargin") as HTMLInputElement;
+    expect(margin).not.toBeNull();
+    expect(margin.value).toBe("16");
+    // 不藏在折叠的高级设置里
+    expect(container.querySelector(".property-panel__advanced #map-mapBoundaryMargin")).toBeNull();
+
+    margin.focus();
+    flushSync(() => setInputValue(margin, "32"));
+    expect(onPatch).not.toHaveBeenCalled();
+    flushSync(() => margin.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+    expect(onPatch).toHaveBeenCalledWith({ mapBoundaryMargin: 32 });
+  });
+
+  it("renders the boundary clearance exactly once in the full inspector", () => {
+    const { container, root } = trackedRoot();
+    flushSync(() => root.render(
+      <MapInspector map={{ ...baseMap, mapBoundaryMargin: 24 }} onPatch={vi.fn()} onReset={() => undefined} />,
+    ));
+
+    const inputs = container.querySelectorAll("#map-mapBoundaryMargin");
+    expect(inputs).toHaveLength(1);
+    expect((inputs[0] as HTMLInputElement).value).toBe("24");
+  });
+
   it("folds heat and per-province color controls into advanced details when collapsible", () => {
     const onPatch = vi.fn();
     const { container, root } = trackedRoot();

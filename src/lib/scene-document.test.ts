@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createDefaultScene,
+  maxCanvasSafeMargin,
   normalizeScene,
   updateSceneTarget,
   type MapRenderSource,
@@ -183,6 +184,26 @@ describe("scene document", () => {
     }).cards.zIndex).toBe(-100);
     expect(updateSceneTarget(scene, { type: "map" }, { zIndex: 42 }).map.zIndex).toBe(42);
     expect(updateSceneTarget(scene, { type: "cards" }, { zIndex: 7 }).cards.zIndex).toBe(7);
+  });
+
+  it("defaults, clamps, and persists the map boundary clearance (展示框安全边距)", () => {
+    const scene = createDefaultScene("original");
+
+    expect(scene.map.mapBoundaryMargin).toBe(16);
+    expect(normalizeScene({ ...scene, map: { ...scene.map, mapBoundaryMargin: undefined } }).map.mapBoundaryMargin).toBe(16);
+    expect(normalizeScene({ ...scene, map: { ...scene.map, mapBoundaryMargin: -5 } }).map.mapBoundaryMargin).toBe(0);
+    expect(normalizeScene({ ...scene, map: { ...scene.map, mapBoundaryMargin: 999 } }).map.mapBoundaryMargin).toBe(200);
+    expect(normalizeScene({ ...scene, map: { ...scene.map, mapBoundaryMargin: Number.NaN } }).map.mapBoundaryMargin).toBe(16);
+    expect(updateSceneTarget(scene, { type: "map" }, { mapBoundaryMargin: 32 }).map.mapBoundaryMargin).toBe(32);
+  });
+
+  it("persists canvas safe-margin edits up to half the shorter canvas side", () => {
+    const scene = createDefaultScene("original"); // 1500 × 1000
+
+    expect(maxCanvasSafeMargin(scene.canvas.width, scene.canvas.height)).toBe(500);
+    expect(updateSceneTarget(scene, { type: "canvas" }, { safeMargin: 48 }).canvas.safeMargin).toBe(48);
+    expect(updateSceneTarget(scene, { type: "canvas" }, { safeMargin: 500 }).canvas.safeMargin).toBe(500);
+    expect(updateSceneTarget(scene, { type: "canvas" }, { safeMargin: 800 }).canvas.safeMargin).toBe(500);
   });
 
   it("clamps text updates to safe inspector bounds", () => {

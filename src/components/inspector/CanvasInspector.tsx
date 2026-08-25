@@ -2,6 +2,7 @@ import { ImageUp, RotateCcw, Trash2 } from "lucide-react";
 import { CANVAS_SIZE_PRESETS, type CanvasSizePresetId } from "../../lib/grid";
 import { describePhysicalSize } from "../../lib/print-size";
 import type { CanvasSettings } from "../../lib/scene-document";
+import { maxCanvasSafeMargin } from "../../lib/scene-document";
 import { FileDropzone } from "../FileDropzone";
 import { DeferredInput } from "../DeferredInput";
 import { CompactButton, IconButton, InspectorHeader } from "../StudioUi";
@@ -29,6 +30,9 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
   const matchedPreset = CANVAS_SIZE_PRESETS.find(
     (preset) => preset.width === canvas.width && preset.height === canvas.height,
   )?.id ?? "custom";
+  // normalizeScene 将安全边距收回到画布短边的一半以内；输入上限保持一致，
+  // 避免“输入了但被静默改小”的假性失效。
+  const safeMarginMax = maxCanvasSafeMargin(canvas.width, canvas.height);
 
   return (
     <section className="property-panel">
@@ -60,7 +64,10 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
       <p className="property-panel__hint" data-canvas-print-size>
         约合印刷：{describePhysicalSize(canvas.width, canvas.height)}。发给打印店时带上这行。
       </p>
-      {number("safeMargin", canvas.safeMargin, 0, 3000, "安全边距")}
+      {number("safeMargin", canvas.safeMargin, 0, safeMarginMax, "安全边距")}
+      <p className="property-panel__hint" data-canvas-safe-margin-hint>
+        安全边距最大为画布短边的一半（当前可设 0–{safeMarginMax}px），超出的输入不会生效。
+      </p>
       <label htmlFor="canvas-background">背景色
         <DeferredInput
           id="canvas-background"

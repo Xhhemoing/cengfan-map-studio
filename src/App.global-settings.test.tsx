@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createProjectDocument } from "./lib/project-document";
 import { sampleStudents } from "./lib/project-data";
 import { createProjectPackage } from "./lib/project-package";
-import { installAppTestHarness, renderApp, click, openRailAdvancedTab, openGlobalSettingsSection, closeGlobalSettings, changeSelect } from "./app-test-harness";
+import { installAppTestHarness, renderApp, click, openRailAdvancedTab, openGlobalSettingsSection, closeGlobalSettings, changeInput, changeSelect } from "./app-test-harness";
 
 installAppTestHarness();
 
@@ -25,6 +25,12 @@ describe("App student editing", () => {
     ]);
 
     expect(settings.querySelector<HTMLInputElement>("#canvas-width")?.value).toBe("1500");
+    // 安全边距输入上限与 normalizeScene 的收回上限一致（画布短边一半），提交后立即生效
+    const safeMargin = settings.querySelector<HTMLInputElement>("#canvas-safeMargin")!;
+    expect(safeMargin.max).toBe("500");
+    changeInput(safeMargin, "48");
+    safeMargin.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    expect(settings.querySelector<HTMLInputElement>("#canvas-safeMargin")?.value).toBe("48");
     click(settings.querySelector<HTMLInputElement>("#canvas-background-opacity")!);
     click(settings.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-map"]')!);
     click(settings.querySelector<HTMLInputElement>("#map-collapse-south-sea")!);
@@ -34,6 +40,13 @@ describe("App student editing", () => {
     expect(container.querySelector<HTMLInputElement>("#map-collapse-south-sea")?.checked).toBe(false);
 
     expect(settings.querySelector("#map-width")).toBeNull();
+    // 展示框安全边距（地图边界安全距离）在全局设置的地图分区必须可编辑
+    const boundary = settings.querySelector<HTMLInputElement>("#map-mapBoundaryMargin")!;
+    expect(boundary).not.toBeNull();
+    expect(boundary.value).toBe("16");
+    changeInput(boundary, "32");
+    boundary.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    expect(settings.querySelector<HTMLInputElement>("#map-mapBoundaryMargin")?.value).toBe("32");
 
     click(settings.querySelector<HTMLButtonElement>('[role="tab"][aria-controls="global-settings-cards"]')!);
     expect(settings.textContent).toContain("学生数据中心");

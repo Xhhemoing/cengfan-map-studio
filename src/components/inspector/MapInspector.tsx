@@ -3,7 +3,7 @@ import { useState, type CSSProperties } from "react";
 import { createId } from "../../lib/ids";
 import { autoFitAlignment } from "../../lib/map-alignment";
 import type { MapImageAlignment, MapSettings, MapRenderSource } from "../../lib/scene-document";
-import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
+import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE, DEFAULT_MAP_BOUNDARY_MARGIN, MAP_BOUNDARY_MARGIN_RANGE } from "../../lib/scene-document";
 import { getProvinceNames } from "../../lib/map-data";
 import { heatPreviewSteps, normalizeHeatScale } from "../../lib/heat-scale";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
@@ -265,7 +265,6 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
           {number("height", map.height, 1, 6000, 1, "高度")}
         </div>
         {number("scale", map.scale, 0.1, 3, 0.01, "缩放")}
-        {number("mapBoundaryMargin", map.mapBoundaryMargin ?? 16, 0, 200, 1, "地图边界安全距离")}
         <label htmlFor="map-zindex">层级
           <DeferredInput
             id="map-zindex"
@@ -288,6 +287,16 @@ export function MapInspector({ map, onPatch, onReset, mode = "all", collapsible 
         </ActionGroup>
         <p className="property-panel__hint">数值越大越靠上。参照：数据框 10 · 嘉宾面板 20 · 装饰素材 30 · 文本 40。置顶/置底即相对全部画布层。</p>
       </>}
+
+      {number(
+        "mapBoundaryMargin",
+        map.mapBoundaryMargin ?? DEFAULT_MAP_BOUNDARY_MARGIN,
+        MAP_BOUNDARY_MARGIN_RANGE.min,
+        MAP_BOUNDARY_MARGIN_RANGE.max,
+        1,
+        "地图边界安全距离",
+      )}
+      <p className="property-panel__hint">数据卡片与展示框会避开地图内容四周这段空隙（画布像素）。</p>
 
       {showGlobal && <>
         <label htmlFor="map-opacity">地图透明度
