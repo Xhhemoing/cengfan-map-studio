@@ -194,6 +194,19 @@ describe("room snapshot store", () => {
     expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("sweeps atomic-write temporaries orphaned by a crashed previous boot", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-orphan-tmp-"));
+    directories.push(dataDir);
+    // 上一次进程在 write 与 rename 之间被 SIGKILL：这三份 <file>.<pid>.tmp 谁也收不掉，
+    // 因为 R9-1 的清理只在本进程的 rename 失败路径上跑。
+    const orphans = ["workspace.json.12345.tmp", "collaboration-rooms.json.999.tmp", "ai-state.json.4.tmp"];
+    for (const name of orphans) await writeFile(join(dataDir, name), "half-written", "utf8");
+
+    servers.push(await createReadyAiServer({ dataDir }));
+
+    expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("writes the room snapshot as a private file", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-mode-"));
     directories.push(dataDir);
