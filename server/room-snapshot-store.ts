@@ -38,17 +38,36 @@ const ATOMIC_TEMPORARY_FILE = /^.+\.\d+\.tmp$/;
  * 也只可能来自上一次启动。清理纯属尽力而为，扫不动也绝不能挡住启动。
  */
 export async function sweepStaleTemporaryFiles(dataDir: string): Promise<void> {
+  // 只认原子写的名字形状：.bad / .corrupt-* 是事故现场，正常数据文件更不能碰。
+  await sweepTemporaryFiles(dataDir, (name) => ATOMIC_TEMPORARY_FILE.test(name));
+}
+
+/**
+ * 状态文件可以被配置到数据目录之外（`AI_STATE_FILE` / `config.aiStateFile`），
+ * 它旁边的孤儿谁都扫不到：`sweepStaleTemporaryFiles` 只读 dataDir。
+ * 这里只收 `<该文件名>.<pid>.tmp` 这一种名字，不用上面那个任意文件名的形状：
+ * 运维完全可能把状态文件指进一个共享目录，泛化的形状会把别的程序的临时文件一起吃掉。
+ */
+export async function sweepStaleTemporaryFilesBesideFile(file: string): Promise<void> {
+  const prefix = `${basename(file)}.`;
+  await sweepTemporaryFiles(
+    dirname(file),
+    (name) => name.startsWith(prefix) && /^\d+\.tmp$/.test(name.slice(prefix.length)),
+  );
+}
+
+/** 扫地的公共实现：名字形状由调用方给，清理失败一律只告警。 */
+async function sweepTemporaryFiles(directory: string, isOrphan: (name: string) => boolean): Promise<void> {
   let names: string[];
   try {
-    names = await readdir(dataDir);
+    names = await readdir(directory);
   } catch {
-    // 首次启动时数据目录还不存在，没有孤儿可扫。
+    // 首次启动时目录还不存在，没有孤儿可扫。
     return;
   }
   for (const name of names) {
-    // 只认原子写的名字形状：.bad / .corrupt-* 是事故现场，正常数据文件更不能碰。
-    if (!ATOMIC_TEMPORARY_FILE.test(name)) continue;
-    const path = join(dataDir, name);
+    if (!isOrphan(name)) continue;
+    const path = join(directory, name);
     try {
       await rm(path, { force: true });
     } catch (error) {
