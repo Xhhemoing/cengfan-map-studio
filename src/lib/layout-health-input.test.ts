@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { checkLayoutHealth } from "./layout-health";
 import { buildProjectLayoutHealthInput } from "./layout-health-input";
 import { createProjectDocument, type ProjectDocument } from "./project-document";
 
@@ -59,5 +60,12 @@ describe("buildProjectLayoutHealthInput", () => {
     );
 
     expect(bounds).toEqual({ left: 100, center: 0, right: -100 });
+  });
+
+  it("keeps every default text inside the safe margin so a new project reports no overflow", () => {
+    const issues = checkLayoutHealth(buildProjectLayoutHealthInput(baseProject()))
+      .filter((issue) => issue.kind === "out-of-bounds" || issue.kind === "overflow");
+
+    expect(issues).toEqual([]);
   });
 });

@@ -407,7 +407,9 @@ const DEFAULT_TEXTS: CanvasText[] = [
   { id: "text-title", role: "title", content: "我们的毕业去向", x: 72, y: 126, fontSize: 42, color: "#1c3154", fontWeight: 700, textAlign: "left", maxWidth: 640, visibility: true },
   { id: "text-subtitle", role: "subtitle", content: "山高水长，来日再聚", x: 72, y: 164, fontSize: 18, color: "#7b8ba5", fontWeight: 400, textAlign: "left", maxWidth: 640, visibility: true },
   { id: "text-stats", role: "stats", content: "", x: 72, y: 204, fontSize: 16, color: "#1c3154", fontWeight: 500, textAlign: "left", maxWidth: 480, visibility: true },
-  { id: "text-watermark", role: "watermark", content: "CENGFAN MAP STUDIO", x: 1432, y: 955, fontSize: 12, color: "#7b8ba5", fontWeight: 500, textAlign: "right", maxWidth: 360, visibility: true },
+  // 水印底边按体检口径为 y + fontSize * 0.3，必须 ≤ height - safeMargin
+  // （1000 - 48 = 952）；955 会让新建项目一进来就自己报「超出画布安全边距」。
+  { id: "text-watermark", role: "watermark", content: "CENGFAN MAP STUDIO", x: 1432, y: 948, fontSize: 12, color: "#7b8ba5", fontWeight: 500, textAlign: "right", maxWidth: 360, visibility: true },
   { id: "text-note", role: "note", content: "", x: 745, y: 905, fontSize: 20, color: "#c85d4b", fontWeight: 500, textAlign: "center", maxWidth: 640, visibility: true },
 ];
 
