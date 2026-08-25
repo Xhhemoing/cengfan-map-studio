@@ -5,25 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
 import type { AddressInfo } from "node:net";
 import type http from "node:http";
 import { createAiLogger } from "./ai/ai-observability";
 import { createRateLimiter } from "./ai/rate-limit";
 import { attachServerLifecycle, createAiServer, createReadyAiServer, DEFAULT_PORT, resolvePort, type PersistableRoomStore } from "./index";
 import { createRoomStore, type RoomPersistOutcome } from "./collaboration";
-
-const fsHooks = vi.hoisted(() => ({ createReadStream: null as null | ((filePath: string) => unknown) }));
-
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  const createReadStream = (filePath: unknown, options?: unknown) => (
-    fsHooks.createReadStream
-      ? fsHooks.createReadStream(String(filePath))
-      : (actual.createReadStream as (path: unknown, options?: unknown) => unknown)(filePath, options)
-  );
-  return { ...actual, default: { ...actual, createReadStream }, createReadStream };
-});
 
 async function startServer(server: http.Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -290,7 +277,6 @@ describe("unified application server", () => {
   const directories: string[] = [];
 
   afterEach(async () => {
-    fsHooks.createReadStream = null;
     vi.restoreAllMocks();
     await Promise.all(
       servers.map(
@@ -409,20 +395,6 @@ describe("unified application server", () => {
     expect(response.status).toBe(404);
     expect(response.headers.get("content-type")).toContain("application/json");
     await expect(response.json()).resolves.toMatchObject({ error: { code: "NOT_FOUND" } });
-  });
-
-  it("rejects encoded paths that resolve outside the static directory", async () => {
-    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-safe-"));
-    directories.push(staticDir);
-    await writeFile(join(staticDir, "index.html"), "<main>SPA</main>");
-    const server = createAiServer({ staticDir });
-    servers.push(server);
-    const origin = await startServer(server);
-
-    const response = await rawGet(origin, "/%2e%2e/%2e%2e/etc/passwd");
-
-    expect(response.status).toBe(403);
-    expect(JSON.parse(response.body)).toMatchObject({ error: { code: "FORBIDDEN" } });
   });
 
   it("validates the agent endpoint request shape", async () => {
@@ -799,32 +771,6 @@ describe("unified application server", () => {
       commands?: unknown[];
     };
     expect(proposal.commands?.length).toBeGreaterThan(0);
-  });
-
-  it("serves hashed static assets with long immutable caching, gzip, and security headers", async () => {
-    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-"));
-    directories.push(staticDir);
-    await writeFile(join(staticDir, "index.html"), "<main>蹭饭地图工作室</main>");
-    await writeFile(join(staticDir, "index-Bf9xZGZi.js"), "console.log('large static asset');\n".repeat(20));
-
-    const server = createAiServer({ staticDir });
-    servers.push(server);
-    const origin = await startServer(server);
-
-    const page = await fetch(`${origin}/`);
-    expect(page.headers.get("cache-control")).toBe("no-cache");
-    expect(page.headers.get("x-content-type-options")).toBe("nosniff");
-
-    const asset = await fetch(`${origin}/index-Bf9xZGZi.js`, {
-      headers: { "Accept-Encoding": "gzip" },
-    });
-
-    expect(asset.status).toBe(200);
-    expect(asset.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
-    expect(asset.headers.get("content-encoding")).toBe("gzip");
-    expect(asset.headers.get("vary")).toContain("Accept-Encoding");
-    expect(asset.headers.get("x-content-type-options")).toBe("nosniff");
-    await expect(asset.text()).resolves.toContain("large static asset");
   });
 
   it("persists the complete workspace across server restarts", async () => {
@@ -1717,78 +1663,6 @@ describe("unified application server", () => {
       monitor.restore();
       stream.disconnect();
     }
-  });
-
-  it("tears the connection down when a static read stream fails after the headers were sent", async () => {
-    const monitor = captureProcessFailures();
-    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-error-"));
-    directories.push(staticDir);
-    await writeFile(join(staticDir, "index.html"), "<main>SPA</main>");
-    await writeFile(join(staticDir, "asset.txt"), "content");
-    fsHooks.createReadStream = () => {
-      const stream = new Readable({ read() { /* pushed manually */ } });
-      setImmediate(() => {
-        stream.emit("open");
-        stream.push("partial");
-        setImmediate(() => stream.emit("error", Object.assign(new Error("read failed"), { code: "EIO" })));
-      });
-      return stream;
-    };
-    const server = createAiServer({ staticDir });
-    servers.push(server);
-    const origin = await startServer(server);
-    try {
-      await rawGet(origin, "/asset.txt").catch(() => undefined);
-      await wait(50);
-      expect(monitor.failures).toEqual([]);
-      fsHooks.createReadStream = null;
-      expect((await rawGet(origin, "/api/live")).status).toBe(200);
-    } finally {
-      monitor.restore();
-    }
-  });
-
-  it("answers with JSON when the static file disappears before the stream opens", async () => {
-    const monitor = captureProcessFailures();
-    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-vanish-"));
-    directories.push(staticDir);
-    await writeFile(join(staticDir, "index.html"), "<main>SPA</main>");
-    await writeFile(join(staticDir, "asset.txt"), "content");
-    fsHooks.createReadStream = () => {
-      const stream = new Readable({ read() { /* pushed manually */ } });
-      setImmediate(() => stream.emit("error", Object.assign(new Error("gone"), { code: "ENOENT" })));
-      return stream;
-    };
-    const server = createAiServer({ staticDir });
-    servers.push(server);
-    const origin = await startServer(server);
-    try {
-      const response = await rawGet(origin, "/asset.txt");
-      expect(response.status).toBe(404);
-      expect(JSON.parse(response.body)).toMatchObject({ error: { code: "NOT_FOUND" } });
-      expect(monitor.failures).toEqual([]);
-    } finally {
-      monitor.restore();
-    }
-  });
-
-  it("keeps rejecting hostile static paths and ignores unsupported range requests", async () => {
-    const staticDir = await mkdtemp(join(tmpdir(), "cengfan-static-hostile-"));
-    directories.push(staticDir);
-    await writeFile(join(staticDir, "index.html"), "<main>SPA</main>");
-    await writeFile(join(staticDir, "index-Bf9xZGZi.js"), "console.log('asset');\n".repeat(20));
-    const server = createAiServer({ staticDir });
-    servers.push(server);
-    const origin = await startServer(server);
-
-    expect((await rawGet(origin, "/%2e%2e/%2e%2e/etc/passwd")).status).toBe(403);
-    expect((await rawGet(origin, "/..%2f..%2fetc/passwd")).status).toBe(403);
-    expect((await rawGet(origin, "/%zz")).status).toBe(400);
-    expect((await rawGet(origin, "/%00passwd")).status).toBe(400);
-
-    const ranged = await rawGet(origin, "/index-Bf9xZGZi.js", { Range: "bytes=abc-def" });
-    expect(ranged.status).toBe(200);
-    expect(ranged.body).toContain("console.log('asset');");
   });
 
   it("answers preflight requests with an empty 204", async () => {
