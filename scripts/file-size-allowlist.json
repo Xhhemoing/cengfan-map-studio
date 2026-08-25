@@ -7,7 +7,6 @@
   "src/App.tsx": 988,
   "src/components/AgentAssistant.test.tsx": 569,
   "src/components/AgentAssistant.tsx": 705,
-  "src/components/AppErrorBoundary.test.tsx": 613,
   "src/components/AppErrorBoundary.tsx": 403,
   "src/components/AssetPanel.test.tsx": 587,
   "src/components/AssetPanel.tsx": 754,
