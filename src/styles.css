@@ -2532,6 +2532,53 @@ button.data-overview__metric:hover {
   .app-shell[data-editor-skin="atelier"] *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
 
+/* 阶段壳的操作回执条：固定在画布底部中央，不参与三栏网格的高度计算。 */
+.studio-status-bar {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  z-index: 90;
+  display: flex;
+  max-width: min(640px, calc(100vw - 32px));
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  color: var(--editor-ink);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--editor-surface-raised);
+  border: 1px solid var(--editor-line);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(16 32 48 / 18%);
+  transform: translateX(-50%);
+}
+.studio-status-bar:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  clip-path: inset(50%);
+}
+.studio-status-bar__text { min-width: 0; }
+.studio-status-bar__close {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  color: var(--editor-ink-muted, #7a8b99);
+  font-size: 15px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  place-items: center;
+}
+.studio-status-bar__close:hover { background: var(--editor-surface); }
+
 /* Focused workbenches keep the assistant rail on the left in both interface skins. */
 .studio-stage-shell {
   display: grid;

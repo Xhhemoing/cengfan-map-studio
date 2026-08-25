@@ -1,6 +1,6 @@
 // 从 src/App.test.tsx 原样搬出：外壳布局契约：CSS、响应式面板、阶段插槽与顶栏分层。
 // 共享挂载/交互装置见 src/app-test-harness.tsx。
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
 import { installAppTestHarness, renderApp, renderPublicApp, renderLegacyApp, click, openGlobalSettingsSection, openRailAdvancedTab, workflowStage } from "./app-test-harness";
 
@@ -242,6 +242,15 @@ describe("Topbar action layering (T4)", () => {
       click(workflowStage(container, stage));
       expect(container.querySelector('.topbar-actions [role="group"][aria-label="历史"]')).not.toBeNull();
     }
+  });
+
+  it("reports project-menu results in the stage shell instead of swallowing them", async () => {
+    const container = renderPublicApp();
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="强制保存到浏览器本地"]')!);
+
+    await vi.waitFor(() => expect(
+      container.querySelector<HTMLElement>('.studio-status-bar[role="status"]')?.textContent,
+    ).toContain("强制保存完成"));
   });
 
   it("marks the low-frequency theme group for narrow-screen hiding", () => {

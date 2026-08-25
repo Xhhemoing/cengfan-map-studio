@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createProjectDocument, serializeProjectDocument } from "./lib/project-document";
 import { sampleStudents } from "./lib/project-data";
 import { createProjectPackage } from "./lib/project-package";
-import { installAppTestHarness, renderApp, saveWorkspaceMirror, click, openPeopleData, changeInput, changeSelect } from "./app-test-harness";
+import { installAppTestHarness, renderApp, renderPublicApp, saveWorkspaceMirror, click, openPeopleData, changeInput, changeSelect } from "./app-test-harness";
 
 installAppTestHarness();
 
@@ -92,6 +92,17 @@ describe("App student editing", () => {
     expect(dialog).not.toBeNull();
     expect(dialog?.textContent).toContain("包含资源包");
     expect(dialog?.textContent).toContain("地图背景、地图贴图、素材和字体");
+    expect(dialog?.querySelector<HTMLInputElement>('input[aria-label="导出时包含资源包"]')?.checked).toBe(true);
+    expect(dialog?.querySelector<HTMLButtonElement>('button[aria-label="确认导出工程"]')).not.toBeNull();
+  });
+
+  it("opens the same export confirmation from the default stage shell", () => {
+    const container = renderPublicApp();
+
+    click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("导出工程"))!);
+
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"][aria-label="导出工程确认"]');
+    expect(dialog).not.toBeNull();
     expect(dialog?.querySelector<HTMLInputElement>('input[aria-label="导出时包含资源包"]')?.checked).toBe(true);
     expect(dialog?.querySelector<HTMLButtonElement>('button[aria-label="确认导出工程"]')).not.toBeNull();
   });

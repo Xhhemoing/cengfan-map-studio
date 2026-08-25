@@ -47,6 +47,9 @@ export interface StageLayoutScreenProps {
   leftRail: ReactNode;
   drawerOpen: boolean;
   onDrawerClose: () => void;
+  /** 保存 / 导入 / 模板 / 复制等操作的结果回执，由壳层的 live region 播报。 */
+  statusMessage?: string;
+  onDismissStatusMessage?: () => void;
   project: ProjectDocument;
   renderProject: ProjectDocument;
   dataHealth: DataHealthSummary;
@@ -106,6 +109,8 @@ export function StageLayoutScreen(props: StageLayoutScreenProps) {
     leftRail,
     drawerOpen,
     onDrawerClose,
+    statusMessage,
+    onDismissStatusMessage,
   } = props;
 
   const slots = buildStageSlots(stage, props);
@@ -125,6 +130,8 @@ export function StageLayoutScreen(props: StageLayoutScreenProps) {
       rightRailLabel={STAGE_METADATA[stage].rightRailLabel}
       drawerOpen={drawerOpen}
       onDrawerClose={onDrawerClose}
+      statusMessage={statusMessage}
+      onDismissStatusMessage={onDismissStatusMessage}
     >
       {slots.workspace}
     </StudioLayoutTemplate>

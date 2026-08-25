@@ -727,62 +727,68 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   if (activeStage !== "content" || !legacyEditorEnabled) {
     return (
-      <StageLayoutScreen
-        stage={activeStage}
-        theme={resolvedTheme}
-        skin={skin}
-        assistantEntry={assistantEntryButton}
-        historyActions={historyActionsNode}
-        projectActions={projectActionsNode}
-        workflowNav={workflowNavNode}
-        leftRail={studioAssistantRail}
-        drawerOpen={assistantDrawerOpen}
-        onDrawerClose={() => setAssistantDrawerOpen(false)}
-        project={project}
-        renderProject={renderProject}
-        dataHealth={dataHealth}
-        dataIssues={dataIssues}
-        layoutIssues={contentLayoutIssues}
-        resourceHealthIssues={resourceHealthIssues}
-        dataWorkspaceProps={dataWorkspaceProps}
-        assetPanelProps={contentAssetPanelProps}
-        userAssets={userAssets}
-        userFonts={userFonts}
-        selection={selection}
-        selectedStudentId={selectedStudentId}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        undoLabel={undoLabel}
-        redoLabel={redoLabel}
-        posterRef={posterRef}
-        posterExport={posterExport}
-        onPatch={patchScene}
-        onReset={resetSceneTarget}
-        onSelect={selectScene}
-        onSelectStudent={setSelectedStudentId}
-        onChangeDataView={dataWorkspaceProps.onChangeDataView}
-        onAddUserAsset={addUserAsset}
-        onCardPositionsResolved={captureCardPositions}
-        onMoveProvinceTexture={moveProvinceTexture}
-        onResizeMapImage={resizeMapImage}
-        onMoveText={moveText}
-        onMoveAsset={moveAsset}
-        onResizeAsset={resizeAsset}
-        onMoveCard={moveCard}
-        onMoveGuests={moveGuests}
-        templateActions={templateActions}
-        onApplyFont={applyFont}
-        onUploadFont={uploadUserFont}
-        onDeleteUserFont={deleteUserFont}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onRefreshPositions={refreshDisplayFramePositions}
-        onBackToMap={() => {
-          setActiveStage("map");
-          setActivePanel("map");
-        }}
-        onLocateDeliveryIssue={locateDeliveryIssue}
-      />
+      <>
+        <StageLayoutScreen
+          stage={activeStage}
+          theme={resolvedTheme}
+          skin={skin}
+          assistantEntry={assistantEntryButton}
+          historyActions={historyActionsNode}
+          projectActions={projectActionsNode}
+          workflowNav={workflowNavNode}
+          leftRail={studioAssistantRail}
+          drawerOpen={assistantDrawerOpen}
+          onDrawerClose={() => setAssistantDrawerOpen(false)}
+          statusMessage={statusMessage}
+          onDismissStatusMessage={() => setStatusMessage("")}
+          project={project}
+          renderProject={renderProject}
+          dataHealth={dataHealth}
+          dataIssues={dataIssues}
+          layoutIssues={contentLayoutIssues}
+          resourceHealthIssues={resourceHealthIssues}
+          dataWorkspaceProps={dataWorkspaceProps}
+          assetPanelProps={contentAssetPanelProps}
+          userAssets={userAssets}
+          userFonts={userFonts}
+          selection={selection}
+          selectedStudentId={selectedStudentId}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          undoLabel={undoLabel}
+          redoLabel={redoLabel}
+          posterRef={posterRef}
+          posterExport={posterExport}
+          onPatch={patchScene}
+          onReset={resetSceneTarget}
+          onSelect={selectScene}
+          onSelectStudent={setSelectedStudentId}
+          onChangeDataView={dataWorkspaceProps.onChangeDataView}
+          onAddUserAsset={addUserAsset}
+          onCardPositionsResolved={captureCardPositions}
+          onMoveProvinceTexture={moveProvinceTexture}
+          onResizeMapImage={resizeMapImage}
+          onMoveText={moveText}
+          onMoveAsset={moveAsset}
+          onResizeAsset={resizeAsset}
+          onMoveCard={moveCard}
+          onMoveGuests={moveGuests}
+          templateActions={templateActions}
+          onApplyFont={applyFont}
+          onUploadFont={uploadUserFont}
+          onDeleteUserFont={deleteUserFont}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onRefreshPositions={refreshDisplayFramePositions}
+          onBackToMap={() => {
+            setActiveStage("map");
+            setActivePanel("map");
+          }}
+          onLocateDeliveryIssue={locateDeliveryIssue}
+        />
+        {/* 顶栏项目菜单在两套壳层里都能开这个弹层，挂载点也必须在两套壳层里都有。 */}
+        <ExportProjectDialog posterExport={posterExport} />
+      </>
     );
   }
 

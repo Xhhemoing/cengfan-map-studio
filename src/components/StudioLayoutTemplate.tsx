@@ -38,6 +38,10 @@ export type StudioLayoutTemplateProps = {
   /** 移动端 AI 抽屉开关状态。 */
   drawerOpen: boolean;
   onDrawerClose: () => void;
+  /** 保存 / 导入 / 模板 / 复制等操作的结果回执，空串表示当前无回执。 */
+  statusMessage?: string;
+  /** 提供时结果条带关闭按钮；不提供则回执只能由下一条覆盖。 */
+  onDismissStatusMessage?: () => void;
   /** 中心画布内容（各阶段 workspace）。 */
   children: ReactNode;
 };
@@ -63,6 +67,8 @@ export function StudioLayoutTemplate({
   rightRailLabel,
   drawerOpen,
   onDrawerClose,
+  statusMessage,
+  onDismissStatusMessage,
   children,
 }: StudioLayoutTemplateProps) {
   return (
@@ -77,6 +83,24 @@ export function StudioLayoutTemplate({
       <StudioEditorShell stage={stage} leftRail={leftRail} rightRail={rightRail} rightRailLabel={rightRailLabel}>
         {children}
       </StudioEditorShell>
+      {/* 常驻挂载、空时视觉隐藏：live region 只有一直在无障碍树里，后来的回执才会被播报。 */}
+      <div className="studio-status-bar" role="status" aria-live="polite">
+        {statusMessage ? (
+          <>
+            <span className="studio-status-bar__text">{statusMessage}</span>
+            {onDismissStatusMessage && (
+              <button
+                type="button"
+                className="studio-status-bar__close"
+                aria-label="关闭操作结果提示"
+                onClick={onDismissStatusMessage}
+              >
+                ×
+              </button>
+            )}
+          </>
+        ) : null}
+      </div>
       <StudioAssistantDrawer open={drawerOpen} onClose={onDrawerClose} label="AI 助手与高级功能">
         {leftRail}
       </StudioAssistantDrawer>
