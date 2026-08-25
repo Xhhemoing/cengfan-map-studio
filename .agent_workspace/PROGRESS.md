@@ -25,7 +25,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 6 | CLOSED | R6-1–R6-9 + R6-5b | — | Full suite 181/1656/2; lint 0 err / 7 warn; fable 6 ACCEPT + 4 NITS; no blocker. |
 | 7 | CLOSED | R7-1–R7-9 + R7-3b + R7-10 | — | 189/1757/2; lint 0/6; CI `362c318`; fable 8 ACCEPT + 2 NITS; no blocker. |
 | 8 | CLOSED | R8-1–R8-9 + R8-3b + R8-10 | — | 197/1846/2; lint 0/1; CI `553d5c1`; fable 9 ACCEPT + 1 NITS; no blocker. |
-| 9 | IN_PROGRESS | R9-1–R9-4, R9-6–R9-8 | — | Tmp leak; ack persistence; App extract; test splits. |
+| 9 | IN_PROGRESS | R9-1–R9-8 | — | Awaiting App.test split (R9-9) and closeout (R9-10). |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -169,6 +169,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R9-4 (`a9f3087`): real-disk rename EISDIR journey (no-orphan + lastFailureAt on ack/snapshot/health). Rollback: revert `a9f3087`.
 - R9-3 (`d6af547`): client ack persistence via `parseRoomSnapshot` + `noteAcknowledgedPersistence`. Rollback: revert `d6af547`.
 - R9-7 (`eac6d7b`): room-snapshot cluster → `server/room-snapshot-store.ts`; index.ts 1661→1547 (1480 not reachable without splitting `createAiServer`). Rollback: revert `eac6d7b`.
+- R9-5 (`dfb7f37`): App.tsx 1729→1484. Rollback: revert `dfb7f37`.
 
 ## Round Briefings
 
