@@ -4,6 +4,7 @@ import {
   solveCardLayout,
   type CardLayoutBounds,
   type CardLayoutInput,
+  type CardLayoutMode,
   type CardLayoutOptions,
   type CardPlacement,
 } from "./card-layout";
@@ -12,7 +13,7 @@ import {
   connectorGeometriesIntersect,
   type ConnectorStyle,
 } from "./connector-geometry";
-import { assertHardConstraints, bounds } from "./card-layout-test-fixtures";
+import { assertHardConstraints, bounds, seededRandom } from "./card-layout-test-fixtures";
 
 const STRAIGHT: CardLayoutOptions = {
   connectorStyle: "straight",
@@ -161,5 +162,97 @@ describe("card layout connector uncrossing", () => {
       expect(new Set(result.placements.map((placement) => placement.side)).size).toBe(1);
       assertHardConstraints(result.placements, bouquetBounds, bouquetBounds.occupiedAreas);
     });
+  });
+
+  describe("rail reordering", () => {
+    /**
+     * Three cards of different heights stacked on one rail, in an order their
+     * anchors invert. No pairwise move can fix it: exchanging two cards by
+     * centre leaves the third overlapped, and sliding one card next to another
+     * lands it on the third. Only re-packing the run in a new order works.
+     */
+    const stack: CardLayoutInput[] = [
+      { id: "tall", anchorX: 430, anchorY: 640, width: 200, height: 170 },
+      { id: "short", anchorX: 430, anchorY: 300, width: 200, height: 70 },
+      { id: "medium", anchorX: 430, anchorY: 470, width: 200, height: 120 },
+    ];
+    const invertedStack: CardPlacement[] = [
+      { ...stack[0]!, x: 120, y: 200, side: "left" },
+      { ...stack[1]!, x: 120, y: 384, side: "left" },
+      { ...stack[2]!, x: 120, y: 468, side: "left" },
+    ];
+
+    it("packs the run in an order that really does cross before any repair runs", () => {
+      expect(countCrossings(invertedStack)).toBeGreaterThan(0);
+    });
+
+    it("re-packs the run by anchor order instead of giving up", () => {
+      const repaired = repairConnectorCrossings(invertedStack, bounds, STRAIGHT);
+
+      expect(countCrossings(repaired)).toBe(0);
+      assertHardConstraints(repaired, bounds);
+      // Same lane, same span: the repair reorders the rail, it does not scatter it.
+      expect(repaired.map((placement) => placement.x)).toEqual([120, 120, 120]);
+      expect(repaired.every((placement) => placement.side === "left")).toBe(true);
+      const sorted = [...repaired].sort((left, right) => left.y - right.y);
+      expect(sorted.map((placement) => placement.id)).toEqual(["short", "medium", "tall"]);
+      // Re-packing is contiguous, so the run can never claim more space than it had.
+      const span = (cards: CardPlacement[]) => Math.max(...cards.map((card) => card.y + card.height))
+        - Math.min(...cards.map((card) => card.y));
+      expect(span(repaired)).toBeLessThanOrEqual(span(invertedStack));
+    });
+  });
+
+  /**
+   * Dense random boards, the case the repair exists for.
+   *
+   * The ceilings below are the counts the pass currently reaches, recorded so a
+   * change that quietly re-tangles a mode fails here; they are an upper bound
+   * on residue, never a target. The `≤ unrepaired` assertion is the real
+   * invariant: turning the constraint on may never leave more crossings than
+   * leaving it off, whatever the repertoire does.
+   *
+   * What is left at these counts is geometry the pass has no legal move for:
+   * near-coincident anchors whose cards landed in different lanes (a straight
+   * bouquet always meets), and cards whose mode parked them on the far side of
+   * the canvas from their anchor, where the only fix is a cross-side
+   * relocation the packer has no room to absorb.
+   */
+  describe("dense 24-card boards", () => {
+    const CEILINGS: Record<string, number> = {
+      proximity: 0,
+      columns: 2,
+      quadrant: 1,
+      radial: 0,
+      "right-stack": 9,
+      grid: 3,
+    };
+    const dense = (() => {
+      const random = seededRandom(0xc205_524 + 24);
+      return Array.from({ length: 24 }, (_, index): CardLayoutInput => ({
+        id: `dense-${index}`,
+        anchorX: bounds.map.x + 30 + random() * (bounds.map.width - 60),
+        anchorY: bounds.map.y + 30 + random() * (bounds.map.height - 60),
+        width: 108 + Math.round(random() * 42),
+        height: 48 + Math.round(random() * 24),
+      }));
+    })();
+    const options: CardLayoutOptions = { connectorStyle: "straight", connectorWidth: 1.5 };
+
+    it.each(Object.keys(CEILINGS) as CardLayoutMode[])(
+      "never ships more crossings than the unrepaired board: %s",
+      (mode) => {
+        const repaired = solveCardLayout(dense, bounds, { ...options, mode });
+        const unrepaired = solveCardLayout(dense, bounds, { ...options, mode, forbidConnectorCrossing: false });
+        const after = countCrossings(repaired.placements, 1.5);
+
+        expect(repaired.placements).toHaveLength(dense.length);
+        expect(repaired.mode).toBe(mode);
+        assertHardConstraints(repaired.placements, bounds);
+        expect(after).toBeLessThanOrEqual(countCrossings(unrepaired.placements, 1.5));
+        expect(after).toBeLessThanOrEqual(CEILINGS[mode]!);
+        expect(repaired.status === "solved").toBe(after === 0);
+      },
+    );
   });
 });

@@ -10,6 +10,21 @@ const adapt = vi.hoisted(() => ({
   calls: [] as unknown[][],
 }));
 
+// Counts the connector geometry the layer asks for, including the imperative rebuilds a
+// drag issues per paint — a card that shows no connector must not compute one.
+const connectorGeometry = vi.hoisted(() => ({ calls: [] as unknown[][] }));
+
+vi.mock("../../lib/connector-geometry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/connector-geometry")>();
+  return {
+    ...actual,
+    buildConnectorGeometry: (...args: Parameters<typeof actual.buildConnectorGeometry>) => {
+      connectorGeometry.calls.push(args);
+      return actual.buildConnectorGeometry(...args);
+    },
+  };
+});
+
 vi.mock("../../lib/card-layout-adapt", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/card-layout-adapt")>();
   return {
@@ -37,60 +52,10 @@ vi.mock("./ReferenceCardVisual", () => ({
   },
 }));
 
-import { DestinationCardsLayer, type DestinationCardsAppearance, type DestinationCardsLayerProps, type PlacedDestinationCard } from "./DestinationCardsLayer";
-import type { CardLayoutBounds, CardPlacement } from "../../lib/card-layout";
-import type { DestinationCardStyle } from "./DestinationCard";
+import { DestinationCardsLayer, type DestinationCardsLayerProps } from "./DestinationCardsLayer";
+import type { CardPlacement } from "../../lib/card-layout";
 import { resolveEdgeStyle } from "../../lib/edge-styles";
-
-const CARD_STYLE = {} as DestinationCardStyle;
-
-function appearance(overrides: Partial<DestinationCardsAppearance> = {}): DestinationCardsAppearance {
-  return {
-    preset: "standard",
-    presentation: "standard",
-    connectorStyle: "straight",
-    connectorDash: "dashed",
-    connectorWidth: 2,
-    background: "#ffffff",
-    opacity: 0.95,
-    textColor: "#1c3154",
-    fontSize: 13,
-    showProvinceTexture: false,
-    activeColor: "#e2703a",
-    edgeColor: "#39434e",
-    lineHeightMultiplier: 1,
-    ...overrides,
-  };
-}
-
-function card(overrides: Partial<PlacedDestinationCard> = {}): PlacedDestinationCard {
-  const key = overrides.group?.key ?? "北京市";
-  return {
-    group: { key, title: key, count: 1, students: [] },
-    province: key,
-    isInternational: false,
-    rows: [],
-    titleLines: [[{ text: key, field: "title" }]],
-    headerExtra: 0,
-    width: 180,
-    height: 120,
-    anchorX: 620,
-    anchorY: 300,
-    placement: { id: key, anchorX: 620, anchorY: 300, x: 100, y: 200, width: 180, height: 120, side: "left" },
-    ...overrides,
-  };
-}
-
-const DRAG_BOUNDS: CardLayoutBounds = {
-  width: 1200,
-  height: 1600,
-  map: { x: 400, y: 200, width: 400, height: 400 },
-  occupiedAreas: [],
-  occupiedPolygons: [],
-  allowMapOverlap: true,
-  margin: 24,
-  gap: 10,
-};
+import { DRAG_BOUNDS, appearance, card, draggable, layerProps } from "./destination-cards-layer-test-fixtures";
 
 const mounted: Array<{ root: ReturnType<typeof createRoot>; container: HTMLDivElement }> = [];
 
@@ -103,36 +68,13 @@ function render(overrides: Partial<DestinationCardsLayerProps> = {}) {
   return { container, root, props };
 }
 
-function layerProps(overrides: Partial<DestinationCardsLayerProps> = {}): DestinationCardsLayerProps {
-  return {
-    cards: [card()],
-    style: CARD_STYLE,
-    appearance: appearance(),
-    connectorEdge: resolveEdgeStyle({ style: "dashed", color: "#39434e", width: 2, filterPrefix: "connector-edge" }),
-    dragBounds: DRAG_BOUNDS,
-    exportMode: false,
-    renderIntervalMs: 0,
-    canvasPoint: (event) => ({ x: event.clientX, y: event.clientY }),
-    ...overrides,
-  };
-}
-
-function draggable(container: HTMLDivElement, key = "北京市") {
-  const node = container.querySelector<SVGGElement>(`[data-destination-card="${key}"]`)!;
-  Object.assign(node, {
-    setPointerCapture: vi.fn(),
-    hasPointerCapture: () => true,
-    releasePointerCapture: vi.fn(),
-  });
-  return node;
-}
-
 afterEach(() => {
   vi.useRealTimers();
   renderCounts.card = 0;
   renderCounts.reference = 0;
   adapt.impl = null;
   adapt.calls.length = 0;
+  connectorGeometry.calls.length = 0;
   while (mounted.length > 0) {
     const entry = mounted.pop()!;
     flushSync(() => entry.root.unmount());
@@ -222,6 +164,7 @@ describe("DestinationCardsLayer", () => {
     const node = draggable(container);
     const connector = container.querySelector('[data-destination-connector="北京市"]')!;
     const before = connector.getAttribute("d");
+    connectorGeometry.calls.length = 0;
 
     flushSync(() => node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 110, clientY: 210 })));
     flushSync(() => node.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 300, clientY: 400 })));
@@ -231,10 +174,61 @@ describe("DestinationCardsLayer", () => {
     flushSync(() => vi.advanceTimersByTime(100));
     expect(node.getAttribute("transform")).toBe("translate(290 390)");
     expect(connector.getAttribute("d")).not.toBe(before);
+    expect(connectorGeometry.calls.length).toBeGreaterThan(0);
     expect(onMoveCard).not.toHaveBeenCalled();
 
     flushSync(() => node.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 })));
     expect(onMoveCard).toHaveBeenCalledWith("北京市", 290, 390);
+  });
+
+  it("keeps the drag preview of an international card free of a connector", () => {
+    vi.useFakeTimers();
+    const onMoveCard = vi.fn();
+    const { container } = render({
+      cards: [card({
+        group: { key: "海外", title: "海外", count: 2, students: [] },
+        province: "海外",
+        isInternational: true,
+      })],
+      onMoveCard,
+      renderIntervalMs: 100,
+    });
+    const node = draggable(container, "海外");
+    connectorGeometry.calls.length = 0;
+
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 110, clientY: 210 })));
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 300, clientY: 400 })));
+    flushSync(() => vi.advanceTimersByTime(100));
+
+    expect(node.getAttribute("transform")).toBe("translate(290 390)");
+    // An international group has no anchor, so the preview must neither compute nor paint a line.
+    expect(connectorGeometry.calls).toEqual([]);
+    expect(container.querySelectorAll("path")).toHaveLength(0);
+    expect(container.querySelector("[data-destination-connector]")).toBeNull();
+
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 })));
+    expect(onMoveCard).toHaveBeenCalledWith("海外", 290, 390);
+  });
+
+  it("keeps drawing the drag preview connector for a domestic card in the same layer", () => {
+    vi.useFakeTimers();
+    const overseas = card({
+      group: { key: "海外", title: "海外", count: 2, students: [] },
+      province: "海外",
+      isInternational: true,
+      placement: { id: "海外", anchorX: 620, anchorY: 300, x: 700, y: 900, width: 180, height: 120, side: "right" },
+    });
+    const { container } = render({ cards: [card(), overseas], onMoveCard: vi.fn(), renderIntervalMs: 100 });
+    const node = draggable(container);
+    const connector = container.querySelector('[data-destination-connector="北京市"]')!;
+    const before = connector.getAttribute("d");
+
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 110, clientY: 210 })));
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 300, clientY: 400 })));
+    flushSync(() => vi.advanceTimersByTime(100));
+
+    expect(connector.getAttribute("d")).not.toBe(before);
+    expect(container.querySelectorAll("[data-destination-connector]")).toHaveLength(1);
   });
 
   it("commits the neighbours a drop pushed aside in the same call", () => {

@@ -4,14 +4,19 @@
  * Side packing (`columns`, `quadrant`, `right-stack`) and the grid fallback
  * place cards from anchor order alone, so two cards can end up in an order that
  * forces their connectors to cross even when the canvas has room for a clean
- * arrangement. This pass takes such a board and fixes the crossings it can:
- * for each crossing pair it tries a small, fixed set of geometric moves (slide
- * along the rail, exchange one axis, swap the two slots, mirror one card to the
- * opposite side) and applies the one that lowers the total crossing count the
- * most, preferring the smallest displacement when several tie.
+ * arrangement. This pass takes such a board and fixes the crossings it can: for
+ * each crossing pair it scores the proposals from `card-layout-uncross-moves.ts`
+ * and applies the one that lowers the total crossing count the most, preferring
+ * the smallest displacement when several tie.
  *
- * The search is deliberately greedy and budgeted — rounds, pairs per round and
- * total move evaluations are all capped — so it never degenerates into
+ * A greedy descent is only as good as the basin its move order walks into, so
+ * the whole descent is repeated once per {@link REPAIR_PLANS} entry from the
+ * same starting board and the fewest-crossings result wins. That is what makes
+ * a new move kind a monotone improvement instead of a trade: a plan that would
+ * end up worse than the plain pairwise descent simply loses.
+ *
+ * The search is deliberately greedy and budgeted — plans, rounds, pairs per
+ * round and total cards moved are all capped — so it never degenerates into
  * exponential backtracking. Every candidate is re-validated against the same
  * hard constraints the solver uses, so a repair can never trade a crossing for
  * an overlap or an out-of-canvas card.
@@ -19,8 +24,6 @@
 
 import type { ConnectorGeometry, ConnectorStyle } from "./connector-geometry";
 import {
-  centerOf,
-  clamp,
   overlaps,
   type CardArea,
   type CardLayoutBounds,
@@ -35,18 +38,22 @@ import {
   crossingsEnforced,
   placementGeometry,
 } from "./card-layout-connectors";
+import { buildRails, type Rail, type RailMove } from "./card-layout-uncross-rails";
+import {
+  candidateMoves,
+  moveDisplacement,
+  REPAIR_PLANS,
+  type RepairPlan,
+} from "./card-layout-uncross-moves";
 
 /** Boards larger than this are left alone; the pass is a polish step, not a solver. */
 const MAX_REPAIR_CARDS = 96;
 const MAX_REPAIR_ROUNDS = 12;
 const MAX_PAIRS_PER_ROUND = 64;
-const MAX_MOVE_EVALUATIONS = 4000;
+/** Budget in *cards moved*, not candidates, so a rail reorder pays for its width. */
+const MAX_MOVE_EVALUATIONS = 6000;
 
-interface Move {
-  index: number;
-  x: number;
-  y: number;
-}
+type Move = RailMove;
 
 interface RepairState {
   cards: CardPlacement[];
@@ -60,6 +67,24 @@ interface RepairState {
   bounds: CardLayoutBounds;
   /** Reused `card index → move slot` scratch, `-1` for cards a move leaves alone. */
   slotScratch: Int32Array;
+  /** Lanes of stacked cards, rebuilt after every commit because a move can re-lane a card. */
+  rails: Rail[];
+  railOf: Int32Array;
+  plan: RepairPlan;
+}
+
+const NO_RAILS: { rails: Rail[]; railOf: Int32Array } = { rails: [], railOf: new Int32Array(0) };
+
+function laneIndex(cards: CardPlacement[], plan: RepairPlan): { rails: Rail[]; railOf: Int32Array } {
+  return plan.railMoves === "none"
+    ? { rails: NO_RAILS.rails, railOf: new Int32Array(cards.length).fill(-1) }
+    : buildRails(cards);
+}
+
+function refreshRails(state: RepairState): void {
+  const { rails, railOf } = laneIndex(state.cards, state.plan);
+  state.rails = rails;
+  state.railOf = railOf;
 }
 
 function buildState(
@@ -67,6 +92,7 @@ function buildState(
   bounds: CardLayoutBounds,
   style: ConnectorStyle,
   clearance: number,
+  plan: RepairPlan,
 ): RepairState {
   const cards = placements.map((placement) => ({ ...placement }));
   const geometries = cards.map((placement) => placementGeometry(placement, style));
@@ -88,6 +114,7 @@ function buildState(
       total += 1;
     }
   }
+  const { rails, railOf } = laneIndex(cards, plan);
   return {
     cards,
     geometries,
@@ -98,6 +125,9 @@ function buildState(
     clearance,
     bounds,
     slotScratch: new Int32Array(size),
+    rails,
+    railOf,
+    plan,
   };
 }
 
@@ -108,9 +138,16 @@ function movedPlacement(state: RepairState, move: Move): CardPlacement {
   return { ...card, x: move.x, y: move.y, side: sideForPlacement(area, state.bounds) };
 }
 
-/** A move set is only worth scoring when it keeps every hard geometric rule. */
+/**
+ * A move set is only worth scoring when it keeps every hard geometric rule.
+ *
+ * `slotOf` maps a card index to its position in `moves` (`-1` for cards the set
+ * leaves alone), which is what keeps the "does this land on a card that is not
+ * moving?" test linear even for a rail-wide reorder.
+ */
 function movesAreLegal(state: RepairState, moves: Move[], next: CardPlacement[]): boolean {
   const gap = state.bounds.gap;
+  const slotOf = state.slotScratch;
   for (let index = 0; index < moves.length; index += 1) {
     const candidate = next[index]!;
     if (!isInsideCanvas(candidate, state.bounds)) return false;
@@ -119,7 +156,7 @@ function movesAreLegal(state: RepairState, moves: Move[], next: CardPlacement[])
       if (overlaps(candidate, next[other]!, gap)) return false;
     }
     for (let card = 0; card < state.cards.length; card += 1) {
-      if (moves.some((move) => move.index === card)) continue;
+      if (slotOf[card]! >= 0) continue;
       if (overlaps(candidate, state.cards[card]!, gap)) return false;
     }
   }
@@ -133,14 +170,15 @@ function movesAreLegal(state: RepairState, moves: Move[], next: CardPlacement[])
  * (moved × board) instead of the full pair matrix.
  */
 function scoreMoves(state: RepairState, moves: Move[]): number | null {
-  const next = moves.map((move) => movedPlacement(state, move));
-  if (!movesAreLegal(state, moves, next)) return null;
   const size = state.cards.length;
-  const geometries = next.map((placement) => placementGeometry(placement, state.style));
-  const boxes = geometries.map(connectorBounds);
   const slotOf = state.slotScratch;
   slotOf.fill(-1);
   for (let slot = 0; slot < moves.length; slot += 1) slotOf[moves[slot]!.index] = slot;
+
+  const next = moves.map((move) => movedPlacement(state, move));
+  if (!movesAreLegal(state, moves, next)) return null;
+  const geometries = next.map((placement) => placementGeometry(placement, state.style));
+  const boxes = geometries.map(connectorBounds);
 
   let removed = 0;
   let added = 0;
@@ -192,88 +230,6 @@ function commitMoves(state: RepairState, moves: Move[]): void {
   }
 }
 
-/** Reflection of a card across the map centre, on whichever axis its side rides. */
-function mirroredMove(state: RepairState, index: number): Move {
-  const card = state.cards[index]!;
-  const centre = centerOf(state.bounds.map);
-  const bounds = state.bounds;
-  if (card.side === "left" || card.side === "right") {
-    return {
-      index,
-      x: clamp(2 * centre.x - (card.x + card.width), bounds.margin, bounds.width - bounds.margin - card.width),
-      y: card.y,
-    };
-  }
-  return {
-    index,
-    x: card.x,
-    y: clamp(2 * centre.y - (card.y + card.height), bounds.margin, bounds.height - bounds.margin - card.height),
-  };
-}
-
-/**
- * Slide `index` along its own rail until it sits just before or just after
- * `neighbour`. This is the move that untangles a side-packed column: the two
- * cards keep their rail, only their order along it changes.
- */
-function railSlides(state: RepairState, index: number, neighbour: number): Move[][] {
-  const card = state.cards[index]!;
-  const other = state.cards[neighbour]!;
-  const gap = state.bounds.gap;
-  if (card.side === "top" || card.side === "bottom") {
-    return [
-      [{ index, x: other.x - gap - card.width, y: card.y }],
-      [{ index, x: other.x + other.width + gap, y: card.y }],
-    ];
-  }
-  return [
-    [{ index, x: card.x, y: other.y - gap - card.height }],
-    [{ index, x: card.x, y: other.y + other.height + gap }],
-  ];
-}
-
-/**
- * The fixed repertoire tried for one crossing pair: exchange the two slots
- * (whole, or one axis at a time), slide either card past the other along its
- * rail, then push either card to the opposite side of the map.
- */
-function candidateMoves(state: RepairState, left: number, right: number): Move[][] {
-  const a = state.cards[left]!;
-  const b = state.cards[right]!;
-  // Each card keeps its own size, so the swap targets the other card's centre.
-  const swapA: Move = {
-    index: left,
-    x: b.x + b.width / 2 - a.width / 2,
-    y: b.y + b.height / 2 - a.height / 2,
-  };
-  const swapB: Move = {
-    index: right,
-    x: a.x + a.width / 2 - b.width / 2,
-    y: a.y + a.height / 2 - b.height / 2,
-  };
-  // Ordered cheapest-looking first: ties are broken by this order, so a repair
-  // that keeps both cards on their rail wins over one that rearranges the board.
-  return [
-    [{ index: left, x: a.x, y: swapA.y }, { index: right, x: b.x, y: swapB.y }],
-    [{ index: left, x: swapA.x, y: a.y }, { index: right, x: swapB.x, y: b.y }],
-    ...railSlides(state, left, right),
-    ...railSlides(state, right, left),
-    [swapA, swapB],
-    [mirroredMove(state, left)],
-    [mirroredMove(state, right)],
-  ];
-}
-
-/** Manhattan travel a move set costs, used to prefer the least disruptive repair. */
-function moveDisplacement(state: RepairState, moves: Move[]): number {
-  let travel = 0;
-  for (const move of moves) {
-    const card = state.cards[move.index]!;
-    travel += Math.abs(card.x - move.x) + Math.abs(card.y - move.y);
-  }
-  return travel;
-}
-
 /** Crossing pairs in a stable order, capped so one round stays bounded. */
 function crossingPairs(state: RepairState): Array<[number, number]> {
   const size = state.cards.length;
@@ -283,11 +239,54 @@ function crossingPairs(state: RepairState): Array<[number, number]> {
       if (state.cross[left * size + right] === 1) pairs.push([left, right]);
     }
   }
+  if (state.plan.reversePairs) pairs.reverse();
   return pairs;
+}
+
+/** Greedy descent over `state`, in place. Returns whether anything was committed. */
+function descend(state: RepairState): boolean {
+  let evaluations = 0;
+  let improved = false;
+  for (let round = 0; round < MAX_REPAIR_ROUNDS && state.total > 0; round += 1) {
+    let roundImproved = false;
+    for (const [left, right] of crossingPairs(state)) {
+      if (state.cross[left * state.cards.length + right] !== 1) continue;
+      let bestMoves: Move[] | null = null;
+      let bestTotal = state.total;
+      let bestTravel = Infinity;
+      for (const moves of candidateMoves(state, left, right)) {
+        if (evaluations >= MAX_MOVE_EVALUATIONS) break;
+        const travel = moveDisplacement(state.cards, moves);
+        if (travel === 0) continue;
+        evaluations += moves.length;
+        const total = scoreMoves(state, moves);
+        if (total === null || total > bestTotal) continue;
+        if (total === bestTotal && (bestMoves === null || travel >= bestTravel)) continue;
+        bestMoves = moves;
+        bestTotal = total;
+        bestTravel = travel;
+      }
+      if (!bestMoves) continue;
+      commitMoves(state, bestMoves);
+      refreshRails(state);
+      roundImproved = true;
+      improved = true;
+      if (state.total === 0) break;
+    }
+    if (!roundImproved || evaluations >= MAX_MOVE_EVALUATIONS) break;
+  }
+  return improved;
 }
 
 /**
  * Untangle crossing connectors in an already-placed board.
+ *
+ * The descent is greedy, so which repertoire it draws from decides which local
+ * minimum it lands in: rail reordering unties runs the pairwise moves cannot
+ * touch, but on some boards it also walks past a better pairwise-only basin.
+ * Both repertoires are therefore run from the same starting board and the
+ * result with fewer crossings wins, which makes adding a move kind a
+ * monotone improvement rather than a trade.
  *
  * Returns the input array unchanged when crossings are not enforced (no
  * `connectorStyle`, or `forbidConnectorCrossing: false`), when the board is
@@ -302,38 +301,16 @@ export function repairConnectorCrossings(
   if (placements.length < 2 || placements.length > MAX_REPAIR_CARDS) return placements;
   if (placements.some((placement) => !placement)) return placements;
 
-  const state = buildState(placements, bounds, options.connectorStyle!, connectorClearance(options));
-  if (state.total === 0) return placements;
-
-  let evaluations = 0;
-  let improved = false;
-  for (let round = 0; round < MAX_REPAIR_ROUNDS && state.total > 0; round += 1) {
-    let roundImproved = false;
-    for (const [left, right] of crossingPairs(state)) {
-      if (state.cross[left * state.cards.length + right] !== 1) continue;
-      let bestMoves: Move[] | null = null;
-      let bestTotal = state.total;
-      let bestTravel = Infinity;
-      for (const moves of candidateMoves(state, left, right)) {
-        if (evaluations >= MAX_MOVE_EVALUATIONS) break;
-        const travel = moveDisplacement(state, moves);
-        if (travel === 0) continue;
-        evaluations += 1;
-        const total = scoreMoves(state, moves);
-        if (total === null || total > bestTotal) continue;
-        if (total === bestTotal && (bestMoves === null || travel >= bestTravel)) continue;
-        bestMoves = moves;
-        bestTotal = total;
-        bestTravel = travel;
-      }
-      if (!bestMoves) continue;
-      commitMoves(state, bestMoves);
-      roundImproved = true;
-      improved = true;
-      if (state.total === 0) break;
-    }
-    if (!roundImproved || evaluations >= MAX_MOVE_EVALUATIONS) break;
+  const clearance = connectorClearance(options);
+  const style = options.connectorStyle!;
+  let best: RepairState | null = null;
+  for (const plan of REPAIR_PLANS) {
+    const state = buildState(placements, bounds, style, clearance, plan);
+    if (state.total === 0) return placements;
+    if (!descend(state)) continue;
+    if (best === null || state.total < best.total) best = state;
+    if (best.total === 0) break;
   }
 
-  return improved ? state.cards : placements;
+  return best ? best.cards : placements;
 }

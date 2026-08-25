@@ -181,7 +181,9 @@ function DestinationCardsLayerView({
       side: placement.side,
       connectorStyle: appearance.connectorStyle,
       borderless,
-      connectorHidden: !card.isInternational && borderless && (appearance.opacity ?? 1) < 0.9,
+      // International groups have no anchor, so they never draw a connector — and a
+      // borderless card whose fill is too transparent to hide the line drops it too.
+      connectorHidden: card.isInternational || (borderless && (appearance.opacity ?? 1) < 0.9),
     };
   }, [appearance.connectorStyle, appearance.opacity, appearance.preset, canvasPoint, cardsByKey]);
 

@@ -1,6 +1,6 @@
 import { applyDataViewChange } from "./catalog-usage";
-import { solveCardLayout, type CardLayoutBounds, type CardLayoutInput, type CardLayoutMode } from "./card-layout";
-import { checkLayoutHealth, type LayoutHealthInput, type LayoutHealthObject } from "./layout-health";
+import { healthInput, runAutoLayout } from "./agent-session-layout";
+import { checkLayoutHealth } from "./layout-health";
 import type { StudioAsset } from "./assets";
 import { duplicateStudentIds } from "./data-duplicate";
 import { createId } from "./ids";
@@ -9,7 +9,6 @@ import { buildProjectDigest } from "./project-digest";
 import type { ProjectDocument, ProjectTransaction } from "./project-document";
 import { updateSceneTarget, type SceneSelection } from "./scene-document";
 import type { DataViewId, Student } from "./project-data";
-import { buildProvinceSummary } from "./project-data";
 
 const MAX_TOOL_RESULT_BYTES = 16 * 1024;
 const MAX_CONVERSATION_MESSAGES = 24;
@@ -321,58 +320,6 @@ function findStudent(project: ProjectDocument, args: Record<string, unknown>): S
   const studentId = typeof args.studentId === "string" ? args.studentId : "";
   const name = typeof args.name === "string" ? args.name.trim() : "";
   return project.students.find((student) => student.id === studentId || (!studentId && name && student.name === name));
-}
-
-function groupCards(project: ProjectDocument): CardLayoutInput[] {
-  const summary = buildProvinceSummary(project.students);
-  const mapCenterX = project.map.x + (project.map.width * project.map.scale) / 2;
-  const mapCenterY = project.map.y + (project.map.height * project.map.scale) / 2;
-  const maxWidth = Math.max(120, project.cards.maxWidth);
-  return summary.map((group, index) => ({
-    id: group.province,
-    anchorX: mapCenterX + Math.cos(index * 1.7) * project.map.width * project.map.scale * 0.28,
-    anchorY: mapCenterY + Math.sin(index * 1.7) * project.map.height * project.map.scale * 0.28,
-    width: maxWidth,
-    height: Math.max(72, project.cards.fontSize * Math.max(2, Math.min(group.students.length + 1, 6))),
-  }));
-}
-
-function runAutoLayout(project: ProjectDocument, mode: string): { project: ProjectDocument; placements: unknown[] } {
-  const cards = groupCards(project);
-  const result = solveCardLayout(cards, {
-    width: project.canvas.width,
-    height: project.canvas.height,
-    map: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale },
-    margin: project.canvas.safeMargin, gap: Math.max(10, project.cards.gap),
-    // Guests go in the set the element switch relaxes; an unset occupiedAreas keeps the map frame protected.
-    elementAreas: project.guests.visibility ? [{ x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 }] : [],
-    allowMapOverlap: project.cards.allowMapOverlap === true, allowElementOverlap: project.cards.allowElementOverlap === true,
-  } as CardLayoutBounds, { mode: (mode || project.cards.layoutMode || "quadrant") as CardLayoutMode, autoBalance: project.cards.autoBalance !== false });
-  const positions = Object.fromEntries(result.placements.map((placement) => [placement.id, { x: placement.x, y: placement.y }]));
-  return {
-    project: { ...project, cards: { ...project.cards, positions } },
-    placements: result.placements,
-  };
-}
-
-function healthInput(project: ProjectDocument): LayoutHealthInput {
-  const objects: LayoutHealthObject[] = [
-    { id: "map", kind: "map", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
-    { id: "cards", kind: "card", zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } },
-    ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
-    ...project.textElements.map((text) => ({
-      id: text.id,
-      kind: "text" as const,
-      zIndex: 40,
-      bounds: { x: text.x, y: text.y - text.fontSize, width: text.maxWidth, height: text.fontSize * 1.3 },
-      visible: text.visibility,
-      content: text.content,
-      textColor: text.color,
-      backgroundColor: project.canvas.backgroundColor,
-    })),
-    ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
-  ];
-  return { canvas: { width: project.canvas.width, height: project.canvas.height, safeMargin: project.canvas.safeMargin }, objects, cardsPositions: project.cards.positions };
 }
 
 export class AgentSession {

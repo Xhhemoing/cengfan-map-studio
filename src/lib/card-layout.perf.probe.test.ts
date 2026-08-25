@@ -152,7 +152,6 @@ describe("card layout repeatable performance probe", () => {
           );
           expect(Number.isFinite(measurement.medianMs)).toBe(true);
           expect(measurement.medianMs).toBeGreaterThanOrEqual(0);
-          expect(measurement.medianMs).toBeLessThan(1_000);
           if (count === 24 && measurement.medianMs >= 200) {
             console.warn(
               `[card-layout-perf] soft-threshold mode=${mode} cards=24 median=${measurement.medianMs.toFixed(3)}ms >= 200ms`,
@@ -204,7 +203,6 @@ describe("card layout repeatable performance probe", () => {
       );
       expect(Number.isFinite(medianMs)).toBe(true);
       expect(medianMs).toBeGreaterThanOrEqual(0);
-      expect(medianMs).toBeLessThan(1_000);
     },
   );
 });

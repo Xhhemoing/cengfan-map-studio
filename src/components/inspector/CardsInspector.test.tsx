@@ -134,6 +134,11 @@ describe("CardsInspector", () => {
     // The crossing constraint is best-effort, so the panel must not promise more than the solver delivers.
     expect(container.textContent).toContain("当硬性要求去搜索，但不保证");
     expect(container.textContent).toContain("交叉最少的一版");
+    expect(mode.getAttribute("aria-describedby")).toBe("cards-crossing-hint");
+    expect(container.querySelector("#cards-crossing-hint")).not.toBeNull();
+    // Nothing to explain while the checkbox is usable.
+    expect(balance.getAttribute("aria-describedby")).toBeNull();
+    expect(container.querySelector("#cards-auto-balance-hint")).toBeNull();
 
     flushSync(() => {
       setter?.call(mode, "proximity");
@@ -149,7 +154,12 @@ describe("CardsInspector", () => {
     flushSync(() => root.render(
       <CardsInspector cards={{ ...project.cards, layoutMode: "radial" }} onPatch={onPatch} onReset={vi.fn()} />,
     ));
-    expect((container.querySelector("#cards-auto-balance") as HTMLInputElement).disabled).toBe(true);
+    const disabledBalance = container.querySelector("#cards-auto-balance") as HTMLInputElement;
+    expect(disabledBalance.disabled).toBe(true);
+    // A disabled checkbox with no reason reads as "已禁用" and nothing else to a screen reader.
+    expect(disabledBalance.getAttribute("aria-describedby")).toBe("cards-auto-balance-hint");
+    expect(container.querySelector("#cards-auto-balance-hint")?.textContent)
+      .toContain("仅「四周整齐」「分列整齐」可用");
   });
 
   it("states the two overlap rules as positive 禁止 checkboxes over the legacy allow flags", () => {
@@ -168,6 +178,14 @@ describe("CardsInspector", () => {
     expect(element.closest("label")?.textContent).toBe("禁止遮挡其他元素");
     expect(map.checked).toBe(true);
     expect(element.checked).toBe(true);
+
+    // The solver only avoids obstacles with the card rectangle; connectors are ranked, never guaranteed.
+    const overlapHint = container.querySelector("#cards-overlap-hint")!;
+    expect(map.getAttribute("aria-describedby")).toBe("cards-overlap-hint");
+    expect(element.getAttribute("aria-describedby")).toBe("cards-overlap-hint");
+    expect(overlapHint.textContent).toContain("只约束卡片矩形本身");
+    expect(overlapHint.textContent).toContain("连接线不受这两个开关约束");
+    expect(container.textContent).not.toContain("卡片与连接线");
 
     flushSync(() => map.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onPatch).toHaveBeenCalledWith({ allowMapOverlap: true });

@@ -41,6 +41,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
 }) {
   const templates = listCardTemplates();
   const layoutMode = normalizeLayoutMode(cards.layoutMode);
+  const autoBalanceAvailable = AUTO_BALANCE_MODES.has(layoutMode);
   const currentTemplateId = cards.templateId
     ?? (getCardTemplateById(cards.preset)?.id || getLegacyPresetTemplateId(cards.preset) || "standard");
   const handleTemplateChange = (templateId: string) => {
@@ -160,14 +161,15 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     <label htmlFor="cards-show-count" className="boolean-control checkbox-row"><input id="cards-show-count" type="checkbox" checked={cards.showCount !== false} onChange={(event) => onPatch({ showCount: event.target.checked })} />显示人数</label>
     <label htmlFor="cards-grouping">分组<select id="cards-grouping" value={cards.grouping} onChange={(event) => onPatch({ grouping: event.target.value as CardSettings["grouping"] })}><option value="province">省份</option><option value="city">城市</option><option value="university">院校</option></select></label>
     <label htmlFor="cards-city-subgroups" className="boolean-control checkbox-row"><input id="cards-city-subgroups" type="checkbox" checked={cards.citySubgroups !== false} disabled={cards.grouping !== "province"} onChange={(event) => onPatch({ citySubgroups: event.target.checked })} />省份卡片内按城市分类</label>
-    <label htmlFor="cards-layout-mode">排布方式<select id="cards-layout-mode" value={layoutMode} onChange={(event) => onPatch({ layoutMode: event.target.value as CardSettings["layoutMode"] })}>{layoutModes.map((option) => (
+    <label htmlFor="cards-layout-mode">排布方式<select id="cards-layout-mode" aria-describedby="cards-crossing-hint" value={layoutMode} onChange={(event) => onPatch({ layoutMode: event.target.value as CardSettings["layoutMode"] })}>{layoutModes.map((option) => (
       <option key={option.id} value={option.id}>{option.label}</option>
     ))}</select></label>
-    <label htmlFor="cards-auto-balance" className="boolean-control checkbox-row"><input id="cards-auto-balance" type="checkbox" checked={cards.autoBalance !== false} disabled={!AUTO_BALANCE_MODES.has(layoutMode)} onChange={() => onPatch({ autoBalance: cards.autoBalance === false })} />自动平衡左右</label>
-    <p className="property-panel__hint">自动排布把「连接线互不交叉」当硬性要求去搜索，但不保证每种排布方式、每份名单都能做到；排不开时会保留它找到的交叉最少的一版。看到交叉可以换一种排布方式、点顶栏「刷新展示框位置」重算，或手动拖开个别卡片。</p>
-    <label htmlFor="cards-avoid-map-overlap" className="boolean-control checkbox-row"><input id="cards-avoid-map-overlap" type="checkbox" checked={cards.allowMapOverlap !== true} onChange={(event) => onPatch({ allowMapOverlap: !event.target.checked })} />禁止遮挡地图</label>
-    <label htmlFor="cards-avoid-element-overlap" className="boolean-control checkbox-row"><input id="cards-avoid-element-overlap" type="checkbox" checked={cards.allowElementOverlap !== true} onChange={(event) => onPatch({ allowElementOverlap: !event.target.checked })} />禁止遮挡其他元素</label>
-    <p className="property-panel__hint">遮挡开关同时作用于自动排布与手动拖拽：勾选后卡片与连接线会避开省份轮廓 / 嘉宾面板、文本、装饰素材。</p>
+    <label htmlFor="cards-auto-balance" className="boolean-control checkbox-row"><input id="cards-auto-balance" type="checkbox" checked={cards.autoBalance !== false} disabled={!autoBalanceAvailable} aria-describedby={autoBalanceAvailable ? undefined : "cards-auto-balance-hint"} onChange={() => onPatch({ autoBalance: cards.autoBalance === false })} />自动平衡左右</label>
+    {!autoBalanceAvailable && <p className="property-panel__hint" id="cards-auto-balance-hint">「自动平衡左右」仅「四周整齐」「分列整齐」可用：其他排布方式不按左右两列打包，所以这里是禁用状态。</p>}
+    <p className="property-panel__hint" id="cards-crossing-hint">自动排布把「连接线互不交叉」当硬性要求去搜索，但不保证每种排布方式、每份名单都能做到；排不开时会保留它找到的交叉最少的一版。看到交叉可以换一种排布方式、点顶栏「刷新展示框位置」重算，或手动拖开个别卡片。</p>
+    <label htmlFor="cards-avoid-map-overlap" className="boolean-control checkbox-row"><input id="cards-avoid-map-overlap" type="checkbox" aria-describedby="cards-overlap-hint" checked={cards.allowMapOverlap !== true} onChange={(event) => onPatch({ allowMapOverlap: !event.target.checked })} />禁止遮挡地图</label>
+    <label htmlFor="cards-avoid-element-overlap" className="boolean-control checkbox-row"><input id="cards-avoid-element-overlap" type="checkbox" aria-describedby="cards-overlap-hint" checked={cards.allowElementOverlap !== true} onChange={(event) => onPatch({ allowElementOverlap: !event.target.checked })} />禁止遮挡其他元素</label>
+    <p className="property-panel__hint" id="cards-overlap-hint">两个「禁止遮挡」只约束卡片矩形本身，自动排布与手动拖拽都生效：勾选「禁止遮挡地图」时卡片避开省份轮廓与地图区域，勾选「禁止遮挡其他元素」时卡片避开嘉宾面板、文本、装饰素材。连接线不受这两个开关约束——排布只另外去搜索「连接线互不交叉」，不保证连接线绕开省份轮廓、文本或装饰素材。</p>
     <label htmlFor="cards-show-province-texture" className="boolean-control checkbox-row"><input id="cards-show-province-texture" type="checkbox" checked={cards.showProvinceTexture === true} onChange={(event) => onPatch({ showProvinceTexture: event.target.checked })} />数据框显示省份贴图</label>
     {mode !== "global" && cardPlacementControls}
     {mode !== "global" && layerControl()}

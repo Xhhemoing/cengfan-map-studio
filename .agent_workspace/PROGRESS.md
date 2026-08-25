@@ -6,8 +6,8 @@
 ## 状态
 
 - Round 1: 完成（见 `cycle4/ROUND1-BRIEF.md`）
-- Round 2: 完成（见 `cycle4/ROUND2-BRIEF.md`）——ratchet 绿，拆线落地
-- Round 3: 未开始
+- Round 2: 完成（见 `cycle4/ROUND2-BRIEF.md`）
+- Round 3: 完成（见 `cycle4/ROUND3-BRIEF.md`）
 
 ## 锁定规格（所有子代理必须遵守）
 

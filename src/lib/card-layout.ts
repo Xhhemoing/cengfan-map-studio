@@ -6,11 +6,12 @@
  * packing, extended with our province-AABB obstacle avoidance and six
  * selectable layout modes.
  *
- * Hard constraints (every mode, every result):
+ * Hard constraints (`status: "solved"`):
  *   1. Every card stays inside the canvas margin.
  *   2. Cards never overlap (with `gap`).
  *   3. Cards never overlap protected `occupiedAreas`; map overlap is opt-in.
- *   4. The solver never throws; saturation degrades to a contained grid.
+ *   4. The solver never throws. Saturation `fallback` may keep overlapping
+ *      cards so none are dropped.
  *
  * Soft goals: keep each card near its geographic anchor; deterministic output.
  *
