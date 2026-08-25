@@ -26,7 +26,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 7 | CLOSED | R7-1–R7-9 + R7-3b + R7-10 | — | 189/1757/2; lint 0/6; CI `362c318`; fable 8 ACCEPT + 2 NITS; no blocker. |
 | 8 | CLOSED | R8-1–R8-9 + R8-3b + R8-10 | — | 197/1846/2; lint 0/1; CI `553d5c1`; fable 9 ACCEPT + 1 NITS; no blocker. |
 | 9 | CLOSED | R9-1–R9-9 + R9-10 | — | 222/1905/2; lint 0/1; CI `7834c47`; fable 8 ACCEPT + 1 NITS; no blocker. |
-| 10 | IN_PROGRESS | R10-1–R10-9 | — | Code tasks merged. Remaining: full suite + fable + R10-10 closeout. |
+| 10 | CLOSED | R10-1–R10-9 + fable/R10-10 | — | 238/1942/2; lint 0/1; fable 5 ACCEPT + 4 NITS; no blocker. |
+| 11 | IN_PROGRESS | — | — | Load-path errno; out-of-dataDir sweep; AI routes; index.test split; App topbar; four test splits. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -191,7 +192,21 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R10-8 (`05e72d2` / `a00dc75`+`2937baf`): `collaboration-client.test.ts` 948→119 + fixture + 4 domain files, all ≤400. Allowlist entry deleted. Rollback: revert `05e72d2`.
 - Allowlist after R10-3/5/8: 42 entries. App.tsx 1066; index.ts 1367; index.test.ts 2378.
 - R10-4 (`96b353d` / `fad35fc`+`c06fb88`): non-SSE room HTTP → `server/room-routes.ts` (deps struct). SSE `events` + `events-ticket` byte-identical in index.ts. index.ts 1367→1146. Rollback: revert `96b353d`.
-- Full suite on `4ec6b7f`: **238 files passed / 1 skipped (239); 1942 passed / 2 skipped (1944)** (93.28s). Lint: 0 errors / **1 warning** (frozen DataWorkspace exhaustive-deps). Typecheck: `tsc -b --noEmit` 0. Fable review pending.
+- Full suite on `4ec6b7f`: **238 files passed / 1 skipped (239); 1942 passed / 2 skipped (1944)** (93.28s). Lint: 0 errors / **1 warning** (frozen DataWorkspace exhaustive-deps). Typecheck: `tsc -b --noEmit` 0.
+- Fable (`2550f76` / `f276a47`): 5 ACCEPT + 4 ACCEPT-WITH-NITS, **no merge blocker**. Review: `round-10-review.md`. Briefing: `round-10-briefing.md`.
+
+## Round 10 closeout
+
+- Disk hygiene: AI-state `.tmp` + `.corrupt-*` cap (revert `964a641`); boot sweep (revert `bd65d04`, deletes matching `.<pid>.tmp` on next boot by design).
+- Size: index.ts 1547→1146 (static-files then room-routes); App.tsx 1484→1066; three large test files split.
+- Ratchet process miss (not a product blocker): five merges were ratchet-red on their own first-parent trees and healed by orchestrator chores. Round 11 requires ratchet-green **per merge**.
+- Known misses carried: idle SSE member; 12 MiB ceiling; load-path errno drop (R11-1); out-of-dataDir sweep (R11-2).
+
+## Round 11 notes
+
+- Queue on `server/index.ts`: R11-2 → R11-3 → R11-4. Independent at open: R11-1, R11-5, R11-6, R11-7, R11-8, R11-9. R11-10 last.
+- **Ratchet merge discipline:** every merge commit must be ratchet-green on its **own** tree. Run `npx vitest run scripts/file-size-ratchet.test.ts` on the merge result before pushing. Allowlist updates (lower/delete that file's entry) ride the merge itself, never a chore commit afterwards. A branch cut before someone else's allowlist change rebases before merging. Each task edits only its own file's allowlist entry.
+- Headline: AI-state load-path `cause` drop; boot sweep misses `AI_STATE_FILE` outside `dataDir`; index.ts 1146 / App.tsx 1066 / index.test.ts 2378.
 
 ## Round Briefings
 
