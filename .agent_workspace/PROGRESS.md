@@ -172,6 +172,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R9-5 (`dfb7f37`): App.tsx 1729→1484. Rollback: revert `dfb7f37`.
 - R9-9 (`51f9ed0`): App.test.tsx split by domain; 129 `it(` unchanged. Rollback: revert `51f9ed0`.
 - Full suite on `9031ece`: **222 files / 1905 passed / 2 skipped**; lint 0 err / 1 warn; `tsc -b --noEmit` 0.
+- Fable review (on `7834c47`): 8 ACCEPT + 1 NITS (R9-7 — missed ≤1480 ruled a brief-authoring miss), **no merge blocker**; R9-4's red reproduced first-hand; AI state store `.tmp`/`.corrupt-*` defects confirmed in code. See `round-9-review.md`; Round-10 tasks in `round-9-briefing.md`.
 
 ## Round Briefings
 
