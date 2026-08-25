@@ -13,4 +13,4 @@
 
 - Round 1: CLOSED — architecture ACCEPT; KEEP features PRESENT; CI green; export-interruption BLOCKER fixed (`70f95b9`)
 - Round 2: CLOSED — export fix ACCEPT; tests harness repaired (`19ffd72`); no remaining MUST-FIX
-- Round 3: in progress
+- Round 3: CLOSED — ACCEPT merge-all; folded PNG-failure report-status fix `ea38982`; typecheck green at `21970aa`
