@@ -1,5 +1,6 @@
 /* 顶栏重算 + 算法选择：拆成主按钮与下拉，五个阶段共用同一套控件。 */
-.layout-recalc { gap: 0; }
+.layout-recalc { gap: 0; overflow: visible; }
+.topbar-actions .layout-recalc { overflow: visible; }
 .layout-recalc .toolbar-button {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
@@ -9,7 +10,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  width: 28px;
   min-height: 30px;
   padding: 0;
   list-style: none;
