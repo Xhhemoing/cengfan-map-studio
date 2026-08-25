@@ -109,9 +109,9 @@ export function createFileAiStateStore(filePath: string): AiStateStore {
   let recovered = false;
   const diskLoad = async (): Promise<AiRuntimeState> => {
     let raw: string;
-    try { raw = await readFile(filePath, "utf8"); } catch (cause) { if (cause && typeof cause === "object" && "code" in cause && cause.code === "ENOENT") return emptyAiRuntimeState(); throw new StateStoreFailure("AI_STATE_LOAD_FAILED", "AI 状态文件读取失败"); }
+    try { raw = await readFile(filePath, "utf8"); } catch (cause) { if (cause && typeof cause === "object" && "code" in cause && cause.code === "ENOENT") return emptyAiRuntimeState(); throw new StateStoreFailure("AI_STATE_LOAD_FAILED", "AI 状态文件读取失败", { cause }); }
     if (Buffer.byteLength(raw, "utf8") > AI_RUNTIME_STATE_MAX_BYTES) throw new StateStoreFailure("AI_STATE_CORRUPT", "AI 状态文件格式无效");
-    try { return parseState(JSON.parse(raw) as unknown); } catch (cause) { const safe = safeError(cause, "AI_STATE_CORRUPT"); if (safe.code === "AI_STATE_UNSUPPORTED_VERSION") throw safe; try { await rename(filePath, `${filePath}.corrupt-${Date.now()}`); } catch { throw new StateStoreFailure("AI_STATE_LOAD_FAILED", "AI 状态文件隔离失败"); } await pruneAiStateSidecars(filePath); recovered = true; return emptyAiRuntimeState(); }
+    try { return parseState(JSON.parse(raw) as unknown); } catch (cause) { const safe = safeError(cause, "AI_STATE_CORRUPT"); if (safe.code === "AI_STATE_UNSUPPORTED_VERSION") throw safe; try { await rename(filePath, `${filePath}.corrupt-${Date.now()}`); } catch (renameCause) { throw new StateStoreFailure("AI_STATE_LOAD_FAILED", "AI 状态文件隔离失败", { cause: renameCause }); } await pruneAiStateSidecars(filePath); recovered = true; return emptyAiRuntimeState(); }
   };
   const store = createStore("file", emptyAiRuntimeState(), async (state) => { await mkdir(dirname(filePath), { recursive: true }); const serialized = `${JSON.stringify(state)}\n`; if (Buffer.byteLength(serialized, "utf8") > AI_RUNTIME_STATE_MAX_BYTES) throw new StateStoreFailure("AI_STATE_TOO_LARGE", "AI 状态超出大小限制"); await writeAiStateAtomically(filePath, serialized); }, diskLoad);
   Object.defineProperty(store, "recovered", { get: () => recovered });
