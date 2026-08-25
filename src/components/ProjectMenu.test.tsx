@@ -80,6 +80,16 @@ describe("ProjectMenu", () => {
     expect(onExportSvg).toHaveBeenCalledTimes(1);
   });
 
+  it("greys out both poster exports while one is in flight", () => {
+    const { container } = renderMenu({ exportState: "exporting" });
+
+    const png = container.querySelector<HTMLButtonElement>('button[aria-label="导出 PNG"]');
+    const svg = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("导出 SVG"));
+    // 两个入口写的是同一张海报：放行任意一个都会顶掉在途的那次导出。
+    expect(png?.disabled).toBe(true);
+    expect(svg?.disabled).toBe(true);
+  });
+
   it("changes the PNG scale and transparency through the supplied callbacks", () => {
     const onPngScaleChange = vi.fn();
     const onTransparentChange = vi.fn();

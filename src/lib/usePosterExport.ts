@@ -77,6 +77,12 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   // PNG 导出是异步的：连点两次、或失败后立刻重试时，先发起的那次落地后不能再
   // 改状态，否则用户看到的是上一轮的结果（旧错误覆盖新成功，或反过来）。
   const exportGenerationRef = useRef(0);
+  // 「谁是最后一次 PNG」和「谁是最后一次导出」是两个问题：前者决定这份 PNG 还要不要落盘
+  // （只有更晚的一次 PNG 才让它成为多余的文件），后者决定它还能不能改导出状态。
+  const latestPngGenerationRef = useRef(0);
+  // 「正在导出 PNG」问的是有没有 PNG 在途，与代次无关：被 SVG / 工程包顶掉代次的
+  // 那一轮同样要交还自己的占用，否则这个标记永远回不到 false。
+  const pngExportsInFlightRef = useRef(0);
   const [pngScale, setPngScale] = useState(1);
   const [transparentExport, setTransparentExport] = useState(false);
   const [showProjectExportDialog, setShowProjectExportDialog] = useState(false);
@@ -176,6 +182,9 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     lastExportRef.current = "png";
     const generation = (exportGenerationRef.current += 1);
     const isCurrent = () => exportGenerationRef.current === generation;
+    latestPngGenerationRef.current = generation;
+    const isLatestPng = () => latestPngGenerationRef.current === generation;
+    pngExportsInFlightRef.current += 1;
     setExportingPng(true);
     setExportState("exporting");
     setExportError(undefined);
@@ -190,20 +199,30 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
         height: project.canvas.height * pngScale,
         transparentBackground: transparentExport,
       });
-      if (!isCurrent()) return;
       const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "png", scale: pngScale });
-      downloadBlob(blob, fileName);
+      // 只有更晚的一次 PNG 才让这份成为多余的文件。SVG / 工程包是另一份东西，它顶掉的
+      // 是状态而不是产物——把用户点过的 PNG 一起吞掉，等来的会是「SVG 已导出」加一个
+      // 从未出现的 PNG。
+      if (isLatestPng()) downloadBlob(blob, fileName);
+      if (!isCurrent()) return;
       setLastExportFileName(fileName);
       setExportState("success");
       reportStatus("PNG 已导出");
     } catch (error) {
-      if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : "PNG 导出失败";
+      if (!isCurrent()) {
+        // 状态面板归后发起的那次导出，但这份 PNG 是另一件事：它失败了还是得有人说一声。
+        // 否则界面只剩一句「SVG 已导出」，用户点过的 PNG 既没落盘也没报错。
+        // 被更晚的一次 PNG 顶掉时例外——那次才是这份文件的最终结果。
+        if (isLatestPng()) reportStatus(message);
+        return;
+      }
       setExportState("error");
       setExportError(message);
       reportStatus(message);
     } finally {
-      if (isCurrent()) setExportingPng(false);
+      pngExportsInFlightRef.current -= 1;
+      if (pngExportsInFlightRef.current === 0) setExportingPng(false);
     }
   };
 
