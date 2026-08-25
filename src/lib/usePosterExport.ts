@@ -209,8 +209,14 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       setExportState("success");
       reportStatus("PNG 已导出");
     } catch (error) {
-      if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : "PNG 导出失败";
+      if (!isCurrent()) {
+        // 状态面板归后发起的那次导出，但这份 PNG 是另一件事：它失败了还是得有人说一声。
+        // 否则界面只剩一句「SVG 已导出」，用户点过的 PNG 既没落盘也没报错。
+        // 被更晚的一次 PNG 顶掉时例外——那次才是这份文件的最终结果。
+        if (isLatestPng()) reportStatus(message);
+        return;
+      }
       setExportState("error");
       setExportError(message);
       reportStatus(message);

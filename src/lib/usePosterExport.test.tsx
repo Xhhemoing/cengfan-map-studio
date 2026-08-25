@@ -14,6 +14,8 @@ const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 let imageBehavior: "load" | "error" | "hang" = "load";
 /** 画布编码行为。 */
 let canvasBehavior: "ok" | "throw" = "ok";
+/** 写盘行为：`throw` 模拟浏览器/扩展拦下程序化下载，字节已经编好但文件没落地。 */
+let downloadBehavior: "ok" | "throw" = "ok";
 let canvasSizes: Array<{ width: number; height: number }> = [];
 let fillRectCalls = 0;
 let downloads: Array<{ filename: string; blob: Blob }> = [];
@@ -64,6 +66,7 @@ function installEnvironment(): void {
     if (tag === "a") {
       const link = document.createElementNS("http://www.w3.org/1999/xhtml", "a") as HTMLAnchorElement;
       link.click = () => {
+        if (downloadBehavior === "throw") throw new Error("下载被拦截");
         const blob = blobsByUrl.get(link.getAttribute("href") ?? "");
         if (blob) downloads.push({ filename: link.download, blob });
       };
@@ -156,6 +159,7 @@ async function startGatedPngExport(
 beforeEach(() => {
   imageBehavior = "load";
   canvasBehavior = "ok";
+  downloadBehavior = "ok";
   canvasSizes = [];
   fillRectCalls = 0;
   downloads = [];
@@ -305,6 +309,53 @@ describe("usePosterExport", () => {
     expect(harness.result().exportState).toBe("success");
     expect(harness.result().lastExportFileName).toBe("我的毕业去向图.svg");
     expect(harness.statuses.at(-1)).toBe("SVG 已导出");
+  });
+
+  it("still reports the png failure when another kind of export starts mid-flight", async () => {
+    const harness = mountHook();
+    const png = await startGatedPngExport(harness, "error");
+
+    // SVG 接管状态面板之后，这次 PNG 才失败：面板归 SVG，但用户点过的 PNG 没了，
+    // 不能只剩一句「SVG 已导出」——那等于告诉他两份文件都好了。
+    act(() => { harness.result().exportSvg(); });
+    imageBehavior = "error";
+    await act(async () => { png.release(); await png.settled; });
+
+    expect(downloads.map((entry) => entry.filename)).toEqual(["我的毕业去向图.svg"]);
+    expect(harness.statuses.at(-1)).toContain("SVG 转 PNG 失败");
+    // 状态面板仍归后发起的 SVG，代次守卫的既有契约不变。
+    expect(harness.result().exportState).toBe("success");
+    expect(harness.result().exportError).toBeUndefined();
+    expect(harness.result().lastExportFileName).toBe("我的毕业去向图.svg");
+  });
+
+  it("still reports a blocked png download when another kind of export starts mid-flight", async () => {
+    const harness = mountHook();
+    const png = await startGatedPngExport(harness);
+
+    // 这次 PNG 已经编出字节了，倒在写盘那一步（浏览器/扩展拦下了程序化下载）。
+    // 产物真的丢了，而且界面上没有任何痕迹——比解码失败更该报出来。
+    act(() => { harness.result().exportSvg(); });
+    downloadBehavior = "throw";
+    await act(async () => { png.release(); await png.settled; });
+
+    expect(downloads.map((entry) => entry.filename)).toEqual(["我的毕业去向图.svg"]);
+    expect(harness.statuses.at(-1)).toContain("下载被拦截");
+    expect(harness.result().exportState).toBe("success");
+  });
+
+  it("stays quiet when the failing png was superseded by a newer png", async () => {
+    const harness = mountHook();
+    const stale = await startGatedPngExport(harness, "error");
+
+    // 这一条钉住上面两条的边界：更晚的一次 PNG 是同一份文件的最终结果，
+    // 先发起的那次失败已经无关紧要，报出来只会让用户以为刚成功的导出也坏了。
+    await act(async () => { await harness.result().exportPng(); });
+    imageBehavior = "error";
+    await act(async () => { stale.release(); await stale.settled; });
+
+    expect(harness.statuses).toEqual(["PNG 已导出"]);
+    expect(harness.result().exportState).toBe("success");
   });
 
   it("releases the png busy flag even when a later export supersedes it", async () => {
