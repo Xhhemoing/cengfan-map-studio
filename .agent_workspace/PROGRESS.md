@@ -27,7 +27,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 8 | CLOSED | R8-1–R8-9 + R8-3b + R8-10 | — | 197/1846/2; lint 0/1; CI `553d5c1`; fable 9 ACCEPT + 1 NITS; no blocker. |
 | 9 | CLOSED | R9-1–R9-9 + R9-10 | — | 222/1905/2; lint 0/1; CI `7834c47`; fable 8 ACCEPT + 1 NITS; no blocker. |
 | 10 | CLOSED | R10-1–R10-9 + fable/R10-10 | — | 238/1942/2; lint 0/1; fable 5 ACCEPT + 4 NITS; no blocker. |
-| 11 | IN_PROGRESS | R11-1–R11-3, R11-5–R11-9 | — | Remaining: R11-4 index.test split, R11-10 closeout. |
+| 11 | IN_PROGRESS | R11-1–R11-9 | — | Remaining: full suite + fable + R11-10 closeout. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -216,6 +216,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R11-8 (`9b6ef55` / `65fd7ef`): agent-session tests split; allowlist entry deleted. Rollback: revert `9b6ef55`.
 - R11-9 (`dfbbeae` / `5ba2aca`+`547f47c`): project-store tests split; allowlist entry deleted. Rollback: revert `dfbbeae`.
 - Allowlist after these: 38 entries. index.ts 979; App.tsx 988; index.test.ts still 2378 (R11-4).
+- R11-4 (`cc14995` / `27a3daf`): `index.test.ts` 2378→126 + 9 domain files + fixture; 75 runtime tests preserved. Allowlist entry deleted. Rollback: revert `cc14995`.
 
 ## Round Briefings
 
