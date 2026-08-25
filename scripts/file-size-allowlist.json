@@ -32,7 +32,6 @@
   "src/lib/project-document.test.ts": 403,
   "src/lib/project-migration.ts": 601,
   "src/lib/project-package.test.ts": 452,
-  "src/lib/project-store.test.ts": 655,
   "src/lib/project-store.ts": 748,
   "src/lib/scene-document.test.ts": 401,
   "src/lib/scene-document.ts": 766,
