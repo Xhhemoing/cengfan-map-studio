@@ -21,8 +21,12 @@ Waited out an in-progress canvas merge on this worktree (other worktrees stayed 
 ## Verify
 
 ```
-npx vitest run src/lib/public-base-path.test.ts src/lib/collaboration-client.test.ts src/components/ProjectWorkbench.listing.test.tsx src/main.test.tsx
+npx vitest run src/lib/public-base-path.test.ts src/lib/collaboration-client.test.ts \
+  src/components/ProjectWorkbench.listing.test.tsx src/components/ProjectWorkbench.storage-notice.test.tsx \
+  src/main.test.tsx src/components/ProjectWorkbench.*.test.tsx
 ```
+
+Evidence: 10 files / 47 tests passed (listing + storage-notice + remaining split workbench + public-base-path + collaboration-client + main). Merge commit `f9560ab`. Not pushed.
 
 ## Rollback
 
