@@ -30,7 +30,6 @@
   "src/lib/binary-import.test.ts": 471,
   "src/lib/card-layout.test.ts": 958,
   "src/lib/card-layout.ts": 1662,
-  "src/lib/collaboration-client.test.ts": 948,
   "src/lib/collaboration-client.ts": 754,
   "src/lib/export-poster.test.ts": 509,
   "src/lib/image-color.ts": 555,
