@@ -3,6 +3,7 @@ import { StudioEditorShell } from "./StudioEditorShell";
 import { StudioTopbar } from "./StudioTopbar";
 import { StudioAssistantDrawer } from "./StudioAssistantDrawer";
 import type { WorkflowStageId } from "../lib/workflow-stages";
+import "./StudioLayoutTemplate.css";
 
 /** 阶段渲染分派返回的槽位（T1）。rightRailLabel 由 STAGE_METADATA 提供，不在此重复。 */
 export interface StageSlots {

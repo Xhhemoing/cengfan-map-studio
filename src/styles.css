@@ -335,17 +335,8 @@ button { font: inherit; }
 .data-upload-workspace--expanded .import-box { padding: 0; background: transparent; border: 0; }
 .data-upload-workspace--expanded .import-box .import-toggle { min-height: 32px; margin: 0; border-style: solid; }
 .data-upload-workspace--expanded .import-box > :not(.import-toggle) { margin-top: 8px; }
-.data-upload-workspace--expanded .import-box > .import-box__template:first-child { margin-top: 0; }
 .data-upload-workspace--expanded .import-recognition,
 .data-upload-workspace--expanded .import-review { grid-column: 1 / -1; order: 4; }
-/* 识别面板此前只有 grid-column 覆盖，正文一直是浏览器默认样式。 */
-.import-recognition__note { margin: 6px 0 0; color: #7a8b99; font-size: 11px; line-height: 1.5; }
-.import-recognition__warning { display: grid; gap: 6px; margin-top: 8px; padding: 10px; color: #9c4a3c; background: #fdf3ef; border: 1px solid #e9c9bd; border-radius: 6px; }
-.import-recognition__warning-title { margin: 0; font-size: 12px; font-weight: 700; line-height: 1.5; }
-.import-recognition__warning-fixes { margin: 0; padding-left: 18px; font-size: 11px; line-height: 1.6; }
-.import-recognition__warning .compact-button { justify-self: start; }
-.student-table__empty td { padding: 20px 12px; color: #7a8b99; text-align: center; white-space: normal; }
-.student-table__empty td .compact-button { margin-left: 8px; }
 .data-upload-workspace--expanded .student-table { min-width: 720px; }
 .data-upload-workspace--expanded .data-list { max-height: none; }
 .data-upload-workspace--expanded .data-upload-workspace__data .data-list { max-height: none; }
@@ -616,14 +607,11 @@ button { font: inherit; }
 .style-controls label { display: grid; gap: 5px; font-size: 12px; color: #4d6072; }
 .style-controls select, .style-controls input[type="color"], .style-controls input[type="range"] { width: 100%; }
 .file-import-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 8px; }
-.import-box__template { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.import-box__template-hint { color: #7a8b99; font-size: 11px; line-height: 1.4; }
 .data-workspace .file-import-row .wide-button { font-size: 11px; }
 
 /* Unified file dropzone */
 .file-dropzone-wrap { display: grid; gap: 4px; width: 100%; }
 .file-dropzone {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -647,17 +635,6 @@ button { font: inherit; }
 .file-dropzone:focus-within {
   outline: 2px solid #7db5a9;
   outline-offset: 2px;
-}
-.file-dropzone__input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  border: 0;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 .file-dropzone.is-dragging {
   border-color: #2f8f7c;
@@ -2554,53 +2531,6 @@ button.data-overview__metric:hover {
   .app-shell[data-editor-skin="atelier"] *::before,
   .app-shell[data-editor-skin="atelier"] *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
-
-/* 阶段壳的操作回执条：固定在画布底部中央，不参与三栏网格的高度计算。 */
-.studio-status-bar {
-  position: fixed;
-  bottom: 18px;
-  left: 50%;
-  z-index: 90;
-  display: flex;
-  max-width: min(640px, calc(100vw - 32px));
-  align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  color: var(--editor-ink);
-  font-size: 12px;
-  line-height: 1.5;
-  background: var(--editor-surface-raised);
-  border: 1px solid var(--editor-line);
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgb(16 32 48 / 18%);
-  transform: translateX(-50%);
-}
-.studio-status-bar:empty {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  background: none;
-  border: 0;
-  box-shadow: none;
-  clip-path: inset(50%);
-}
-.studio-status-bar__text { min-width: 0; }
-.studio-status-bar__close {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-  color: var(--editor-ink-muted, #7a8b99);
-  font-size: 15px;
-  background: transparent;
-  border: 0;
-  border-radius: 4px;
-  cursor: pointer;
-  place-items: center;
-}
-.studio-status-bar__close:hover { background: var(--editor-surface); }
 
 /* Focused workbenches keep the assistant rail on the left in both interface skins. */
 .studio-stage-shell {

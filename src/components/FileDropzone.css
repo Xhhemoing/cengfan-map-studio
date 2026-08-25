@@ -1,0 +1,18 @@
+/*
+ * 视觉隐藏而不是 hidden：`hidden` 会把 <input type="file"> 踢出焦点序，
+ * 整个拖放区就只剩鼠标可用，styles.css 里 `.file-dropzone:focus-within`
+ * 的焦点环也永远不会亮。定位基准由 `.file-dropzone` 的 relative 提供。
+ */
+.file-dropzone { position: relative; }
+
+.file-dropzone__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

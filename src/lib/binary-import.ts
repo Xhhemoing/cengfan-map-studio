@@ -1,6 +1,12 @@
 import { parseStudentText, type ImportCandidate, type TextImportResult, type UnparsedLine } from "./import-data";
+import {
+  describeStudentColumns,
+  HEADER_ALIASES,
+  REQUIRED_COLUMNS,
+  type StudentColumn,
+} from "./student-columns";
 
-export type StudentColumn = "name" | "university" | "city" | "locationScope";
+export { describeHeaderAliases, describeStudentColumns, STUDENT_COLUMN_LABELS, type StudentColumn } from "./student-columns";
 
 export interface ExcelColumnMapping {
   field: StudentColumn;
@@ -37,34 +43,6 @@ export function createImportTemplateSheets(): ImportTemplateSheets {
     ],
   };
 }
-
-const REQUIRED_COLUMNS = ["name", "university", "city"] as const;
-
-export const STUDENT_COLUMN_LABELS: Record<StudentColumn, string> = {
-  name: "学生姓名",
-  university: "录取院校",
-  city: "城市",
-  locationScope: "去向类型",
-};
-
-const HEADER_ALIASES: Record<StudentColumn, readonly string[]> = {
-  name: ["姓名", "学生", "学生姓名", "名字", "name", "student", "student name", "full name"],
-  university: [
-    "院校",
-    "录取院校",
-    "录取学校",
-    "大学",
-    "学校",
-    "就读学校",
-    "就读院校",
-    "university",
-    "school",
-    "college",
-    "enrolled university",
-  ],
-  city: ["城市", "所在城市", "目的地城市", "city", "destination city", "location"],
-  locationScope: ["去向类型", "去向", "地区类型", "destination type", "location scope", "scope"],
-};
 
 /** 认到几列才算表头行：一列命中太容易被普通数据行碰上，两列起才当表头。 */
 const MIN_HEADER_SCORE = 2;
@@ -108,19 +86,6 @@ function rowRawLine(cells: string[]): string {
 function rowFallbackLine(cells: string[]): string {
   const lastFilled = cells.reduce((last, cell, index) => (cell ? index : last), -1);
   return lastFilled < 0 ? "" : cells.slice(0, lastFilled + 1).join("\t");
-}
-
-/** 面板与提示里点名列时统一走这里，标签口径与 XLSX 模板表头一致。 */
-export function describeStudentColumns(fields: readonly StudentColumn[]): string {
-  return fields.map((field) => STUDENT_COLUMN_LABELS[field]).join("、");
-}
-
-/**
- * 缺列提示里回显「还认得哪些写法」。只列中文别名：
- * 英文表头对班委没有参考价值，列出来反而把提示撑长。
- */
-export function describeHeaderAliases(field: StudentColumn): string {
-  return HEADER_ALIASES[field].filter((alias) => /[\u4e00-\u9fa5]/.test(alias)).join(" / ");
 }
 
 function emptyMetadata(): Pick<ExcelImportResult, "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {

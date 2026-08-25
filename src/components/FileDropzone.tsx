@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Loader2, Upload } from "lucide-react";
 import { fileMatchesAccept } from "../lib/file-accept";
+import "./FileDropzone.css";
 
 export type FileDropzoneProps = {
   id?: string;
@@ -153,8 +154,7 @@ export function FileDropzone({
           id={inputId}
           type="file"
           accept={accept}
-          // 视觉隐藏而不是 hidden：hidden 会把 input 踢出焦点序，
-          // 整个拖放区就只剩鼠标可用，:focus-within 的焦点环也永远不会亮。
+          // 视觉隐藏而不是 hidden：hidden 会把 input 踢出焦点序（见 FileDropzone.css）。
           className="file-dropzone__input"
           disabled={inactive}
           onChange={(event) => {

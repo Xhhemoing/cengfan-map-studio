@@ -1,8 +1,4 @@
-import {
-  Bot,
-  Redo2,
-  Undo2,
-} from "lucide-react";
+import { Redo2, Undo2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -56,6 +52,7 @@ import { StudioAssistantRail } from "./components/StudioAssistantRail";
 import "./components/workflow-workspaces.css";
 import type { GlobalSettingsSection } from "./components/GlobalSettingsScreen";
 import type { ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
+import { AssistantEntryButton } from "./components/editor/AssistantEntryButton";
 import { ExportProjectDialog } from "./components/editor/ExportProjectDialog";
 import { GlobalSettingsShell } from "./components/editor/GlobalSettingsShell";
 import { LegacyEditorInspector } from "./components/editor/LegacyEditorInspector";
@@ -649,15 +646,11 @@ function StudioApp({ projectId }: { projectId?: string }) {
   );
 
   const assistantEntryButton = (
-    <button
-      ref={assistantEntryRef}
-      type="button"
-      aria-label="打开AI助手与高级功能"
-      aria-expanded={assistantDrawerOpen}
-      onClick={() => setAssistantDrawerOpen(true)}
-    >
-      <Bot size={17} />
-    </button>
+    <AssistantEntryButton
+      buttonRef={assistantEntryRef}
+      expanded={assistantDrawerOpen}
+      onOpen={() => setAssistantDrawerOpen(true)}
+    />
   );
 
   const historyActionsNode = (

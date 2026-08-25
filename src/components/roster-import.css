@@ -1,0 +1,17 @@
+/* 名单导入的起点与回执：模板入口、表头识别面板、空名单表格。 */
+
+/* 模板入口活在折叠区之外，所以要自己取消 import-box 给子项的 margin-top。 */
+.import-box__template { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.import-box__template-hint { color: #7a8b99; font-size: 11px; line-height: 1.4; }
+.data-upload-workspace--expanded .import-box > .import-box__template:first-child { margin-top: 0; }
+
+/* 识别面板此前只有 grid-column 覆盖，正文一直是浏览器默认样式。 */
+.import-recognition__note { margin: 6px 0 0; color: #7a8b99; font-size: 11px; line-height: 1.5; }
+.import-recognition__warning { display: grid; gap: 6px; margin-top: 8px; padding: 10px; color: #9c4a3c; background: #fdf3ef; border: 1px solid #e9c9bd; border-radius: 6px; }
+.import-recognition__warning-title { margin: 0; font-size: 12px; font-weight: 700; line-height: 1.5; }
+.import-recognition__warning-fixes { margin: 0; padding-left: 18px; font-size: 11px; line-height: 1.6; }
+.import-recognition__warning .compact-button { justify-self: start; }
+
+/* tr 前缀是为了压过 styles.css 里同分量的 `.student-table td`（本文件先于 styles.css 加载）。 */
+tr.student-table__empty td { padding: 20px 12px; color: #7a8b99; text-align: center; white-space: normal; }
+tr.student-table__empty td .compact-button { margin-left: 8px; }

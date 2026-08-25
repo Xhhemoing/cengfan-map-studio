@@ -11,16 +11,15 @@ import {
 import { parseStudentText, type ImportCandidate, type UnparsedLine } from "../lib/import-data";
 import {
   createImportTemplateSheets,
-  describeHeaderAliases,
-  describeStudentColumns,
   isCsvFile,
   parseOcrLikeText,
-  STUDENT_COLUMN_LABELS,
   type ExcelImportResult,
 } from "../lib/binary-import";
+import { describeStudentColumns } from "../lib/student-columns";
 import type { WorkbookImportRequest, WorkbookImportResponse } from "../workers/workbook-import.worker";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
 import { DataMessageRegions } from "./DataMessageRegions";
+import { ImportRecognitionReport } from "./ImportRecognitionReport";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
 import { findDuplicateStudentGroups } from "../lib/data-duplicate";
@@ -29,9 +28,8 @@ import { SearchCombobox } from "./SearchCombobox";
 import { FileDropzone } from "./FileDropzone";
 import { UniversityEmblem } from "./UniversityEmblem";
 import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, SegmentedControl } from "./StudioUi";
+import "./roster-import.css";
 
-/** 未导入行最多列几条：一份 60 行的名单全废时不该把整个面板刷满。 */
-const UNPARSED_PREVIEW_LIMIT = 20;
 /** 提示里最多点名几张未读取的工作表，其余用「等」收尾。 */
 const SKIPPED_SHEET_PREVIEW = 3;
 /** 压缩工作簿解包后的体积可能远大于文件本身，先挡住异常大的输入再读取到内存。 */
@@ -672,65 +670,12 @@ export function DataWorkspace({
         )}
       </div>
 
-      {excelRecognition?.headerRowIndex !== undefined && (
-        <section className="import-recognition" aria-label="Excel 表头识别结果">
-          <PanelHeader title="表头识别" meta={`第 ${excelRecognition.headerRowIndex + 1} 行`} />
-          <div className="import-recognition__grid">
-            {excelRecognition.columnMappings.map((mapping) => (
-              <div key={mapping.field} className="import-recognition__row">
-                <span>{mapping.sourceHeader}</span>
-                <strong>{STUDENT_COLUMN_LABELS[mapping.field]}</strong>
-                <small>{mapping.samples.length > 0 ? mapping.samples.join("、") : "暂无代表数据"}</small>
-              </div>
-            ))}
-          </div>
-          {excelRecognition.unmappedHeaders.length > 0 && (
-            <p className="import-recognition__note">这些列没用上：{excelRecognition.unmappedHeaders.join("、")}</p>
-          )}
-          {excelRecognition.missingRequiredFields.length > 0 && (
-            <div className="import-recognition__warning">
-              <p className="import-recognition__warning-title">
-                这张表里没有「{describeStudentColumns(excelRecognition.missingRequiredFields)}」这一列，所以一个人都没导进来。
-              </p>
-              <ul className="import-recognition__warning-fixes">
-                {excelRecognition.missingRequiredFields.map((field) => (
-                  <li key={field}>
-                    把某一列的表头改成「{STUDENT_COLUMN_LABELS[field]}」就行；写成 {describeHeaderAliases(field)} 也认得。
-                  </li>
-                ))}
-              </ul>
-              {!hideTemplateDownload && (
-                <CompactButton
-                  variant="secondary"
-                  aria-label="下载 XLSX 模板重新整理表格"
-                  icon={<Download size={14} aria-hidden />}
-                  onClick={() => { void downloadImportTemplate(); }}
-                >
-                  下载模板重新整理
-                </CompactButton>
-              )}
-            </div>
-          )}
-        </section>
-      )}
-
-      {unparsedRows.length > 0 && (
-        <section className="import-unparsed" aria-label="未导入的行">
-          <PanelHeader title="未导入的行" meta={`${unparsedRows.length} 行被跳过`} />
-          <ul className="import-unparsed__list">
-            {unparsedRows.slice(0, UNPARSED_PREVIEW_LIMIT).map((row, index) => (
-              <li key={`${row.sourceLine}-${index}`} className="import-unparsed__row">
-                <strong>第 {row.sourceLine} 行</strong>
-                <span>{row.reason}</span>
-                <small>{row.rawLine || "（空行）"}</small>
-              </li>
-            ))}
-          </ul>
-          {unparsedRows.length > UNPARSED_PREVIEW_LIMIT && (
-            <p className="import-recognition__note">仅显示前 {UNPARSED_PREVIEW_LIMIT} 行，共 {unparsedRows.length} 行未导入</p>
-          )}
-        </section>
-      )}
+      <ImportRecognitionReport
+        recognition={excelRecognition}
+        unparsedRows={unparsedRows}
+        hideTemplateDownload={hideTemplateDownload}
+        onDownloadTemplate={() => { void downloadImportTemplate(); }}
+      />
 
       {reviewRows.length > 0 && (
         <div className="import-review">

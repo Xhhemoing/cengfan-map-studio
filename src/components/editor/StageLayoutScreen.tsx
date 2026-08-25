@@ -1,97 +1,21 @@
 import { MapPinned, RefreshCw } from "lucide-react";
-import type { ComponentProps, ReactNode, RefObject } from "react";
-import type { UserAsset } from "../../lib/assets";
-import type { DataHealthSummary, DataIssue } from "../../lib/data-health";
-import type { UserFont } from "../../lib/fonts";
-import type { LayoutHealthIssue } from "../../lib/layout-health";
-import type { ProjectDocument } from "../../lib/project-document";
-import type { ResourceHealthIssue } from "../../lib/resource-health";
-import type { SceneSelection } from "../../lib/scene-document";
+import type { ComponentProps } from "react";
 import { STAGE_METADATA } from "../../lib/stage-metadata";
-import { templatePickerProps, type EditorTemplateActions } from "../../lib/editor-template-actions";
-import type { UsePosterExportResult } from "../../lib/usePosterExport";
+import { templatePickerProps } from "../../lib/editor-template-actions";
 import type { WorkflowStageId } from "../../lib/workflow-stages";
 import { CardsInspector } from "../inspector/CardsInspector";
 import { StudioLayoutTemplate, type StageSlots } from "../StudioLayoutTemplate";
 import { ToolbarButton } from "../StudioUi";
-import {
-  ContentLayoutRail,
-  ContentLayoutWorkspace,
-  type ContentAssetPanelProps,
-  type ContentLayoutWorkspaceProps,
-} from "../workspaces/ContentLayoutWorkspace";
-import {
-  DataUploadRail,
-  DataUploadWorkspace,
-  type DataUploadWorkspaceProps,
-} from "../workspaces/DataUploadWorkspace";
-import {
-  DeliveryRail,
-  DeliveryWorkspace,
-  type DeliveryIssue,
-} from "../workspaces/DeliveryWorkspace";
-import { MapStyleRail, MapStyleWorkspace, type MapStyleWorkspaceProps } from "../workspaces/MapStyleWorkspace";
+import { ContentLayoutRail, ContentLayoutWorkspace } from "../workspaces/ContentLayoutWorkspace";
+import { DataUploadRail, DataUploadWorkspace } from "../workspaces/DataUploadWorkspace";
+import { DeliveryRail, DeliveryWorkspace } from "../workspaces/DeliveryWorkspace";
+import { MapStyleRail, MapStyleWorkspace } from "../workspaces/MapStyleWorkspace";
 import { ReferenceCardStyleRail, ReferenceCardStyleWorkspace } from "../workspaces/ReferenceCardStyleWorkspace";
+import type { StageLayoutScreenProps } from "./stage-layout-screen-props";
+
+export type { StageLayoutScreenProps };
 
 type CardsInspectorProps = ComponentProps<typeof CardsInspector>;
-
-
-export interface StageLayoutScreenProps {
-  stage: WorkflowStageId;
-  theme: string;
-  skin: string;
-  assistantEntry: ReactNode;
-  historyActions: ReactNode;
-  projectActions: ReactNode;
-  workflowNav: ReactNode;
-  leftRail: ReactNode;
-  drawerOpen: boolean;
-  onDrawerClose: () => void;
-  /** 保存 / 导入 / 模板 / 复制等操作的结果回执，由壳层的 live region 播报。 */
-  statusMessage?: string;
-  onDismissStatusMessage?: () => void;
-  project: ProjectDocument;
-  renderProject: ProjectDocument;
-  dataHealth: DataHealthSummary;
-  dataIssues: DataIssue[];
-  layoutIssues: LayoutHealthIssue[];
-  resourceHealthIssues: ResourceHealthIssue[];
-  dataWorkspaceProps: DataUploadWorkspaceProps["dataWorkspaceProps"];
-  assetPanelProps: ContentAssetPanelProps;
-  userAssets: UserAsset[];
-  userFonts: UserFont[];
-  selection: SceneSelection;
-  selectedStudentId: string | null;
-  canUndo: boolean;
-  canRedo: boolean;
-  undoLabel: string;
-  redoLabel: string;
-  posterRef: RefObject<SVGSVGElement | null>;
-  posterExport: UsePosterExportResult;
-  onPatch: ContentLayoutWorkspaceProps["onPatch"];
-  onReset: ContentLayoutWorkspaceProps["onReset"];
-  onSelect: ContentLayoutWorkspaceProps["onSelect"];
-  onSelectStudent: (id: string) => void;
-  onChangeDataView: MapStyleWorkspaceProps["onChangeDataView"];
-  onAddUserAsset: NonNullable<MapStyleWorkspaceProps["onAddUserAsset"]>;
-  onCardPositionsResolved: NonNullable<MapStyleWorkspaceProps["onCardPositionsResolved"]>;
-  onMoveProvinceTexture: NonNullable<MapStyleWorkspaceProps["onMoveProvinceTexture"]>;
-  onResizeMapImage: NonNullable<MapStyleWorkspaceProps["onResizeMapImage"]>;
-  onMoveText: NonNullable<ContentLayoutWorkspaceProps["onMoveText"]>;
-  onMoveAsset: NonNullable<ContentLayoutWorkspaceProps["onMoveAsset"]>;
-  onResizeAsset: NonNullable<ContentLayoutWorkspaceProps["onResizeAsset"]>;
-  onMoveCard: NonNullable<ContentLayoutWorkspaceProps["onMoveCard"]>;
-  onMoveGuests: NonNullable<ContentLayoutWorkspaceProps["onMoveGuests"]>;
-  templateActions: EditorTemplateActions;
-  onApplyFont: NonNullable<ContentLayoutWorkspaceProps["onApplyFont"]>;
-  onUploadFont: NonNullable<ContentLayoutWorkspaceProps["onUploadFont"]>;
-  onDeleteUserFont: NonNullable<ContentLayoutWorkspaceProps["onDeleteUserFont"]>;
-  onUndo: () => void;
-  onRedo: () => void;
-  onRefreshPositions: () => void;
-  onBackToMap: () => void;
-  onLocateDeliveryIssue: (issue: DeliveryIssue) => void;
-}
 
 /**
  * 聚焦阶段的整屏分支:按阶段装配 `StudioLayoutTemplate` 的右栏 / 工作区 / 阶段动作三个插槽。
