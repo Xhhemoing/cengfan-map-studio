@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import type { AppErrorBoundaryProps } from "./AppErrorBoundary";
+import { Boom } from "./app-error-boundary-crash-child";
 import {
-  Boom,
   clickExport,
   clickReturn,
   fakeProjectStore,

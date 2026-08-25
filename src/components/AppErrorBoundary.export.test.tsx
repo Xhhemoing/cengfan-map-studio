@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SyncWorkspaceStore } from "../lib/browser-workspace-store";
 import { parseProjectPackage } from "../lib/project-package";
+import { Boom } from "./app-error-boundary-crash-child";
 import {
-  Boom,
   backupNote,
   clickExport,
   installAppErrorBoundaryTestHarness,

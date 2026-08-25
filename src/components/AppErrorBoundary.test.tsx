@@ -3,8 +3,8 @@
 // 导出备份、项目库回落与返回列表分别在 AppErrorBoundary.export/project-store/
 // return-navigation.test.tsx。
 import { describe, expect, it, vi } from "vitest";
+import { Boom } from "./app-error-boundary-crash-child";
 import {
-  Boom,
   installAppErrorBoundaryTestHarness,
   mountBoundary,
 } from "./app-error-boundary-test-harness";

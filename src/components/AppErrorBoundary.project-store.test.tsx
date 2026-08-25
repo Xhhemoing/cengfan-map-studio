@@ -8,8 +8,8 @@ import {
   serializeProjectPackage,
   type ProjectPackage,
 } from "../lib/project-package";
+import { Boom } from "./app-error-boundary-crash-child";
 import {
-  Boom,
   backupNote,
   clickExport,
   fakeProjectStore,

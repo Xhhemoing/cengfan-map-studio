@@ -46,10 +46,6 @@ export function installAppErrorBoundaryTestHarness(): void {
   });
 }
 
-export const Boom = () => {
-  throw new Error("boom");
-};
-
 export function mountBoundary(
   children: ReactNode,
   props: Omit<AppErrorBoundaryProps, "children"> = {},
