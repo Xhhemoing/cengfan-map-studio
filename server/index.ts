@@ -24,6 +24,7 @@ import {
 } from "./ai/schemas";
 import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomPersistOutcome, type RoomStore, type RoomStoreOptions, type RoomStoreSnapshot } from "./collaboration";
 import { createRoomSnapshotWriter, isRestorableRoomSnapshot, loadRoomSnapshot, sweepStaleTemporaryFiles, writeFileAtomically } from "./room-snapshot-store";
+import { createRoomErrorSender, createRoomRoutes, roomAccessToken } from "./room-routes";
 import { corsHeaders, securityHeaders, sendJson, serveStatic } from "./static-files";
 
 export const DEFAULT_PORT = 8787;
@@ -121,7 +122,6 @@ export interface AiServerOptions {
 
 const DEFAULT_MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_WORKSPACE_BYTES = 64 * 1024 * 1024;
-const DEFAULT_MAX_ROOM_TRANSACTION_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_AI_BODY_BYTES = 512 * 1024;
 const DEFAULT_MAX_ROOMS = 100;
 const DEFAULT_MAX_ROOM_SUBSCRIBERS = 50;
@@ -375,6 +375,17 @@ export function createAiServer(options: AiServerOptions = {}) {
       persistence: { outcome, at, ...(lastFailureAt === null ? {} : { lastFailureAt }) },
     };
   };
+  // 非 SSE 的房间 HTTP 路由住在 server/room-routes.ts；events-ticket 与 SSE events 仍在下面，
+  // 因为它们要用这里的 ticket 表、订阅集合与背压计量。
+  const roomRoutes = createRoomRoutes({
+    roomStore,
+    roomPersistenceFields,
+    roomCreateRateLimiter,
+    clientIp: (request) => clientIp(request, trustProxy),
+    readJson,
+    maxJsonBodyBytes,
+    isRecord,
+  });
   /**
    * 健康检查上的落盘结论。房间存储用 at: 0 表示从未成功落过盘，原样发出去在朴素解析器
    * 眼里就是 1970 年；房间响应早在 roomPersistence 里把它报成 null，运维面必须说同一件事。
@@ -601,240 +612,8 @@ export function createAiServer(options: AiServerOptions = {}) {
         return;
       }
 
-      const roomAccessToken = (request: http.IncomingMessage): string | null => {
-        const value = request.headers["x-cengfan-room-token"];
-        return typeof value === "string" && value.trim() ? value.trim() : null;
-      };
-      const roomErrorStatus = (error: CollaborationError): number => error.code === "VERSION_CONFLICT" || error.code === "ROOM_CLOSED" ? 409
-        : error.code === "ROOM_NOT_FOUND" ? 404
-          : error.code === "ROOM_LIMIT_REACHED" || error.code === "SUBSCRIBER_LIMIT_REACHED" ? 429
-            : error.code === "ROOM_FORBIDDEN" || error.code === "FORBIDDEN" || error.code === "READONLY_ROOM" ? 403
-              : error.code === "ROOM_INITIALIZING" ? 425
-                : 400;
-      const sendRoomError = (error: CollaborationError) => send(roomErrorStatus(error), {
-        error: { code: error.code, message: error.message, currentVersion: error.currentVersion },
-      });
-      const roomProjection = (room: ReturnType<typeof roomStore.get>, accessToken: string) => {
-        if (!room) return null;
-        const participant = roomStore.authorize(room.id, accessToken, "read");
-        return {
-          ...room,
-          role: participant.role,
-          participants: roomStore.listParticipants(room.id, accessToken),
-          ...roomPersistenceFields(room.id),
-        };
-      };
-
-      if (request.method === "POST" && pathname === "/api/rooms") {
-        const roomLimit = roomCreateRateLimiter.check(clientIp(request, trustProxy));
-        if (!roomLimit.allowed) {
-          send(429, { error: { code: "ROOM_RATE_LIMITED", message: "创建房间过于频繁，请稍后重试。" } });
-          return;
-        }
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId || typeof body.displayName !== "string" || !body.displayName.trim()) {
-          send( 400, { error: { code: "VALIDATION_ERROR", message: "clientId 和 displayName 必填" } });
-          return;
-        }
-        try {
-          const created = roomStore.create(body.snapshot, { clientId: body.clientId, displayName: body.displayName.trim() });
-          send(201, { ...created, ...roomPersistenceFields(created.room.id) });
-        } catch (error) {
-          if (error instanceof CollaborationError) {
-            sendRoomError(error);
-            return;
-          }
-          throw error;
-        }
-        return;
-      }
-
-      const roomMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)$/);
-      if (request.method === "GET" && roomMatch) {
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        try {
-          const room = roomProjection(roomStore.get(roomMatch[1]!), accessToken);
-          if (!room) {
-            send(404, { error: { code: "ROOM_NOT_FOUND", message: "共享房间不存在" } });
-            return;
-          }
-          if (!room.ready) {
-            send(425, { error: { code: "ROOM_INITIALIZING", message: "共享房间正在上传初始工程" } });
-            return;
-          }
-          send(200, room);
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const invitationMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/invitations$/);
-      if (request.method === "POST" && invitationMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body) || (body.role !== "editor" && body.role !== "viewer")) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "邀请角色无效" } });
-          return;
-        }
-        try {
-          send(201, roomStore.createInvitation(invitationMatch[1]!, accessToken, body.role));
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const joinMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/join$/);
-      if (request.method === "POST" && joinMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        if (!isRecord(body) || typeof body.inviteToken !== "string" || typeof body.clientId !== "string" || typeof body.displayName !== "string") {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "邀请凭证、clientId 和 displayName 必填" } });
-          return;
-        }
-        try {
-          const joined = roomStore.join(joinMatch[1]!, { inviteToken: body.inviteToken, clientId: body.clientId, displayName: body.displayName });
-          send(200, { ...joined, ...roomPersistenceFields(joined.room.id) });
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const transactionMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/transactions$/);
-      if (request.method === "POST" && transactionMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body)) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "请求体必须是对象" } });
-          return;
-        }
-        try {
-          const room = roomStore.apply(transactionMatch[1]!, accessToken, {
-            txId: typeof body.txId === "string" ? body.txId : "",
-            clientId: typeof body.clientId === "string" ? body.clientId : "",
-            baseVersion: Number(body.baseVersion),
-            snapshot: body.snapshot,
-            operations: Array.isArray(body.operations) ? body.operations : undefined,
-          });
-          const prefer = Array.isArray(request.headers.prefer) ? request.headers.prefer.join(",") : request.headers.prefer ?? "";
-          const result = prefer.toLowerCase().includes("return=minimal") ? { ...room, snapshot: undefined } : room;
-          // 正在编辑的成员稳态下只会反复收到这条 ack：SSE 对落盘一言不发，创建/加入/快照
-          // 那三个报落盘的响应他一次也不会再取。最小 ack 省的是快照，不是事故。
-          send(200, { ...result, ...roomPersistenceFields(transactionMatch[1]!) });
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const memberMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/members$/);
-      if (request.method === "POST" && memberMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "clientId 必填" } });
-          return;
-        }
-        try {
-          send(200, roomStore.refreshMember(memberMatch[1]!, accessToken, body.clientId));
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const leaveMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/leave$/);
-      if (request.method === "POST" && leaveMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body) || typeof body.clientId !== "string" || !body.clientId) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "clientId 必填" } });
-          return;
-        }
-        try {
-          send(200, roomStore.leave(leaveMatch[1]!, accessToken, body.clientId));
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const accessMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/access$/);
-      if (request.method === "POST" && accessMatch) {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_ROOM_TRANSACTION_BYTES));
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        if (!isRecord(body) || typeof body.clientId !== "string" || (body.action !== "set-readonly" && body.action !== "close")) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "clientId 与 action(set-readonly|close) 必填" } });
-          return;
-        }
-        try {
-          send(200, roomStore.setAccess(accessMatch[1]!, accessToken, body.clientId, body.action));
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
-
-      const operationsMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/operations$/);
-      if (request.method === "GET" && operationsMatch) {
-        const accessToken = roomAccessToken(request);
-        if (!accessToken) {
-          send(403, { error: { code: "ROOM_FORBIDDEN", message: "需要房间访问凭证" } });
-          return;
-        }
-        const operationsUrl = new URL(url, "http://localhost");
-        const afterVersionParam = operationsUrl.searchParams.get("afterVersion");
-        const afterVersion = afterVersionParam === null ? Number.NaN : Number(afterVersionParam);
-        if (afterVersionParam === null || !Number.isInteger(afterVersion) || afterVersion < 0) {
-          send(400, { error: { code: "VALIDATION_ERROR", message: "afterVersion 必须是非负整数" } });
-          return;
-        }
-        try {
-          const result = roomStore.getOperations(operationsMatch[1]!, accessToken, afterVersion);
-          send(200, {
-            id: operationsMatch[1]!.toUpperCase(),
-            version: result.version,
-            afterVersion,
-            operations: result.operations,
-          });
-        } catch (error) {
-          if (error instanceof CollaborationError) sendRoomError(error);
-          else throw error;
-        }
-        return;
-      }
+      const sendRoomError = createRoomErrorSender(send);
+      if (await roomRoutes.handle({ request, pathname, url, send, sendRoomError })) return;
 
       const eventsTicketMatch = pathname.match(/^\/api\/rooms\/([A-Za-z0-9]+)\/events-ticket$/);
       if (request.method === "POST" && eventsTicketMatch) {
