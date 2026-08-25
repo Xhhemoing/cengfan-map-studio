@@ -3,7 +3,7 @@
   "scripts/sync-china-locations.test.ts": 418,
   "server/collaboration.ts": 1011,
   "server/index.test.ts": 2378,
-  "server/index.ts": 1146,
+  "server/index.ts": 979,
   "src/App.collaboration-terminal.test.tsx": 402,
   "src/App.tsx": 1066,
   "src/components/AgentAssistant.test.tsx": 569,
