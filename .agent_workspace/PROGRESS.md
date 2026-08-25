@@ -27,7 +27,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 8 | CLOSED | R8-1–R8-9 + R8-3b + R8-10 | — | 197/1846/2; lint 0/1; CI `553d5c1`; fable 9 ACCEPT + 1 NITS; no blocker. |
 | 9 | CLOSED | R9-1–R9-9 + R9-10 | — | 222/1905/2; lint 0/1; CI `7834c47`; fable 8 ACCEPT + 1 NITS; no blocker. |
 | 10 | CLOSED | R10-1–R10-9 + fable/R10-10 | — | 238/1942/2; lint 0/1; fable 5 ACCEPT + 4 NITS; no blocker. |
-| 11 | IN_PROGRESS | — | — | Load-path errno; out-of-dataDir sweep; AI routes; index.test split; App topbar; four test splits. |
+| 11 | IN_PROGRESS | R11-1, R11-2 | — | Load-path errno; out-of-dataDir sweep; AI routes; index.test split; App topbar; four test splits. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -207,6 +207,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - Queue on `server/index.ts`: R11-2 → R11-3 → R11-4. Independent at open: R11-1, R11-5, R11-6, R11-7, R11-8, R11-9. R11-10 last.
 - **Ratchet merge discipline:** every merge commit must be ratchet-green on its **own** tree. Run `npx vitest run scripts/file-size-ratchet.test.ts` on the merge result before pushing. Allowlist updates (lower/delete that file's entry) ride the merge itself, never a chore commit afterwards. A branch cut before someone else's allowlist change rebases before merging. Each task edits only its own file's allowlist entry.
 - Headline: AI-state load-path `cause` drop; boot sweep misses `AI_STATE_FILE` outside `dataDir`; index.ts 1146 / App.tsx 1066 / index.test.ts 2378.
+- R11-1 (`af32785` / `f03e64c`+`b40cf32`): load-path `StateStoreFailure` carries `{ cause }`. Rollback: revert `af32785`.
+- R11-2 (`6a8775b` / `f54f3d0`): `sweepStaleTemporaryFilesBesideFile` for `AI_STATE_FILE` outside `dataDir`; index.ts stays 1146. Rollback: revert `6a8775b`. Must land before R11-3.
 
 ## Round Briefings
 
