@@ -1,26 +1,35 @@
-# Round 32 任务书
+# Round 32 结论简报
 
 - **时间**: 2026-08-25
 - **前置**: Round 31 BRIEF（226 files / 2024 tests；HEAD `5e102eb`）
 - **模型**: 2× claude-fable-5-thinking-xhigh · 2× claude-opus-5-thinking-high-fast · 2× gpt-5.6-sol-xhigh-fast
-- **状态**: 进行中
+- **集成**: `tsc` app+node 0 error；`npx eslint . --max-warnings 0`；全量 vitest **226 files / 2037 tests passed**（77.00s）；feat HEAD `179aab2`
 
-## 相对 Round 31 的真实剩余缺口
+## 相对 Round 31
 
-| 槽位 | 真实缺口 | 禁止 |
+| 代理 | Round 31 | Round 32 |
 | --- | --- | --- |
-| R32-fable-arch | 项目工作台无 skip-link（编辑器/设置页已有 `SkipToStageLink`） | 不改 StudioUi 兜底测；不引入 Playwright |
-| R32-fable-sota | `UniversityEmblem` 在占位/失败时 `aria-hidden` 掉整个 `role="img"`，校徽名称进不了 AT | 不改 emblem 懒加载网络行为 |
-| R32-opus-layout | `solveCardLayout` 出口没有最后一遍 `side = space.sideOf(placement)` 不变量 | 禁止改 `repairPlacement` seed；禁止第二列；禁止改 pack 几何 |
-| R32-opus-data | HTML 仍缺 `&MediumSpace;`（U+205F） | 禁止 `·`；禁止 ASCII `:` `/`；禁止 ldquo→空格；`import-data.ts` 已 400 行勿扩 |
-| R32-gpt-server | `host-validation` 与 `clientIp` 各写一套 `::ffff:` 十六进制解析，会漂 | 禁止发明 CF-Connecting-IP；禁止改 XFF 跳数顺序 |
-| R32-gpt-perf | cache-key / worker LRU 已做；只查新的测得赢 | 禁止重写 pack；禁止重试 nearestValues / cache-key / worker LRU |
+| R32-fable-arch | 工作台空状态 MapPinned hidden | 工作台 skip-link「跳到项目列表」，落点 `workbench-projects` |
+| R32-fable-sota | ContinueEditingCard History hidden | UniversityEmblem 占位/失败时保留 `role="img"` + `aria-label` |
+| R32-opus-layout | 搜索路径 leftover side 锁 | 出口 `sideForShippedPlacement`：shipped `side` = `space.sideOf` |
+| R32-opus-data | CELL_DELIMITERS `︓` `︰` | HTML `&MediumSpace;` / `&ThickSpace;` → 空格 |
+| R32-gpt-perf | worker hook 去掉重复 LRU | worker 阈值 24→49（48 卡主线程 p95 < 16.7ms） |
+| R32-gpt-server | `clientIp` `::ffff:H:L` 点分还原 | 共享 `normalizeIpv4MappedAddress`；Host `[::ffff:7f00:1]` |
 
-## 共享约束
+## 验证链
 
-- 回复第一行必须是 `MODEL_SLUG: <slug>`。
-- 禁止 git commit / stash / checkout / push / 新分支。
-- 实现文件 ≤400 行。
-- 根 `tsc --noEmit` 是 no-op；用 `-p tsconfig.app.json` / `tsconfig.node.json`。
-- 支付/套餐不得进入仓库。
-- 报告写到 `.agent_workspace/round32/<slot>.md`。
+| failure | cause | fix | recheck |
+| --- | --- | --- | --- |
+| 无集成失败 | — | 子代理路径隔离；出口 relabel 测试先证 packSides 仍不一致 | tsc 0；eslint --max-warnings 0；226 / 2037 |
+| 工作台无 skip-link | 仅编辑器/设置页有 `SkipToStageLink` | 复用组件 + `WORKBENCH_PROJECTS_TARGET_ID` | ProjectWorkbench + ProjectGrid 套件绿 |
+| 校徽占位 `aria-hidden` 掉名称 | 宿主 `aria-hidden={!showImage}` | 只藏内部占位，宿主保留 role/img | UniversityEmblem 9 绿 |
+| packSides 落座后 side 仍是分栏 | 出口透传 classification | `merged.map(sideForShippedPlacement)` | card-layout 套件绿 |
+| `&MediumSpace;` 原样进姓名 | 实体表缺键 | `mediumspace`/`thickspace` → `" "` | html-table-parse 套件绿 |
+| Host 与 clientIp 各写一套 mapped 解析 | 无共享模块 | `server/ipv4-mapped.ts` | client-ip + security 绿 |
+| 24 卡冷 miss 付 worker 启动 ~21ms | 阈值低于测得的主线程安全区 | 阈值 49 | worker/bench 套件绿 |
+
+## 仍未达印刷级 SOTA
+
+- 无真浏览器 E2E；协作 flock 只保证单机。
+- 饱和溢出仍堆在 `y = maxY`。浏览器 PNG 仍为 sRGB。
+- `hasError && empty` 时 ProjectGrid 渲染空白列表（错误横幅在工作台）。
