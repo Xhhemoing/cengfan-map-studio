@@ -2,7 +2,7 @@
 
 Integration branch: `agent/opt-continuous`  
 **Merge-all overlay (2026-08-25):** isolation `cursor/merge-all-branches-e17a` → merged as PR #44 onto `main` @ `388eafc`.  
-**Verify overlay:** `cursor/verify-merged-code-e17a`. See `round-verify-r1.md` / `VERIFY-PROGRESS.md`.  
+**Verify overlay:** `cursor/verify-merged-code-e17a` PR #45. See `round-verify-r1.md` / `round-verify-r2.md` / `VERIFY-PROGRESS.md`.  
 PR: https://github.com/Xhhemoing/cengfan-map-studio/pull/14  
 Base: `origin/main` @ `897a2a6`  
 Start: 2026-08-24  

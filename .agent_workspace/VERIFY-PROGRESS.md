@@ -11,6 +11,6 @@
 
 ## Loop status
 
-- Round 1: in progress (6 agents dispatched)
-- Round 2: pending
-- Round 3: pending
+- Round 1: CLOSED — architecture ACCEPT; KEEP features PRESENT; CI green; export-interruption BLOCKER fixed (`70f95b9`)
+- Round 2: CLOSED — export fix ACCEPT; tests harness repaired (`19ffd72`); no remaining MUST-FIX
+- Round 3: in progress
