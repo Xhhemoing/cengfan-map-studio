@@ -27,7 +27,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 8 | CLOSED | R8-1–R8-9 + R8-3b + R8-10 | — | 197/1846/2; lint 0/1; CI `553d5c1`; fable 9 ACCEPT + 1 NITS; no blocker. |
 | 9 | CLOSED | R9-1–R9-9 + R9-10 | — | 222/1905/2; lint 0/1; CI `7834c47`; fable 8 ACCEPT + 1 NITS; no blocker. |
 | 10 | CLOSED | R10-1–R10-9 + fable/R10-10 | — | 238/1942/2; lint 0/1; fable 5 ACCEPT + 4 NITS; no blocker. |
-| 11 | IN_PROGRESS | R11-1–R11-9 | — | Remaining: full suite + fable + R11-10 closeout. |
+| 11 | CLOSED | R11-1–R11-9 + fable/R11-10 | — | 264/1969/2; lint 0/1; fable 7 ACCEPT + 2 NITS; no blocker. |
+| 12 | IN_PROGRESS | — | — | App ≤940; eight test splits; lint-green-per-merge. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -219,6 +220,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R11-4 (`cc14995` / `27a3daf`): `index.test.ts` 2378→126 + 9 domain files + fixture; 75 runtime tests preserved. Allowlist entry deleted. Rollback: revert `cc14995`.
 - Lint follow-up: `useServerFixture` renamed to `installServerFixture` so rules-of-hooks does not fire on node-env tests.
 - Full suite on this tree (pre-rename, tests identical): **264 files passed / 2 skipped; 1969 passed / 2 skipped** (98.27s). Lint after rename: 0 errors / 1 frozen warning. Typecheck: `tsc -b --noEmit` 0.
+- Fable (`f6f5285`): 7 ACCEPT + 2 ACCEPT-WITH-NITS, **no merge blocker**. Review: `round-11-review.md`. Briefing: `round-11-briefing.md`.
 
 ## Round Briefings
 
