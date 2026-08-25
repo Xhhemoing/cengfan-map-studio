@@ -104,6 +104,25 @@ describe("AI runtime state store", () => {
     }
   });
 
+  it("keeps the original errno on cause when the state file cannot be read", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "cengfan-ai-load-"));
+    try {
+      const file = join(directory, "state.json");
+      // 状态文件位置被目录占住：readFile 抛的是 EISDIR 而不是 ENOENT，属于真正的加载故障。
+      await mkdir(file);
+      const store = createFileAiStateStore(file);
+
+      const rejection = await store.load().then(() => null, (error: unknown) => error);
+
+      expect(rejection).toMatchObject({ code: "AI_STATE_LOAD_FAILED" });
+      // 对外 code 稳定，排障要靠 cause 上的原始 errno 区分是路径被占还是权限不足。
+      expect((rejection as { cause?: { code?: string } }).cause).toMatchObject({ code: "EISDIR" });
+      expect(store.failure).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("caps quarantined corrupt sidecars at the newest five", async () => {
     const directory = await mkdtemp(join(tmpdir(), "cengfan-ai-sidecars-"));
     try {
