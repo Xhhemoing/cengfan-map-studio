@@ -24,7 +24,7 @@ import {
   proposeEditsRequestSchema,
 } from "./ai/schemas";
 import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomPersistOutcome, type RoomStore, type RoomStoreOptions, type RoomStoreSnapshot } from "./collaboration";
-import { createRoomSnapshotWriter, isRestorableRoomSnapshot, loadRoomSnapshot, writeFileAtomically } from "./room-snapshot-store";
+import { createRoomSnapshotWriter, isRestorableRoomSnapshot, loadRoomSnapshot, sweepStaleTemporaryFiles, writeFileAtomically } from "./room-snapshot-store";
 
 export const DEFAULT_PORT = 8787;
 
@@ -1490,6 +1490,8 @@ export async function createReadyAiServer(options: AiServerOptions = {}): Promis
   const config = options.productionConfig ?? validateProductionConfig(process.env);
   if (!config.ok) throw new Error(`生产配置无效: ${config.errors.join(",")}`);
   const dataDir = resolve(options.dataDir ?? config.config?.dataDir ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
+  // 上一次进程崩在原子写中途留下的 .tmp 只有启动时能收：必须赶在任何读写者上膛之前。
+  await sweepStaleTemporaryFiles(dataDir);
   const stateFile = process.env.AI_STATE_FILE ?? config.config?.aiStateFile ?? join(dataDir, "ai-runtime-state.json");
   const store = options.aiStateStore ?? createFileAiStateStore(stateFile);
   const state = await store.load();

@@ -194,6 +194,91 @@ describe("room snapshot store", () => {
     expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("sweeps atomic-write temporaries orphaned by a crashed previous boot", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-orphan-tmp-"));
+    directories.push(dataDir);
+    // 上一次进程在 write 与 rename 之间被 SIGKILL：这三份 <file>.<pid>.tmp 谁也收不掉，
+    // 因为 R9-1 的清理只在本进程的 rename 失败路径上跑。
+    const orphans = ["workspace.json.12345.tmp", "collaboration-rooms.json.999.tmp", "ai-state.json.4.tmp"];
+    for (const name of orphans) await writeFile(join(dataDir, name), "half-written", "utf8");
+
+    servers.push(await createReadyAiServer({ dataDir }));
+
+    expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("sweeps the temporary left under this process's own pid, which can only be a previous boot's", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-own-pid-tmp-"));
+    directories.push(dataDir);
+    // 启动那一刻还没有任何写者上膛，所以哪怕名字里的 pid 正是本进程，也只可能是上一次启动留下的。
+    const ownPid = join(dataDir, `collaboration-rooms.json.${process.pid}.tmp`);
+    await writeFile(ownPid, "half-written", "utf8");
+
+    servers.push(await createReadyAiServer({ dataDir }));
+
+    await expect(readFile(ownPid, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("leaves sidecars, live data files, and non-pid .tmp names alone while sweeping", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-sweep-scope-"));
+    directories.push(dataDir);
+    const survivors = [
+      // 事故现场：R9-7 的 .bad 与 R10-1 的 .corrupt-*，扫临时文件时一份都不能顺手带走。
+      "collaboration-rooms.json.bad",
+      "collaboration-rooms.json.1700000000000.bad",
+      "ai-runtime-state.json.corrupt-1700000000000",
+      // 正常数据文件。
+      "workspace.json",
+      // 名字形状不对：既不是 `<file>.<pid>.tmp`，就不是原子写留下的，来历不明不动它。
+      "workspace.json.abc.tmp",
+      "scratch.tmp",
+      ".tmp",
+    ];
+    for (const name of survivors) await writeFile(join(dataDir, name), `keep-${name}`, "utf8");
+    await writeFile(join(dataDir, "workspace.json.777.tmp"), "half-written", "utf8");
+
+    servers.push(await createReadyAiServer({ dataDir }));
+
+    const remaining = (await readdir(dataDir)).filter((name) => survivors.includes(name) || name.endsWith(".tmp"));
+    expect(remaining.sort()).toEqual([...survivors].sort());
+  });
+
+  it("keeps the good envelope from the previous boot while sweeping that boot's orphaned temporaries", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-sweep-envelope-"));
+    directories.push(dataDir);
+    const first = await createReadyAiServer({ dataDir });
+    servers.push(first);
+    const created = await createCollaborationRoom(await startServer(first), { title: "扫过之后还在" });
+    await attachServerLifecycle(first, { timeoutMs: 2_000 }).shutdown("SIGTERM");
+    // 落盘成功的信封与崩溃留下的孤儿躺在同一个目录里，扫地的只准带走后者。
+    await writeFile(join(dataDir, "collaboration-rooms.json.999.tmp"), "half-written", "utf8");
+
+    const restarted = await createReadyAiServer({ dataDir });
+    servers.push(restarted);
+    const response = await fetch(`${await startServer(restarted)}/api/rooms/${created.room.id}`, {
+      headers: roomHeaders(created.access.accessToken),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ snapshot: { title: "扫过之后还在" } });
+    expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("boots anyway when a leftover temporary cannot be removed", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-sweep-fail-"));
+    directories.push(dataDir);
+    // 名字对上了却是个非空目录：rm 不带 recursive 会失败，扫地失败不能把启动挡下来。
+    await mkdir(join(dataDir, "workspace.json.42.tmp"));
+    await writeFile(join(dataDir, "workspace.json.42.tmp", "inner"), "x", "utf8");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const server = await createReadyAiServer({ dataDir });
+    servers.push(server);
+
+    expect((await fetch(`${await startServer(server)}/api/live`)).status).toBe(200);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("workspace.json.42.tmp"), expect.anything());
+  });
+
   it("writes the room snapshot as a private file", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "cengfan-rooms-mode-"));
     directories.push(dataDir);
