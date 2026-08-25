@@ -212,6 +212,25 @@ describe("Extracted render branches (R11-5)", () => {
   });
 });
 
+describe("Extracted render branches (R12-1)", () => {
+  // legacy 画布舞台与右侧属性面板搬到 src/components/editor/*。这条 pin 从 App 这一侧
+  // 确认中栏的缩放外壳嵌套、右栏的 id 与项目摘要的同步状态出口都没有随接缝改变。
+  it("keeps the canvas stage nesting and the inspector summary wired to the legacy shell", () => {
+    const container = renderLegacyApp();
+    const workspace = container.querySelector(".workspace")!;
+
+    const inner = workspace.querySelector(
+      ":scope > section.editor-area > .canvas-stage > .canvas-zoom-shell > .canvas-zoom-inner",
+    );
+    expect(inner?.querySelector("svg")).not.toBeNull();
+
+    const inspector = workspace.querySelector<HTMLElement>(":scope > aside.inspector")!;
+    expect(inspector.id).toBe("editor-inspector");
+    expect(inspector.querySelector(".project-summary > summary")?.textContent).toBe("项目摘要");
+    expect(inspector.querySelector<HTMLElement>(".project-summary .status")?.dataset.syncStatus).toBe("idle");
+  });
+});
+
 describe("Topbar action layering (T4)", () => {
   it("keeps global undo/redo visible in the topbar across every focused stage", () => {
     const container = renderPublicApp();
