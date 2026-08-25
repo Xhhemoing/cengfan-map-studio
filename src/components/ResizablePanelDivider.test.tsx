@@ -47,6 +47,7 @@ describe("ResizablePanelDivider", () => {
     expect(separator?.getAttribute("aria-valuenow")).toBe("220");
     expect(separator?.getAttribute("aria-valuemin")).toBe("180");
     expect(separator?.getAttribute("aria-valuemax")).toBe("360");
+    expect(separator?.getAttribute("aria-valuetext")).toBe("220 像素");
     expect(separator?.getAttribute("aria-label")).toBe("调整左侧栏宽度");
   });
 
@@ -69,5 +70,32 @@ describe("ResizablePanelDivider", () => {
     separator.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "End" }));
 
     expect(onChange.mock.calls).toEqual([[228], [180], [360]]);
+  });
+
+  it("cancels an in-progress drag with Escape and restores the starting width", () => {
+    const { container, onChange } = renderDivider();
+    const separator = container.querySelector<HTMLElement>('[role="separator"]')!;
+
+    separator.dispatchEvent(pointer("pointerdown", 200));
+    separator.dispatchEvent(pointer("pointermove", 260));
+    expect(onChange).toHaveBeenLastCalledWith(280);
+
+    separator.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    expect(onChange).toHaveBeenLastCalledWith(220);
+    expect(separator.classList.contains("is-dragging")).toBe(false);
+
+    // Once cancelled, further pointer movement must not resize the panel.
+    onChange.mockClear();
+    separator.dispatchEvent(pointer("pointermove", 320));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("ignores Escape when no drag is active", () => {
+    const { container, onChange } = renderDivider();
+    const separator = container.querySelector<HTMLElement>('[role="separator"]')!;
+
+    separator.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

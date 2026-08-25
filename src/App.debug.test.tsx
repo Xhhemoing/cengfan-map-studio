@@ -1,42 +1,7 @@
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
-import { createRoot, type Root } from "react-dom/client";
-import { flushSync } from "react-dom";
-import { App } from "./App";
-import { LEGACY_EDITOR_STORAGE_KEY } from "./lib/workspace-session";
+import { describe, it, expect } from "vitest";
+import { click, installAppTestHarness, renderLegacyApp } from "./test-utils/app-harness";
 
-const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
-
-beforeAll(async () => {
-  await import("./components/GlobalSettingsScreen");
-  await import("./components/workspaces/DataUploadWorkspace");
-});
-
-function mountApp(): HTMLDivElement {
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  roots.push({ root, container });
-  flushSync(() => root.render(<App />));
-  return container;
-}
-
-function renderLegacyApp(): HTMLDivElement {
-  window.localStorage.clear();
-  window.localStorage.setItem(LEGACY_EDITOR_STORAGE_KEY, "1");
-  return mountApp();
-}
-
-function click(element: Element): void {
-  flushSync(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-}
-
-afterEach(() => {
-  roots.splice(0).forEach(({ root, container }) => {
-    flushSync(() => root.unmount());
-    container.remove();
-  });
-  window.localStorage.clear();
-});
+installAppTestHarness();
 
 describe("debug", () => {
   it("clicks the advanced tab then looks for the settings button", () => {

@@ -17,35 +17,53 @@ function areaKey(area: CardArea): [number, number, number, number] {
   return [area.x, area.y, area.width, area.height];
 }
 
-function polygonKey(polygon: CardPolygon): { rings: number[][][]; bounds?: [number, number, number, number] } {
-  return {
-    rings: polygon.rings.map((ring) => ring.map((point) => [point.x, point.y])),
-    ...(polygon.bounds ? { bounds: areaKey(polygon.bounds) } : {}),
-  };
+function polygonKey(
+  polygon: CardPolygon,
+): [number[][][], [number, number, number, number] | null] {
+  return [
+    polygon.rings.map((ring) => ring.map((point) => [point.x, point.y])),
+    polygon.bounds ? areaKey(polygon.bounds) : null,
+  ];
+}
+
+function fixedPositionsKey(
+  positions: CardLayoutOptions["fixedPositions"],
+): Array<[string, number, number]> | undefined {
+  if (!positions) return undefined;
+  const entries: Array<[string, number, number]> = [];
+  for (const [id, point] of Object.entries(positions)) {
+    if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+      entries.push([id, point.x, point.y]);
+    }
+  }
+  entries.sort(([left], [right]) => left.localeCompare(right));
+  return entries.length === 0 ? undefined : entries;
 }
 
 /** Creates a stable key for solver inputs without including renderer-only styling. */
 export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutCacheInput): string {
-  return JSON.stringify({
-    cards: cards.map(({ id, anchorX, anchorY, width, height }) => [id, anchorX, anchorY, width, height]),
-    bounds: {
-      width: bounds.width,
-      height: bounds.height,
-      map: areaKey(bounds.map),
-      margin: bounds.margin,
-      gap: bounds.gap,
-      allowMapOverlap: bounds.allowMapOverlap === true,
-      occupiedAreas: (bounds.occupiedAreas ?? []).map(areaKey),
-      occupiedPolygons: (bounds.occupiedPolygons ?? []).map(polygonKey),
-    },
-    options: {
-      mode: options.mode ?? "quadrant",
-      autoBalance: options.autoBalance === true,
-      ...(options.topBottomBandRatio === undefined ? {} : { topBottomBandRatio: options.topBottomBandRatio }),
-      connectorStyle: options.connectorStyle ?? "curve",
-      connectorWidth: options.connectorWidth ?? 1.5,
-    },
-  });
+  const fixedPositions = fixedPositionsKey(options.fixedPositions);
+  return JSON.stringify([
+    cards.map(({ id, anchorX, anchorY, width, height }) => [id, anchorX, anchorY, width, height]),
+    [
+      bounds.width,
+      bounds.height,
+      areaKey(bounds.map),
+      bounds.margin,
+      bounds.gap,
+      bounds.allowMapOverlap === true,
+      (bounds.occupiedAreas ?? []).map(areaKey),
+      (bounds.occupiedPolygons ?? []).map(polygonKey),
+    ],
+    [
+      options.mode ?? "quadrant",
+      options.autoBalance === true,
+      options.topBottomBandRatio === undefined ? [] : [options.topBottomBandRatio],
+      options.connectorStyle ?? "curve",
+      options.connectorWidth ?? 1.5,
+      fixedPositions ?? null,
+    ],
+  ]);
 }
 
 export class CardLayoutCache {

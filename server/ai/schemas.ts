@@ -15,6 +15,11 @@ export interface ProposeEditsRequest {
   };
 }
 
+export interface ExplainRequest {
+  message: string;
+  studentCount: number;
+}
+
 export interface EditorCommandPayload {
   id: string;
   type:
@@ -49,15 +54,19 @@ const COMMAND_TYPES = new Set([
   "moveText",
 ]);
 
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return Boolean(input) && typeof input === "object" && !Array.isArray(input);
+}
+
 export function parseDataRequestSchema(input: unknown): ValidationResult<ParseDataRequest> {
-  if (!input || typeof input !== "object") {
+  if (!isRecord(input)) {
     return { ok: false, error: "请求体必须是对象" };
   }
-  const body = input as Record<string, unknown>;
+  const body = input;
   if (typeof body.text !== "string" || !body.text.trim()) {
     return { ok: false, error: "text 不能为空" };
   }
-  if (!["paste", "csv", "excel", "ocr"].includes(String(body.source))) {
+  if (typeof body.source !== "string" || !["paste", "csv", "excel", "ocr"].includes(body.source)) {
     return { ok: false, error: "source 无效" };
   }
   return {
@@ -72,31 +81,54 @@ export function parseDataRequestSchema(input: unknown): ValidationResult<ParseDa
 export function proposeEditsRequestSchema(
   input: unknown,
 ): ValidationResult<ProposeEditsRequest> {
-  if (!input || typeof input !== "object") {
+  if (!isRecord(input)) {
     return { ok: false, error: "请求体必须是对象" };
   }
-  const body = input as Record<string, unknown>;
+  const body = input;
   if (typeof body.message !== "string" || !body.message.trim()) {
     return { ok: false, error: "message 不能为空" };
   }
   const summary = body.projectSummary;
-  if (!summary || typeof summary !== "object") {
+  if (!isRecord(summary)) {
     return { ok: false, error: "projectSummary 不能为空" };
   }
-  const projectSummary = summary as Record<string, unknown>;
-  if (typeof projectSummary.studentCount !== "number") {
-    return { ok: false, error: "studentCount 必须是数字" };
+  const projectSummary = summary;
+  if (!Number.isSafeInteger(projectSummary.studentCount) || Number(projectSummary.studentCount) < 0) {
+    return { ok: false, error: "studentCount 必须是非负整数" };
+  }
+  for (const key of ["templateId", "dataView", "cardPreset"] as const) {
+    if (projectSummary[key] !== undefined && (typeof projectSummary[key] !== "string" || !projectSummary[key].trim())) {
+      return { ok: false, error: `${key} 必须是非空字符串` };
+    }
   }
   return {
     ok: true,
     value: {
       message: body.message,
       projectSummary: {
-        studentCount: projectSummary.studentCount,
-        templateId: String(projectSummary.templateId ?? "original"),
-        dataView: String(projectSummary.dataView ?? "province"),
-        cardPreset: String(projectSummary.cardPreset ?? "standard"),
+        studentCount: projectSummary.studentCount as number,
+        templateId: (projectSummary.templateId as string | undefined) ?? "original",
+        dataView: (projectSummary.dataView as string | undefined) ?? "province",
+        cardPreset: (projectSummary.cardPreset as string | undefined) ?? "standard",
       },
+    },
+  };
+}
+
+export function explainRequestSchema(input: unknown): ValidationResult<ExplainRequest> {
+  if (!isRecord(input)) return { ok: false, error: "请求体必须是对象" };
+  if (typeof input.message !== "string" || !input.message.trim()) {
+    return { ok: false, error: "message 不能为空" };
+  }
+  if (input.studentCount !== undefined
+    && (!Number.isSafeInteger(input.studentCount) || Number(input.studentCount) < 0)) {
+    return { ok: false, error: "studentCount 必须是非负整数" };
+  }
+  return {
+    ok: true,
+    value: {
+      message: input.message,
+      studentCount: (input.studentCount as number | undefined) ?? 0,
     },
   };
 }
@@ -104,10 +136,10 @@ export function proposeEditsRequestSchema(
 export function validateEditorCommandPayload(
   input: unknown,
 ): ValidationResult<EditorCommandPayload> {
-  if (!input || typeof input !== "object") {
+  if (!isRecord(input)) {
     return { ok: false, error: "command 必须是对象" };
   }
-  const command = input as Record<string, unknown>;
+  const command = input;
   if (typeof command.id !== "string" || !command.id) {
     return { ok: false, error: "command.id 无效" };
   }

@@ -54,6 +54,17 @@ describe("StudioTopbar", () => {
     expect(topbar.querySelector(".topbar-actions")?.textContent).toContain("工程动作");
   });
 
+  it("hides every brand svg from assistive technology and keeps a single labelled topbar", () => {
+    const { container } = renderTopbar();
+
+    expect(container.querySelectorAll('[aria-label="编辑器顶栏"]')).toHaveLength(1);
+    const brandIcons = [...container.querySelectorAll(".brand svg")];
+    expect(brandIcons.length).toBeGreaterThan(0);
+    for (const icon of brandIcons) {
+      expect(icon.getAttribute("aria-hidden")).toBe("true");
+    }
+  });
+
   it("renders the workflow navigation in the topbar when provided", () => {
     const { container } = renderTopbar({
       workflowNav: <nav className="workflow-stage-stepper" aria-label="制作步骤">步骤</nav>,

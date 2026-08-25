@@ -1,3 +1,4 @@
+import { normalizeStudentName } from "./name-format";
 import type { Student } from "./project-data";
 
 export interface DuplicateStudentGroup {
@@ -5,8 +6,17 @@ export interface DuplicateStudentGroup {
   studentIds: string[];
 }
 
+/**
+ * Two records typed by different people differ in decoration, not identity:
+ * the roster name cleanup runs first (middle-dot variants, padding spaces,
+ * zero-width characters), then NFKC folds full-width Latin and digits so
+ * "Ｈａｒｖａｒｄ" and "Harvard" land in the same group.
+ */
 function normalizeDuplicateValue(value: string | undefined): string {
-  return (value ?? "").trim().toLocaleLowerCase("zh-CN").replace(/\s+/g, "");
+  return normalizeStudentName(value)
+    .normalize("NFKC")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/\s+/g, "");
 }
 
 export function normalizeDuplicateKey(student: Pick<Student, "name" | "university" | "city" | "locationScope">): string {

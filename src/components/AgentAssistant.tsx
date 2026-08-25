@@ -1,168 +1,25 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { AlertTriangle, Check, LoaderCircle, Minus, Plus, ShieldCheck, Sparkles, X } from "lucide-react";
-import { AgentSession, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Sparkles } from "lucide-react";
+import { AgentSession } from "../lib/agent-session";
 import type { UserAsset } from "../lib/assets";
-import { loadAssistantConversationState, saveAssistantConversationState, type AssistantConversationRecord } from "../lib/agent-conversation-store";
-import { fingerprintProject } from "../lib/project-digest";
+import { loadAssistantConversationState, saveAssistantConversationState } from "../lib/agent-conversation-store";
 import type { ProjectDocument, ProjectTransaction } from "../lib/project-document";
-
-const READ_ONLY = new Set(["inspect_project", "describe_capability", "check_health", "find_assets"]);
-type Mode = "conservative" | "smart";
-type ConversationStatus = "draft" | "running" | "completed" | "failed" | "cancelled" | "applied";
-
-type AssistantConversation = {
-  id: string;
-  title: string;
-  session: AgentSession;
-  request: string;
-  status: ConversationStatus;
-  summary: string;
-  error: string;
-  steps: AgentStep[];
-  selectedStepIds: string[];
-  mode: Mode;
-  progress: string;
-  route?: "primary" | "fallback" | "local";
-  provider: string;
-  restored: boolean;
-  projectDigest: string;
-};
-
-function digestFor(project: ProjectDocument): string {
-  return fingerprintProject(project);
-}
-
-function browserStorage(): Storage | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null;
-  }
-}
-
-function restoreConversation(project: ProjectDocument, assets: UserAsset[], record: AssistantConversationRecord): AssistantConversation {
-  const session = record.snapshot
-    ? (() => {
-      try {
-        return AgentSession.restore(project, record.snapshot, { mode: record.mode, assets });
-      } catch {
-        return new AgentSession(project, { mode: record.mode, assets });
-      }
-    })()
-    : new AgentSession(project, { mode: record.mode, assets });
-  return {
-    id: record.id,
-    title: record.title,
-    session,
-    request: record.request,
-    status: record.status,
-    summary: record.summary,
-    error: record.error,
-    steps: record.snapshot ? session.steps : [],
-    selectedStepIds: record.selectedStepIds,
-    mode: record.mode,
-    progress: "",
-    route: record.route,
-    provider: record.provider,
-    restored: true,
-    projectDigest: record.projectDigest ?? digestFor(project),
-  };
-}
-
-function persistedConversation(conversation: AssistantConversation): AssistantConversationRecord {
-  const snapshot: AgentSessionSnapshot | null = (() => {
-    try {
-      return conversation.session.exportSnapshot();
-    } catch {
-      return null;
-    }
-  })();
-  const snapshotFailed = snapshot === null && (conversation.steps.length > 0 || conversation.status === "running" || conversation.status === "completed");
-  return {
-    id: conversation.id,
-    title: conversation.title,
-    request: conversation.request,
-    status: snapshotFailed ? "failed" : conversation.status,
-    summary: snapshotFailed ? "会话无法保存，预览已取消" : conversation.summary,
-    error: snapshotFailed ? "会话快照过大或无效" : conversation.error,
-    steps: snapshotFailed ? [] : conversation.steps
-      .filter((step) => !READ_ONLY.has(step.name) && step.result.ok)
-      .map(({ id, name, arguments: args, risk, lostManualLayout }) => ({ id, name, arguments: structuredClone(args), risk, lostManualLayout })),
-    selectedStepIds: snapshotFailed ? [] : conversation.selectedStepIds,
-    mode: conversation.mode,
-    route: conversation.route,
-    provider: conversation.provider,
-    restored: conversation.restored,
-    projectDigest: conversation.projectDigest,
-    snapshot,
-  };
-}
-
-function stepLabel(step: AgentStep): string {
-  const patch = step.arguments.patch;
-  if (patch && typeof patch === "object" && !Array.isArray(patch)) {
-    const fields = Object.keys(patch as Record<string, unknown>);
-    if (fields.length > 0) return `${step.name}：${fields.join("、")}`;
-  }
-  if (step.name === "set_data_view") return `切换数据视图：${String(step.arguments.view ?? "")}`;
-  if (step.name === "auto_layout") return `自动排版：${String(step.arguments.mode ?? "quadrant")}`;
-  return step.name;
-}
-
-function riskLabel(risk: AgentStep["risk"]): string {
-  if (risk === "high") return "高风险";
-  if (risk === "medium") return "中风险";
-  return "低风险";
-}
-
-function newId(): string {
-  return `assistant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function rebaseTextSession(project: ProjectDocument, assets: UserAsset[], conversation: AssistantConversation): AgentSession {
-  try {
-    const snapshot = conversation.session.exportSnapshot();
-    return AgentSession.restoreTextHistory(project, snapshot, { mode: conversation.mode, assets });
-  } catch {
-    return new AgentSession(project, { mode: conversation.mode, assets });
-  }
-}
-
-function createConversation(project: ProjectDocument, mode: Mode, assets: UserAsset[], onProgress?: (progress: { round: number; name: string; status: "running" | "done" | "rejected" }) => void): AssistantConversation {
-  return {
-    id: newId(),
-    title: "新对话",
-    session: new AgentSession(project, { mode, assets, onProgress }),
-    request: "",
-    status: "draft",
-    summary: "",
-    error: "",
-    steps: [],
-    selectedStepIds: [],
-    mode,
-    progress: "",
-    provider: "",
-    restored: false,
-    projectDigest: digestFor(project),
-  };
-}
-
-type AssistantConversationState = {
-  open: boolean;
-  setOpen: Dispatch<SetStateAction<boolean>>;
-  mode: Mode;
-  setMode: Dispatch<SetStateAction<Mode>>;
-  conversations: AssistantConversation[];
-  setConversations: Dispatch<SetStateAction<AssistantConversation[]>>;
-  activeId: string | null;
-  setActiveId: Dispatch<SetStateAction<string | null>>;
-  position: { x: number; y: number } | null;
-  setPosition: Dispatch<SetStateAction<{ x: number; y: number } | null>>;
-  hydrated: boolean;
-  hydrate: (project: ProjectDocument, assets: UserAsset[]) => void;
-};
-
-const AssistantConversationContext = createContext<AssistantConversationState | null>(null);
+import {
+  AssistantConversationContext,
+  READ_ONLY_TOOLS,
+  browserStorage,
+  createConversation,
+  digestFor,
+  persistedConversation,
+  rebaseTextSession,
+  restoreConversation,
+  useAssistantConversationState,
+  type AssistantConversation,
+  type AssistantProgressEvent,
+  type Mode,
+} from "./agent-assistant-model";
+import { AssistantConversationView } from "./agent-assistant-conversation-view";
+import { AgentAssistantWindow } from "./agent-assistant-window";
 
 export function AssistantConversationProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -202,9 +59,7 @@ export function AgentAssistant({
   onPendingCountChange?: (count: number) => void;
   presentation?: "floating" | "docked";
 }) {
-  const state = useContext(AssistantConversationContext);
-  if (!state) throw new Error("AgentAssistant must be rendered inside AssistantConversationProvider");
-  const { open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, position, setPosition, hydrated, hydrate } = state;
+  const { open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, hydrated, hydrate } = useAssistantConversationState();
   const [message, setMessage] = useState("");
   const mountedRef = useRef(false);
   const hasMountedRef = useRef(false);
@@ -212,7 +67,6 @@ export function AgentAssistant({
   const latestProjectDigestRef = useRef<string | null>(null);
   const projectGenerationRef = useRef(0);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const activeRunRef = useRef<AgentSession | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
 
@@ -223,7 +77,7 @@ export function AgentAssistant({
   const pendingCount = useMemo(() => conversations.filter((conversation) =>
     conversation.projectDigest === currentProjectDigest && conversation.status === "completed" && conversation.selectedStepIds.length > 0,
   ).length, [conversations, currentProjectDigest]);
-  const activeWriteSteps = projectIsCurrent ? active?.steps.filter((step) => !READ_ONLY.has(step.name)) ?? [] : [];
+  const activeWriteSteps = projectIsCurrent ? active?.steps.filter((step) => !READ_ONLY_TOOLS.has(step.name)) ?? [] : [];
   const selectedIds = new Set(projectIsCurrent ? active?.selectedStepIds ?? [] : []);
   const selectedWriteSteps = activeWriteSteps.filter((step) => step.result.ok && selectedIds.has(step.id));
   useEffect(() => {
@@ -328,19 +182,6 @@ export function AgentAssistant({
     setOpen(true);
   };
 
-  useEffect(() => {
-    if (!open || !position) return;
-    const clamp = () => {
-      const width = 390;
-      setPosition((current) => current ? {
-        x: Math.max(0, Math.min(current.x, Math.max(0, window.innerWidth - width))),
-        y: Math.max(0, Math.min(current.y, Math.max(0, window.innerHeight - 52))),
-      } : current);
-    };
-    window.addEventListener("resize", clamp);
-    return () => window.removeEventListener("resize", clamp);
-  }, [open, position, setPosition]);
-
   const updateConversation = (id: string, update: (conversation: AssistantConversation) => AssistantConversation) => {
     setConversations((current) => current.map((conversation) => conversation.id === id ? update(conversation) : conversation));
   };
@@ -377,7 +218,7 @@ export function AgentAssistant({
     const runProjectGeneration = projectGenerationRef.current;
     const isCurrentRun = () => mountedRef.current && activeRunIdRef.current === active.id &&
       latestProjectDigestRef.current === runProjectDigest && projectGenerationRef.current === runProjectGeneration;
-    const progress = ({ round, name, status }: { round: number; name: string; status: "running" | "done" | "rejected" }) => {
+    const progress = ({ round, name, status }: AssistantProgressEvent) => {
       if (isCurrentRun()) updateConversation(active.id, (conversation) => ({
         ...conversation,
         progress: `第 ${round} 轮 · ${name} · ${status === "running" ? "执行中" : status === "done" ? "已完成" : "已拒绝"}`,
@@ -407,7 +248,7 @@ export function AgentAssistant({
       const outcome = await (isFresh ? sessionWithProgress.run(request) : sessionWithProgress.continue(request));
       if (!isCurrentRun()) return;
       const preview = sessionWithProgress.landingPreview();
-      const validWrites = preview.steps.filter((step) => !READ_ONLY.has(step.name) && step.result.ok);
+      const validWrites = preview.steps.filter((step) => !READ_ONLY_TOOLS.has(step.name) && step.result.ok);
       try {
         sessionWithProgress.exportSnapshot();
       } catch {
@@ -476,101 +317,38 @@ export function AgentAssistant({
     updateConversation(active.id, (conversation) => ({ ...conversation, status: "applied", selectedStepIds: [] }));
   };
 
-  const beginDrag = (event: React.PointerEvent<HTMLElement>) => {
-    const target = event.target as HTMLElement;
-    if (target.closest("button, input, label, textarea")) return;
-    const panel = event.currentTarget.closest(".agent-assistant-window") as HTMLElement | null;
-    const rect = panel?.getBoundingClientRect();
-    if (!rect) return;
-    dragRef.current = { pointerId: event.pointerId, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top };
-    setPosition({ x: Math.max(0, rect.left), y: Math.max(0, rect.top) });
-    event.currentTarget.setPointerCapture(event.pointerId);
+  const changeMode = (conversation: AssistantConversation, nextMode: Mode) => {
+    setMode(nextMode);
+    updateConversation(conversation.id, (item) => ({ ...item, mode: nextMode }));
   };
 
-  const moveDrag = (event: React.PointerEvent<HTMLElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const width = 390;
-    const x = Math.max(0, Math.min(event.clientX - drag.offsetX, Math.max(0, window.innerWidth - width)));
-    const y = Math.max(0, Math.min(event.clientY - drag.offsetY, Math.max(0, window.innerHeight - 52)));
-    setPosition({ x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 });
-  };
-
-  const endDrag = (event: React.PointerEvent<HTMLElement>) => {
-    if (dragRef.current?.pointerId === event.pointerId) {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-      dragRef.current = null;
-    }
-  };
-
-  const renderConversation = (conversation: AssistantConversation) => (
-    <>
-      <div className="agent-assistant-history" aria-label="对话历史">
-        {conversations.map((item) => (
-          <button key={item.id} type="button" className={item.id === conversation.id ? "is-active" : undefined} disabled={item.status === "running"} title={item.request || "新对话"} onClick={() => selectConversation(item)}>
-            <span>{item.title}</span>
-            {item.selectedStepIds.length > 0 && item.status === "completed" && <small>待应用</small>}
-          </button>
-        ))}
-      </div>
-      <div className="agent-assistant-body">
-        <div className="agent-mode-control" role="radiogroup" aria-label="AI 执行模式">
-          <label><input type="radio" name={`agent-mode-${conversation.id}`} value="conservative" checked={conversation.mode === "conservative"} disabled={conversation.status !== "draft"} onChange={() => { setMode("conservative"); updateConversation(conversation.id, (item) => ({ ...item, mode: "conservative" })); }} />保守模式</label>
-          <label><input type="radio" name={`agent-mode-${conversation.id}`} value="smart" checked={conversation.mode === "smart"} disabled={conversation.status !== "draft"} onChange={() => { setMode("smart"); updateConversation(conversation.id, (item) => ({ ...item, mode: "smart" })); }} />智能模式</label>
-        </div>
-        {conversation.request && <p className="agent-assistant-request">需求：{conversation.request}</p>}
-        <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="描述你的需求" aria-label="描述 AI 修改需求" disabled={conversation.status === "running"} />
-        {conversation.status === "running" ? (
-          <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
-        ) : (
-          <button className="wide-button" type="button" onClick={() => void run()} disabled={!projectIsCurrent || !message.trim() || conversation.status === "applied"}><Sparkles size={16} aria-hidden /> {projectIsCurrent && conversation.status === "completed" ? "继续对话" : "开始规划"}</button>
-        )}
-        {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
-        {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
-        {conversation.route === "local" && <p className="panel-note" role="status">已使用本地规则完成可识别的修改。</p>}
-        {conversation.route === "fallback" && <p className="panel-note" role="status">已切换备选模型：{conversation.provider || "备选模型"}。</p>}
-        {conversation.summary && <p className="panel-note agent-summary">{conversation.summary}</p>}
-        {conversation.status === "applied" && <p className="panel-note agent-summary" role="status">已应用</p>}
-        {activeWriteSteps.length > 0 && conversation.status !== "failed" && conversation.status !== "applied" && (
-          <section className="ai-proposal agent-review" aria-label="AI 修改预览">
-            <div className="agent-review-heading"><strong>修改预览</strong><small>{selectedWriteSteps.length}/{activeWriteSteps.filter((step) => step.result.ok).length} 项已选</small></div>
-            <div className="review-list">
-              {activeWriteSteps.filter((step) => step.result.ok).map((step) => (
-                <label key={step.id} className="review-row agent-review-row">
-                  <input type="checkbox" checked={selectedIds.has(step.id)} onChange={(event) => toggleStep(step.id, event.target.checked)} aria-label={`选择 ${stepLabel(step)}`} />
-                  <span className="agent-review-icon" aria-hidden>{step.risk === "high" ? <AlertTriangle size={16} /> : step.result.ok ? <Check size={16} /> : <ShieldCheck size={16} />}</span>
-                  <span><strong>{stepLabel(step)}</strong><small>{riskLabel(step.risk)} · 影子画布已执行{step.lostManualLayout ? " · 将丢弃手工位置" : ""}</small></span>
-                </label>
-              ))}
-            </div>
-            <button className="wide-button" type="button" aria-label="确认应用" onClick={applySelected} disabled={selectedWriteSteps.length === 0}><Check size={16} aria-hidden />确认应用（{selectedWriteSteps.length}）</button>
-          </section>
-        )}
-      </div>
-    </>
+  const conversationView = (conversation: AssistantConversation) => (
+    <AssistantConversationView
+      conversation={conversation}
+      conversations={conversations}
+      message={message}
+      projectIsCurrent={projectIsCurrent}
+      activeWriteSteps={activeWriteSteps}
+      selectedWriteSteps={selectedWriteSteps}
+      selectedIds={selectedIds}
+      onMessageChange={setMessage}
+      onSelectConversation={selectConversation}
+      onModeChange={changeMode}
+      onRun={() => void run()}
+      onCancel={cancel}
+      onToggleStep={toggleStep}
+      onApplySelected={applySelected}
+    />
   );
 
-  const displayConversation = active ?? conversations[0] ?? (presentation === "docked" ? {
-    id: "docked-initializing",
-    title: "AI 对话",
-    session: new AgentSession(project, { mode, assets }),
-    request: "",
-    status: "draft" as const,
-    summary: "",
-    error: "",
-    steps: [],
-    selectedStepIds: [],
-    mode,
-    progress: "",
-    provider: "",
-    restored: false,
-    projectDigest: currentProjectDigest,
-  } : null);
+  const displayConversation = active ?? conversations[0] ?? (presentation === "docked"
+    ? { ...createConversation(project, mode, assets), id: "docked-initializing", title: "AI 对话" }
+    : null);
 
   if (presentation === "docked") {
     return (
       <section className="agent-assistant agent-assistant--docked" data-agent-presentation="docked" aria-label="AI 助手">
-        {displayConversation ? renderConversation(displayConversation) : <p className="panel-note">AI 助手正在初始化…</p>}
+        {displayConversation ? conversationView(displayConversation) : <p className="panel-note">AI 助手正在初始化…</p>}
       </section>
     );
   }
@@ -584,23 +362,13 @@ export function AgentAssistant({
         </button>
       )}
       {open && active && (
-        <section
-          className="agent-assistant-window"
-          role="dialog"
-          aria-label="AI 助手"
-          style={position ? { left: `${position.x}px`, top: `${position.y}px`, right: "auto", bottom: "auto" } : undefined}
+        <AgentAssistantWindow
+          onNewConversation={createNewConversation}
+          onMinimize={() => setOpen(false)}
+          onClose={() => { setOpen(false); onPreview?.(null); }}
         >
-          <header className="agent-assistant-header" onPointerDown={beginDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
-            <span><Sparkles size={16} aria-hidden /> AI 助手</span>
-            <div className="agent-assistant-header-actions">
-              <button type="button" title="新建对话" aria-label="新建对话" onClick={createNewConversation}><Plus size={15} aria-hidden /></button>
-              <button type="button" title="最小化 AI 助手" aria-label="最小化 AI 助手" onClick={() => setOpen(false)}><Minus size={15} aria-hidden /></button>
-              <button type="button" title="重置窗口位置" aria-label="重置窗口位置" onClick={() => setPosition(null)}><Sparkles size={15} aria-hidden /></button>
-              <button type="button" title="关闭 AI 助手" aria-label="关闭 AI 助手" onClick={() => { setOpen(false); onPreview?.(null); }}><X size={15} aria-hidden /></button>
-            </div>
-          </header>
-          {renderConversation(active)}
-        </section>
+          {conversationView(active)}
+        </AgentAssistantWindow>
       )}
     </div>
   );

@@ -83,25 +83,27 @@ export function ProjectMenu({
 }: ProjectMenuProps) {
   return (
     <details className="project-menu">
-      <summary className="secondary-button" aria-label="打开项目菜单">
-        <FolderOpen size={16} /> <span>项目</span>
+      {/* WCAG 2.5.3 Label in Name：可及名以可见文字「项目」开头。 */}
+      <summary className="secondary-button" aria-label="项目菜单">
+        <FolderOpen size={16} aria-hidden /> <span>项目</span>
       </summary>
       <div className="project-menu__popover">
         <section>
           <strong>项目管理</strong>
-          <button type="button" aria-label="新建项目" onClick={onNewProject}><Plus size={16} /> 新建项目</button>
-          <button type="button" aria-label="恢复本机最近项目" onClick={onRestoreLocal}><FolderOpen size={16} /> 恢复最近项目</button>
-          <button type="button" aria-label="保存项目到本机" onClick={onSaveLocal}><Save size={16} /> 保存到本机</button>
+          <button type="button" onClick={onNewProject}><Plus size={16} aria-hidden /> 新建项目</button>
+          <button type="button" onClick={onRestoreLocal}><FolderOpen size={16} aria-hidden /> 恢复最近项目</button>
+          <button type="button" onClick={onSaveLocal}><Save size={16} aria-hidden /> 保存到本机</button>
         </section>
         <section>
           <strong>导出海报</strong>
-          <label>PNG 倍率
+          {/* 可见文字与 aria-label 一字不差；aria-label 被 App 级测试钉住，故与 DeliveryWorkspace 一样统一为「PNG 导出倍率」。 */}
+          <label>PNG 导出倍率
             <select aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}>
               <option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option>
             </select>
           </label>
           <label className="project-menu__check boolean-control checkbox-row"><input type="checkbox" checked={transparentExport} onChange={(event) => onTransparentChange(event.target.checked)} />透明背景</label>
-          <button type="button" onClick={onExportSvg}><Download size={16} /> 导出 SVG</button>
+          <button type="button" onClick={onExportSvg}><Download size={16} aria-hidden /> 导出 SVG</button>
         </section>
         <section>
           <strong>在线协作</strong>
@@ -109,11 +111,12 @@ export function ProjectMenu({
             <button
               type="button"
               className={`secondary-button collaboration-button ${roomId ? "is-connected" : ""}`}
-              aria-label="增量在线协作"
+              // 可及名包含按钮当前的可见文字：未连接时是「增量协作」，已连接时是房间码。
+              aria-label={roomId ? `增量协作房间 ${roomId}` : "增量协作"}
               aria-expanded={collaborationOpen}
               onClick={() => onSetCollaborationOpen(!collaborationOpen)}
             >
-              <Share2 size={16} /> <span>{roomId ? roomId : "增量协作"}</span>
+              <Share2 size={16} aria-hidden /> <span>{roomId ? roomId : "增量协作"}</span>
             </button>
             {collaborationOpen && (
               <section className="collaboration-popover" aria-label="增量协作设置">
@@ -125,7 +128,7 @@ export function ProjectMenu({
                   <>
                     <div className="collaboration-room-code">
                       <b>{roomId}</b>
-                      <button type="button" aria-label="复制房间码" onClick={() => void navigator.clipboard?.writeText(roomId)}><Copy size={15} /></button>
+                      <button type="button" aria-label="复制房间码" onClick={() => void navigator.clipboard?.writeText(roomId)}><Copy size={15} aria-hidden /></button>
                     </div>
                     <small>{roomRole === "owner" ? "创建者" : roomRole === "editor" ? "编辑者" : roomRole === "viewer" ? "仅查看" : "正在确认权限"} · {members.length} 位成员</small>
                     {members.length > 0 && (
@@ -149,19 +152,19 @@ export function ProjectMenu({
                         {roomRole === "owner" && <div className="collaboration-invitations">
                           <button type="button" onClick={() => onCreateInvitation("editor")}>邀请编辑者</button>
                           <button type="button" onClick={() => onCreateInvitation("viewer")}>邀请查看者</button>
-                          {invitationToken && <button type="button" aria-label="复制邀请凭证" title="邀请凭证仅可使用一次，请通过私密渠道发送" onClick={() => void navigator.clipboard?.writeText(invitationToken)}><Copy size={15} /> 复制邀请凭证</button>}
+                          {invitationToken && <button type="button" title="邀请凭证仅可使用一次，请通过私密渠道发送" onClick={() => void navigator.clipboard?.writeText(invitationToken)}><Copy size={15} aria-hidden /> 复制邀请凭证</button>}
                           <button type="button" onClick={() => onSetRoomAccess("set-readonly")}>{roomReadonly ? "恢复编辑" : "设为只读"}</button>
                           <button type="button" onClick={() => onSetRoomAccess("close")}>关闭房间</button>
                         </div>}
                       </>
                     )}
                     <small data-collaboration-status={collaborationStatus}>{collaborationMessage}</small>
-                    <button type="button" className="collaboration-leave" onClick={onLeaveRoom}><LogOut size={14} /> 断开房间</button>
+                    <button type="button" className="collaboration-leave" onClick={onLeaveRoom}><LogOut size={14} aria-hidden /> 断开房间</button>
                   </>
                 ) : (
                   <>
                     <p>未连接时不会上传或覆盖工程。创建者可生成可编辑或仅查看的一次性邀请凭证。</p>
-                    <button type="button" className="collaboration-create" disabled={collaborationStatus === "connecting"} onClick={onStartRoom}><Share2 size={14} /> 创建房间</button>
+                    <button type="button" className="collaboration-create" disabled={collaborationStatus === "connecting"} onClick={onStartRoom}><Share2 size={14} aria-hidden /> 创建房间</button>
                     <div className="collaboration-join">
                       <input aria-label="协作房间码" value={roomInput} maxLength={12} placeholder="输入房间码" onChange={(event) => onRoomInputChange(event.target.value.toUpperCase())} />
                       <input aria-label="协作邀请凭证" value={inviteTokenInput} placeholder="输入邀请凭证" onChange={(event) => onInviteTokenInputChange(event.target.value)} />
@@ -176,18 +179,19 @@ export function ProjectMenu({
         </section>
         <section>
           <strong>工程文件</strong>
+          {/* 空闲名「强制保存到浏览器本地」被 App 级测试钉住，可见文字取其子串；保存中名称跟随可见文字，避免名与状态矛盾。 */}
           <button
             type="button"
-            aria-label="强制保存到浏览器本地"
+            aria-label={syncStatus === "saving" ? "保存中" : "强制保存到浏览器本地"}
             title="立即将当前工程、素材、字体、模板和渲染设置覆盖到浏览器本地存储"
             disabled={syncStatus === "saving"}
             onClick={onSaveLocal}
           >
-            <Save size={16} /> {syncStatus === "saving" ? "保存中" : "保存到本机"}
+            <Save size={16} aria-hidden /> {syncStatus === "saving" ? "保存中" : "保存到浏览器本地"}
           </button>
-          <button type="button" onClick={onExportProject}><PackageOpen size={16} /> 导出工程</button>
-          <label className="project-menu__file"><PackageOpen size={16} /> 导入工程
-            <input type="file" accept={PROJECT_PACKAGE_FILE_ACCEPT} aria-label="导入完整工程包" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
+          <button type="button" onClick={onExportProject}><PackageOpen size={16} aria-hidden /> 导出工程</button>
+          <label className="project-menu__file"><PackageOpen size={16} aria-hidden /> 导入工程
+            <input type="file" accept={PROJECT_PACKAGE_FILE_ACCEPT} aria-label="导入工程" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
           </label>
         </section>
       </div>

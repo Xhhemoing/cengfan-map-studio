@@ -40,9 +40,10 @@ export function WorkflowStageStepper({
             title={stage.description}
             onClick={() => onChange(stage.id)}
           >
-            <span className="workflow-stepper__number">{index + 1}</span>
+            <span className="workflow-stepper__number" aria-hidden="true">{index + 1}</span>
             <span className="workflow-stepper__label">{stage.label}</span>
-            <span className="workflow-stepper__status" data-status={status}>
+            {/* 状态图标与角标数字为装饰；待处理数量已并入按钮的 aria-label。 */}
+            <span className="workflow-stepper__status" data-status={status} aria-hidden="true">
               <StatusIcon status={status} />
               {warningCount > 0 && <small>{warningCount}</small>}
             </span>

@@ -359,6 +359,16 @@ describe("AgentSession", () => {
     expect(session.steps[0]?.result.content).toContain("TOOL_ARGUMENTS_INVALID");
   });
 
+  it("keeps the facade exports available after the module split", async () => {
+    const facade = await import("./agent-session");
+    expect(typeof facade.AgentSession).toBe("function");
+    expect(typeof facade.compactAgentToolResult).toBe("function");
+    expect(typeof facade.validateAgentSessionSnapshot).toBe("function");
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const snapshot = new facade.AgentSession(project, { mode: "conservative" }).exportSnapshot();
+    expect(() => facade.validateAgentSessionSnapshot(snapshot)).not.toThrow();
+  });
+
   it("rejects concurrent runs and can continue a completed conversation", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     let release!: () => void;

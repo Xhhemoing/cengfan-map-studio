@@ -1,5 +1,6 @@
 import { ImageUp, RotateCcw, Trash2 } from "lucide-react";
 import { CANVAS_SIZE_PRESETS, type CanvasSizePresetId } from "../../lib/grid";
+import { MAX_PRINT_BLEED_MM } from "../../lib/print-bleed";
 import type { CanvasSettings } from "../../lib/scene-document";
 import { FileDropzone } from "../FileDropzone";
 import { DeferredInput } from "../DeferredInput";
@@ -16,7 +17,7 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
     reader.readAsDataURL(file);
   };
 
-  const number = (key: "width" | "height" | "safeMargin", value: number, min: number, max: number, label: string) => (
+  const number = (key: "width" | "height" | "safeMargin" | "printBleedMm", value: number, min: number, max: number, label: string) => (
     <label htmlFor={`canvas-${key}`}>{label}
       <DeferredInput id={`canvas-${key}`} type="number" min={min} max={max} value={value} onCommit={(draft) => {
         const next = Number(draft);
@@ -33,7 +34,7 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
     <section className="property-panel">
       <InspectorHeader
         title="画布属性"
-        actions={<IconButton label="重置画布" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} />}
+        actions={<IconButton label="重置画布" icon={<RotateCcw size={15} aria-hidden />} variant="ghost" onClick={onReset} />}
       />
       <label htmlFor="canvas-size-preset">尺寸预设
         <select
@@ -57,6 +58,7 @@ export function CanvasInspector({ canvas, onPatch, onReset }: {
         {number("height", canvas.height, 320, 6000, "高度")}
       </div>
       {number("safeMargin", canvas.safeMargin, 0, 3000, "安全边距")}
+      {number("printBleedMm", canvas.printBleedMm ?? 0, 0, MAX_PRINT_BLEED_MM, "印刷出血(mm)")}
       <label htmlFor="canvas-background">背景色
         <DeferredInput
           id="canvas-background"

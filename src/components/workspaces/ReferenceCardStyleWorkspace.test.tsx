@@ -30,4 +30,30 @@ describe("ReferenceCardStyleWorkspace", () => {
 
     flushSync(() => root.unmount());
   });
+
+  it("exposes the style options as a labelled group with pressed state", () => {
+    const project = createProjectDocument({
+      students: [{ id: "1", name: "林舟", university: "北京大学", city: "北京市", visibility: true }],
+      templateId: "original",
+      dataView: "province",
+    });
+    project.cards = { ...project.cards, templateId: "emblem-list", presentation: "emblem-list" };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<ReferenceCardStyleWorkspace cards={project.cards} onPatch={vi.fn()} />));
+
+    const group = container.querySelector('[role="group"][aria-label="展示框样式选项"]');
+    expect(group).not.toBeNull();
+    const options = Array.from(group!.querySelectorAll<HTMLButtonElement>("button"));
+    expect(options).toHaveLength(4);
+    // Every option is named by its visible template title and reports selection state.
+    for (const option of options) {
+      expect(option.textContent?.trim()).toBeTruthy();
+      expect(["true", "false"]).toContain(option.getAttribute("aria-pressed"));
+    }
+    expect(options.filter((option) => option.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+
+    flushSync(() => root.unmount());
+  });
 });

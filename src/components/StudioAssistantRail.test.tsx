@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { StudioAssistantRail, type StudioAssistantRailProps } from "./StudioAssistantRail";
 import { AssistantConversationProvider } from "./AgentAssistant";
@@ -10,9 +10,15 @@ function click(element: Element | null): void {
   flushSync(() => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
+const containers: HTMLDivElement[] = [];
+const roots: Root[] = [];
+
 function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
   const container = document.createElement("div");
+  document.body.append(container);
+  containers.push(container);
   const root = createRoot(container);
+  roots.push(root);
   const props: StudioAssistantRailProps = {
     project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
     assets: [],
@@ -48,6 +54,10 @@ function renderRail(overrides: Partial<StudioAssistantRailProps> = {}) {
 }
 
 afterEach(() => {
+  roots.splice(0).forEach((root) => {
+    flushSync(() => root.unmount());
+  });
+  containers.splice(0).forEach((container) => container.remove());
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -123,6 +133,107 @@ describe("StudioAssistantRail", () => {
 
     click(container.querySelector("button.studio-stage-overview__card--action")!);
     expect(onStageOverviewAction).toHaveBeenCalledWith({ kind: "data-diagnostics" });
+  });
+
+  it("moves through the rail tabs with roving tabindex and arrow keys", () => {
+    const { container } = renderRail();
+    const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(tabs).toHaveLength(3);
+    // Only the selected tab is in the tab order (roving tabindex).
+    expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1]);
+
+    const press = (target: HTMLElement, key: string) =>
+      flushSync(() => target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key })));
+
+    tabs[0]!.focus();
+    press(tabs[0]!, "ArrowRight");
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.id).toBe("studio-stage-tab");
+    expect(document.activeElement?.id).toBe("studio-stage-tab");
+
+    press(document.activeElement as HTMLElement, "ArrowRight");
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.id).toBe("studio-advanced-tab");
+
+    // ArrowRight wraps from the last tab back to the first.
+    press(document.activeElement as HTMLElement, "ArrowRight");
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.id).toBe("studio-ai-tab");
+
+    // ArrowLeft wraps backwards; Home/End jump to the ends.
+    press(document.activeElement as HTMLElement, "ArrowLeft");
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.id).toBe("studio-advanced-tab");
+    press(document.activeElement as HTMLElement, "Home");
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.id).toBe("studio-ai-tab");
+    press(document.activeElement as HTMLElement, "End");
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.id).toBe("studio-advanced-tab");
+
+    const activeTabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(activeTabs.map((tab) => tab.tabIndex)).toEqual([-1, -1, 0]);
+  });
+
+  it("resets the advanced view when re-entering the advanced tab via keyboard", () => {
+    const { container } = renderRail();
+    const advancedTab = container.querySelector<HTMLButtonElement>("#studio-advanced-tab")!;
+    click(advancedTab);
+    click(container.querySelector('button[aria-label="打开元素查看"]')!);
+    expect(container.textContent).toContain("排版问题");
+
+    // Leave and come back with arrow keys: the advanced tab starts fresh on operations.
+    click(container.querySelector("#studio-ai-tab")!);
+    const aiTab = container.querySelector<HTMLButtonElement>("#studio-ai-tab")!;
+    aiTab.focus();
+    flushSync(() => aiTab.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "End" })));
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.id).toBe("studio-advanced-tab");
+    expect(container.textContent).toContain("工程状态");
+  });
+
+  it("keeps the element listbox on a single tab stop and moves focus with arrow keys", () => {
+    const { container } = renderRail();
+    click(container.querySelector('[role="tab"]:last-child')!);
+    click(container.querySelector('button[aria-label="打开元素查看"]')!);
+
+    const options = [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(options.length).toBeGreaterThanOrEqual(4);
+    // selection = canvas → the selected first option is the only tab stop (roving tabindex).
+    expect(options[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(options.map((option) => option.tabIndex)).toEqual(options.map((_, index) => (index === 0 ? 0 : -1)));
+
+    const press = (target: HTMLElement, key: string) =>
+      flushSync(() => target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key })));
+
+    options[0]!.focus();
+    press(options[0]!, "ArrowDown");
+    expect(document.activeElement).toBe(options[1]);
+    // The tab stop follows keyboard focus.
+    expect(options[1]!.tabIndex).toBe(0);
+    expect(options[0]!.tabIndex).toBe(-1);
+
+    const last = options[options.length - 1]!;
+    press(options[1]!, "End");
+    expect(document.activeElement).toBe(last);
+    press(last, "ArrowDown");
+    expect(document.activeElement).toBe(last); // clamps at the end, no wrap
+    press(last, "Home");
+    expect(document.activeElement).toBe(options[0]);
+    press(options[0]!, "ArrowUp");
+    expect(document.activeElement).toBe(options[0]); // clamps at the start, no wrap
+  });
+
+  it("hosts element options on named native buttons inside the labelled listbox", () => {
+    const { container } = renderRail();
+    click(container.querySelector('[role="tab"]:last-child')!);
+    click(container.querySelector('button[aria-label="打开元素查看"]')!);
+
+    expect(container.querySelector('[role="listbox"]')?.getAttribute("aria-label")).toBe("内容对象列表");
+    const options = [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(options.length).toBeGreaterThanOrEqual(4);
+    for (const option of options) {
+      // 契约：option 有意由原生 <button type="button"> 承载——ARIA in HTML 允许该组合，
+      // 可聚焦性与 Enter/Space 激活来自原生按钮；styles.css 也按 button 选择器钉样式。
+      // 若要换宿主元素，必须同步补键盘激活处理并调整样式所有权。
+      expect(option.tagName).toBe("BUTTON");
+      expect(option.type).toBe("button");
+      expect(option.textContent?.trim(), `unnamed option: ${option.outerHTML}`).toBeTruthy();
+      expect(option.getAttribute("aria-selected")).toMatch(/^(true|false)$/);
+    }
   });
 
   it("opens the element view straight from the stage overview elements card", () => {

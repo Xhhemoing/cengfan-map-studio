@@ -109,10 +109,10 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
         }} />
       </label>
       <ActionGroup label="数据框层级" className="inspector-actions">
-        <IconButton label="数据框上移" text="上移" icon={<ArrowUp size={14} />} onClick={() => onPatch({ zIndex: Math.min(CANVAS_LAYER_Z_RANGE.max, (cards.zIndex ?? CANVAS_LAYER_Z.cards) + 1) })} />
-        <IconButton label="数据框下移" text="下移" icon={<ArrowDown size={14} />} onClick={() => onPatch({ zIndex: Math.max(CANVAS_LAYER_Z_RANGE.min, (cards.zIndex ?? CANVAS_LAYER_Z.cards) - 1) })} />
-        <IconButton label="数据框置顶" text="置顶" icon={<ChevronsUp size={14} />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.max })} />
-        <IconButton label="数据框置底" text="置底" icon={<ChevronsDown size={14} />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.min })} />
+        <IconButton label="数据框上移" text="上移" icon={<ArrowUp size={14} aria-hidden />} onClick={() => onPatch({ zIndex: Math.min(CANVAS_LAYER_Z_RANGE.max, (cards.zIndex ?? CANVAS_LAYER_Z.cards) + 1) })} />
+        <IconButton label="数据框下移" text="下移" icon={<ArrowDown size={14} aria-hidden />} onClick={() => onPatch({ zIndex: Math.max(CANVAS_LAYER_Z_RANGE.min, (cards.zIndex ?? CANVAS_LAYER_Z.cards) - 1) })} />
+        <IconButton label="数据框置顶" text="置顶" icon={<ChevronsUp size={14} aria-hidden />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.max })} />
+        <IconButton label="数据框置底" text="置底" icon={<ChevronsDown size={14} aria-hidden />} onClick={() => onPatch({ zIndex: CANVAS_LAYER_Z_RANGE.min })} />
       </ActionGroup>
       <p className="property-panel__hint">数值越大越靠上。参照：地图 0 · 嘉宾面板 20 · 装饰素材 30 · 文本 40。置顶/置底即相对全部画布层。</p>
     </>
@@ -136,7 +136,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     </>
   );
 
-  return <section className="property-panel"><InspectorHeader title="卡片属性" actions={<IconButton label="重置卡片" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} />} />
+  return <section className="property-panel"><InspectorHeader title="卡片属性" actions={<IconButton label="重置卡片" icon={<RotateCcw size={15} aria-hidden />} variant="ghost" onClick={onReset} />} />
     <label htmlFor="cards-template">视觉样式
       <select id="cards-template" value={currentTemplateId} onChange={(event) => handleTemplateChange(event.target.value)}>
         {templates.map((tpl) => (

@@ -27,12 +27,12 @@ export function ProjectCard({ project, updatedAtLabel, menuOpen, onOpen, onToggl
         </small>
       </button>
       <div className="workbench-card-menu">
-        <button type="button" aria-label="项目菜单" aria-expanded={menuOpen} onClick={onToggleMenu}><MoreHorizontal size={16} /></button>
+        <button type="button" aria-label="项目菜单" aria-expanded={menuOpen} onClick={onToggleMenu}><MoreHorizontal size={16} aria-hidden /></button>
         {menuOpen && <div className="workbench-menu" role="menu">
-          <button type="button" role="menuitem" onClick={onRename}><Pencil size={14} /> 重命名</button>
-          <button type="button" role="menuitem" onClick={onDuplicate}><Copy size={14} /> 复制</button>
-          <button type="button" role="menuitem" onClick={onExport}><FolderOpen size={14} /> 导出工程包</button>
-          <button type="button" role="menuitem" onClick={onDelete}><Trash2 size={14} /> 删除</button>
+          <button type="button" role="menuitem" onClick={onRename}><Pencil size={14} aria-hidden /> 重命名</button>
+          <button type="button" role="menuitem" onClick={onDuplicate}><Copy size={14} aria-hidden /> 复制</button>
+          <button type="button" role="menuitem" onClick={onExport}><FolderOpen size={14} aria-hidden /> 导出工程包</button>
+          <button type="button" role="menuitem" onClick={onDelete}><Trash2 size={14} aria-hidden /> 删除</button>
         </div>}
       </div>
     </article>

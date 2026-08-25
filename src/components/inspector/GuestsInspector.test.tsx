@@ -67,6 +67,49 @@ describe("GuestsInspector", () => {
     flushSync(() => root.unmount());
   });
 
+  it("gives every per-person control an accessible name, including the avatar link input", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.guests = {
+      ...project.guests,
+      people: [{ id: "g1", name: "王老师", visibility: true }],
+    };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={project.guests} onPatch={vi.fn()} />));
+
+    // The visible “头像” span is a visual caption only; the URL input needs its own name.
+    const avatarLink = container.querySelector('[data-guest-avatar-input="g1"]');
+    expect(avatarLink?.getAttribute("aria-label")).toBe("王老师 的头像图片链接");
+    const avatarUpload = container.querySelector('[data-guest-avatar-upload="g1"]');
+    expect(avatarUpload?.getAttribute("aria-label")).toBe("上传 王老师 的头像");
+
+    flushSync(() => root.unmount());
+  });
+
+  it("keeps IconButton Lucide icons aria-hidden while buttons keep their accessible names", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.guests = {
+      ...project.guests,
+      people: [{ id: "g1", name: "王老师", visibility: true, avatarSrc: "data:image/png;base64,AAA" }],
+    };
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<GuestsInspector guests={project.guests} onPatch={vi.fn()} />));
+
+    const visibilityToggle = container.querySelector<HTMLButtonElement>("header button")!;
+    expect(visibilityToggle.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+
+    const clearAvatar = container.querySelector<HTMLButtonElement>('[data-guest-avatar-clear="g1"]')!;
+    expect(clearAvatar.getAttribute("aria-label")).toBe("清除 王老师 的头像");
+    expect(clearAvatar.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+
+    const deletePerson = container.querySelector<HTMLButtonElement>('button[aria-label="删除 王老师"]')!;
+    expect(deletePerson).not.toBeNull();
+    expect(deletePerson.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+
+    flushSync(() => root.unmount());
+  });
+
   it("commits per-person custom note and avatar url, and clears the avatar", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     project.guests = {

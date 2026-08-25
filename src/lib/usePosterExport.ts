@@ -5,7 +5,7 @@
  * `applyImportedPackage` and `reportStatus` callbacks.
  */
 import { useRef, useState, type RefObject } from "react";
-import { downloadDataUrl, downloadText, serializePosterSvg, svgToPngDataUrl } from "./export-poster";
+import { downloadDataUrl, downloadText, posterPngExportSize, serializePosterSvg, svgToPngDataUrl } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
 import { createProjectPackage, downloadProjectPackage, parseProjectPackage, type ProjectPackage } from "./project-package";
 import type { CustomTemplateRecord } from "./template-store";
@@ -65,7 +65,10 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
-      const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
+      const source = serializePosterSvg(svg, {
+        transparentBackground: transparentExport,
+        printBleedMm: project.canvas.printBleedMm,
+      });
       downloadText(source, "我的毕业去向图.svg", "image/svg+xml;charset=utf-8");
       setExportState("success");
       reportStatus("SVG 已导出");
@@ -137,10 +140,15 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
       await ensureUserFontsLoaded(userFonts);
-      const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
+      const source = serializePosterSvg(svg, {
+        transparentBackground: transparentExport,
+        blockFontDisplay: true,
+        printBleedMm: project.canvas.printBleedMm,
+      });
+      // Bleed > 0 enlarges the exported viewBox (bleed area + crop marks), so
+      // the raster size must follow the media box instead of the raw canvas.
       const dataUrl = await svgToPngDataUrl(source, {
-        width: project.canvas.width * pngScale,
-        height: project.canvas.height * pngScale,
+        ...posterPngExportSize(project.canvas, { scale: pngScale, printBleedMm: project.canvas.printBleedMm }),
         transparentBackground: transparentExport,
       });
       downloadDataUrl(dataUrl, "我的毕业去向图.png");

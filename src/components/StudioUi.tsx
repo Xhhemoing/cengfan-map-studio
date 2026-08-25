@@ -1,5 +1,17 @@
 import type { LucideIcon } from "lucide-react";
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
+import { Fragment, cloneElement, isValidElement, type ButtonHTMLAttributes, type HTMLAttributes, type ReactElement, type ReactNode } from "react";
+
+/**
+ * Icon slots are always decorative: the accessible name comes from the
+ * button's `label`/text, so element icons are removed from the a11y tree
+ * even when a call site forgets to pass `aria-hidden` itself.
+ */
+function decorativeIcon(icon: ReactNode): ReactNode {
+  if (!isValidElement(icon) || icon.type === Fragment) return icon;
+  const element = icon as ReactElement<{ "aria-hidden"?: boolean | "true" | "false" }>;
+  if (element.props["aria-hidden"] !== undefined) return element;
+  return cloneElement(element, { "aria-hidden": true });
+}
 
 type NavigationItem<Id extends string> = {
   id: Id;
@@ -140,7 +152,7 @@ export function IconButton({
       aria-label={label}
       title={title ?? label}
     >
-      {icon}
+      {decorativeIcon(icon)}
       {text !== undefined && <span className="sr-only">{text}</span>}
     </button>
   );
@@ -171,7 +183,7 @@ export function CompactButton({
       className={["compact-button", `compact-button${variantClass(variant)}`, className].filter(Boolean).join(" ")}
       data-studio-density="compact"
     >
-      {icon}
+      {decorativeIcon(icon)}
       {children}
     </button>
   );
@@ -248,11 +260,13 @@ export function WorkspaceNav<Id extends string>({
           key={id}
           type="button"
           aria-label={description ? `${label}：${description}` : label}
-          aria-selected={activeId === id}
+          // aria-selected is invalid on plain buttons; aria-current marks the
+          // active workspace inside a navigation landmark.
+          aria-current={activeId === id ? "page" : undefined}
           className={activeId === id ? "is-active" : undefined}
           onClick={() => onChange(id)}
         >
-          {Icon && <Icon size={17} />}
+          {Icon && <Icon size={17} aria-hidden />}
           <span><strong>{label}</strong>{description && <small>{description}</small>}</span>
         </button>
       ))}

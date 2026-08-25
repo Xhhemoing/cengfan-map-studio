@@ -227,6 +227,46 @@ describe("InspectorPanel", () => {
     container.remove();
   });
 
+  it("labels the panel group and moves focus on selection change, but never on mount or mid-drag", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "canvas" }} onPatch={vi.fn()} onReset={vi.fn()} />));
+    const panel = () => container.querySelector<HTMLDivElement>("[data-inspector-panel]")!;
+    expect(panel().getAttribute("role")).toBe("group");
+    expect(panel().getAttribute("aria-label")).toBe("当前对象属性：画布");
+    expect(panel().getAttribute("tabindex")).toBe("-1");
+    // Initial mount never steals focus.
+    expect(document.activeElement).not.toBe(panel());
+
+    // A completed selection change (no pointer held down) focuses the panel.
+    flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "map" }} onPatch={vi.fn()} onReset={vi.fn()} />));
+    expect(panel().getAttribute("aria-label")).toBe("当前对象属性：地图展示框");
+    expect(document.activeElement).toBe(panel());
+
+    // Mid-drag (pointerdown without pointerup) must not steal focus from the canvas.
+    panel().blur();
+    window.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "province", province: "北京市" }} onPatch={vi.fn()} onReset={vi.fn()} />));
+    expect(panel().getAttribute("aria-label")).toBe("当前对象属性：省份 北京市");
+    expect(document.activeElement).not.toBe(panel());
+
+    // Once the pointer is released, the next selection change focuses again.
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "cards" }} onPatch={vi.fn()} onReset={vi.fn()} />));
+    expect(document.activeElement).toBe(panel());
+
+    // Re-rendering with the same selection identity does not re-focus.
+    panel().blur();
+    flushSync(() => root.render(<InspectorPanel project={project} selection={{ type: "cards" }} onPatch={vi.fn()} onReset={vi.fn()} />));
+    expect(document.activeElement).not.toBe(panel());
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("keeps full project-wide controls in the right inspector with a global settings entry", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();

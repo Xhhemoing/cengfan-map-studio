@@ -1,7 +1,8 @@
 import type { ProjectDocument } from "./project-document";
 import type { Student } from "./project-data";
-import { resolveStudentLocation } from "./student-data";
+import { isOverseasStudent, resolveStudentLocation } from "./student-data";
 import { duplicateStudentIds } from "./data-duplicate";
+import { trimImportCell } from "./import-data";
 
 export interface DataHealthSummary {
   total: number;
@@ -22,6 +23,14 @@ export type DataIssueKind =
   | "duplicate";
 
 export interface DataIssue {
+  /**
+   * Stable `kind:studentId` identifier so the UI can key, locate and dedupe
+   * rows. Optional on the input type because issue literals are built in
+   * several places; everything produced by {@link listDataIssues} is a
+   * {@link ResolvedDataIssue} and therefore always carries one. Read it with
+   * {@link resolveDataIssueId} so a hand-built issue behaves identically.
+   */
+  id?: string;
   studentId: string;
   studentName: string;
   kind: DataIssueKind;
@@ -29,12 +38,77 @@ export interface DataIssue {
   severity: "warning" | "info";
 }
 
+/** A {@link DataIssue} whose stable id is guaranteed by the type system. */
+export type ResolvedDataIssue = DataIssue & { id: string };
+
+const DATA_ISSUE_KIND_LABELS: Record<DataIssueKind, string> = {
+  "missing-field": "缺失必要字段",
+  "unresolved-location": "城市未匹配",
+  "manual-province": "省份覆盖",
+  international: "海外去向",
+  hidden: "隐藏记录",
+  duplicate: "重复记录",
+};
+
+/** Wording every screen uses for an issue kind, including filter chips. */
+export function dataIssueKindLabel(kind: DataIssueKind): string {
+  return DATA_ISSUE_KIND_LABELS[kind];
+}
+
+/** One student produces at most one issue per kind, so this pair is unique. */
+export function dataIssueId(kind: DataIssueKind, studentId: string): string {
+  return `${kind}:${studentId}`;
+}
+
+export function resolveDataIssueId(issue: DataIssue): string {
+  return issue.id ?? dataIssueId(issue.kind, issue.studentId);
+}
+
+/** Guarantees the stable id on an issue that came from somewhere else. */
+export function withDataIssueId(issue: DataIssue): ResolvedDataIssue {
+  return { ...issue, id: resolveDataIssueId(issue) };
+}
+
+/**
+ * Emptiness is judged with {@link trimImportCell}, the same rule the import
+ * pipeline uses: a cell holding only a BOM or a zero-width space looks filled
+ * in to `trim()` but renders as nothing, so it has to count as missing here too
+ * — otherwise the record shows up as a nameless row with no warning at all.
+ */
 function missingFields(student: Student): string[] {
   const fields: string[] = [];
-  if (!student.name.trim()) fields.push("姓名");
-  if (!student.university.trim()) fields.push("院校");
-  if (!student.city.trim()) fields.push("城市");
+  if (!trimImportCell(student.name)) fields.push("姓名");
+  if (!trimImportCell(student.university)) fields.push("院校");
+  if (!trimImportCell(student.city)) fields.push("城市");
   return fields;
+}
+
+function createIssue(
+  student: Student,
+  kind: DataIssueKind,
+  detail: string,
+  severity: DataIssue["severity"],
+): ResolvedDataIssue {
+  return {
+    id: dataIssueId(kind, student.id),
+    studentId: student.id,
+    studentName: trimImportCell(student.name) || "未命名学生",
+    kind,
+    detail,
+    severity,
+  };
+}
+
+/**
+ * A province left on an overseas record is named here instead of raising a
+ * 省份覆盖 issue: {@link resolveStudentLocation} ignores it, while the map
+ * mapping panel turns every 省份覆盖 row into a 指定省份 fix — an edit that on
+ * an overseas record writes a value nothing will ever read.
+ */
+function internationalDetail(student: Student): string {
+  const city = trimImportCell(student.city) || "未填写";
+  const stale = trimImportCell(student.province);
+  return stale ? `海外去向：${city}（省份 ${stale} 不参与中国地图，已忽略）` : `海外去向：${city}`;
 }
 
 export function buildDataHealthSummary(project: ProjectDocument): DataHealthSummary {
@@ -50,7 +124,10 @@ export function buildDataHealthSummary(project: ProjectDocument): DataHealthSumm
     } else {
       visible += 1;
     }
-    if (student.locationScope === "international") {
+    // resolveStudentLocation reports an overseas record as unresolved because it
+    // has no place on the China map; counting it as 城市未匹配 too would report
+    // the same record twice, so the scope decides which bucket it lands in.
+    if (isOverseasStudent(student)) {
       international += 1;
     } else if (resolveStudentLocation(student).status === "unresolved") {
       unresolved += 1;
@@ -69,70 +146,37 @@ export function buildDataHealthSummary(project: ProjectDocument): DataHealthSumm
   };
 }
 
-export function listDataIssues(project: ProjectDocument): DataIssue[] {
-  const missing: DataIssue[] = [];
-  const unresolved: DataIssue[] = [];
-  const manualProvince: DataIssue[] = [];
-  const international: DataIssue[] = [];
-  const hidden: DataIssue[] = [];
-  const duplicate: DataIssue[] = [];
+/** Every returned issue carries its stable `kind:studentId` id. */
+export function listDataIssues(project: ProjectDocument): ResolvedDataIssue[] {
+  const missing: ResolvedDataIssue[] = [];
+  const unresolved: ResolvedDataIssue[] = [];
+  const manualProvince: ResolvedDataIssue[] = [];
+  const international: ResolvedDataIssue[] = [];
+  const hidden: ResolvedDataIssue[] = [];
+  const duplicate: ResolvedDataIssue[] = [];
   const duplicateIds = duplicateStudentIds(project.students);
 
   for (const student of project.students) {
+    const overseas = isOverseasStudent(student);
     const fields = missingFields(student);
     if (fields.length > 0) {
-      missing.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "missing-field",
-        detail: `缺少${fields.join("、")}`,
-        severity: "warning",
-      });
+      missing.push(createIssue(student, "missing-field", `缺少${fields.join("、")}`, "warning"));
     }
-    if (student.locationScope !== "international" && resolveStudentLocation(student).status === "unresolved") {
-      unresolved.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "unresolved-location",
-        detail: `无法定位城市：${student.city || "未填写"}`,
-        severity: "warning",
-      });
+    if (!overseas && resolveStudentLocation(student).status === "unresolved") {
+      unresolved.push(createIssue(student, "unresolved-location", `无法定位城市：${trimImportCell(student.city) || "未填写"}`, "warning"));
     }
-    if (student.province?.trim()) {
-      manualProvince.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "manual-province",
-        detail: `使用省份覆盖：${student.province}`,
-        severity: "info",
-      });
+    const province = trimImportCell(student.province);
+    if (province && !overseas) {
+      manualProvince.push(createIssue(student, "manual-province", `使用省份覆盖：${province}`, "info"));
     }
-    if (student.locationScope === "international") {
-      international.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "international",
-        detail: `海外去向：${student.city || "未填写"}`,
-        severity: "info",
-      });
+    if (overseas) {
+      international.push(createIssue(student, "international", internationalDetail(student), "info"));
     }
     if (duplicateIds.has(student.id)) {
-      duplicate.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "duplicate",
-        detail: "姓名、院校、城市和去向类型与其他记录一致",
-        severity: "warning",
-      });
+      duplicate.push(createIssue(student, "duplicate", "姓名、院校、城市和去向类型与其他记录一致", "warning"));
     }
     if (student.visibility === false) {
-      hidden.push({
-        studentId: student.id,
-        studentName: student.name || "未命名学生",
-        kind: "hidden",
-        detail: "记录已隐藏，不会出现在海报中",
-        severity: "info",
-      });
+      hidden.push(createIssue(student, "hidden", "记录已隐藏，不会出现在海报中", "info"));
     }
   }
 

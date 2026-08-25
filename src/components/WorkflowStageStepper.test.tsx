@@ -40,4 +40,35 @@ describe("WorkflowStageStepper", () => {
     flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="最终导出"]')?.click());
     expect(onChange).toHaveBeenCalledWith("export");
   });
+
+  it("names every stage button and keeps the status glyphs decorative", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push({ root, container });
+    const project = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+
+    flushSync(() => root.render(
+      <WorkflowStageStepper
+        activeId="frame"
+        project={project}
+        progress={computeWorkflowProgress(project)}
+        onChange={vi.fn()}
+      />,
+    ));
+
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
+    // Every stage is reachable by name (warning counts are folded into the label when present).
+    for (const button of buttons) {
+      expect(button.getAttribute("aria-label")).toBeTruthy();
+    }
+    // The check/warning glyphs and numbering repeat the label state visually; they stay
+    // out of the accessibility tree so screen readers hear one clean name per stage.
+    for (const status of container.querySelectorAll(".workflow-stepper__status")) {
+      expect(status.getAttribute("aria-hidden")).toBe("true");
+    }
+    for (const number of container.querySelectorAll(".workflow-stepper__number")) {
+      expect(number.getAttribute("aria-hidden")).toBe("true");
+    }
+  });
 });

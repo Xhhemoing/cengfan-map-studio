@@ -1,4 +1,11 @@
-export function serializePosterSvg(svg: SVGSVGElement, options: { transparentBackground?: boolean; blockFontDisplay?: boolean } = {}): string {
+import { applyPrintBleedToSvg, resolveBleedExportSize, type PrintBleedOptions } from "./print-bleed";
+
+export interface SerializePosterSvgOptions extends PrintBleedOptions {
+  transparentBackground?: boolean;
+  blockFontDisplay?: boolean;
+}
+
+export function serializePosterSvg(svg: SVGSVGElement, options: SerializePosterSvgOptions = {}): string {
   const clone = svg.cloneNode(true) as SVGSVGElement;
   clone.querySelectorAll(
     "[data-selection-overlay], [data-map-selection-overlay], [data-asset-selection], [data-editor-grid]",
@@ -6,6 +13,7 @@ export function serializePosterSvg(svg: SVGSVGElement, options: { transparentBac
   if (options.transparentBackground) {
     clone.querySelectorAll("[data-canvas-background], [data-background-image]").forEach((node) => node.remove());
   }
+  applyPrintBleedToSvg(clone, options);
   if (options.blockFontDisplay) {
     clone.querySelectorAll("[data-font-faces] style, style[data-font-faces]").forEach((node) => {
       node.textContent = node.textContent?.replace(/font-display\s*:\s*swap\s*;?/g, "font-display:block;") ?? "";
@@ -57,6 +65,17 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     };
     image.src = url;
   });
+}
+
+/**
+ * PNG 导出的像素尺寸。出血为 0 时等于画布尺寸乘倍数，
+ * 出血 > 0 时按含裁切标记的媒体框放大，与 `serializePosterSvg` 扩展后的 viewBox 一致。
+ */
+export function posterPngExportSize(
+  canvas: { width: number; height: number },
+  options: PrintBleedOptions & { scale?: number } = {},
+): { width: number; height: number } {
+  return resolveBleedExportSize(canvas, options);
 }
 
 export async function svgToPngDataUrl(

@@ -49,7 +49,7 @@ export function AssetLibraryPanel({
         <div className="asset-library-panel__header">
           <IconButton
             label="展开素材库"
-            icon={<ChevronRight size={16} />}
+            icon={<ChevronRight size={16} aria-hidden />}
             variant="ghost"
             onClick={toggle}
           />
@@ -68,7 +68,7 @@ export function AssetLibraryPanel({
         actions={
           <IconButton
             label="折叠素材库"
-            icon={<ChevronLeft size={16} />}
+            icon={<ChevronLeft size={16} aria-hidden />}
             variant="ghost"
             onClick={toggle}
           />

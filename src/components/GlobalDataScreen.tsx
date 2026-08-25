@@ -1,5 +1,5 @@
 import { useMemo, useState, type ComponentProps } from "react";
-import type { DataHealthSummary, DataIssue, DataIssueKind } from "../lib/data-health";
+import { dataIssueKindLabel, type DataHealthSummary, type DataIssue, type DataIssueKind } from "../lib/data-health";
 import type { ProjectDocument } from "../lib/project-document";
 import type { DataViewId, MapTemplateId } from "../lib/project-data";
 import { DataOverview } from "./DataOverview";
@@ -8,7 +8,8 @@ import { DataQualityPanel } from "./DataQualityPanel";
 import { DataWorkspace } from "./DataWorkspace";
 import type { CustomTemplateOption, TemplateOption } from "./TemplatePicker";
 import { PanelHeader } from "./StudioUi";
-import { GlobalDataNavigation, globalDataViewLabel } from "./global-data/GlobalDataNavigation";
+import { GlobalDataNavigation } from "./global-data/GlobalDataNavigation";
+import { globalDataViewLabel } from "./global-data/global-data-views";
 import { GlobalDataStatus } from "./global-data/GlobalDataStatus";
 
 export type GlobalDataView = "overview" | "roster" | "quality" | "mapping" | "presentation";
@@ -57,6 +58,17 @@ export function GlobalDataScreen({
     [issueFilter, issues],
   );
 
+  /**
+   * 地图映射 answers "which records are missing from the province map", so it
+   * always looks at the whole roster. Intersecting it with a filter carried
+   * over from the overview (隐藏记录, say) would empty the list and let the
+   * panel report a map that is in fact still incomplete.
+   */
+  const mappingIssues = useMemo(
+    () => issues.filter((issue) => issue.kind === "unresolved-location" || issue.kind === "manual-province"),
+    [issues],
+  );
+
   const openIssues = (kind: DataIssueKind) => {
     setIssueFilter(kind);
     setActiveView("quality");
@@ -77,7 +89,7 @@ export function GlobalDataScreen({
       <div className="global-data-layout">
         <GlobalDataNavigation activeView={activeView} onChange={(view) => {
           setActiveView(view);
-          if (view !== "quality" && view !== "mapping") setIssueFilter(null);
+          if (view !== "quality") setIssueFilter(null);
         }} />
 
         <section
@@ -98,15 +110,23 @@ export function GlobalDataScreen({
             />
           )}
           {activeView === "quality" && (
-            <DataQualityPanel issues={visibleIssues} onSelectStudent={locateStudent} />
+            <DataQualityPanel
+              issues={visibleIssues}
+              onSelectStudent={locateStudent}
+              filterLabel={issueFilter ? dataIssueKindLabel(issueFilter) : undefined}
+              onClearFilter={() => setIssueFilter(null)}
+              totalIssues={issues.length}
+            />
           )}
           {activeView === "mapping" && (
             <section className="global-data-mapping" aria-label="地图映射">
               <PanelHeader title="地图映射" meta="定位中国去向，海外去向不会进入省份地图" />
               <p className="global-data-mapping__note">城市未匹配时，可以从名单管理中编辑城市，或为记录指定省份覆盖。</p>
               <DataQualityPanel
-                issues={visibleIssues.filter((issue) => issue.kind === "unresolved-location" || issue.kind === "manual-province")}
+                issues={mappingIssues}
                 onSelectStudent={locateStudent}
+                filterLabel="定位问题"
+                totalIssues={issues.length}
               />
             </section>
           )}

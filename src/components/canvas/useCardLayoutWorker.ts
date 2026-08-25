@@ -1,17 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { solveCardLayout, type CardLayoutResult } from "../../lib/card-layout";
 import { cardLayoutCache } from "../../lib/card-layout-cache";
+import { isCardLayoutWorkerResponse } from "../../lib/card-layout-worker-protocol";
 import type {
   CardLayoutWorkerMessage,
+  CardLayoutWorkerRequest,
   CardLayoutWorkerResponse,
 } from "../../lib/card-layout-worker-protocol";
-import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
 
 export type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
 
 export interface CardLayoutWorkerState {
   result: CardLayoutResult | null;
   pending: boolean;
+}
+
+/**
+ * Keep small solves on the main thread and avoid paying worker startup latency.
+ *
+ * Linux/Node 22 probes measured 20.648 ms startup p50 at 48 cards while the
+ * same-fixture main-thread solve stayed at 12.905 ms p95. At 48 cards all four
+ * layout modes remained at or below 12.968 ms p95.
+ */
+export const DEFAULT_WORKER_CARD_THRESHOLD = 49;
+
+export function shouldUseCardLayoutWorker(cardCount: number): boolean {
+  return cardCount >= DEFAULT_WORKER_CARD_THRESHOLD;
 }
 
 function workerIsAvailable(): boolean {
@@ -43,7 +57,11 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
     if (!request) return { key: null, result: null, cached: false };
     const cached = cardLayoutCache.get(request.key);
     if (cached) return { key: request.key, result: cached, cached: true };
-    if (!forceSync && workerIsAvailable()) return { key: request.key, result: null, cached: false };
+    if (!forceSync
+      && shouldUseCardLayoutWorker(request.cards.length)
+      && workerIsAvailable()) {
+      return { key: request.key, result: null, cached: false };
+    }
     const result = solveCardLayout(request.cards, request.bounds, request.options);
     cardLayoutCache.set(request.key, result);
     return { key: request.key, result, cached: !forceSync };
@@ -66,12 +84,25 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
     const currentRequest = requestRef.current;
     activeKeyRef.current = requestKey;
     if (!currentRequest) {
-      setState({ key: null, result: null, pending: false });
+      setState((current) => current.key === null && current.result === null && !current.pending
+        ? current
+        : { key: null, result: null, pending: false });
+      return;
+    }
+
+    // The render path already resolved synchronous and cached requests.
+    // Reuse that exact result instead of touching the LRU again and scheduling
+    // a duplicate state update after the initial commit.
+    if (resolved.key === currentRequest.key && resolved.result) {
+      setState((current) =>
+        current.key === resolved.key && current.result === resolved.result && !current.pending
+          ? current
+          : { key: resolved.key, result: resolved.result, pending: false });
       return;
     }
 
     const cached = cardLayoutCache.get(currentRequest.key);
-    if (cached || forceSync) {
+    if (cached || forceSync || !shouldUseCardLayoutWorker(currentRequest.cards.length)) {
       const result = cached ?? solveCardLayout(currentRequest.cards, currentRequest.bounds, currentRequest.options);
       cardLayoutCache.set(currentRequest.key, result);
       setState({ key: currentRequest.key, result, pending: false });
@@ -93,9 +124,19 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
     if (!worker.onmessage) {
       worker.onmessage = (event: MessageEvent<CardLayoutWorkerResponse>) => {
         const response = event.data;
-        if (response.type !== "result"
+        if (!isCardLayoutWorkerResponse(response)
           || response.requestId !== requestIdRef.current
           || response.key !== activeKeyRef.current) return;
+        // The worker reported it could not solve this request; keep the canvas
+        // moving by solving it here instead of leaving the state pending.
+        if (response.type === "error") {
+          const pendingRequest = requestRef.current;
+          if (!pendingRequest || pendingRequest.key !== response.key) return;
+          const result = solveCardLayout(pendingRequest.cards, pendingRequest.bounds, pendingRequest.options);
+          cardLayoutCache.set(pendingRequest.key, result);
+          setState({ key: pendingRequest.key, result, pending: false });
+          return;
+        }
         cardLayoutCache.set(response.key, response.result);
         setState({ key: response.key, result: response.result, pending: false });
       };
@@ -119,7 +160,7 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
       ...currentRequest,
     };
     worker.postMessage(message);
-  }, [forceSync, requestKey]);
+  }, [forceSync, requestKey, resolved.key, resolved.result]);
 
   useEffect(() => () => {
     workerRef.current?.terminate();

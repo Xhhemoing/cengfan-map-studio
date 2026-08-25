@@ -135,4 +135,16 @@ describe("AssetInspector", () => {
     expect(onDuplicate).toHaveBeenCalledWith("decoration-1");
     expect(onDelete).toHaveBeenCalledWith("decoration-1");
   });
+
+  it("keeps action button accessible names while hiding their icons from the a11y tree", () => {
+    const container = render(landmark);
+
+    for (const label of ["删除素材", "素材上移", "素材下移", "复制素材"]) {
+      const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      expect(button, label).not.toBeNull();
+      const svg = button!.querySelector("svg");
+      expect(svg, label).not.toBeNull();
+      expect(svg!.getAttribute("aria-hidden"), label).toBe("true");
+    }
+  });
 });

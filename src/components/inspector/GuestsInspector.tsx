@@ -76,7 +76,7 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
       {!peopleOnly && <>
         <InspectorHeader
           title="特邀嘉宾"
-          actions={<IconButton label={guests.visibility ? "隐藏嘉宾板块" : "显示嘉宾板块"} icon={guests.visibility ? <EyeOff size={15} /> : <Eye size={15} />} variant="ghost" onClick={() => onPatch({ visibility: !guests.visibility })} />}
+          actions={<IconButton label={guests.visibility ? "隐藏嘉宾板块" : "显示嘉宾板块"} icon={guests.visibility ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />} variant="ghost" onClick={() => onPatch({ visibility: !guests.visibility })} />}
         />
         <label htmlFor="guests-title">板块标题
           <DeferredInput id="guests-title" value={guests.title} onCommit={(title) => onPatch({ title })} />
@@ -141,8 +141,9 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
               <DeferredInput data-guest-note-input={person.id} value={person.note ?? ""} placeholder="祝福语、寄语等自由文本" onCommit={(note) => updatePerson(person.id, { note: note || undefined })} />
             </label>
             <div className="guest-avatar-editor">
-              <span>头像</span>
-              <DeferredInput data-guest-avatar-input={person.id} value={person.avatarSrc ?? ""} placeholder="图片链接（或上传）" onCommit={(avatarSrc) => updatePerson(person.id, { avatarSrc: avatarSrc || undefined })} />
+              {/* “头像” 只是视觉分组标题，不与任何控件关联；链接输入框需要自己的名字。 */}
+              <span aria-hidden="true">头像</span>
+              <DeferredInput data-guest-avatar-input={person.id} aria-label={`${person.name} 的头像图片链接`} value={person.avatarSrc ?? ""} placeholder="图片链接（或上传）" onCommit={(avatarSrc) => updatePerson(person.id, { avatarSrc: avatarSrc || undefined })} />
               <input
                 type="file"
                 accept="image/*"
@@ -157,7 +158,7 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
                 }}
               />
               {person.avatarSrc && (
-                <IconButton label={`清除 ${person.name} 的头像`} icon={<X size={14} />} variant="ghost" data-guest-avatar-clear={person.id} onClick={() => updatePerson(person.id, { avatarSrc: undefined })} />
+                <IconButton label={`清除 ${person.name} 的头像`} icon={<X size={14} aria-hidden />} variant="ghost" data-guest-avatar-clear={person.id} onClick={() => updatePerson(person.id, { avatarSrc: undefined })} />
               )}
             </div>
             <ActionGroup label={`${person.name} 操作`} className="guest-person-row__actions">
@@ -169,7 +170,7 @@ export function GuestsInspector({ guests, onPatch, layoutOnly = false, peopleOnl
               />
                 显示
               </label>
-              <IconButton label={`删除 ${person.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={() => removePerson(person.id)} />
+              <IconButton label={`删除 ${person.name}`} icon={<Trash2 size={14} aria-hidden />} variant="danger" onClick={() => removePerson(person.id)} />
             </ActionGroup>
           </div>
         ))}

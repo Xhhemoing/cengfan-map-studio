@@ -50,13 +50,14 @@ export function UniversityEmblem({ university, size = 24, className, alt }: Univ
   const showImage = inView && src && !failed;
 
   return (
+    // 占位态也不能 aria-hidden 宿主：role="img" + aria-label 是 AT 唯一能读到
+    // 校徽名称的地方，隐藏它会让占位/加载失败时读屏完全听不到这所大学。
     <span
       ref={hostRef}
       className={`university-emblem${className ? ` ${className}` : ""}`}
       style={style}
       role="img"
       aria-label={alt ?? `${university}校徽`}
-      aria-hidden={!showImage}
     >
       {showImage ? (
         <img

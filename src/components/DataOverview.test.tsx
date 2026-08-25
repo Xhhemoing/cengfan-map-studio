@@ -53,4 +53,19 @@ describe("DataOverview", () => {
     expect(container.textContent).toContain("当前呈现");
     expect(container.textContent).toContain("省份卡片");
   });
+
+  it("reports a ready state when nothing needs checking", () => {
+    const container = render({ total: 2, visible: 2, hidden: 0, international: 1, unresolved: 0, missingRequired: 0, duplicate: 0 });
+
+    expect(container.querySelector('[data-status="ready"]')).not.toBeNull();
+    expect(container.textContent).toContain("数据状态良好");
+  });
+
+  it("counts unresolved, missing and duplicate records into one warning total", () => {
+    const container = render({ total: 9, visible: 9, hidden: 0, international: 0, unresolved: 2, missingRequired: 1, duplicate: 3 });
+
+    expect(container.querySelector('[data-status="warning"]')).not.toBeNull();
+    expect(container.textContent).toContain("还有 6 项数据需要检查");
+    expect(container.querySelector('button[aria-label="查看重复记录"]')).not.toBeNull();
+  });
 });

@@ -1,6 +1,12 @@
-import { parseStudentText, type TextImportResult } from "./import-data";
+import {
+  candidateFromColumns, describeMissingCells, detectHeaderMapping, isBlankImportCell, isSummaryRow,
+  missingRequiredCells, missingRequiredColumns, parseStudentText, rowRestatesHeader, STUDENT_HEADER_ALIASES,
+  trimImportCell, type ImportCandidate, type RequiredStudentColumn, type StudentColumn, type StudentColumnMapping,
+  type TextImportResult, type UnparsedLine,
+} from "./import-data";
+import { parseHtmlTableRows } from "./html-table-parse";
 
-export type StudentColumn = "name" | "university" | "city" | "locationScope";
+export type { RequiredStudentColumn, StudentColumn } from "./import-data";
 
 export interface ExcelColumnMapping {
   field: StudentColumn;
@@ -13,7 +19,7 @@ export interface ExcelImportResult extends TextImportResult {
   headerRowIndex?: number;
   columnMappings: ExcelColumnMapping[];
   unmappedHeaders: string[];
-  missingRequiredFields: Array<Extract<StudentColumn, "name" | "university" | "city">>;
+  missingRequiredFields: RequiredStudentColumn[];
 }
 
 export interface ImportTemplateSheets {
@@ -23,175 +29,194 @@ export interface ImportTemplateSheets {
 
 export function createImportTemplateSheets(): ImportTemplateSheets {
   return {
-    data: [
-      ["学生姓名", "录取院校", "城市", "去向类型"],
-      ["", "", "", ""],
-    ],
+    data: [["学生姓名", "录取院校", "城市", "去向类型"], ["", "", "", ""]],
     guide: [
       ["字段", "必填", "示例"],
       ["学生姓名", "是", "林舟"],
       ["录取院校", "是", "北京大学"],
       ["城市", "是", "北京市"],
       ["去向类型", "否", "中国去向 / 海外去向"],
-      ["填写说明", "", "去向类型留空时按中国去向处理"],
+      ["省份", "否", "浙江省（留空时按城市自动匹配）"],
+      ["填写说明", "", "去向类型留空时按中国去向处理；海外去向无需填写省份"],
+      ["填写说明", "", "合并单元格会按整块自动补齐；CSV 中含逗号的姓名请用英文双引号包裹"],
     ],
   };
 }
 
-const REQUIRED_COLUMNS = ["name", "university", "city"] as const;
+const HEADER_SEARCH_DEPTH = 8;
 
-const HEADER_ALIASES: Record<StudentColumn, readonly string[]> = {
-  name: ["姓名", "学生", "学生姓名", "名字", "name", "student", "student name", "full name"],
-  university: [
-    "院校",
-    "录取院校",
-    "录取学校",
-    "大学",
-    "学校",
-    "就读学校",
-    "就读院校",
-    "university",
-    "school",
-    "college",
-    "enrolled university",
-  ],
-  city: ["城市", "所在城市", "目的地城市", "city", "destination city", "location"],
-  locationScope: ["去向类型", "去向", "地区类型", "destination type", "location scope", "scope"],
-};
-
-function normalizeHeader(value: string): string {
-  return value
-    .trim()
-    .toLocaleLowerCase("zh-CN")
-    .replace(/\s|_|-|\(|\)|（|）/g, "");
+/** A `!merges` entry from the xlsx worksheet: inclusive start/end cell addresses. */
+export interface SheetMergeRange {
+  s: { r: number; c: number };
+  e: { r: number; c: number };
 }
 
-function findColumnIndexes(header: string[]): Partial<Record<StudentColumn, number>> {
-  const indexes: Partial<Record<StudentColumn, number>> = {};
-  for (const column of Object.keys(HEADER_ALIASES) as StudentColumn[]) {
-    const aliases = HEADER_ALIASES[column].map(normalizeHeader);
-    const index = header.findIndex((cell) => aliases.includes(normalizeHeader(cell)));
-    if (index >= 0) indexes[column] = index;
+export interface ExcelParseOptions {
+  /** Pass `worksheet["!merges"]` so a merged 省份/城市 block fills its rows. */
+  merges?: readonly SheetMergeRange[];
+}
+
+function normalizeMatrix(rows: unknown[][]): string[][] {
+  return rows.map((row) => (Array.isArray(row) ? row : []).map(trimImportCell));
+}
+
+/**
+ * xlsx only stores a merged block's value in its top-left cell and leaves the rest blank, which
+ * would turn every following row of a merged 省份/城市 block into an incomplete record. Copying the
+ * anchor value across the block keeps those rows importable; cells the user filled in are kept.
+ */
+export function expandMergedCells(rows: string[][], merges: readonly SheetMergeRange[] = []): string[][] {
+  if (merges.length === 0) return rows;
+  const expanded = rows.map((row) => [...row]);
+  for (const merge of merges) {
+    const anchor = expanded[merge.s.r]?.[merge.s.c] ?? "";
+    if (isBlankImportCell(anchor)) continue;
+    for (let row = merge.s.r; row <= merge.e.r; row += 1) {
+      const target = expanded[row];
+      if (!target) continue;
+      for (let column = merge.s.c; column <= merge.e.c; column += 1) {
+        while (target.length < column) target.push("");
+        if (isBlankImportCell(target[column])) target[column] = anchor;
+      }
+    }
   }
-  return indexes;
+  return expanded;
 }
 
+/**
+ * Renders one matrix row the way a spreadsheet paste carries it. Blank cells are kept — dropping
+ * them would pull every later cell a column left, so `林舟,,北京市` would read 北京市 as the 院校 —
+ * matching the alignment rule splitParts follows in import-data. Only trailing tabs are trimmed,
+ * so an all-blank row reads as an empty line.
+ */
+function rowToTabLine(row: string[]): string {
+  return row.join("\t").replace(/\t+$/, "");
+}
+
+/** Tab-joins the matrix for the free-text fallback, dropping rows that hold nothing. */
 function matrixToText(rows: string[][]): string {
-  return rows
-    .map((row) => row.map((cell) => String(cell ?? "").trim()).filter(Boolean).join("\t"))
-    .filter((line) => line.length > 0)
-    .join("\n");
+  return rows.map(rowToTabLine).filter((line) => line.length > 0).join("\n");
 }
 
 function emptyMetadata(): Pick<ExcelImportResult, "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {
-  return {
-    columnMappings: [],
-    unmappedHeaders: [],
-    missingRequiredFields: [],
-  };
+  return { columnMappings: [], unmappedHeaders: [], missingRequiredFields: [] };
 }
 
-function findHeaderRow(rows: string[][]): { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>> } | null {
-  const candidates = rows
-    .map((row, rowIndex) => ({
-      rowIndex,
-      headers: row.map((cell) => String(cell ?? "").trim()),
-    }))
-    .filter(({ headers }) => headers.some(Boolean))
-    .slice(0, 8);
+interface DetectedHeader {
+  rowIndex: number;
+  headers: string[];
+  mapping: StudentColumnMapping;
+}
 
-  let best: { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>>; score: number } | null = null;
+/**
+ * Scans the first rows for the best header: the one mapping the most student columns. Leading
+ * title/notes rows are therefore skipped automatically.
+ */
+function findHeaderRow(rows: string[][]): DetectedHeader | null {
+  const candidates = rows.map((headers, rowIndex) => ({ rowIndex, headers }))
+    .filter(({ headers }) => headers.some(Boolean)).slice(0, HEADER_SEARCH_DEPTH);
+  let best: (DetectedHeader & { score: number }) | null = null;
   for (const candidate of candidates) {
-    const indexes = findColumnIndexes(candidate.headers);
-    const score = Object.keys(indexes).length;
+    const mapping = detectHeaderMapping(candidate.headers);
+    const score = Object.keys(mapping.indexes).length;
     if (score < 2 || (best && score <= best.score)) continue;
-    best = { ...candidate, indexes, score };
+    best = { ...candidate, mapping, score };
   }
-  return best ? { rowIndex: best.rowIndex, headers: best.headers, indexes: best.indexes } : null;
+  return best ? { rowIndex: best.rowIndex, headers: best.headers, mapping: best.mapping } : null;
 }
 
-function createMetadata(
-  rows: string[][],
-  header: { rowIndex: number; headers: string[]; indexes: Partial<Record<StudentColumn, number>> },
-): Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> {
+type ExcelMetadata = Pick<
+  ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"
+>;
+
+function createMetadata(rows: string[][], header: DetectedHeader): ExcelMetadata {
   const mappedIndexes = new Set<number>();
-  const columnMappings = (Object.keys(HEADER_ALIASES) as StudentColumn[]).flatMap((field) => {
-    const columnIndex = header.indexes[field];
+  const columnMappings = (Object.keys(STUDENT_HEADER_ALIASES) as StudentColumn[]).flatMap((field) => {
+    const columnIndex = header.mapping.indexes[field];
     if (columnIndex === undefined) return [];
     mappedIndexes.add(columnIndex);
-    const samples = rows
-      .slice(header.rowIndex + 1)
-      .map((row) => row[columnIndex]?.trim() ?? "")
-      .filter(Boolean)
-      .slice(0, 2);
-    return [{
-      field,
-      sourceHeader: header.headers[columnIndex] ?? "",
-      columnIndex,
-      samples,
-    }];
+    // A repeated column backs its twin up on blank rows, so it is in use too and must not be
+    // reported to the user as an ignored header.
+    for (const alternate of header.mapping.alternates?.[field] ?? []) mappedIndexes.add(alternate);
+    const samples = rows.slice(header.rowIndex + 1).map((row) => row[columnIndex] ?? "").filter(Boolean).slice(0, 2);
+    return [{ field, sourceHeader: header.headers[columnIndex] ?? "", columnIndex, samples }];
   });
-  const unmappedHeaders = header.headers.filter((value, index) => value && !mappedIndexes.has(index));
-  const missingRequiredFields = REQUIRED_COLUMNS.filter((field) => header.indexes[field] === undefined);
   return {
     headerRowIndex: header.rowIndex,
     columnMappings,
-    unmappedHeaders,
-    missingRequiredFields: [...missingRequiredFields],
+    unmappedHeaders: header.headers.filter((value, index) => value && !mappedIndexes.has(index)),
+    missingRequiredFields: missingRequiredColumns(header.mapping),
   };
-}
-
-function parseLocationScope(value: string | undefined): "international" | undefined {
-  const normalized = value?.trim().toLocaleLowerCase("zh-CN") ?? "";
-  return normalized.includes("海外") || normalized.includes("international") || normalized.includes("overseas")
-    ? "international"
-    : undefined;
 }
 
 export function parseExcelArrayBuffer(input: ArrayBuffer | string[][]): ExcelImportResult {
   if (Array.isArray(input)) return parseExcelWorkbookRows(input);
   // Binary workbook decoding is handled at the UI boundary with xlsx.
-  void input;
   return { ...parseStudentText(""), ...emptyMetadata() };
 }
 
-export function parseExcelWorkbookRows(rows: string[][]): ExcelImportResult {
+export function parseExcelWorkbookRows(input: unknown[][], options: ExcelParseOptions = {}): ExcelImportResult {
+  const rows = expandMergedCells(normalizeMatrix(input ?? []), options.merges);
+  // An empty sheet (or one holding only blank cells) is not an error: report nothing recognized
+  // instead of pretending a header was found.
+  if (!rows.some((row) => row.some(Boolean))) return { candidates: [], unparsed: [], ...emptyMetadata() };
+
   const header = findHeaderRow(rows);
   if (!header) return { ...parseStudentText(matrixToText(rows)), ...emptyMetadata() };
-
   const metadata = createMetadata(rows, header);
-  if (metadata.missingRequiredFields.length > 0) {
-    return { ...parseStudentText(matrixToText(rows)), ...metadata };
-  }
+  if (metadata.missingRequiredFields.length > 0) return { ...parseStudentText(matrixToText(rows)), ...metadata };
 
-  const candidates = rows.slice(header.rowIndex + 1).flatMap((row, rowIndex) => {
-    const name = row[header.indexes.name!]?.trim() ?? "";
-    const university = row[header.indexes.university!]?.trim() ?? "";
-    const city = row[header.indexes.city!]?.trim() ?? "";
-    if (!name || !university || !city) return [];
-    const locationScope = parseLocationScope(row[header.indexes.locationScope!]);
-    return [{
-      name,
-      university,
-      city,
-      ...(locationScope ? { locationScope } : {}),
-      sourceLine: header.rowIndex + rowIndex + 2,
-      rawLine: row.map((cell) => cell.trim()).filter(Boolean).join("\t"),
-    }];
+  const candidates: ImportCandidate[] = [];
+  const unparsed: UnparsedLine[] = [];
+  rows.slice(header.rowIndex + 1).forEach((row, rowIndex) => {
+    const sourceLine = header.rowIndex + rowIndex + 2;
+    // candidateFromColumns reads the row by index, but rawLine is the line quoted back to the
+    // user, so it keeps its blank cells: squeezing a row with an empty 院校 shut would quote
+    // 林舟\t\t北京市 as 林舟\t北京市, hiding the gap by reading 北京市 as the 院校.
+    const rawLine = rowToTabLine(row);
+    // Sheets built by stacking two exports repeat the header mid-table; that row is a header, not
+    // a student called 姓名.
+    if (rowRestatesHeader(row, header.mapping, header.headers)) return;
+    if (isSummaryRow(row, header.mapping)) {
+      unparsed.push({ sourceLine, rawLine, reason: "汇总行" });
+      return;
+    }
+    const candidate = candidateFromColumns(row, header.mapping, sourceLine, rawLine);
+    if (candidate) {
+      candidates.push(candidate);
+      return;
+    }
+    // Trailing blank sheet rows are normal; a row that holds data but misses a required cell is
+    // reported so the import never drops it silently.
+    if (row.every(isBlankImportCell)) return;
+    unparsed.push({ sourceLine, rawLine, reason: describeMissingCells(missingRequiredCells(row, header.mapping)) });
   });
 
-  return {
-    candidates,
-    unparsed: [],
-    ...metadata,
-  };
+  return { candidates, unparsed, ...metadata };
+}
+
+// The clipboard's HTML flavour is tokenized in html-table-parse; re-exported here so every
+// import call site keeps its single entry point for binary-ish formats.
+export { parseHtmlTableRows };
+
+/** Reads a pasted `<table>` with the same header engine as a workbook. */
+export function parseHtmlTable(html: string): ExcelImportResult {
+  const rows = parseHtmlTableRows(html);
+  if (!rows) return { candidates: [], unparsed: [], ...emptyMetadata() };
+  return parseExcelWorkbookRows(rows);
+}
+
+/**
+ * Renders a matrix as the tab-separated text a spreadsheet paste carries, so the recognized table
+ * stays visible (and re-parsable) in the paste box. Empty cells are kept: dropping them would
+ * shift every later column.
+ */
+export function rowsToTabText(rows: string[][]): string {
+  const lines = rows.map(rowToTabLine);
+  while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
+  return lines.join("\n");
 }
 
 export function parseOcrLikeText(text: string): TextImportResult {
-  const normalized = text
-    .replace(/\u00a0/g, " ")
-    .replace(/[|｜]/g, " ")
-    .replace(/[：:]/g, " ")
-    .replace(/\s{2,}/g, " ");
-  return parseStudentText(normalized);
+  return parseStudentText(text.replace(/\u00a0/g, " ").replace(/[|｜]/g, " ").replace(/[：:]/g, " ").replace(/\s{2,}/g, " "));
 }

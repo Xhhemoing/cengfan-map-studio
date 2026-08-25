@@ -40,6 +40,22 @@ describe("CardsInspector", () => {
     flushSync(() => root.unmount());
   });
 
+  it("keeps IconButton Lucide icons aria-hidden while buttons keep their accessible names", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<CardsInspector cards={project.cards} onPatch={vi.fn()} onReset={vi.fn()} />));
+
+    for (const label of ["数据框上移", "数据框下移", "数据框置顶", "数据框置底", "重置卡片"]) {
+      const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      expect(button, label).not.toBeNull();
+      expect(button!.getAttribute("aria-label"), label).toBe(label);
+      expect(button!.querySelector("svg")?.getAttribute("aria-hidden"), label).toBe("true");
+    }
+
+    flushSync(() => root.unmount());
+  });
+
   it("offers compact layout independently from visual templates", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const onPatch = vi.fn();

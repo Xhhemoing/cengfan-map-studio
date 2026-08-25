@@ -1,0 +1,376 @@
+/**
+ * Connector-aware placement search for the quadrant / radial modes.
+ *
+ * Every card gets a shortlist of candidate rectangles (see
+ * {@link ./card-layout-candidates}) scored by how the *rendered* connector
+ * would behave — crossings, cards it would cut through, provinces it would
+ * cross (see {@link ./card-layout-scoring}). Several deterministic insertion
+ * orders are tried and the best complete, legal layout wins.
+ *
+ * Connector quality is only ever a score, never a veto: a card whose every
+ * candidate collides is repaired into the nearest free spot instead of being
+ * dropped, so a crossing penalty can never cost a card its place.
+ */
+import { buildConnectorGeometry, type ConnectorStyle } from "./connector-geometry";
+import { buildCandidates, DENSE_CARD_COUNT, type LayoutCandidate } from "./card-layout-candidates";
+import { connectorBounds } from "./card-layout-connectors";
+import { compareScores, sideAxisSize } from "./card-layout-geometry";
+import { classifyQuadrant, classifyRadial } from "./card-layout-modes";
+import { containFree, orderResult } from "./card-layout-pack";
+import {
+  anchorClusters,
+  scoreLayout,
+  selectCandidate,
+  type Budget,
+  type ClusterMap,
+  type OrderState,
+} from "./card-layout-scoring";
+import { PlacementIndex, validateHard, type LayoutSpace } from "./card-layout-space";
+import {
+  SIDE_ORDER,
+  type CardLayoutInput,
+  type CardLayoutOptions,
+  type CardPlacement,
+  type CardSide,
+} from "./card-layout-types";
+
+/**
+ * Card ceiling for the connector-aware search.
+ *
+ * Not a cost limit — {@link SEARCH_BUDGET} does that job — but the point past
+ * which the search stops earning its keep. Above roughly eighty cards the
+ * per-side shortlists are already trimmed hard enough that no insertion order
+ * beats the packed layout it starts from: measured over 100- and 120-card
+ * boards, both vector and rectangular, the search returned the seed unchanged
+ * every time while adding hundreds of milliseconds. Dense boards get the
+ * cheaper packing ladder instead, which is what they were getting anyway.
+ */
+export const MAX_OPTIMIZED_CARDS = 80;
+
+/**
+ * Work one solve may spend exploring insertion orders, counted in candidate
+ * comparisons rather than milliseconds.
+ *
+ * A wall-clock budget would make the output depend on how loaded the machine
+ * is, which breaks the determinism guarantee. Counting comparisons is
+ * reproducible: the same input always stops in the same place. The budget only
+ * decides how many *orders* are tried — an order that has started always runs
+ * to the end, so no card can be left unplaced by exhaustion.
+ *
+ * The figure is where the measured quality curve flattens: below it a 60-card
+ * vector board loses its best layout, above it nothing tested improves.
+ */
+const SEARCH_BUDGET = 2_500_000;
+
+/**
+ * What one scanned repair costs, in the same units.
+ *
+ * Repairs are by far the most expensive thing an order can do — a repair walks
+ * a 12px lattice over the free canvas, and profiling a 60-card board with a
+ * full-map obstacle puts a fifth of the whole solve inside that one scan — so
+ * the budget has to price them or they crowd out everything else. Measured
+ * across the obstacle boards, this figure is the knee: cheaper and the search
+ * buys a few more crossings for a large slice of the frame budget, dearer and
+ * the boards that genuinely need repairs stop getting them.
+ */
+const REPAIR_COST = 60_000;
+
+/**
+ * Repairs allowed per insertion order, as a fraction of the cards.
+ *
+ * A repaired card is placed by a scan of the free canvas, so it is legal and
+ * gets scored like any other — repairs are expensive, not wrong. On boards
+ * where obstacles leave only a narrow ring the rails cannot tile it, and a
+ * fixed small budget declared those boards hopeless when they were merely
+ * awkward. The share below lets such an order finish while
+ * {@link SEARCH_BUDGET} keeps the total bounded.
+ */
+const REPAIR_SHARE = 0.4;
+const MIN_REPAIRS_PER_ORDER = 3;
+
+/**
+ * Insertion orders in a row that may fail to beat the incumbent before the
+ * search gives up on the board.
+ *
+ * The orders are not interchangeable samples — {@link insertionOrders} leads
+ * with the ones that carry nearly all the wins — so a run of misses is evidence
+ * about the board rather than about luck. Measured over the obstacle boards,
+ * two is where the curve turns: at that setting every layout the full eight
+ * orders ever shipped is still found, while the boards the search cannot help
+ * end after two to four orders instead of eight. Stopping at the first miss
+ * costs two of those boards their best layout — one loses a crossing pair, the
+ * other two province crossings — and stopping at three buys nothing back while
+ * putting the vector boards within a few percent of the full sweep again.
+ *
+ * This only ever ends *exploration*. Whatever the caller seeded the search with
+ * is still returned, so an early stop can cost a better layout but never a
+ * legal one, and never a card.
+ */
+const SEARCH_PATIENCE = 2;
+
+function homeSides(
+  cards: CardLayoutInput[],
+  space: LayoutSpace,
+  mode: "quadrant" | "radial",
+  options: CardLayoutOptions,
+): Map<string, CardSide> {
+  const assignments = mode === "radial"
+    ? classifyRadial(cards, space)
+    : classifyQuadrant(cards, space, options);
+  return new Map(assignments.flatMap(({ side, cards: assigned }) =>
+    assigned.map((card) => [card.id, side] as const)));
+}
+
+function angularOrder(cards: CardLayoutInput[], space: LayoutSpace): CardLayoutInput[] {
+  const centerX = space.map.x + space.map.width / 2;
+  const centerY = space.map.y + space.map.height / 2;
+  return [...cards].sort((left, right) => {
+    const leftAngle = Math.atan2(left.anchorY - centerY, left.anchorX - centerX);
+    const rightAngle = Math.atan2(right.anchorY - centerY, right.anchorX - centerX);
+    return leftAngle - rightAngle
+      || Math.hypot(left.anchorX - centerX, left.anchorY - centerY)
+        - Math.hypot(right.anchorX - centerX, right.anchorY - centerY)
+      || left.id.localeCompare(right.id);
+  });
+}
+
+/**
+ * Deterministic insertion orders: rotations around the map, plus scarcity.
+ *
+ * Highest-yield first, because {@link SEARCH_PATIENCE} stops the search after a
+ * run of orders that add nothing and the sequence therefore decides what a
+ * short search gets to see. Measured over the obstacle boards, the wins
+ * concentrate in four: the angular order, the scarcest-first order — the one
+ * that finds the best layout on every board whose obstacle is a single large
+ * rectangle — the next rotation, and the reversed angular order. The remaining
+ * rotations improved on one board out of eight, so they go last, where an early
+ * stop skips them. With this sequence a short search finds every layout the
+ * full sweep found.
+ */
+function insertionOrders(
+  cards: CardLayoutInput[],
+  space: LayoutSpace,
+  candidateCounts: Map<string, number>,
+): CardLayoutInput[][] {
+  const ordered = angularOrder(cards, space);
+  const rotations: CardLayoutInput[][] = [];
+  const starts = Math.min(ordered.length, cards.length > DENSE_CARD_COUNT ? 3 : 6);
+  for (let index = 0; index < starts; index += 1) {
+    const start = Math.floor((index * ordered.length) / starts);
+    rotations.push([...ordered.slice(start), ...ordered.slice(0, start)]);
+  }
+  const scarcest = [...cards].sort((left, right) =>
+    (candidateCounts.get(left.id) ?? 0) - (candidateCounts.get(right.id) ?? 0)
+    || left.id.localeCompare(right.id));
+  return [
+    ...rotations.slice(0, 1),
+    scarcest,
+    ...rotations.slice(1, 2),
+    [...ordered].reverse(),
+    ...rotations.slice(2),
+  ];
+}
+
+/** Why {@link optimizedLayout} stopped trying insertion orders. */
+export type SearchStop = "no-candidates" | "no-gain" | "budget" | "exhausted";
+
+/**
+ * What one connector-aware search did. Diagnostics only — nothing in the solver
+ * reads it back, and it never affects a placement.
+ */
+export interface ConnectorSearchTrace {
+  /** Shortlisted rectangles across every card. Zero means the search cannot run. */
+  candidates: number;
+  /** Insertion orders executed, including ones that produced nothing legal. */
+  ordersRun: number;
+  /** Orders that produced a complete, legal layout worth scoring. */
+  ordersScored: number;
+  /**
+   * Repairs actually scanned, across every order tried. Each one walks a
+   * lattice over the free canvas, which is the dearest step in the search.
+   */
+  repairs: number;
+  /** Indices, within the tried orders, of those that beat the incumbent. */
+  improvingOrders: number[];
+  stop: SearchStop;
+  budgetSpent: number;
+}
+
+function repairPlacement(card: CardLayoutInput, space: LayoutSpace, placed: PlacementIndex): CardPlacement {
+  // `side` is the placeholder every containFree caller passes: the repair
+  // re-derives it from wherever the card actually lands.
+  const probe: CardPlacement = {
+    ...card,
+    x: space.clampX(card.anchorX - card.width / 2, card.width),
+    y: space.clampY(card.anchorY - card.height / 2, card.height),
+    side: "right",
+  };
+  return containFree(probe, space, placed);
+}
+
+/** The hard constraints {@link validateHard} will apply to this seat later. */
+function seatIsLegal(seat: CardPlacement, space: LayoutSpace, placed: PlacementIndex): boolean {
+  return space.inside(seat) && !space.blocked(seat) && !placed.hits(seat, space.gap);
+}
+
+/**
+ * Run one insertion order; `null` when it had to give up.
+ *
+ * A returned layout is legal by construction: a candidate is shortlisted only
+ * if it is inside, clear of geography and clear of what is already placed, and
+ * the one other way to seat a card — a repair — hands the order back when it
+ * cannot match that.
+ */
+function runOrder(
+  order: readonly CardLayoutInput[],
+  candidates: Map<string, LayoutCandidate[]>,
+  clusters: ClusterMap,
+  space: LayoutSpace,
+  style: ConnectorStyle,
+  clearance: number,
+  budget: Budget,
+): { placements: CardPlacement[] | null; repairs: number } {
+  const state: OrderState = {
+    placed: PlacementIndex.forSpace(space),
+    geometries: [],
+    geometryBounds: [],
+    sideLoads: new Map<CardSide, number>(SIDE_ORDER.map((side) => [side, 0])),
+    sides: new Map<string, CardSide>(),
+  };
+  let repairs = 0;
+  const repairLimit = Math.max(MIN_REPAIRS_PER_ORDER, Math.ceil(order.length * REPAIR_SHARE));
+
+  for (const card of order) {
+    const selected = selectCandidate(
+      candidates.get(card.id) ?? [],
+      clusters.get(card.id) ?? [],
+      state,
+      clearance,
+      space,
+      budget,
+    );
+    // Every candidate collided (or the card had none). Repairs are scanned
+    // searches, so an order that needs more than its share of them costs more
+    // than the whole packing ladder; abandoning it here loses nothing, because
+    // the caller keeps the packed layout it was trying to beat.
+    // The repair that trips either ceiling is never scanned, so it is charged
+    // to the budget but not to the count of scans the caller is told about.
+    if (!selected && ((repairs += 1) > repairLimit || (budget.spent += REPAIR_COST) > SEARCH_BUDGET)) {
+      return { placements: null, repairs: repairs - 1 };
+    }
+    const placement = selected?.placement ?? repairPlacement(card, space, state.placed);
+    // A repair overlaps only when the canvas had nowhere legal left for the
+    // card, and that is precisely what makes `validateHard` throw the finished
+    // order away. Everything the order would place after it — including further
+    // lattice scans, the dearest step there is — buys a layout no caller can
+    // ship, so the order ends on the seat that lost it rather than on the last
+    // card. Nothing is lost: the order was already unscoreable.
+    if (!selected && !seatIsLegal(placement, space, state.placed)) return { placements: null, repairs };
+    const geometry = selected?.geometry ?? buildConnectorGeometry({
+      card: placement,
+      anchor: { x: card.anchorX, y: card.anchorY },
+      preferredSide: placement.side,
+      style,
+    });
+    const geometryBounds = selected?.geometryBounds ?? connectorBounds(geometry);
+    state.placed.add(placement);
+    state.geometries.push(geometry);
+    state.geometryBounds.push(geometryBounds);
+    state.sides.set(placement.id, placement.side);
+    state.sideLoads.set(
+      placement.side,
+      state.sideLoads.get(placement.side)! + sideAxisSize(placement, placement.side) + space.gap,
+    );
+  }
+  return { placements: state.placed.items, repairs };
+}
+
+/**
+ * Best-of-N insertion search. `placements` is `null` when no order produced a
+ * layout that satisfies the hard constraints, or when none beat `seed`, letting
+ * the caller keep what it had.
+ *
+ * `seed` is the layout the caller would otherwise ship — the side-packed one,
+ * already known to be legal. Scoring it alongside the insertion orders makes
+ * the search a strict improvement: it can only return something that beats the
+ * packed layout on connector quality, never something merely different. Pass
+ * `null` when the caller has no legal layout to defend.
+ */
+export function optimizedLayout(
+  cards: CardLayoutInput[],
+  space: LayoutSpace,
+  mode: "quadrant" | "radial",
+  options: CardLayoutOptions,
+  seed: readonly CardPlacement[] | null = null,
+): { placements: CardPlacement[] | null; trace: ConnectorSearchTrace } {
+  const style = options.connectorStyle ?? "curve";
+  const clearance = Math.max(0, options.connectorWidth ?? 1.5);
+  const assignedSides = homeSides(cards, space, mode, options);
+  const candidates = new Map(cards.map((card) => [
+    card.id,
+    buildCandidates(card, cards, space, assignedSides.get(card.id) ?? "right", style),
+  ]));
+  const candidateCounts = new Map([...candidates].map(([id, items]) => [id, items.length]));
+  const trace: ConnectorSearchTrace = {
+    candidates: [...candidateCounts.values()].reduce((sum, count) => sum + count, 0),
+    ordersRun: 0,
+    ordersScored: 0,
+    repairs: 0,
+    improvingOrders: [],
+    stop: "exhausted",
+    budgetSpent: 0,
+  };
+  // With no rectangle to move a card to, every order would repair its way to
+  // the same packed answer at scanning prices. Bail before scoring the seed,
+  // which is itself a quadratic pass over the connectors.
+  if (trace.candidates === 0) {
+    trace.stop = "no-candidates";
+    return { placements: null, trace };
+  }
+  const clusters = anchorClusters(cards);
+
+  let best: CardPlacement[] | null = seed ? [...seed] : null;
+  let bestScore = seed ? scoreLayout(seed, assignedSides, style, clearance, space) : null;
+  const seeded = best;
+  const budget: Budget = { spent: 0 };
+  const seenOrders = new Set<string>();
+  let misses = 0;
+  for (const order of insertionOrders(cards, space, candidateCounts)) {
+    // An order already under way always finishes, so exhaustion costs
+    // exploration and never a card's place.
+    if (budget.spent > SEARCH_BUDGET) {
+      trace.stop = "budget";
+      break;
+    }
+    const signature = order.map((card) => card.id).join("\0");
+    if (seenOrders.has(signature)) continue;
+    seenOrders.add(signature);
+
+    const { placements: placed, repairs } = runOrder(order, candidates, clusters, space, style, clearance, budget);
+    trace.ordersRun += 1;
+    trace.repairs += repairs;
+    let improved = false;
+    if (placed && placed.length === cards.length && validateHard(placed, space)) {
+      trace.ordersScored += 1;
+      const score = scoreLayout(placed, assignedSides, style, clearance, space);
+      if (!bestScore || compareScores(score, bestScore) < 0) {
+        trace.improvingOrders.push(trace.ordersRun - 1);
+        best = [...placed];
+        bestScore = score;
+        improved = true;
+      }
+    }
+    misses = improved ? 0 : misses + 1;
+    // The caller already holds a legal layout, so a run of orders that cannot
+    // better it is the search telling us it has nothing to add on this board.
+    if (seed && misses >= SEARCH_PATIENCE) {
+      trace.stop = "no-gain";
+      break;
+    }
+  }
+  trace.budgetSpent = budget.spent;
+  // Nothing beat the layout the caller already had; say so rather than handing
+  // back a copy, so the caller keeps its own status and ordering.
+  if (best === seeded) return { placements: null, trace };
+  return { placements: best ? orderResult(cards, best, space) : null, trace };
+}

@@ -64,10 +64,12 @@ function ComboboxHarness({
   label,
   options,
   portal = false,
+  allowFreeInput = false,
 }: {
   label: string;
   options: (query: string) => SearchComboboxOption[];
   portal?: boolean;
+  allowFreeInput?: boolean;
 }) {
   const [value, setValue] = useState("");
   return (
@@ -78,6 +80,7 @@ function ComboboxHarness({
         placeholder={label}
         searchOptions={options}
         portal={portal}
+        allowFreeInput={allowFreeInput}
         onChange={setValue}
       />
       <output data-testid="selected-value">{value}</output>
@@ -124,6 +127,49 @@ describe("SearchCombobox", () => {
     expect(input.value).toBe("自定义学院");
     await pressKey(input, "Escape");
     expect(input.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("exposes the combobox popup state and active descendant to assistive tech", async () => {
+    const container = render(<ComboboxHarness label="录取院校" options={universityOptions} />);
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="录取院校"]')!;
+
+    expect(input.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(input.getAttribute("aria-expanded")).toBe("false");
+    expect(input.hasAttribute("aria-activedescendant")).toBe(false);
+
+    await changeInput(input, "北大");
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+    const listbox = container.querySelector('[role="listbox"]')!;
+    expect(listbox.getAttribute("aria-label")).toBe("录取院校建议");
+    expect(input.getAttribute("aria-controls")).toBe(listbox.id);
+
+    await pressKey(input, "ArrowDown");
+    const firstOption = container.querySelector('[role="option"]')!;
+    expect(input.getAttribute("aria-activedescendant")).toBe(firstOption.id);
+    expect(firstOption.getAttribute("aria-selected")).toBe("true");
+
+    await pressKey(input, "ArrowUp");
+    const options = [...container.querySelectorAll('[role="option"]')];
+    const lastOption = options[options.length - 1]!;
+    expect(input.getAttribute("aria-activedescendant")).toBe(lastOption.id);
+
+    await pressKey(input, "Escape");
+    expect(input.getAttribute("aria-expanded")).toBe("false");
+    expect(input.hasAttribute("aria-activedescendant")).toBe(false);
+  });
+
+  it("reports an expanded popup when free input adds the custom entry", async () => {
+    const container = render(
+      <ComboboxHarness label="城市" options={() => []} allowFreeInput />,
+    );
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="城市"]')!;
+
+    await changeInput(input, "自定义地点");
+
+    // The visible list contains the synthetic 使用自定义 entry, so the
+    // combobox must announce itself as expanded even without catalog matches.
+    expect(container.querySelectorAll('[role="option"]')).toHaveLength(1);
+    expect(input.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("mounts portal suggestions outside the combobox clipping context", async () => {

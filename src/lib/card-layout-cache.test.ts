@@ -30,6 +30,28 @@ const result: CardLayoutResult = {
 };
 
 describe("card layout cache", () => {
+  it("keeps keys stable for referentially new, deep-equal option objects", () => {
+    const firstOptions: CardLayoutOptions = {
+      mode: "quadrant",
+      autoBalance: true,
+      topBottomBandRatio: 0.28,
+      connectorStyle: "curve",
+      connectorWidth: 1.5,
+    };
+    const secondOptions: CardLayoutOptions = {
+      connectorWidth: 1.5,
+      connectorStyle: "curve",
+      topBottomBandRatio: 0.28,
+      autoBalance: true,
+      mode: "quadrant",
+    };
+
+    expect(secondOptions).toEqual(firstOptions);
+    expect(secondOptions).not.toBe(firstOptions);
+    expect(createCardLayoutCacheKey({ cards, bounds, options: secondOptions }))
+      .toBe(createCardLayoutCacheKey({ cards, bounds, options: firstOptions }));
+  });
+
   it("uses only layout geometry and options in a stable request key", () => {
     const base = createCardLayoutCacheKey({ cards, bounds, options });
     const equivalent = createCardLayoutCacheKey({
@@ -49,6 +71,20 @@ describe("card layout cache", () => {
       bounds: { ...bounds, occupiedAreas: [{ x: 48, y: 781, width: 280, height: 120 }] },
       options,
     })).not.toBe(base);
+    expect(createCardLayoutCacheKey({
+      cards,
+      bounds,
+      options: { ...options, fixedPositions: { zhejiang: { x: 40, y: 80 } } },
+    })).not.toBe(base);
+    expect(createCardLayoutCacheKey({
+      cards,
+      bounds,
+      options: { ...options, fixedPositions: { zhejiang: { x: 40, y: 80 } } },
+    })).toBe(createCardLayoutCacheKey({
+      cards,
+      bounds,
+      options: { ...options, fixedPositions: { zhejiang: { x: 40, y: 80 } } },
+    }));
   });
 
   it("evicts the least recently used result after reaching its capacity", () => {

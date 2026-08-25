@@ -31,8 +31,10 @@ export function ZoomControls({
   };
 
   return (
-    <div className="topbar-action-group" aria-label="缩放控制">
-      <span className="zoom-label" aria-label="当前缩放">
+    <div className="topbar-action-group" role="group" aria-label="缩放控制">
+      {/* aria-label 在无角色的 span 上会被忽略，改用视觉隐藏文本朗读上下文。 */}
+      <span className="zoom-label">
+        <span className="sr-only">当前缩放 </span>
         {zoomPercent}%
       </span>
       <ToolbarButton

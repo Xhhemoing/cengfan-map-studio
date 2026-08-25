@@ -98,6 +98,62 @@ describe("MapStyleWorkspace", () => {
     expect(onPatchProvince).not.toHaveBeenCalled();
   });
 
+  it("gives every primary control an accessible name and announces the canvas selection", () => {
+    const { container } = renderWorkspace("北京市");
+
+    // Data-view segmented control: each button carries an explicit name + pressed state.
+    const viewButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="地图表达"] button'));
+    expect(viewButtons).toHaveLength(5);
+    for (const button of viewButtons) {
+      expect(button.getAttribute("aria-label")).toMatch(/^切换为.+表达$/);
+      expect(button.hasAttribute("aria-pressed")).toBe(true);
+    }
+    // History buttons are named.
+    expect(container.querySelector('button[aria-label="撤销地图修改"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="重做地图修改"]')).not.toBeNull();
+
+    // The rail inspector exposes a labelled focus target for the selected province.
+    const panel = container.querySelector('[data-inspector-panel]');
+    expect(panel?.getAttribute("aria-label")).toBe("当前对象属性：省份 北京市");
+
+    // The canvas announces the selected province via a polite live region.
+    const announcer = container.querySelector('.map-style-workspace__canvas [data-canvas-selection-announcement]');
+    expect(announcer?.getAttribute("aria-live")).toBe("polite");
+    expect(announcer?.textContent).toBe("已选中省份：北京市");
+  });
+
+  it("announces undo/redo outcomes through a persistent polite live region", () => {
+    const { container, onUndo, onRedo } = renderWorkspace();
+
+    // The region is in the rail and exists before any interaction (live
+    // regions must be in the DOM ahead of the change to announce reliably),
+    // screen-reader-only and initially empty.
+    const region = container.querySelector('[aria-label="地图对象属性"] [data-history-announcement]');
+    expect(region).not.toBeNull();
+    expect(region?.getAttribute("role")).toBe("status");
+    expect(region?.getAttribute("aria-live")).toBe("polite");
+    expect(region?.classList.contains("sr-only")).toBe(true);
+    expect(region?.textContent).toBe("");
+
+    const undo = container.querySelector<HTMLButtonElement>('button[aria-label="撤销地图修改"]');
+    flushSync(() => undo?.click());
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(region?.textContent?.replace(/\u00A0/g, "")).toBe("已撤销地图修改");
+
+    // Undoing a second, identically labelled step still mutates the DOM text
+    // (an invisible suffix toggles), so aria-live re-announces it.
+    const firstAnnouncement = region?.textContent;
+    flushSync(() => undo?.click());
+    expect(region?.textContent?.replace(/\u00A0/g, "")).toBe("已撤销地图修改");
+    expect(region?.textContent).not.toBe(firstAnnouncement);
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="重做地图修改"]')?.click());
+    expect(onRedo).toHaveBeenCalledTimes(1);
+    expect(region?.textContent?.replace(/\u00A0/g, "")).toBe("已重做地图修改");
+    // Same node throughout: announcements never rely on a remount.
+    expect(region?.isConnected).toBe(true);
+  });
+
   it("keeps history controls in the right-side context without a return-editor header", () => {
     const { container, onPatchMap, onUndo, onRedo } = renderWorkspace();
 

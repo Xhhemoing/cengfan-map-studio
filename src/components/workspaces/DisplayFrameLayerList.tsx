@@ -41,21 +41,22 @@ export function DisplayFrameLayerList({
           <IconButton label="添加矩形装饰" icon={<Square size={14} aria-hidden />} onClick={onAddRectangle} />
         </div>
       </div>
-      <div className="display-frame-layer-list__items" role="list">
+      {/* 真列表 + 普通按钮：aria-pressed 在 role="listitem" 上无效，改由 li 提供列表语义。 */}
+      <ul className="display-frame-layer-list__items" style={{ listStyle: "none", margin: 0, padding: 0 }}>
         {items.slice().sort((left, right) => right.zIndex - left.zIndex || right.id.localeCompare(left.id)).map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="listitem"
-            aria-label={`选择${itemLabel(item)}`}
-            aria-pressed={item.id === selectedItemId}
-            className={item.id === selectedItemId ? "is-selected" : undefined}
-            onClick={() => onSelect(item.id)}
-          >
-            <span><strong>{itemLabel(item)}</strong><small>{itemKindLabel(item)} · 层级 {item.zIndex}</small></span>
-          </button>
+          <li key={item.id}>
+            <button
+              type="button"
+              aria-label={`选择${itemLabel(item)}`}
+              aria-pressed={item.id === selectedItemId}
+              className={item.id === selectedItemId ? "is-selected" : undefined}
+              onClick={() => onSelect(item.id)}
+            >
+              <span><strong>{itemLabel(item)}</strong><small>{itemKindLabel(item)} · 层级 {item.zIndex}</small></span>
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
       <button
         type="button"
         aria-label="删除当前图层"

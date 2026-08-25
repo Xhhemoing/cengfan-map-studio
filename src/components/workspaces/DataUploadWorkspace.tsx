@@ -1,6 +1,6 @@
 import { CheckCircle2, LocateFixed, MapPinned, ShieldCheck } from "lucide-react";
 import { useState, type ComponentProps, type KeyboardEvent } from "react";
-import type { DataHealthSummary, DataIssue } from "../../lib/data-health";
+import { resolveDataIssueId, type DataHealthSummary, type DataIssue } from "../../lib/data-health";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { Student } from "../../lib/project-data";
 import { searchProvinces } from "../../lib/search-catalog";
@@ -8,6 +8,7 @@ import { resolveStudentLocation } from "../../lib/student-data";
 import { AssetPanel } from "../AssetPanel";
 import { DataQualityPanel } from "../DataQualityPanel";
 import { DataWorkspace } from "../DataWorkspace";
+import { focusStudentRow } from "../data-workspace-fields";
 import { SearchCombobox } from "../SearchCombobox";
 import { CompactButton, PanelHeader } from "../StudioUi";
 
@@ -22,11 +23,13 @@ function MappingIssueRow({
   issue,
   onUpdateStudent,
   onSelectStudent,
+  onAnnounce,
 }: {
   student?: Student;
   issue: DataIssue;
   onUpdateStudent: (id: string, patch: Partial<Pick<Student, "province">>) => void;
   onSelectStudent: (id: string) => void;
+  onAnnounce: (message: string) => void;
 }) {
   const [province, setProvince] = useState(student?.province ?? "");
   const [saved, setSaved] = useState(false);
@@ -34,11 +37,12 @@ function MappingIssueRow({
     const next = province.trim();
     if (!next) return;
     onUpdateStudent(student?.id ?? issue.studentId, { province: next });
+    onAnnounce(`已为 ${issue.studentName} 指定省份：${next}`);
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1600);
   };
   return (
-    <div className="data-quality-row data-upload-workspace__mapping-row" role="listitem">
+    <div className="data-quality-row data-upload-workspace__mapping-row" data-issue-id={resolveDataIssueId(issue)} role="listitem">
       <div className="data-quality-row__content">
         <strong>{issue.studentName}</strong>
         <small>{issue.detail}</small>
@@ -64,6 +68,7 @@ function MappingIssueRow({
         icon={<LocateFixed size={14} aria-hidden />}
         aria-label={`定位${issue.studentName}`}
         variant="secondary"
+        data-locate-issue={resolveDataIssueId(issue)}
         onClick={() => onSelectStudent(issue.studentId)}
       >
         定位到名单
@@ -72,11 +77,16 @@ function MappingIssueRow({
   );
 }
 
+/**
+ * A 定位 action from the quality rail lands on the roster row itself instead of
+ * only scrolling near it. When the row is not rendered (the roster filter hides
+ * it) the selection is still reported: the roster panel owns the filter and
+ * announces the hidden record with a way to reveal it.
+ */
 function selectStudentRow(id: string, onSelectStudent: (studentId: string) => void, delegate?: (studentId: string) => void) {
   delegate?.(id);
   onSelectStudent(id);
-  const row = Array.from(document.querySelectorAll<HTMLElement>("[data-student-row]")).find((item) => item.dataset.studentRow === id);
-  if (typeof row?.scrollIntoView === "function") row.scrollIntoView({ block: "center" });
+  focusStudentRow(id);
 }
 
 export type DataUploadWorkspaceProps = {
@@ -165,6 +175,7 @@ export function DataUploadRail({
 }: DataUploadRailProps) {
   const [railTab, setRailTab] = useState<"quality" | "assets">("quality");
   const [assetProvince, setAssetProvince] = useState("");
+  const [mappingAnnouncement, setMappingAnnouncement] = useState("");
 
   const handleRailTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -220,6 +231,15 @@ export function DataUploadRail({
           素材库
         </button>
       </div>
+      {/*
+       * The 指定省份 button hides its visible "已指定" flip behind an aria-label,
+       * and a successful apply remounts the row (it is keyed on the student's
+       * province), so the applied-override announcement must live outside the
+       * rows — in a persistent polite region that also survives tab switches.
+       */}
+      <span className="sr-only" role="status" aria-live="polite" data-mapping-announcement>
+        {mappingAnnouncement}
+      </span>
       {railTab === "quality" ? (
         <section className="data-upload-workspace__quality" id="data-rail-quality" role="tabpanel" aria-labelledby="data-rail-quality-tab">
           <PanelHeader title="数据质量" meta={`${issues.length} 项待检查`} />
@@ -237,7 +257,7 @@ export function DataUploadRail({
             </div>
             <div className="data-upload-workspace__province-grid" role="list" aria-label="省份分布">
               {distributionEntries.map(([name, entry]) => (
-                <span key={name} className="data-upload-workspace__province-chip" data-overridden={entry.overridden ? "true" : undefined}>
+                <span key={name} className="data-upload-workspace__province-chip" role="listitem" data-overridden={entry.overridden ? "true" : undefined}>
                   <strong>{name}</strong>
                   <small>{entry.count} 人{entry.overridden ? " · 已覆盖" : ""}</small>
                 </span>
@@ -253,11 +273,12 @@ export function DataUploadRail({
               <div className="data-quality-list" role="list" aria-label="地图映射问题">
                 {mappingIssues.map((issue) => (
                   <MappingIssueRow
-                    key={`${issue.studentId}-${issue.kind}-${studentById.get(issue.studentId)?.province ?? ""}`}
+                    key={`${resolveDataIssueId(issue)}-${studentById.get(issue.studentId)?.province ?? ""}`}
                     student={studentById.get(issue.studentId)}
                     issue={issue}
                     onUpdateStudent={dataWorkspaceProps.onUpdateStudent}
                     onSelectStudent={handleSelectStudent}
+                    onAnnounce={setMappingAnnouncement}
                   />
                 ))}
               </div>

@@ -1,9 +1,18 @@
+import {
+  CONNECTOR_ANCHOR_EXEMPT_RADIUS,
+  segmentRectOverlapLength,
+  trimSegmentsNearAnchor,
+} from "./connector-geometry";
+import { mmToPx, normalizePrintBleedMm } from "./print-bleed";
+
 export type LayoutHealthIssueKind =
   | "overflow"
   | "out-of-bounds"
   | "occlusion"
   | "unreadable-text"
-  | "connector-conflict";
+  | "connector-conflict"
+  | "connector-crosses-card"
+  | "object-in-bleed";
 
 export type LayoutHealthSeverity = "warning" | "error";
 
@@ -35,10 +44,15 @@ export interface LayoutHealthConnector {
   id: string;
   segments: Array<{ start: LayoutHealthPoint; end: LayoutHealthPoint }>;
   visible?: boolean;
+  /** 引线出发的那张卡片。它的边框就是引线起点，贴着自己走不算穿卡。 */
+  cardId?: string;
+  /** 地理锚点。锚点周围的会合区是共锚点花束，不参与穿卡判定。 */
+  anchor?: LayoutHealthPoint;
 }
 
 export interface LayoutHealthInput {
-  canvas: { width: number; height: number; safeMargin?: number };
+  /** `width`/`height` are the trim box; `printBleedMm` extends the print sheet outside it. */
+  canvas: { width: number; height: number; safeMargin?: number; printBleedMm?: number };
   objects: readonly LayoutHealthObject[];
   connectors?: readonly LayoutHealthConnector[];
   cardsPositions?: Record<string, LayoutHealthPoint>;
@@ -49,6 +63,12 @@ export interface LayoutHealthIssue {
   kind: LayoutHealthIssueKind;
   severity: LayoutHealthSeverity;
   detail: string;
+  /**
+   * 涉及对象的原始 id，按定位优先级排列（最该挪动的在前）。issue.id 由这些 id 用
+   * ":" 拼成，而卡片分组键本身可能含 ":"，从拼接串拆不回原值；定位时应优先用这里。
+   * 连接线不是画布对象，以其出发卡片（cardId）代表，缺失时退回连接线自身 id。
+   */
+  targets?: string[];
 }
 
 const EPSILON = 0.000001;
@@ -73,6 +93,26 @@ function outsideSafeArea(bounds: LayoutHealthBounds, canvas: LayoutHealthInput["
     || bounds.y < margin
     || bounds.x + bounds.width > canvas.width - margin
     || bounds.y + bounds.height > canvas.height - margin;
+}
+
+/** Layers that may legitimately run full-bleed (背景、地图底图) are exempt from the trim check. */
+const BLEED_SENSITIVE_KINDS: ReadonlySet<LayoutHealthObject["kind"]> = new Set(["card", "text", "asset", "guests"]);
+
+type BleedRisk = "in-bleed" | "near-trim";
+
+/**
+ * `print-bleed` treats the canvas as the trim box and grows the bleed outwards, so an object
+ * crossing a canvas edge already prints inside the bleed and risks being cut off.
+ */
+function bleedRisk(bounds: LayoutHealthBounds, canvas: LayoutHealthInput["canvas"], quietZone: number): BleedRisk | null {
+  const smallest = Math.min(
+    bounds.x,
+    bounds.y,
+    canvas.width - (bounds.x + bounds.width),
+    canvas.height - (bounds.y + bounds.height),
+  );
+  if (smallest < -EPSILON) return "in-bleed";
+  return smallest < quietZone - EPSILON ? "near-trim" : null;
 }
 
 function resolvedBounds(object: LayoutHealthObject, positions: Record<string, LayoutHealthPoint> | undefined): LayoutHealthBounds {
@@ -140,11 +180,75 @@ function connectorConflict(left: LayoutHealthConnector, right: LayoutHealthConne
   return left.segments.some((leftSegment) => right.segments.some((rightSegment) => segmentsIntersect(leftSegment, rightSegment)));
 }
 
+/**
+ * 引线要压进卡片正身多少像素才算「穿过去」。
+ *
+ * 判定用的是卡内弦长而不是「碰到没有」：擦过一个角、或者沿着边框走一小截，
+ * 画面上看不出线压在卡上，报出来只会把真正从卡片正中穿过去的那条淹掉。4px
+ * 是连接线自身描边的量级。
+ */
+const CARD_CROSSING_MIN_CHORD = 4;
+
+/**
+ * 参与穿卡判定的折线：先把锚点周围的会合区裁掉。
+ *
+ * 共锚点的一束引线必然在锚点处交汇，而锚点常常正落在某张卡片身上（卡片就摆在
+ * 自己省份上方）。那种「最后十几像素扎进卡里」是花束的固有形状，不是排版事故；
+ * 同一半径之外的部分照常判定，所以真的从卡片正身穿过去仍然会报。
+ */
+function crossingSegments(connector: LayoutHealthConnector) {
+  return connector.anchor
+    ? trimSegmentsNearAnchor(connector.segments, connector.anchor, CONNECTOR_ANCHOR_EXEMPT_RADIUS)
+    : connector.segments;
+}
+
+function boundingBox(segments: readonly { start: LayoutHealthPoint; end: LayoutHealthPoint }[]): LayoutHealthBounds {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const segment of segments) {
+    for (const point of [segment.start, segment.end]) {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * 两个盒子完全错开。和 {@link overlaps} 不同，这里贴边接触算「没错开」：一条正
+ * 压在卡片边框上走的引线，包围盒是零宽的，不能被当成够不着而提前筛掉。
+ */
+function separated(left: LayoutHealthBounds, right: LayoutHealthBounds): boolean {
+  return left.x > right.x + right.width
+    || left.x + left.width < right.x
+    || left.y > right.y + right.height
+    || left.y + left.height < right.y;
+}
+
+/**
+ * Whether an overlap between two objects on the same layer is worth reporting.
+ *
+ * 展示框 share one `cards.zIndex`, so a pair of stacked cards always compares
+ * equal and would otherwise never warn — the case a user most needs to see.
+ * Other kinds stay exempt: their reported heights are estimates, and one text
+ * or 素材 drawn over another on the same layer is usually deliberate, so
+ * warning on every such pair would bury the real overlaps in noise.
+ */
+function sameLayerOcclusionMatters(left: LayoutHealthObject, right: LayoutHealthObject): boolean {
+  return left.kind === "card" && right.kind === "card";
+}
+
 export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[] {
   const issues: LayoutHealthIssue[] = [];
   const visibleObjects = input.objects
     .filter((object) => object.visible !== false)
     .map((object) => ({ object, bounds: resolvedBounds(object, input.cardsPositions) }));
+  const bleedMm = normalizePrintBleedMm(input.canvas.printBleedMm);
+  const bleedPx = bleedMm > 0 ? mmToPx(bleedMm) : 0;
 
   for (const { object, bounds } of visibleObjects) {
     if (outsideCanvas(bounds, input.canvas)) {
@@ -153,6 +257,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "out-of-bounds",
         severity: "error",
         detail: `${object.id} 超出画布边界`,
+        targets: [object.id],
       });
     } else if (outsideSafeArea(bounds, input.canvas)) {
       issues.push({
@@ -160,7 +265,22 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "overflow",
         severity: "warning",
         detail: `${object.id} 超出画布安全边距`,
+        targets: [object.id],
       });
+    }
+    if (bleedPx > 0 && BLEED_SENSITIVE_KINDS.has(object.kind)) {
+      const risk = bleedRisk(bounds, input.canvas, bleedPx);
+      if (risk) {
+        issues.push({
+          id: object.id,
+          kind: "object-in-bleed",
+          severity: "warning",
+          detail: risk === "in-bleed"
+            ? `${object.id} 落在出血区（裁切线之外），裁切后可能被切掉`
+            : `${object.id} 距裁切线不足 ${bleedMm}mm`,
+          targets: [object.id],
+        });
+      }
     }
     if (hasLowContrast(object)) {
       issues.push({
@@ -168,6 +288,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "unreadable-text",
         severity: "warning",
         detail: `${object.id} 的文字与背景对比度不足`,
+        targets: [object.id],
       });
     }
   }
@@ -179,14 +300,16 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
       if (!overlaps(left.bounds, right.bounds)) continue;
       const leftZ = left.object.zIndex ?? 0;
       const rightZ = right.object.zIndex ?? 0;
-      if (leftZ === rightZ) continue;
-      const back = leftZ < rightZ ? left.object : right.object;
-      const front = leftZ < rightZ ? right.object : left.object;
+      if (leftZ === rightZ && !sameLayerOcclusionMatters(left.object, right.object)) continue;
+      // Equal z means paint order decides, and that is input order.
+      const back = leftZ <= rightZ ? left.object : right.object;
+      const front = leftZ <= rightZ ? right.object : left.object;
       issues.push({
         id: `${back.id}:${front.id}`,
         kind: "occlusion",
         severity: "warning",
         detail: `${front.id} 遮挡了 ${back.id}`,
+        targets: [back.id, front.id],
       });
     }
   }
@@ -202,6 +325,30 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
         kind: "connector-conflict",
         severity: "warning",
         detail: `${left.id} 与 ${right.id} 的连接线发生冲突`,
+        targets: [left.cardId ?? left.id, right.cardId ?? right.id],
+      });
+    }
+  }
+
+  const visibleCards = visibleObjects.filter((entry) => entry.object.kind === "card");
+  for (const connector of visibleConnectors) {
+    const segments = crossingSegments(connector);
+    if (segments.length === 0) continue;
+    // curve 会被采样成 16 段，逐段对每张卡做裁剪很快就上万次。要留下 4px 弦长，
+    // 整条线的包围盒必然与卡片相交，一次包围盒比较就能筛掉绝大多数卡片。
+    const reach = boundingBox(segments);
+    for (const { object, bounds } of visibleCards) {
+      if (object.id === connector.cardId || separated(reach, bounds)) continue;
+      // 折线的各段互不重叠，逐段弦长相加就是这条线压在卡内的总长度。
+      const chord = segments.reduce((total, segment) => total + segmentRectOverlapLength(segment, bounds), 0);
+      if (chord < CARD_CROSSING_MIN_CHORD) continue;
+      // 被穿的卡在前：那才是用户要挪的东西；出发卡殿后，供被穿卡已不可选时兜底。
+      issues.push({
+        id: `${connector.id}:${object.id}`,
+        kind: "connector-crosses-card",
+        severity: "warning",
+        detail: `${connector.cardId ?? connector.id} 的连接线从 ${object.id} 上穿过`,
+        targets: [object.id, connector.cardId ?? connector.id],
       });
     }
   }

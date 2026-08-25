@@ -286,6 +286,59 @@ describe("WorkflowGuide", () => {
     expect(onOpenGlobalSettings).toHaveBeenCalledWith("map");
   });
 
+  it("wires the toggle to its panel and closes with Escape returning focus to the bar", () => {
+    const { container } = renderGuide();
+    const bar = container.querySelector<HTMLButtonElement>(".workflow-guide__bar")!;
+
+    // Collapsed: expanded=false and no dangling aria-controls reference.
+    expect(bar.getAttribute("aria-expanded")).toBe("false");
+    expect(bar.hasAttribute("aria-controls")).toBe(false);
+
+    clickBar(container);
+    expect(bar.getAttribute("aria-expanded")).toBe("true");
+    expect(bar.getAttribute("aria-controls")).toBe("workflow-guide-panel");
+    const panel = container.querySelector("#workflow-guide-panel");
+    expect(panel).not.toBeNull();
+
+    // Escape anywhere inside the guide closes the popover and restores focus to the toggle.
+    const stepButton = container.querySelector<HTMLButtonElement>(".workflow-nav button")!;
+    stepButton.focus();
+    flushSync(() => stepButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(container.querySelector("#workflow-guide-panel")).toBeNull();
+    expect(bar.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(bar);
+  });
+
+  it("hides the decorative step icons from the accessibility tree", () => {
+    const { container } = renderGuide();
+    clickBar(container);
+
+    const icons = Array.from(container.querySelectorAll(".workflow-nav__icon"));
+    expect(icons.length).toBe(5);
+    for (const icon of icons) {
+      expect(icon.getAttribute("aria-hidden")).toBe("true");
+      // The Lucide svg itself must stay pinned even if the wrapper span changes.
+      const svg = icon.querySelector("svg");
+      expect(svg).not.toBeNull();
+      expect(svg?.getAttribute("aria-hidden")).toBe("true");
+    }
+  });
+
+  it("groups the export warning lists and actions with accessible names", () => {
+    const { container } = renderGuide({
+      activeStep: "export",
+      exportWarnings: {
+        unresolvedStudents: [{ id: "s-2", name: "未匹配同学", city: "不存在的城市" }],
+        hiddenStudents: [{ id: "s-4", name: "隐藏同学" }],
+      },
+    });
+    clickBar(container);
+
+    expect(container.querySelector('[role="group"][aria-label="未匹配城市"]')).not.toBeNull();
+    expect(container.querySelector('[role="group"][aria-label="隐藏名单"]')).not.toBeNull();
+    expect(container.querySelector('[role="group"][aria-label="导出与保存"]')).not.toBeNull();
+  });
+
   it("keeps the layout section links out of the topbar variant", () => {
     const { container } = renderGuide({
       activeStep: "layout",

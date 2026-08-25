@@ -22,7 +22,7 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, { faile
     return (
       <main className="workbench-shell">
         <section className="workbench-error workbench-error--recover" role="alert">
-          <span className="workbench-brand-mark"><MapPinned size={22} /></span>
+          <span className="workbench-brand-mark"><MapPinned size={22} aria-hidden /></span>
           <strong>界面加载出错</strong>
           <p>可能是本地数据或网络问题导致的临时故障，你的工程内容不会被清除。</p>
           <div className="workbench-error-actions">

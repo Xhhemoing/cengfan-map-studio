@@ -11,12 +11,31 @@ import { TextInspector } from "./TextInspector";
 import { AssetInspector } from "./AssetInspector";
 import { ProvinceInspector } from "./ProvinceInspector";
 import { TypographyPanel } from "../TypographyPanel";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Settings2 } from "lucide-react";
 import { CompactButton } from "../StudioUi";
 
 /** 全局设置分区（与 GlobalSettingsScreen.sections 保持一致）。 */
 export type GlobalSettingsSectionId = "canvas" | "map" | "cards" | "guests" | "typography" | "advanced";
+
+/** Stable identity for a selection so re-renders with the same target don't re-trigger focus. */
+function selectionIdentity(selection: SceneSelection): string {
+  if (selection.type === "province") return `province:${selection.province}`;
+  if (selection.type === "text" || selection.type === "asset") return `${selection.type}:${selection.id}`;
+  return selection.type;
+}
+
+function selectionSummary(selection: SceneSelection): string {
+  switch (selection.type) {
+    case "canvas": return "画布";
+    case "map": return "地图展示框";
+    case "cards": return "数据展示框";
+    case "guests": return "嘉宾板块";
+    case "province": return `省份 ${selection.province}`;
+    case "text": return "文字";
+    case "asset": return "素材实例";
+  }
+}
 
 const DEFAULT_GUESTS: GuestPanelSettings = {
   title: "特邀嘉宾 · 老师名单",
@@ -51,6 +70,40 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
   onDeleteUserFont?: (fontId: string) => void;
 }) {
   const guests = project.guests ?? DEFAULT_GUESTS;
+
+  // Focus policy: when the selected object changes, move focus onto the panel
+  // container so keyboard and screen-reader users land next to the controls
+  // that just changed — EXCEPT while a pointer interaction is in progress.
+  // Text/asset/card selection fires on pointerdown and the user usually keeps
+  // dragging; yanking focus mid-drag would interrupt pointer capture feedback
+  // and scroll the rail unexpectedly. Completed clicks (pointer already up)
+  // and programmatic selection changes do move focus. The initial mount never
+  // steals focus. See .agent_workspace/round2/fable-ux.md for the rationale.
+  const focusRootRef = useRef<HTMLDivElement | null>(null);
+  const pointerActiveRef = useRef(false);
+  const previousIdentityRef = useRef<string | null>(null);
+  const identity = selectionIdentity(selection);
+
+  useEffect(() => {
+    const markDown = () => { pointerActiveRef.current = true; };
+    const markUp = () => { pointerActiveRef.current = false; };
+    window.addEventListener("pointerdown", markDown, true);
+    window.addEventListener("pointerup", markUp, true);
+    window.addEventListener("pointercancel", markUp, true);
+    return () => {
+      window.removeEventListener("pointerdown", markDown, true);
+      window.removeEventListener("pointerup", markUp, true);
+      window.removeEventListener("pointercancel", markUp, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const previous = previousIdentityRef.current;
+    previousIdentityRef.current = identity;
+    if (previous === null || previous === identity) return;
+    if (pointerActiveRef.current) return;
+    focusRootRef.current?.focus();
+  }, [identity]);
 
   let panel: ReactNode;
   if (selection.type === "canvas") {
@@ -97,7 +150,13 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
   }
 
   return (
-    <>
+    <div
+      ref={focusRootRef}
+      data-inspector-panel
+      tabIndex={-1}
+      role="group"
+      aria-label={`当前对象属性：${selectionSummary(selection)}`}
+    >
       {onOpenGlobalSettings && (
         <CompactButton
           className="inspector-global-entry"
@@ -121,6 +180,6 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
           />
         </details>
       )}
-    </>
+    </div>
   );
 }

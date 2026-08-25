@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Redo2, Undo2 } from "lucide-react";
 import type { DataViewId } from "../../lib/project-data";
 import type { ProjectDocument } from "../../lib/project-document";
@@ -65,16 +66,39 @@ export function MapStyleRail({
   onUndo,
   onRedo,
 }: MapStyleRailProps) {
+  // 撤销/重做对读屏用户是零反馈的：画布 live region 只播报选中变化，而按钮
+  // aria-label 的静默更新不会被读出（WCAG 4.1.3 状态消息）。点击时用点击前的
+  // 标签播报「已撤销/已重做：某步骤」；tick 的隐形空格后缀在两次播报之间切换，
+  // 保证连续撤销两个同名步骤时文本仍有变化（aria-live 不会复读完全相同的文本）。
+  const [historyAnnouncement, setHistoryAnnouncement] = useState({ text: "", tick: 0 });
+  const announceHistory = (label: string) =>
+    setHistoryAnnouncement((prev) => ({ text: `已${label}`, tick: prev.tick + 1 }));
   return (
     <aside className="map-style-workspace__context" aria-label="地图对象属性">
       <section className="map-style-workspace__section" aria-label="地图表达">
         <div className="map-style-workspace__section-heading">
           <strong>地图表达</strong>
           <div className="map-style-workspace__history" role="group" aria-label="地图样式历史">
-            <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
-            <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
+            <IconButton
+              label={undoLabel}
+              icon={<Undo2 size={17} aria-hidden />}
+              disabled={!canUndo}
+              onClick={() => { announceHistory(undoLabel); onUndo(); }}
+            />
+            <IconButton
+              label={redoLabel}
+              icon={<Redo2 size={17} aria-hidden />}
+              disabled={!canRedo}
+              onClick={() => { announceHistory(redoLabel); onRedo(); }}
+            />
           </div>
         </div>
+        {/* 持久存在（而非按需挂载）的播报区：区域必须先于变更就在 DOM 里，
+            读屏才能可靠播报；sr-only 且绝对定位，不产生任何可见布局变化。 */}
+        <span className="sr-only" role="status" aria-live="polite" data-history-announcement>
+          {historyAnnouncement.text}
+          {historyAnnouncement.tick % 2 === 1 ? "\u00A0" : ""}
+        </span>
         <SegmentedControl
           label="地图表达"
           activeId={project.dataView}

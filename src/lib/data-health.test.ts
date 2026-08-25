@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createProjectDocument } from "./project-document";
-import { buildDataHealthSummary, listDataIssues } from "./data-health";
+import {
+  buildDataHealthSummary,
+  dataIssueId,
+  listDataIssues,
+  resolveDataIssueId,
+  withDataIssueId,
+} from "./data-health";
 
 describe("project data health", () => {
   it("summarizes visible, hidden, international, unresolved, and missing records", () => {
@@ -58,6 +64,223 @@ describe("project data health", () => {
       "student-1:hidden",
       "student-1:duplicate",
       "student-2:duplicate",
+    ]);
+  });
+
+  it("groups records that differ only in punctuation width or middle dot", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "student-1", name: "阿依古丽·买买提", university: "Harvard University", city: "美国·波士顿", locationScope: "international", visibility: true },
+        // The same person retyped: katakana middle dot and full-width Latin.
+        { id: "student-2", name: "阿依古丽・买买提", university: "Ｈａｒｖａｒｄ　Ｕｎｉｖｅｒｓｉｔｙ", city: "美国·波士顿", locationScope: "international", visibility: true },
+        { id: "student-3", name: "林舟", university: "北京大学", city: "北京市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project).duplicate).toBe(2);
+    expect(listDataIssues(project).filter((issue) => issue.kind === "duplicate").map((issue) => issue.studentId))
+      .toEqual(["student-1", "student-2"]);
+  });
+
+  it("gives every issue a stable kind:studentId identifier the UI can locate", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "student-1", name: "未匹配", university: "大学", city: "不存在", province: "火星省", visibility: false },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    const issues = listDataIssues(project);
+    const ids = issues.map((issue) => issue.id);
+
+    expect(ids).toEqual(["manual-province:student-1", "hidden:student-1"]);
+    expect(new Set(ids).size).toBe(ids.length);
+    // Re-running on the same data must produce the same ids.
+    expect(listDataIssues(project).map((issue) => issue.id)).toEqual(ids);
+    expect(dataIssueId("hidden", "student-1")).toBe("hidden:student-1");
+    expect(resolveDataIssueId({ studentId: "student-9", studentName: "无 id", kind: "duplicate", detail: "", severity: "warning" }))
+      .toBe("duplicate:student-9");
+  });
+
+  it("sets an id on every listed issue whatever its kind", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "student-1", name: "", university: "", city: "不存在", visibility: false },
+        { id: "student-2", name: "周晴", university: "哈佛大学", city: "美国·波士顿", locationScope: "international", visibility: true },
+        { id: "student-3", name: "林舟", university: "北京大学", city: "北京市", province: "北京市", visibility: true },
+        { id: "student-4", name: "林舟", university: "北京大学", city: "北京市", visibility: true },
+        { id: "student-5", name: "林舟", university: "北京大学", city: "北京市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    const issues = listDataIssues(project);
+    const kinds = new Set(issues.map((issue) => issue.kind));
+
+    expect(kinds).toEqual(new Set(["missing-field", "unresolved-location", "manual-province", "international", "hidden", "duplicate"]));
+    expect(issues.every((issue) => issue.id === resolveDataIssueId(issue))).toBe(true);
+    expect(issues.every((issue) => issue.id === `${issue.kind}:${issue.studentId}`)).toBe(true);
+    expect(new Set(issues.map((issue) => issue.id)).size).toBe(issues.length);
+  });
+
+  it("fills in the id of an issue built outside listDataIssues", () => {
+    const literal = { studentId: "student-9", studentName: "无 id", kind: "hidden" as const, detail: "", severity: "info" as const };
+
+    expect(withDataIssueId(literal)).toEqual({ ...literal, id: "hidden:student-9" });
+    expect(withDataIssueId({ ...literal, id: "custom" }).id).toBe("custom");
+  });
+
+  it("reports a whitespace-only name as a missing field and labels it 未命名学生", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "blank-name", name: "   ", university: "浙江大学", city: "杭州市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project).missingRequired).toBe(1);
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({
+        id: "missing-field:blank-name",
+        studentName: "未命名学生",
+        kind: "missing-field",
+        detail: "缺少姓名",
+      }),
+    ]);
+  });
+
+  it("reports a name made only of invisible characters as missing", () => {
+    // trim() keeps a zero-width space, so the record used to pass the required
+    // -field check and then render as a blank row with no warning attached.
+    const project = createProjectDocument({
+      students: [
+        { id: "zero-width", name: "\u200b", university: "浙江大学", city: "杭州市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project).missingRequired).toBe(1);
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({
+        id: "missing-field:zero-width",
+        studentName: "未命名学生",
+        detail: "缺少姓名",
+      }),
+    ]);
+  });
+
+  it("keeps warning about an unlocatable city behind an invisible province override", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "ghost-province", name: "林舟", university: "北京大学", city: "火星市", province: "\uFEFF", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ unresolved: 1, missingRequired: 0 });
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({
+        id: "unresolved-location:ghost-province",
+        kind: "unresolved-location",
+        detail: "无法定位城市：火星市",
+      }),
+    ]);
+  });
+
+  it("flags a city-only row for its missing name and university without dropping it", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "city-only", name: "", university: "", city: "杭州市", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ total: 1, missingRequired: 1, unresolved: 0 });
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({ kind: "missing-field", detail: "缺少姓名、院校" }),
+    ]);
+  });
+
+  it("still reports the missing city of a row placed by a province override", () => {
+    // The override makes the location resolved, so 城市未匹配 stays silent on
+    // purpose; the row must not slip through unflagged because of it.
+    const project = createProjectDocument({
+      students: [
+        { id: "override-only", name: "林舟", university: "北京大学", city: "\u3000", province: "浙江省", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ unresolved: 0, missingRequired: 1 });
+    expect(listDataIssues(project).map((issue) => issue.id)).toEqual([
+      "missing-field:override-only",
+      "manual-province:override-only",
+    ]);
+    expect(listDataIssues(project)[0]).toMatchObject({ detail: "缺少城市" });
+  });
+
+  it("keeps an overseas record out of the unresolved count when a stale province survives", () => {
+    // Imports strip the province of an overseas destination, but a hand-edited
+    // or older project file can still carry one.
+    const project = createProjectDocument({
+      students: [
+        { id: "stale", name: "苏禾", university: "哈佛大学", city: "美国·波士顿", province: "浙江省", locationScope: "international", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ unresolved: 0, international: 1 });
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({
+        id: "international:stale",
+        kind: "international",
+        detail: "海外去向：美国·波士顿（省份 浙江省 不参与中国地图，已忽略）",
+      }),
+    ]);
+  });
+
+  it("does not offer a province override as the fix for an overseas record", () => {
+    // 省份覆盖 rows are what the map mapping panel turns into a 指定省份 button.
+    // On an overseas record that write lands in data nothing reads, so the
+    // leftover province is reported on the 海外去向 row instead.
+    const project = createProjectDocument({
+      students: [
+        { id: "overseas", name: "苏禾", university: "哈佛大学", city: "美国·波士顿", province: "浙江省", locationScope: "international", visibility: true },
+        { id: "china", name: "林舟", university: "火星学院", city: "火星市", province: "浙江省", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    const mappingIssues = listDataIssues(project).filter(
+      (issue) => issue.kind === "unresolved-location" || issue.kind === "manual-province",
+    );
+
+    expect(mappingIssues.map((issue) => issue.id)).toEqual(["manual-province:china"]);
+  });
+
+  it("never asks an overseas record for a Chinese city or province", () => {
+    const project = createProjectDocument({
+      students: [
+        { id: "overseas", name: "周晴", university: "哈佛大学", city: "美国·波士顿", locationScope: "international", visibility: true },
+      ],
+      templateId: "original",
+      dataView: "province",
+    });
+
+    expect(buildDataHealthSummary(project)).toMatchObject({ unresolved: 0, international: 1, missingRequired: 0 });
+    expect(listDataIssues(project)).toEqual([
+      expect.objectContaining({ id: "international:overseas", kind: "international", severity: "info" }),
     ]);
   });
 });

@@ -1,9 +1,10 @@
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import { DataUploadRail, DataUploadWorkspace } from "./DataUploadWorkspace";
 import { createProjectDocument } from "../../lib/project-document";
+import type { DataIssue } from "../../lib/data-health";
 import type { Student } from "../../lib/project-data";
 import type { DataWorkspace } from "../DataWorkspace";
 
@@ -75,6 +76,68 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
   return { container, root, project };
 }
 
+const rosterWithTwo: Student[] = [
+  students[0]!,
+  { id: "student-2", name: "苏禾", university: "浙江大学", city: "杭州市", visibility: true },
+];
+
+const locateIssues: DataIssue[] = [{
+  id: "unresolved-location:student-1",
+  studentId: "student-1",
+  studentName: "林舟",
+  kind: "unresolved-location",
+  detail: "无法定位城市：火星市",
+  severity: "warning",
+}];
+
+/**
+ * The DATA stage keeps the selected record in the app shell, so 定位 only
+ * reaches the roster table through a state round-trip. This harness stands in
+ * for that shell.
+ */
+function LocateHarness() {
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const project = createProjectDocument({ students: rosterWithTwo, templateId: "original", dataView: "province" });
+  const summary = { total: 2, visible: 2, hidden: 0, international: 0, unresolved: 1, missingRequired: 0, duplicate: 0 };
+  const dataWorkspaceProps: ComponentProps<typeof DataWorkspace> = {
+    ...defaultDataWorkspaceProps(),
+    students: rosterWithTwo,
+    selectedStudentId,
+  };
+  const assetPanelProps = { onApplyBackground: vi.fn() };
+  return (
+    <div className="data-upload-test-suite">
+      <DataUploadWorkspace
+        project={project}
+        summary={summary}
+        issues={locateIssues}
+        dataWorkspaceProps={dataWorkspaceProps}
+        assetPanelProps={assetPanelProps}
+        onCreateDecoration={vi.fn()}
+        onSelectStudent={setSelectedStudentId}
+      />
+      <DataUploadRail
+        project={project}
+        summary={summary}
+        issues={locateIssues}
+        dataWorkspaceProps={dataWorkspaceProps}
+        assetPanelProps={assetPanelProps}
+        onCreateDecoration={vi.fn()}
+        onSelectStudent={setSelectedStudentId}
+      />
+    </div>
+  );
+}
+
+function renderLocateHarness() {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push({ root, container });
+  flushSync(() => root.render(<LocateHarness />));
+  return { container, root };
+}
+
 describe("DataUploadWorkspace", () => {
   it("is the upload data workbench and excludes templates and map expression controls", () => {
     const { container } = renderWorkspace();
@@ -143,6 +206,138 @@ describe("DataUploadWorkspace", () => {
     expect(onUpdateStudent).toHaveBeenCalledWith("student-1", { province: "火星省" });
   });
 
+  it("announces an applied province override through a persistent polite live region", () => {
+    const onUpdateStudent = vi.fn();
+    const { container } = renderWorkspace({
+      issues: [
+        { studentId: "student-1", studentName: "林舟", kind: "unresolved-location", detail: "无法定位城市：火星市", severity: "warning" },
+      ],
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), onUpdateStudent },
+    });
+
+    // The region must already exist (empty) before the interaction so assistive
+    // tech tracks the change, and it must sit outside the mapping rows: a
+    // successful apply remounts the row (keyed on the student's province), and
+    // the apply button's aria-label hides its visible "已指定" flip anyway.
+    const announcer = container.querySelector("[data-mapping-announcement]")!;
+    expect(announcer).not.toBeNull();
+    expect(announcer.getAttribute("role")).toBe("status");
+    expect(announcer.getAttribute("aria-live")).toBe("polite");
+    expect(announcer.classList.contains("sr-only")).toBe(true);
+    expect(announcer.textContent).toBe("");
+    expect(announcer.closest(".data-upload-workspace__mapping-row")).toBeNull();
+
+    const input = container.querySelector('input[aria-label="为 林舟 指定省份"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, "火星省");
+    flushSync(() => input.dispatchEvent(new Event("input", { bubbles: true })));
+    flushSync(() => container.querySelector<HTMLButtonElement>('button[aria-label="为 林舟 应用省份覆盖"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(onUpdateStudent).toHaveBeenCalledWith("student-1", { province: "火星省" });
+    expect(announcer.isConnected).toBe(true);
+    expect(announcer.textContent).toBe("已为 林舟 指定省份：火星省");
+
+    // Switching rail tabs keeps the region mounted, so no stale re-announce on return.
+    flushSync(() => container.querySelector<HTMLButtonElement>("#data-rail-assets-tab")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(container.querySelector("[data-mapping-announcement]")).toBe(announcer);
+  });
+
+  it("tags every quality row with a stable issue id so the UI can locate it", () => {
+    const { container } = renderWorkspace({
+      issues: [
+        { id: "unresolved-location:student-1", studentId: "student-1", studentName: "林舟", kind: "unresolved-location", detail: "无法定位城市：火星市", severity: "warning" },
+        // An issue without an explicit id still gets the same derived identifier.
+        { studentId: "student-1", studentName: "林舟", kind: "duplicate", detail: "与其他记录一致", severity: "warning" },
+      ],
+    });
+
+    const ids = Array.from(container.querySelectorAll(".data-quality-panel [data-issue-id]")).map((row) => row.getAttribute("data-issue-id"));
+    expect(ids).toEqual(["unresolved-location:student-1", "duplicate:student-1"]);
+    // The map-mapping list repeats the same issue and must reuse its id.
+    expect(container.querySelector('.data-upload-workspace__mapping-row[data-issue-id="unresolved-location:student-1"]')).not.toBeNull();
+  });
+
+  it("moves focus to the roster row when an issue is located by its stable id", () => {
+    const innerSelect = vi.fn();
+    const outerSelect = vi.fn();
+    const { container } = renderWorkspace({
+      issues: [
+        { id: "unresolved-location:student-1", studentId: "student-1", studentName: "林舟", kind: "unresolved-location", detail: "无法定位城市：火星市", severity: "warning" },
+      ],
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), onSelectStudent: innerSelect },
+      onSelectStudent: outerSelect,
+    });
+
+    const issueRow = container.querySelector('.data-quality-panel [data-issue-id="unresolved-location:student-1"]')!;
+    const locate = issueRow.querySelector<HTMLButtonElement>("[data-locate-issue]")!;
+    expect(locate.getAttribute("data-locate-issue")).toBe("unresolved-location:student-1");
+
+    flushSync(() => locate.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(innerSelect).toHaveBeenCalledWith("student-1");
+    expect(outerSelect).toHaveBeenCalledWith("student-1");
+    expect(document.activeElement).toBe(container.querySelector('[data-student-row="student-1"]'));
+  });
+
+  it("locates the roster row from the map-mapping list too", () => {
+    const outerSelect = vi.fn();
+    const { container } = renderWorkspace({
+      issues: [
+        { studentId: "student-1", studentName: "林舟", kind: "manual-province", detail: "使用省份覆盖：火星省", severity: "info" },
+      ],
+      onSelectStudent: outerSelect,
+    });
+
+    const mappingRow = container.querySelector('.data-upload-workspace__mapping-row[data-issue-id="manual-province:student-1"]')!;
+    flushSync(() => mappingRow.querySelector<HTMLButtonElement>('button[aria-label="定位林舟"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(outerSelect).toHaveBeenCalledWith("student-1");
+    expect(document.activeElement).toBe(container.querySelector('[data-student-row="student-1"]'));
+  });
+
+  it("still reports the selection when the located record is filtered out of the table", () => {
+    const outerSelect = vi.fn();
+    const { container } = renderWorkspace({
+      issues: [
+        { studentId: "student-404", studentName: "不在表内", kind: "duplicate", detail: "与其他记录一致", severity: "warning" },
+      ],
+      onSelectStudent: outerSelect,
+    });
+    const active = document.activeElement;
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-locate-issue="duplicate:student-404"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(outerSelect).toHaveBeenCalledWith("student-404");
+    expect(document.activeElement).toBe(active);
+  });
+
+  it("says the located row is hidden by the roster filter and brings it back", () => {
+    const { container } = renderLocateHarness();
+    const filterInput = container.querySelector<HTMLInputElement>('input[aria-label="筛选学生"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    flushSync(() => {
+      setter?.call(filterInput, "浙江");
+      filterInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelector('[data-student-row="student-1"]')).toBeNull();
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-locate-issue="unresolved-location:student-1"]')!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    // The row cannot be focused, so the roster panel says why instead.
+    const notice = container.querySelector('[data-filtered-selection="student-1"]');
+    expect(notice?.textContent).toContain("林舟");
+
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-reveal-filtered-selection="student-1"]')!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    flushSync(() => {});
+
+    const row = container.querySelector('[data-student-row="student-1"]');
+    expect(row).not.toBeNull();
+    expect(document.activeElement).toBe(row);
+    expect(container.querySelector("[data-filtered-selection]")).toBeNull();
+  });
+
   it("shows an empty state when all locations and provinces are resolved", () => {
     const { container } = renderWorkspace();
 
@@ -150,6 +345,17 @@ describe("DataUploadWorkspace", () => {
     expect(mapping).not.toBeNull();
     expect(mapping?.textContent).toContain("城市与省份已全部定位");
     expect(mapping?.querySelector('[aria-label="省份分布"]')?.textContent).toContain("北京市");
+  });
+
+  it("exposes every province distribution chip as a listitem of the 省份分布 list", () => {
+    // Two roster cities resolve to two provinces, so the pairing is exercised with more than one chip.
+    const { container } = renderWorkspace({
+      project: createProjectDocument({ students: rosterWithTwo, templateId: "original", dataView: "province" }),
+    });
+
+    const chips = Array.from(container.querySelector('[role="list"][aria-label="省份分布"]')!.children);
+    expect(chips.map((chip) => chip.getAttribute("role"))).toEqual(["listitem", "listitem"]);
+    expect(chips.every((chip) => chip.classList.contains("data-upload-workspace__province-chip"))).toBe(true);
   });
 
   it("defaults the side rail to the quality tab and switches to the asset library", () => {

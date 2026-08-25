@@ -64,6 +64,30 @@ describe("TypographyPanel", () => {
     flushSync(() => root.unmount());
   });
 
+  it("hides the delete-font icon from assistive tech while keeping the button label", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(
+      <TypographyPanel
+        project={project}
+        provinces={["陕西省"]}
+        userFonts={[userFont]}
+        onApplyFont={vi.fn()}
+        onPatch={vi.fn()}
+      />,
+    ));
+
+    const deleteButton = container.querySelector<HTMLButtonElement>('button[aria-label="删除字体 陕西手写体"]');
+    expect(deleteButton).not.toBeNull();
+    expect(deleteButton?.getAttribute("aria-label")).toBe("删除字体 陕西手写体");
+    const icon = deleteButton?.querySelector("svg");
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+
+    flushSync(() => root.unmount());
+  });
+
   it("can apply one guest font to all guests and one personnel font to all names", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     project.guests.people = [{ id: "guest-1", name: "张老师", title: "特邀嘉宾", visibility: true }];

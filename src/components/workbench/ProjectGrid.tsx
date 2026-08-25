@@ -1,6 +1,7 @@
 import { MapPinned } from "lucide-react";
 import type { StoredProject } from "../../lib/project-store";
 import { ProjectCard } from "./ProjectCard";
+import { WORKBENCH_PROJECTS_TARGET_ID } from "./projects-target";
 
 export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete }: {
   projects: StoredProject[];
@@ -15,16 +16,17 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
   onExport: (project: StoredProject) => void;
   onDelete: (project: StoredProject) => void;
 }) {
-  return <section className="workbench-grid" aria-label="项目列表">
+  // id + tabIndex=-1：工作台 skip-link 的落点，.focus() 需要可编程聚焦。
+  return <section id={WORKBENCH_PROJECTS_TARGET_ID} className="workbench-grid" aria-label="项目列表" tabIndex={-1}>
     {loading && projects.length === 0 ? (
       <div className="workbench-empty" role="status">
-        <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} /></span>
+        <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} aria-hidden /></span>
         <strong>正在加载项目…</strong>
         <p>稍候，正在读取本机项目列表。</p>
       </div>
     ) : projects.length === 0 && !hasError ? (
       <div className="workbench-empty">
-        <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} /></span>
+        <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} aria-hidden /></span>
         <strong>还没有项目</strong>
         <p>点击「新建项目」或「导入」开始制作毕业去向图。</p>
       </div>

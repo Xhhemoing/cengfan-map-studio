@@ -16,7 +16,9 @@
   --editor-accent: #245d57;
   --editor-accent-soft: #e7f1ef;
   --editor-danger: #c95c49;
-  --editor-focus: #d6b56d;
+  /* Focus ring ≥3:1 against light surfaces (WCAG 2.2 focus appearance);
+     the old #d6b56d gold sat below 2:1 on white. Dark theme overrides below. */
+  --editor-focus: #a07613;
   /* Studio semantic tokens: consumed by the MUI theme (StudioMuiProvider) as
      var(--studio-*) strings so MUI components follow the editor light/dark skins. */
   --studio-bg: var(--editor-bg);
@@ -39,7 +41,7 @@
   --status-warning: #b26a00;
   --status-error: #c95c49;
   --status-info: #526575;
-  --focus-ring: #d6b56d;
+  --focus-ring: #a07613;
   --surface-panel: var(--editor-surface-raised);
 }
 * { box-sizing: border-box; }
@@ -1190,7 +1192,7 @@ button { font: inherit; }
 .global-settings-screen input:focus-visible,
 .global-settings-screen select:focus-visible,
 .global-settings-content:focus-visible {
-  outline: 2px solid #d6b56d;
+  outline: 2px solid var(--editor-focus, #a07613);
   outline-offset: 2px;
 }
 
@@ -3729,4 +3731,57 @@ html[data-editor-skin="classic"][data-editor-theme="dark"] {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+/* ---------------------------------------------------------------------------
+ * Accessibility baseline: focus visibility, skip link, reduced motion.
+ * ------------------------------------------------------------------------- */
+
+/* Zero-specificity focus fallback (:where keeps specificity at 0,1,0): any
+ * keyboard-focusable control without a bespoke ring gets a visible one, while
+ * every existing component-specific :focus-visible rule still wins. */
+:where(button, [href], input, select, textarea, summary, [role="tab"], [role="option"], [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--editor-focus, #a07613);
+  outline-offset: 2px;
+}
+
+/* Skip link: visually hidden until keyboard-focused, then pinned above the
+ * topbar. Render as <a class="skip-link" href="#main-target">跳到主要内容</a>
+ * before the topbar once the stage exposes a landmark id. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 300;
+  padding: 8px 14px;
+  color: var(--editor-ink, #1c3154);
+  background: var(--editor-surface-raised, #ffffff);
+  border: 1px solid var(--editor-line, #d3dce2);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgb(23 44 74 / 25%);
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(calc(-100% - 16px));
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  outline: 2px solid var(--editor-focus, #a07613);
+  outline-offset: 2px;
+  transform: none;
+}
+
+/* Respect prefers-reduced-motion everywhere, not only in the atelier skin:
+ * transitions/animations collapse to a near-zero duration so state changes
+ * remain (transitionend/animationend still fire) without visible motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  html {
+    scroll-behavior: auto !important;
+  }
 }

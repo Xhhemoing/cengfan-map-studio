@@ -17,8 +17,14 @@ import { CardPresentationSettings } from "./CardPresentationSettings";
 import { ThemeToggle } from "./ThemeToggle";
 import type { ResolvedTheme, ThemeMode } from "../lib/theme";
 import { ActionGroup, CompactButton, IconButton, SegmentedControl } from "./StudioUi";
+import { useHistoryAnnouncement } from "./use-history-announcement";
+import { SkipToStageLink } from "./studio-editor/SkipToStageLink";
 
 export type GlobalSettingsSection = "canvas" | "map" | "cards" | "guests" | "typography" | "advanced";
+
+// 设置页跳转落点 id：全局设置整页会替换工作室壳挂载，但仍持有自己的落点，
+// 不占用工作室的 #studio-stage。不导出以满足 react-refresh 只导出组件的约束。
+const SETTINGS_MAIN_TARGET_ID = "global-settings-main";
 
 interface SettingsSection {
   id: GlobalSettingsSection;
@@ -159,6 +165,9 @@ export function GlobalSettingsScreen({
 }) {
   const [activeSection, setActiveSection] = useState<GlobalSettingsSection>(initialSection);
   const [dataView, setDataView] = useState<"people" | "cards">("people");
+  // 与顶栏「历史与缩放」组相同的读屏反馈：点击时用点击前的标签播报
+  // 「已撤销：xx / 已重做：xx」（详见 useHistoryAnnouncement 的说明）。
+  const { announce: announceHistory, announcement: historyAnnouncement } = useHistoryAnnouncement();
 
   const handleSectionClick = (section: GlobalSettingsSection) => {
     setActiveSection(section);
@@ -166,10 +175,13 @@ export function GlobalSettingsScreen({
   const active = allSections.find((section) => section.id === activeSection) ?? allSections[0]!;
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % allSections.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + allSections.length) % allSections.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = allSections.length - 1;
+    if (nextIndex === null) return;
     event.preventDefault();
-    const direction = event.key === "ArrowRight" ? 1 : -1;
-    const nextIndex = (index + direction + allSections.length) % allSections.length;
     const next = allSections[nextIndex];
     if (!next) return;
     setActiveSection(next.id);
@@ -178,15 +190,34 @@ export function GlobalSettingsScreen({
 
   return (
     <main className="global-settings-screen" aria-label="全局设置">
+      {/* 与工作室壳同款的键盘跳转链接（.skip-link 视觉隐藏、拦截片段跳转保住
+          hash 路由），落点是下方包住设置主内容的 tabindex=-1 容器。 */}
+      <SkipToStageLink targetId={SETTINGS_MAIN_TARGET_ID} label="跳到设置内容" />
       <header className="global-settings-header">
         <ActionGroup label="全局设置历史" className="global-settings-history">
-          <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
-          <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
+          <IconButton
+            label={undoLabel}
+            icon={<Undo2 size={17} aria-hidden />}
+            disabled={!canUndo}
+            onClick={() => { announceHistory(undoLabel); onUndo(); }}
+          />
+          <IconButton
+            label={redoLabel}
+            icon={<Redo2 size={17} aria-hidden />}
+            disabled={!canRedo}
+            onClick={() => { announceHistory(redoLabel); onRedo(); }}
+          />
           {themeMode && resolvedTheme && onThemeChange && (
             <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={onThemeChange} />
           )}
           <CompactButton className="global-settings-done" onClick={onClose}>完成</CompactButton>
         </ActionGroup>
+        {/* 持久存在的播报区：必须先于变更就在 DOM 里，读屏才能可靠播报；
+            放在组外，窄屏 CSS 只作用于组内按钮，播报不受影响。data 属性与
+            顶栏的 data-topbar-history-announcement 区分，两屏同挂时选择器不冲突。 */}
+        <span className="sr-only" role="status" aria-live="polite" data-settings-history-announcement>
+          {historyAnnouncement}
+        </span>
       </header>
 
       <div className="global-settings-guide" role="status">
@@ -196,7 +227,9 @@ export function GlobalSettingsScreen({
         </p>
       </div>
 
-      <div className="global-settings-layout">
+      {/* skip-link 落点：包住分区导航与表单主内容，跳过页头历史操作。
+          position:fixed 的 skip-link 不占网格轨道，四行网格布局不受影响。 */}
+      <div className="global-settings-layout" id={SETTINGS_MAIN_TARGET_ID} tabIndex={-1}>
         <nav className="global-settings-nav" role="tablist" aria-label="全局设置分区">
           {sectionGroups.map((group) => (
             <div key={group.id} className="global-settings-group" role="presentation">

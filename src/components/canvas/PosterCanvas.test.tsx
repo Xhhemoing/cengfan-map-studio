@@ -1146,4 +1146,82 @@ describe("PosterCanvas", () => {
     flushSync(() => root.unmount());
     container.remove();
   });
+
+  it("makes the cards layer keyboard-operable with an accessible name", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onSelect={onSelect} />));
+
+    const cardsLayer = container.querySelector<SVGGElement>("[data-cards-layer]")!;
+    expect(cardsLayer.getAttribute("role")).toBe("button");
+    expect(cardsLayer.getAttribute("tabindex")).toBe("0");
+    expect(cardsLayer.getAttribute("aria-label")).toContain("选择数据展示框");
+
+    flushSync(() => cardsLayer.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onSelect).toHaveBeenCalledWith({ type: "cards" });
+    onSelect.mockClear();
+    flushSync(() => cardsLayer.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
+    expect(onSelect).toHaveBeenCalledWith({ type: "cards" });
+
+    // Export renders stay non-interactive.
+    flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
+    const exportLayer = container.querySelector<SVGGElement>("[data-cards-layer]")!;
+    expect(exportLayer.hasAttribute("role")).toBe(false);
+    expect(exportLayer.hasAttribute("tabindex")).toBe(false);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("selects the guest panel with Enter and Space", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    project.guests = { ...project.guests, people: [{ id: "g1", name: "李老师", visibility: true }] };
+    const onSelect = vi.fn();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} onSelect={onSelect} />));
+
+    const guests = container.querySelector<SVGGElement>("[data-guests-layer]")!;
+    expect(guests.getAttribute("tabindex")).toBe("0");
+    flushSync(() => guests.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onSelect).toHaveBeenCalledWith({ type: "guests" });
+    onSelect.mockClear();
+    flushSync(() => guests.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
+    expect(onSelect).toHaveBeenCalledWith({ type: "guests" });
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("announces the current selection politely and mirrors it into the canvas label", () => {
+    const project = createProjectDocument({ students, templateId: "original", dataView: "province" });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    flushSync(() => root.render(<PosterCanvas project={project} selectedProvince="北京市" onSelect={vi.fn()} />));
+
+    const announcer = container.querySelector('[data-canvas-selection-announcement]')!;
+    expect(announcer.getAttribute("role")).toBe("status");
+    expect(announcer.getAttribute("aria-live")).toBe("polite");
+    expect(announcer.textContent).toBe("已选中省份：北京市");
+    expect(container.querySelector("svg")?.getAttribute("aria-label"))
+      .toBe("毕业去向蹭饭图编辑画布，已选中省份：北京市");
+
+    // Text selection announces the text content.
+    flushSync(() => root.render(<PosterCanvas project={project} selectedTextId={project.textElements[0]!.id} onSelect={vi.fn()} />));
+    expect(container.querySelector('[data-canvas-selection-announcement]')?.textContent).toContain("已选中文字：");
+
+    // No selection: the region stays present (so the removal is announced) but empty.
+    flushSync(() => root.render(<PosterCanvas project={project} onSelect={vi.fn()} />));
+    expect(container.querySelector('[data-canvas-selection-announcement]')?.textContent).toBe("");
+    expect(container.querySelector("svg")?.getAttribute("aria-label")).toBe("毕业去向蹭饭图编辑画布");
+
+    // Export mode renders no live region at all.
+    flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
+    expect(container.querySelector('[data-canvas-selection-announcement]')).toBeNull();
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
 });

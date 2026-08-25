@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CardLayoutBounds, CardLayoutInput, CardLayoutOptions, CardLayoutResult } from "../../lib/card-layout";
 import { cardLayoutCache, createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerResponse } from "../../lib/card-layout-worker-protocol";
-import { useCardLayoutWorker, type CardLayoutWorkerRequest } from "./useCardLayoutWorker";
+import {
+  DEFAULT_WORKER_CARD_THRESHOLD,
+  shouldUseCardLayoutWorker,
+  useCardLayoutWorker,
+  type CardLayoutWorkerRequest,
+} from "./useCardLayoutWorker";
 
 class FakeWorker {
   static instances: FakeWorker[] = [];
@@ -38,7 +43,7 @@ class FakeWorker {
 
 const globalWithWorker = globalThis as unknown as { Worker?: unknown };
 const originalWorker = globalWithWorker.Worker;
-const cards: CardLayoutInput[] = [{ id: "one", anchorX: 500, anchorY: 300, width: 180, height: 90 }];
+const card: CardLayoutInput = { id: "one", anchorX: 500, anchorY: 300, width: 180, height: 90 };
 const bounds: CardLayoutBounds = {
   width: 1500,
   height: 1000,
@@ -48,8 +53,16 @@ const bounds: CardLayoutBounds = {
 };
 const options: CardLayoutOptions = { mode: "grid" };
 
-function makeRequest(keySuffix: string): CardLayoutWorkerRequest {
-  const requestCards = cards.map((card) => ({ ...card, id: `${card.id}-${keySuffix}` }));
+function makeRequest(
+  keySuffix: string,
+  cardCount = DEFAULT_WORKER_CARD_THRESHOLD,
+): CardLayoutWorkerRequest {
+  const requestCards = Array.from({ length: cardCount }, (_, index) => ({
+    ...card,
+    id: `${card.id}-${keySuffix}-${index}`,
+    anchorX: card.anchorX + (index % 6) * 12,
+    anchorY: card.anchorY + Math.floor(index / 6) * 12,
+  }));
   return {
     key: createCardLayoutCacheKey({ cards: requestCards, bounds, options }),
     cards: requestCards,
@@ -89,6 +102,24 @@ describe("useCardLayoutWorker", () => {
 
   afterEach(() => {
     globalWithWorker.Worker = originalWorker;
+  });
+
+  it("keeps rosters below the measured threshold synchronous", () => {
+    expect(shouldUseCardLayoutWorker(DEFAULT_WORKER_CARD_THRESHOLD - 1)).toBe(false);
+    expect(shouldUseCardLayoutWorker(DEFAULT_WORKER_CARD_THRESHOLD)).toBe(true);
+    const request = makeRequest("tiny", DEFAULT_WORKER_CARD_THRESHOLD - 1);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<Harness request={request} />));
+
+    expect(FakeWorker.instances).toHaveLength(0);
+    expect(current?.pending).toBe(false);
+    expect(current?.result?.placements).toHaveLength(request.cards.length);
+    expect(cardLayoutCache.get(request.key)).toEqual(current?.result);
+
+    flushSync(() => root.unmount());
+    container.remove();
   });
 
   it("posts the latest key and ignores stale worker responses", () => {
@@ -175,7 +206,8 @@ describe("useCardLayoutWorker", () => {
 
     flushSync(() => root.render(<Harness request={syncRequest} forceSync />));
 
-    expect(current?.result?.placements.map((placement) => placement.id)).toEqual([syncRequest.cards[0]!.id]);
+    expect(current?.result?.placements.map((placement) => placement.id))
+      .toEqual(syncRequest.cards.map(({ id }) => id));
     expect(current?.pending).toBe(false);
     expect(cardLayoutCache.get(syncRequest.key)).toEqual(current?.result);
 
@@ -197,7 +229,8 @@ describe("useCardLayoutWorker", () => {
     flushSync(() => worker.onerror?.({} as ErrorEvent));
 
     expect(worker.terminated).toBe(true);
-    expect(current?.result?.placements.map((placement) => placement.id)).toEqual([second.cards[0]!.id]);
+    expect(current?.result?.placements.map((placement) => placement.id))
+      .toEqual(second.cards.map(({ id }) => id));
     expect(current?.pending).toBe(false);
     expect(cardLayoutCache.get(second.key)).toEqual(current?.result);
 
@@ -242,6 +275,57 @@ describe("useCardLayoutWorker", () => {
     container.remove();
   });
 
+  it("solves synchronously when the worker reports it could not handle the request", () => {
+    const request = makeRequest("worker-error");
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<Harness request={request} />));
+    const worker = FakeWorker.instances[0]!;
+    const posted = worker.messages[0] as { requestId: number; key: string };
+
+    flushSync(() => worker.emit({
+      type: "error",
+      requestId: posted.requestId,
+      key: posted.key,
+      reason: "solver exploded",
+    }));
+
+    expect(current?.pending).toBe(false);
+    expect(current?.result?.placements.map((placement) => placement.id))
+      .toEqual(request.cards.map(({ id }) => id));
+    expect(cardLayoutCache.get(request.key)).toEqual(current?.result);
+    expect(worker.terminated).toBe(false);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
+  it("ignores malformed worker messages and stays pending", () => {
+    const request = makeRequest("worker-garbage");
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    flushSync(() => root.render(<Harness request={request} />));
+    const worker = FakeWorker.instances[0]!;
+    const posted = worker.messages[0] as { requestId: number; key: string };
+
+    for (const message of [
+      undefined,
+      { type: "result", requestId: posted.requestId, key: posted.key },
+      { type: "unknown", requestId: posted.requestId, key: posted.key },
+      { type: "error", requestId: posted.requestId, key: posted.key },
+    ]) {
+      flushSync(() => worker.emit(message as CardLayoutWorkerResponse));
+    }
+
+    expect(current?.result).toBeNull();
+    expect(current?.pending).toBe(true);
+
+    flushSync(() => root.unmount());
+    container.remove();
+  });
+
   it("solves synchronously when Worker is unavailable", () => {
     globalWithWorker.Worker = undefined;
     const request = makeRequest("fallback");
@@ -250,7 +334,7 @@ describe("useCardLayoutWorker", () => {
 
     flushSync(() => root.render(<Harness request={request} />));
 
-    expect(current?.result?.placements).toHaveLength(1);
+    expect(current?.result?.placements).toHaveLength(request.cards.length);
     expect(current?.pending).toBe(false);
     expect(FakeWorker.instances).toHaveLength(0);
 

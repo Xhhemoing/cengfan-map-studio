@@ -1,0 +1,298 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-24T14:38:36.180Z",
+  "runtime": {
+    "node": "v22.14.0",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "seed": 7,
+  "warmupIterations": 2,
+  "iterations": 12,
+  "counts": [
+    16,
+    24,
+    36,
+    60,
+    100,
+    200,
+    400
+  ],
+  "modes": [
+    "quadrant",
+    "radial",
+    "right-stack",
+    "grid"
+  ],
+  "invariantChecks": {
+    "finiteNumbers": true,
+    "canvasBounds": true,
+    "placementCount": true,
+    "overlaps": "solved-results"
+  },
+  "results": [
+    {
+      "count": 16,
+      "mode": "quadrant",
+      "p50Ms": 3.736,
+      "p95Ms": 4.041,
+      "minMs": 3.472,
+      "maxMs": 4.041,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 16,
+      "mode": "radial",
+      "p50Ms": 2.844,
+      "p95Ms": 2.988,
+      "minMs": 2.783,
+      "maxMs": 2.988,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 16,
+      "mode": "right-stack",
+      "p50Ms": 10.635,
+      "p95Ms": 10.836,
+      "minMs": 10.501,
+      "maxMs": 10.836,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 16,
+      "mode": "grid",
+      "p50Ms": 8.133,
+      "p95Ms": 10.335,
+      "minMs": 7.725,
+      "maxMs": 10.335,
+      "fallbackRuns": 0
+    },
+    {
+      "count": 24,
+      "mode": "quadrant",
+      "p50Ms": 24.964,
+      "p95Ms": 29.206,
+      "minMs": 24.714,
+      "maxMs": 29.206,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 24,
+      "mode": "radial",
+      "p50Ms": 18.016,
+      "p95Ms": 18.577,
+      "minMs": 17.854,
+      "maxMs": 18.577,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 24,
+      "mode": "right-stack",
+      "p50Ms": 27.788,
+      "p95Ms": 28.492,
+      "minMs": 27.543,
+      "maxMs": 28.492,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 24,
+      "mode": "grid",
+      "p50Ms": 14.143,
+      "p95Ms": 16.147,
+      "minMs": 13.713,
+      "maxMs": 16.147,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "quadrant",
+      "p50Ms": 29,
+      "p95Ms": 29.709,
+      "minMs": 28.779,
+      "maxMs": 29.709,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "radial",
+      "p50Ms": 28.535,
+      "p95Ms": 35.606,
+      "minMs": 28.292,
+      "maxMs": 35.606,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "right-stack",
+      "p50Ms": 29.012,
+      "p95Ms": 29.683,
+      "minMs": 28.783,
+      "maxMs": 29.683,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 36,
+      "mode": "grid",
+      "p50Ms": 16.134,
+      "p95Ms": 16.284,
+      "minMs": 16.016,
+      "maxMs": 16.284,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "quadrant",
+      "p50Ms": 33.906,
+      "p95Ms": 34.941,
+      "minMs": 33.663,
+      "maxMs": 34.941,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "radial",
+      "p50Ms": 34.237,
+      "p95Ms": 36.617,
+      "minMs": 33.845,
+      "maxMs": 36.617,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "right-stack",
+      "p50Ms": 33.955,
+      "p95Ms": 34.636,
+      "minMs": 33.214,
+      "maxMs": 34.636,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 60,
+      "mode": "grid",
+      "p50Ms": 22.277,
+      "p95Ms": 22.411,
+      "minMs": 22.091,
+      "maxMs": 22.411,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "quadrant",
+      "p50Ms": 32.166,
+      "p95Ms": 32.455,
+      "minMs": 31.965,
+      "maxMs": 32.455,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "radial",
+      "p50Ms": 31.762,
+      "p95Ms": 32.558,
+      "minMs": 31.598,
+      "maxMs": 32.558,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "right-stack",
+      "p50Ms": 30.669,
+      "p95Ms": 31.948,
+      "minMs": 30.192,
+      "maxMs": 31.948,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 100,
+      "mode": "grid",
+      "p50Ms": 22.198,
+      "p95Ms": 22.411,
+      "minMs": 22.022,
+      "maxMs": 22.411,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "quadrant",
+      "p50Ms": 53.794,
+      "p95Ms": 54.271,
+      "minMs": 53.275,
+      "maxMs": 54.271,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "radial",
+      "p50Ms": 53.466,
+      "p95Ms": 55.813,
+      "minMs": 52.536,
+      "maxMs": 55.813,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "right-stack",
+      "p50Ms": 49.172,
+      "p95Ms": 49.948,
+      "minMs": 48.683,
+      "maxMs": 49.948,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 200,
+      "mode": "grid",
+      "p50Ms": 47.679,
+      "p95Ms": 47.856,
+      "minMs": 47.204,
+      "maxMs": 47.856,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "quadrant",
+      "p50Ms": 94.071,
+      "p95Ms": 94.991,
+      "minMs": 93.625,
+      "maxMs": 94.991,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "radial",
+      "p50Ms": 93.503,
+      "p95Ms": 95.524,
+      "minMs": 92.817,
+      "maxMs": 95.524,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "right-stack",
+      "p50Ms": 85.759,
+      "p95Ms": 90.252,
+      "minMs": 85.087,
+      "maxMs": 90.252,
+      "fallbackRuns": 12
+    },
+    {
+      "count": 400,
+      "mode": "grid",
+      "p50Ms": 97.425,
+      "p95Ms": 97.946,
+      "minMs": 96.74,
+      "maxMs": 97.946,
+      "fallbackRuns": 12
+    }
+  ],
+  "workerMessageOverhead": {
+    "methodology": "worker_threads request and placement-shaped response; solver excluded",
+    "count": 24,
+    "startupIterations": 7,
+    "warmupIterations": 2,
+    "iterations": 30,
+    "startupP50Ms": 21.397,
+    "startupP95Ms": 24.109,
+    "warmP50Ms": 0.063,
+    "warmP95Ms": 0.423
+  }
+}
