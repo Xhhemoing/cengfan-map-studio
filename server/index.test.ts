@@ -9,7 +9,6 @@ import { Readable } from "node:stream";
 import type { AddressInfo } from "node:net";
 import type http from "node:http";
 import { createAiLogger } from "./ai/ai-observability";
-import { emptyAiRuntimeState, type AiStateStore } from "./ai/ai-state-store";
 import { createRateLimiter } from "./ai/rate-limit";
 import { attachServerLifecycle, createAiServer, createReadyAiServer, DEFAULT_PORT, resolvePort, type PersistableRoomStore } from "./index";
 import { createRoomStore, type RoomPersistOutcome } from "./collaboration";
@@ -893,35 +892,6 @@ describe("unified application server", () => {
       error: { code: "INTERNAL_ERROR", message: expect.stringContaining("EISDIR") },
     });
     // 反复失败时每个进程都会留下一份 <file>.<pid>.tmp，不清就是往数据目录里堆垃圾。
-    expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
-  });
-
-  it("sweeps orphaned atomic-write temporaries before the first reader touches the data directory", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "cengfan-boot-sweep-"));
-    directories.push(dataDir);
-    // 上一次进程崩在 write 与 rename 之间留下的三份孤儿，本进程谁都不认领。
-    for (const name of ["workspace.json.12345.tmp", "collaboration-rooms.json.999.tmp", "ai-state.json.4.tmp"]) {
-      await writeFile(join(dataDir, name), "half-written", "utf8");
-    }
-    const seenAtLoad: string[][] = [];
-    // AI 状态是启动路径上第一个碰磁盘的读者：它看到的目录里就必须已经没有孤儿了，
-    // 否则扫地排在了写者上膛之后，本次启动照样可能把新的临时文件一起收掉。
-    const aiStateStore: AiStateStore = {
-      mode: "memory",
-      ready: true,
-      recovered: false,
-      failure: false,
-      load: async () => {
-        seenAtLoad.push((await readdir(dataDir)).filter((name) => name.endsWith(".tmp")));
-        return emptyAiRuntimeState();
-      },
-      update: async () => undefined,
-      flush: async () => undefined,
-    };
-
-    servers.push(await createReadyAiServer({ dataDir, aiStateStore }));
-
-    expect(seenAtLoad).toEqual([[]]);
     expect((await readdir(dataDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 

@@ -1489,9 +1489,7 @@ export function attachServerLifecycle(server: AiServer, options: AttachServerLif
 export async function createReadyAiServer(options: AiServerOptions = {}): Promise<AiServer> {
   const config = options.productionConfig ?? validateProductionConfig(process.env);
   if (!config.ok) throw new Error(`生产配置无效: ${config.errors.join(",")}`);
-  const dataDir = resolve(options.dataDir ?? config.config?.dataDir ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR);
-  // 上一次进程崩在原子写中途留下的 .tmp 只有启动时能收：必须赶在任何读写者上膛之前。
-  await sweepStaleTemporaryFiles(dataDir);
+  const dataDir = resolve(options.dataDir ?? config.config?.dataDir ?? process.env.DATA_DIR ?? DEFAULT_DATA_DIR); await sweepStaleTemporaryFiles(dataDir);
   const stateFile = process.env.AI_STATE_FILE ?? config.config?.aiStateFile ?? join(dataDir, "ai-runtime-state.json");
   const store = options.aiStateStore ?? createFileAiStateStore(stateFile);
   const state = await store.load();

@@ -12,7 +12,6 @@
   "src/components/AppErrorBoundary.tsx": 403,
   "src/components/AssetPanel.test.tsx": 587,
   "src/components/AssetPanel.tsx": 754,
-  "src/components/DataWorkspace.test.tsx": 1362,
   "src/components/DataWorkspace.tsx": 885,
   "src/components/ProjectWorkbench.test.tsx": 564,
   "src/components/canvas/MapDataLayer.tsx": 508,
@@ -41,7 +40,6 @@
   "src/lib/project-store.ts": 748,
   "src/lib/scene-document.test.ts": 401,
   "src/lib/scene-document.ts": 766,
-  "src/lib/useCollaborationRoom.test.tsx": 1265,
   "src/lib/useCollaborationRoom.ts": 847,
   "src/styles.css": 3798
 }
