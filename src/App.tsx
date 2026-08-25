@@ -395,8 +395,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   });
 
   const resolvedCardPositionsRef = useRef<CardPositions | null>(null);
-  // PosterCanvas memoizes on prop identity, so a fresh callback each render would
-  // re-render the whole canvas on every unrelated editor state change.
+  // 与 canvasActions 同理:PosterCanvas 按 prop 身份 memo,回调必须身份稳定。
   const captureCardPositions = useCallback((positions: CardPositions) => {
     resolvedCardPositionsRef.current = positions;
   }, []);
