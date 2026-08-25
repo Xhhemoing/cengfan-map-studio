@@ -171,6 +171,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R9-7 (`eac6d7b`): room-snapshot cluster → `server/room-snapshot-store.ts`; index.ts 1661→1547 (1480 not reachable without splitting `createAiServer`). Rollback: revert `eac6d7b`.
 - R9-5 (`dfb7f37`): App.tsx 1729→1484. Rollback: revert `dfb7f37`.
 - R9-9 (`51f9ed0`): App.test.tsx split by domain; 129 `it(` unchanged. Rollback: revert `51f9ed0`.
+- Full suite on `9031ece`: **222 files / 1905 passed / 2 skipped**; lint 0 err / 1 warn; `tsc -b --noEmit` 0.
 
 ## Round Briefings
 
