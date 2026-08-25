@@ -26,7 +26,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 7 | CLOSED | R7-1–R7-9 + R7-3b + R7-10 | — | 189/1757/2; lint 0/6; CI `362c318`; fable 8 ACCEPT + 2 NITS; no blocker. |
 | 8 | CLOSED | R8-1–R8-9 + R8-3b + R8-10 | — | 197/1846/2; lint 0/1; CI `553d5c1`; fable 9 ACCEPT + 1 NITS; no blocker. |
 | 9 | CLOSED | R9-1–R9-9 + R9-10 | — | 222/1905/2; lint 0/1; CI `7834c47`; fable 8 ACCEPT + 1 NITS; no blocker. |
-| 10 | IN_PROGRESS | R10-9, R10-1, R10-6, R10-7, R10-2 | — | AI tmp hygiene; boot sweep; index/App extract; test splits; size ratchet. |
+| 10 | IN_PROGRESS | R10-9, R10-1, R10-6, R10-7, R10-2, R10-3, R10-5, R10-8 | — | Remaining: R10-4 room-routes extract, R10-10 closeout. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -185,7 +185,11 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R10-6 (`7d2717f` / `3c4c771`): `useCollaborationRoom.test.tsx` 1265→201 + harness + 4 domain files, all ≤400. Allowlist entry deleted. Rollback: revert `7d2717f`.
 - R10-7 (`4010acc` / `931c310`): `DataWorkspace.test.tsx` 1362→241 + harness + 3 domain files, all ≤400. Product frozen. Allowlist entry deleted. Rollback: revert `4010acc`.
 - R10-2 (`bd65d04` / `43cbd91`+`f896e5c`): `sweepStaleTemporaryFiles` once in `createReadyAiServer` before any load/writer. Boot-order pin lives in `server/boot-tmp-sweep.test.ts` so `index.test.ts` stays 2504; `index.ts` stays 1547. Rollback: revert `bd65d04`. Must land before R10-3.
-- Allowlist after these four: 43 entries (was 45).
+- Allowlist after those four: 43 entries (was 45).
+- R10-3 (`b5e17df` / `74ed0c0`+`e538d63`): static-file cluster → `server/static-files.ts`; `sendJson`/`corsHeaders` moved with it to avoid a cycle. index.ts 1547→1367; index.test.ts 2504→2378. Rollback: revert `b5e17df`. Must land before R10-4.
+- R10-5 (`acce6f6` / `b4e788b`+`f4c9f1c`): five App render branches → `src/components/editor/*`. App.tsx 1484→1066 (gate ≤1250). Rollback: revert `acce6f6`.
+- R10-8 (`05e72d2` / `a00dc75`+`2937baf`): `collaboration-client.test.ts` 948→119 + fixture + 4 domain files, all ≤400. Allowlist entry deleted. Rollback: revert `05e72d2`.
+- Allowlist after R10-3/5/8: 42 entries. App.tsx 1066; index.ts 1367; index.test.ts 2378.
 
 ## Round Briefings
 
