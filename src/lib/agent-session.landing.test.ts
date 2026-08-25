@@ -25,6 +25,17 @@ describe("AgentSession landing", () => {
     expect(applied.history).toEqual(project.history);
   });
 
+  it("accepts map boundary clearance patches instead of rejecting them as unknown props", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "c1", name: "update_map", arguments: { patch: { mapBoundaryMargin: 32 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "已加大展示框安全边距" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    const outcome = await session.run("展示框离地图远一点");
+    expect(outcome.kind).toBe("finish");
+    expect(session.shadowProject.map.mapBoundaryMargin).toBe(32);
+  });
+
   it("builds a selected-step transaction without applying deselected writes", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const originalFontSize = project.cards.fontSize;
