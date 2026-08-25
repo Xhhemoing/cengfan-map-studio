@@ -5,9 +5,9 @@ import { mkdir, mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAiServer } from "./index";
-import { startServer, useServerFixture, workspaceRequestInit } from "./index-test-fixtures";
+import { startServer, installServerFixture, workspaceRequestInit } from "./index-test-fixtures";
 
-const { servers, directories } = useServerFixture();
+const { servers, directories } = installServerFixture();
 
 describe("unified application server — workspace API", () => {
   it("does not expose the global workspace API unless an explicit token is configured", async () => {

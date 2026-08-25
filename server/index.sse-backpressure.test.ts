@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import { request as httpRequest } from "node:http";
 import type http from "node:http";
 import { createAiServer } from "./index";
-import { captureProcessFailures, createBackpressuredEventStream, createCollaborationRoom, createEventsTicket, joinRoomMember, rawGet, roomHeaders, startServer, useServerFixture, wait } from "./index-test-fixtures";
+import { captureProcessFailures, createBackpressuredEventStream, createCollaborationRoom, createEventsTicket, joinRoomMember, rawGet, roomHeaders, startServer, installServerFixture, wait } from "./index-test-fixtures";
 
-const { servers } = useServerFixture();
+const { servers } = installServerFixture();
 
 describe("unified application server — room event stream backpressure", () => {
   it("does not throw when a slow subscriber stops draining the stream", async () => {

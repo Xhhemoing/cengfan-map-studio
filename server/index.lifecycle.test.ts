@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { attachServerLifecycle, createAiServer, createReadyAiServer, type PersistableRoomStore } from "./index";
 import { createRoomStore } from "./collaboration";
-import { captureProcessFailures, createCollaborationRoom, openEventStream, rawGet, roomHeaders, startServer, useServerFixture, wait } from "./index-test-fixtures";
+import { captureProcessFailures, createCollaborationRoom, openEventStream, rawGet, roomHeaders, startServer, installServerFixture, wait } from "./index-test-fixtures";
 
-const { servers, directories } = useServerFixture();
+const { servers, directories } = installServerFixture();
 
 describe("unified application server — health probes and lifecycle", () => {
   it("serves live and ready probes without exposing runtime paths or secrets", async () => {

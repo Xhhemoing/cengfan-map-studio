@@ -2,9 +2,9 @@
 // 请求体形状校验、端口解析与生产/开发下的 AI 访问闸门。
 import { describe, expect, it } from "vitest";
 import { createAiServer, DEFAULT_PORT, resolvePort } from "./index";
-import { createCollaborationRoom, rawPost, roomHeaders, startServer, useServerFixture } from "./index-test-fixtures";
+import { createCollaborationRoom, rawPost, roomHeaders, startServer, installServerFixture } from "./index-test-fixtures";
 
-const { servers } = useServerFixture();
+const { servers } = installServerFixture();
 
 describe("unified application server — request shape and access mode", () => {
   it.each([

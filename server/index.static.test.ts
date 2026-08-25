@@ -5,9 +5,9 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAiServer } from "./index";
-import { startServer, useServerFixture } from "./index-test-fixtures";
+import { startServer, installServerFixture } from "./index-test-fixtures";
 
-const { servers, directories } = useServerFixture();
+const { servers, directories } = installServerFixture();
 
 describe("unified application server — static hosting and CORS", () => {
   it("returns JSON 404 for unknown API routes instead of the SPA fallback", async () => {

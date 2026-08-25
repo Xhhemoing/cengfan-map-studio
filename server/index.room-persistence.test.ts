@@ -3,9 +3,9 @@
 import { describe, expect, it } from "vitest";
 import { createAiServer, type PersistableRoomStore } from "./index";
 import { createRoomStore, type RoomPersistOutcome } from "./collaboration";
-import { createCollaborationRoom, roomHeaders, startServer, useServerFixture, type RoomPersistenceField, type PersistenceEnvelope } from "./index-test-fixtures";
+import { createCollaborationRoom, roomHeaders, startServer, installServerFixture, type RoomPersistenceField, type PersistenceEnvelope } from "./index-test-fixtures";
 
-const { servers } = useServerFixture();
+const { servers } = installServerFixture();
 
 describe("unified application server — room persistence reporting", () => {
   it("marks a freshly created room as persisted at the last flush", async () => {

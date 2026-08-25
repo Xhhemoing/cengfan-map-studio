@@ -2,9 +2,9 @@
 // 房间创建/事务/成员/权限/回填等 HTTP 路由在统一服务器上的行为。
 import { describe, expect, it } from "vitest";
 import { createAiServer } from "./index";
-import { createCollaborationRoom, roomHeaders, startServer, useServerFixture } from "./index-test-fixtures";
+import { createCollaborationRoom, roomHeaders, startServer, installServerFixture } from "./index-test-fixtures";
 
-const { servers } = useServerFixture();
+const { servers } = installServerFixture();
 
 describe("unified application server — collaboration room routes", () => {
   it("requires a room token before returning private room data", async () => {

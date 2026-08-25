@@ -270,8 +270,10 @@ export function workspaceRequestInit(token = "workspace-test-token"): RequestIni
 /**
  * 每个域文件在顶层调用一次：登记服务器与临时目录，并挂上文件级的 afterEach 清理。
  * 漏掉它的文件会把监听中的服务器和临时目录留给下一个用例。
+ * 名称故意不用 `use` 前缀：这些是 node-env 测试文件，ESLint 的 rules-of-hooks 会把
+ * 顶层 `use*` 当成 React Hook。
  */
-export function useServerFixture(): { servers: http.Server[]; directories: string[] } {
+export function installServerFixture(): { servers: http.Server[]; directories: string[] } {
   const servers: http.Server[] = [];
   const directories: string[] = [];
 

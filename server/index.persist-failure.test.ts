@@ -3,9 +3,9 @@
 import { describe, expect, it } from "vitest";
 import { createAiServer } from "./index";
 import { createRoomStore, type RoomPersistOutcome } from "./collaboration";
-import { createCollaborationRoom, postRoomTransaction, roomHeaders, startServer, useServerFixture, type RoomPersistenceField, type PersistenceEnvelope } from "./index-test-fixtures";
+import { createCollaborationRoom, postRoomTransaction, roomHeaders, startServer, installServerFixture, type RoomPersistenceField, type PersistenceEnvelope } from "./index-test-fixtures";
 
-const { servers } = useServerFixture();
+const { servers } = installServerFixture();
 
 describe("unified application server — persist failure streaks", () => {
   it("keeps the persist failure streak visible on /api/health.rooms.lastFlush", async () => {

@@ -5,9 +5,9 @@ import { request as httpRequest } from "node:http";
 import { createAiLogger } from "./ai/ai-observability";
 import { createRateLimiter } from "./ai/rate-limit";
 import { createAiServer } from "./index";
-import { rawPost, startServer, useServerFixture } from "./index-test-fixtures";
+import { rawPost, startServer, installServerFixture } from "./index-test-fixtures";
 
-const { servers } = useServerFixture();
+const { servers } = installServerFixture();
 
 describe("unified application server — AI routes", () => {
   it("validates the agent endpoint request shape", async () => {

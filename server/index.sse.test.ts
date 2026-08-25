@@ -2,9 +2,9 @@
 // SSE 票据、广播、断连回收与房间关闭后的写入安全。
 import { describe, expect, it, vi } from "vitest";
 import { createAiServer } from "./index";
-import { captureProcessFailures, createCollaborationRoom, createEventsTicket, createInMemoryEventStream, joinRoomMember, openEventStream, rawGet, roomHeaders, startServer, useServerFixture, wait } from "./index-test-fixtures";
+import { captureProcessFailures, createCollaborationRoom, createEventsTicket, createInMemoryEventStream, joinRoomMember, openEventStream, rawGet, roomHeaders, startServer, installServerFixture, wait } from "./index-test-fixtures";
 
-const { servers } = useServerFixture();
+const { servers } = installServerFixture();
 
 describe("unified application server — room event streams", () => {
   it("issues one-use SSE tickets and broadcasts incremental operations", async () => {

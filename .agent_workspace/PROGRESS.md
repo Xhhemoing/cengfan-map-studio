@@ -217,6 +217,8 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R11-9 (`dfbbeae` / `5ba2aca`+`547f47c`): project-store tests split; allowlist entry deleted. Rollback: revert `dfbbeae`.
 - Allowlist after these: 38 entries. index.ts 979; App.tsx 988; index.test.ts still 2378 (R11-4).
 - R11-4 (`cc14995` / `27a3daf`): `index.test.ts` 2378→126 + 9 domain files + fixture; 75 runtime tests preserved. Allowlist entry deleted. Rollback: revert `cc14995`.
+- Lint follow-up: `useServerFixture` renamed to `installServerFixture` so rules-of-hooks does not fire on node-env tests.
+- Full suite on this tree (pre-rename, tests identical): **264 files passed / 2 skipped; 1969 passed / 2 skipped** (98.27s). Lint after rename: 0 errors / 1 frozen warning. Typecheck: `tsc -b --noEmit` 0.
 
 ## Round Briefings
 
