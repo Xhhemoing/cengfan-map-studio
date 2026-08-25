@@ -84,7 +84,20 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
     const currentRequest = requestRef.current;
     activeKeyRef.current = requestKey;
     if (!currentRequest) {
-      setState({ key: null, result: null, pending: false });
+      setState((current) => current.key === null && current.result === null && !current.pending
+        ? current
+        : { key: null, result: null, pending: false });
+      return;
+    }
+
+    // The render path already resolved synchronous and cached requests.
+    // Reuse that exact result instead of touching the LRU again and scheduling
+    // a duplicate state update after the initial commit.
+    if (resolved.key === currentRequest.key && resolved.result) {
+      setState((current) =>
+        current.key === resolved.key && current.result === resolved.result && !current.pending
+          ? current
+          : { key: resolved.key, result: resolved.result, pending: false });
       return;
     }
 
@@ -147,7 +160,7 @@ export function useCardLayoutWorker(request: CardLayoutWorkerRequest | null, for
       ...currentRequest,
     };
     worker.postMessage(message);
-  }, [forceSync, requestKey]);
+  }, [forceSync, requestKey, resolved.key, resolved.result]);
 
   useEffect(() => () => {
     workerRef.current?.terminate();

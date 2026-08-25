@@ -9,6 +9,24 @@ function unwrapBracketedAddress(value: string): string {
   return value.match(bracketedAddress)?.[1] ?? value;
 }
 
+function normalizeIpv4MappedAddress(value: string): string {
+  const mappedMatch = unwrapBracketedAddress(value).match(/^::ffff:(.*)$/i);
+  if (!mappedMatch) return value;
+
+  const mappedAddress = mappedMatch[1];
+  const hexGroups = mappedAddress.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (!hexGroups) return mappedAddress;
+
+  const high = Number.parseInt(hexGroups[1], 16);
+  const low = Number.parseInt(hexGroups[2], 16);
+  return [
+    (high >> 8) & 255,
+    high & 255,
+    (low >> 8) & 255,
+    low & 255,
+  ].join(".");
+}
+
 function rightmostHop(value: HeaderValue, arrayMode: "join" | "last"): string | undefined {
   const hops = Array.isArray(value)
     ? (arrayMode === "join" ? value.join(",") : value.at(-1))
@@ -92,6 +110,6 @@ export function clientIp(
   const standardForwardedIp = trustProxy && !forwardedIp && !realIp
     ? forwardedFor(request.headers.forwarded)
     : undefined;
-  return (forwardedIp || realIp || standardForwardedIp || request.socket.remoteAddress || "unknown")
-    .replace(/^::ffff:/i, "");
+  const address = forwardedIp || realIp || standardForwardedIp || request.socket.remoteAddress || "unknown";
+  return normalizeIpv4MappedAddress(address);
 }

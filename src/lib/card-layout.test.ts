@@ -1056,6 +1056,7 @@ describe("connector search cost control", () => {
       candidates: 0,
       ordersRun: 0,
       ordersScored: 0,
+      repairs: 0,
       improvingOrders: [],
       stop: "no-candidates",
       budgetSpent: 0,
@@ -1420,6 +1421,43 @@ describe("leftover cards on the facade path", () => {
     }
     expect(result.placements.map((placement) => placement.side)).not.toContain("right");
   });
+
+  it.each<CardLayoutMode>(["quadrant", "radial"])(
+    "sides a leftover the connector search repaired for itself, in %s mode",
+    (mode) => {
+      // The band gives the search real geography to route around, so it runs
+      // and wins the board — but the one free column it leaves is too narrow
+      // for the rails the shortlists are built from to tile, so the cards those
+      // shortlists cannot seat are repaired instead. A repair enters
+      // `containFree` carrying the `"right"` placeholder every repair probe is
+      // built with, and this is the path Round 30 could not reach: there the
+      // search was skipped, so no leftover ever went through it.
+      const space = new LayoutSpace(banded);
+      const roster = crowd(7).map((card) => ({ ...card, height: 90 }));
+
+      const result = solveCardLayout(roster, banded, { mode });
+      const debug = __layoutDebug.last!;
+
+      expect({ decision: debug.decision, shipped: debug.improved, repaired: debug.trace!.repairs > 0 })
+        .toEqual({ decision: "ran", shipped: true, repaired: true });
+      expect(result.status).toBe("solved");
+      expect(result.placements.map((placement) => placement.id)).toEqual(roster.map((card) => card.id));
+      for (const placement of result.placements) {
+        expect(placement.side).toBe(space.sideOf(placement));
+      }
+      // The column starts north of the wide map, runs down past its left flank
+      // and on below it, so no single placeholder could describe it — and
+      // `"right"`, the one the probes carry, is the side nothing here sits on.
+      expect(new Set(result.placements.map((placement) => placement.side)))
+        .toEqual(new Set(["top", "left", "bottom"]));
+      // Two seats are off the obstacle-edge rail the shortlists are cut from
+      // (`300 - gap - width`); those are the repaired cards, seated on
+      // `containFree`'s own 12px lattice. Without them these assertions would
+      // only cover candidates, which never see the placeholder in the first
+      // place.
+      expect(new Set(result.placements.map((placement) => placement.x))).toEqual(new Set([66, 56]));
+    },
+  );
 
   it.each<CardLayoutMode>(["quadrant", "radial", "right-stack", "grid"])(
     "keeps input order and seat-derived sides in %s mode when nothing fits at all",

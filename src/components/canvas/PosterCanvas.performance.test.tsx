@@ -78,21 +78,28 @@ describe("PosterCanvas interaction rendering", () => {
     });
     const container = document.createElement("div");
     const root = createRoot(container);
+    const cacheGetSpy = vi.spyOn(cardLayoutCache, "get");
+    const cacheSetSpy = vi.spyOn(cardLayoutCache, "set");
     flushSync(() => root.render(<PosterCanvas project={project} exportMode />));
 
     expect(cardLayoutCache.size).toBe(1);
+    expect(cacheGetSpy).toHaveBeenCalledTimes(1);
+    expect(cacheSetSpy).toHaveBeenCalledTimes(1);
     const originalTransform = container.querySelector("[data-destination-card]")?.getAttribute("transform");
-    const cacheGetSpy = vi.spyOn(cardLayoutCache, "get");
     const identicalProject = {
       ...project,
       students: project.students.map((student) => ({ ...student })),
     };
+    cacheGetSpy.mockClear();
+    cacheSetSpy.mockClear();
 
     flushSync(() => root.render(<PosterCanvas project={identicalProject} exportMode />));
 
     expect(cacheGetSpy.mock.results.some(
       ({ type, value }) => type === "return" && value !== undefined,
     )).toBe(true);
+    expect(cacheGetSpy).toHaveBeenCalledTimes(1);
+    expect(cacheSetSpy).not.toHaveBeenCalled();
     expect(cardLayoutCache.size).toBe(1);
     expect(container.querySelector("[data-destination-card]")?.getAttribute("transform"))
       .toBe(originalTransform);

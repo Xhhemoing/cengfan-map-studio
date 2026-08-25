@@ -185,6 +185,11 @@ export interface ConnectorSearchTrace {
   ordersRun: number;
   /** Orders that produced a complete, legal layout worth scoring. */
   ordersScored: number;
+  /**
+   * Repairs actually scanned, across every order tried. Each one walks a
+   * lattice over the free canvas, which is the dearest step in the search.
+   */
+  repairs: number;
   /** Indices, within the tried orders, of those that beat the incumbent. */
   improvingOrders: number[];
   stop: SearchStop;
@@ -203,7 +208,19 @@ function repairPlacement(card: CardLayoutInput, space: LayoutSpace, placed: Plac
   return containFree(probe, space, placed);
 }
 
-/** Run one insertion order; `null` when it had to give up. */
+/** The hard constraints {@link validateHard} will apply to this seat later. */
+function seatIsLegal(seat: CardPlacement, space: LayoutSpace, placed: PlacementIndex): boolean {
+  return space.inside(seat) && !space.blocked(seat) && !placed.hits(seat, space.gap);
+}
+
+/**
+ * Run one insertion order; `null` when it had to give up.
+ *
+ * A returned layout is legal by construction: a candidate is shortlisted only
+ * if it is inside, clear of geography and clear of what is already placed, and
+ * the one other way to seat a card — a repair — hands the order back when it
+ * cannot match that.
+ */
 function runOrder(
   order: readonly CardLayoutInput[],
   candidates: Map<string, LayoutCandidate[]>,
@@ -212,7 +229,7 @@ function runOrder(
   style: ConnectorStyle,
   clearance: number,
   budget: Budget,
-): CardPlacement[] | null {
+): { placements: CardPlacement[] | null; repairs: number } {
   const state: OrderState = {
     placed: PlacementIndex.forSpace(space),
     geometries: [],
@@ -236,8 +253,19 @@ function runOrder(
     // searches, so an order that needs more than its share of them costs more
     // than the whole packing ladder; abandoning it here loses nothing, because
     // the caller keeps the packed layout it was trying to beat.
-    if (!selected && ((repairs += 1) > repairLimit || (budget.spent += REPAIR_COST) > SEARCH_BUDGET)) return null;
+    // The repair that trips either ceiling is never scanned, so it is charged
+    // to the budget but not to the count of scans the caller is told about.
+    if (!selected && ((repairs += 1) > repairLimit || (budget.spent += REPAIR_COST) > SEARCH_BUDGET)) {
+      return { placements: null, repairs: repairs - 1 };
+    }
     const placement = selected?.placement ?? repairPlacement(card, space, state.placed);
+    // A repair overlaps only when the canvas had nowhere legal left for the
+    // card, and that is precisely what makes `validateHard` throw the finished
+    // order away. Everything the order would place after it — including further
+    // lattice scans, the dearest step there is — buys a layout no caller can
+    // ship, so the order ends on the seat that lost it rather than on the last
+    // card. Nothing is lost: the order was already unscoreable.
+    if (!selected && !seatIsLegal(placement, space, state.placed)) return { placements: null, repairs };
     const geometry = selected?.geometry ?? buildConnectorGeometry({
       card: placement,
       anchor: { x: card.anchorX, y: card.anchorY },
@@ -254,7 +282,7 @@ function runOrder(
       state.sideLoads.get(placement.side)! + sideAxisSize(placement, placement.side) + space.gap,
     );
   }
-  return state.placed.items;
+  return { placements: state.placed.items, repairs };
 }
 
 /**
@@ -287,6 +315,7 @@ export function optimizedLayout(
     candidates: [...candidateCounts.values()].reduce((sum, count) => sum + count, 0),
     ordersRun: 0,
     ordersScored: 0,
+    repairs: 0,
     improvingOrders: [],
     stop: "exhausted",
     budgetSpent: 0,
@@ -317,8 +346,9 @@ export function optimizedLayout(
     if (seenOrders.has(signature)) continue;
     seenOrders.add(signature);
 
-    const placed = runOrder(order, candidates, clusters, space, style, clearance, budget);
+    const { placements: placed, repairs } = runOrder(order, candidates, clusters, space, style, clearance, budget);
     trace.ordersRun += 1;
+    trace.repairs += repairs;
     let improved = false;
     if (placed && placed.length === cards.length && validateHard(placed, space)) {
       trace.ordersScored += 1;

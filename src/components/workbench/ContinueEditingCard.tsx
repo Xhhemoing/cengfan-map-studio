@@ -28,7 +28,7 @@ export function ContinueEditingCard({ entry, onResume }: {
       aria-label="继续编辑本地内容"
       onClick={onResume}
     >
-      <span className="workbench-resume-icon" aria-hidden="true"><History size={22} /></span>
+      <span className="workbench-resume-icon" aria-hidden="true"><History size={22} aria-hidden /></span>
       <span className="workbench-resume-body">
         <strong>继续编辑本地内容</strong>
         <small>{students} 名学生 · 保存于 {formatSavedAt(entry.pack.exportedAt)}</small>

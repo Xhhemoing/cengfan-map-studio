@@ -7,14 +7,16 @@
  * module-private, so these tests rebuild its probe verbatim and compare the
  * bare call against the wrapped expression it replaced.
  *
- * Deliberately not asserted: concrete stacked seats (the stacking scan is
- * owned by `card-layout-pack` and its tests) and `side === sideOf` over
- * `optimizedLayout` output as a whole — candidate-based placements keep the
- * side they were generated for, so that invariant only holds for repairs.
+ * Deliberately not asserted: concrete stacked seats, which the stacking scan's
+ * own tests in `card-layout-pack` own.
+ *
+ * The second half covers the other thing a repair decides — whether the order
+ * that needed it can still go anywhere.
  */
 import { describe, expect, it } from "vitest";
+import { optimizedLayout } from "./card-layout-optimizer";
 import { containFree } from "./card-layout-pack";
-import { LayoutSpace, PlacementIndex } from "./card-layout-space";
+import { LayoutSpace, PlacementIndex, validateHard } from "./card-layout-space";
 import {
   SIDE_ORDER,
   type CardArea,
@@ -113,6 +115,65 @@ describe("repairPlacement's bare containFree call", () => {
       const results = SIDE_ORDER.map((side) =>
         containFree({ ...repairProbe(card, space), side }, space, placed));
       for (const result of results.slice(1)) expect(result).toEqual(results[0]);
+    }
+  });
+});
+
+/**
+ * A shortlisted rectangle is inside the canvas, clear of geography and clear of
+ * everything already placed, which is exactly what `validateHard` asks of a
+ * finished layout. So the only way an insertion order can end up unshippable is
+ * a repair that had to overlap — and once one has, the order is already lost,
+ * however many cards are still waiting behind it.
+ */
+describe("an insertion order that a repair has already lost", () => {
+  /** A wide, shallow map behind a band that leaves only the margin column free. */
+  const banded = new LayoutSpace({
+    width: 1500,
+    height: 1000,
+    map: { x: 200, y: 420, width: 1100, height: 160 },
+    occupiedAreas: [{ x: 300, y: 60, width: 1160, height: 880 }],
+    margin: 32,
+    gap: 14,
+  });
+
+  /** Seven cards on that column, `height` deciding whether they all fit it. */
+  function crowd(height: number): CardLayoutInput[] {
+    return Array.from({ length: 7 }, (_, index) => ({
+      id: `crowd-${index}`,
+      anchorX: 300 + (index % 4) * 250,
+      anchorY: 480,
+      width: 220,
+      height,
+    }));
+  }
+
+  it("stops on the seat that lost it instead of scanning again for every card behind", () => {
+    // Tall cards overfill the column, so the first repair in every order comes
+    // back overlapping. No seed, so nothing cuts the sweep short early.
+    const { placements, trace } = optimizedLayout(crowd(110), banded, "quadrant", {}, null);
+
+    expect(placements).toBeNull();
+    expect(trace.ordersScored).toBe(0);
+    // One lattice scan per order and no more: the second repair each of these
+    // orders used to pay for — the dearest single step in the search — was
+    // buying a layout `validateHard` had already ruled out.
+    expect(trace.repairs).toBe(trace.ordersRun);
+  });
+
+  it("keeps running an order whose repair found a legal seat", () => {
+    // The same column, shallower cards: the repairs land free, so the orders
+    // finish and get scored rather than being abandoned.
+    const cards = crowd(90);
+    const { placements, trace } = optimizedLayout(cards, banded, "quadrant", {}, null);
+
+    expect(trace.repairs).toBeGreaterThan(0);
+    expect(trace.ordersScored).toBe(trace.ordersRun);
+    expect(placements).not.toBeNull();
+    expect(validateHard(placements!, banded)).toBe(true);
+    expect(placements!.map((placement) => placement.id)).toEqual(cards.map((card) => card.id));
+    for (const placement of placements!) {
+      expect(placement.side).toBe(banded.sideOf(placement));
     }
   });
 });

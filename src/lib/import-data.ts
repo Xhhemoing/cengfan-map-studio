@@ -116,8 +116,8 @@ function joinQuotedLines(lines: string[]): SourceLine[] {
   return joined;
 }
 
-/** Delimiters a paste may use, in the order they are believed. Only the fullwidth ： and ／, never the ASCII : of a time or a URL, nor the ASCII / of 2026/08/24 or 哈佛大学/肯尼迪学院. The small forms ﹔ ﹕ ﹑ a CJK-width paste ships stand for ； ： 、. */
-const CELL_DELIMITERS = ["\t", ",", "，", ";", "；", "﹔", "|", "｜", "／", "：", "﹕", "、", "﹑"];
+/** Delimiters a paste may use, in the order they are believed. Only the fullwidth ： and ／, never the ASCII : of a time or a URL, nor the ASCII / of 2026/08/24 or 哈佛大学/肯尼迪学院. The small forms ﹔ ﹕ ﹑ stand for ； ： 、; the vertical forms ︓ ︰ Word writes down a CJK column are both a ：. */
+const CELL_DELIMITERS = ["\t", ",", "，", ";", "；", "﹔", "|", "｜", "／", "：", "﹕", "︓", "︰", "、", "﹑"];
 
 /** The "1." / "2、" / "３)" / "４．" / "５）" / "６。" opening a numbered list: a marker, never a cell. */
 const LIST_MARKER = /^\p{Nd}+[.．。、﹑)）]\s*(?=[^\p{Nd}])/u;
@@ -127,7 +127,7 @@ const LIST_MARKER = /^\p{Nd}+[.．。、﹑)）]\s*(?=[^\p{Nd}])/u;
  * their second occurrence on: the mark is also the Chinese enumeration mark *inside* one cell
  * ("北京、上海") and the marker of a numbered list, and a row needs three cells to describe a
  * student, so a lone 、 opens no column the positional reader could use. Every other delimiter,
- * `﹔` and `﹕` included — a semicolon and a colon separate, never enumerate — needs a second cell.
+ * `﹔` `﹕` `︓` `︰` included — a semicolon and a colon separate, never enumerate — needs a second cell.
  */
 function detectDelimiter(line: string): string | null {
   const content = line.replace(LIST_MARKER, "");

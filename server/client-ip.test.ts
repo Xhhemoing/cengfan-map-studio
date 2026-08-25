@@ -51,10 +51,32 @@ describe("clientIp", () => {
     expect(clientIp(request, true)).toBe("203.0.113.9");
   });
 
+  it("converts a hexadecimal IPv4-mapped X-Forwarded-For address", () => {
+    const request = requestWith({ "x-forwarded-for": "::ffff:cb00:7109" });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("converts a bracketed hexadecimal IPv4-mapped X-Forwarded-For address", () => {
+    const request = requestWith({ "x-forwarded-for": "[::ffff:cb00:7109]" });
+
+    expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("converts a mixed-case hexadecimal IPv4-mapped socket address", () => {
+    expect(clientIp(requestWith({}, "::FFFF:7f00:1"), false)).toBe("127.0.0.1");
+  });
+
   it("continues to strip a lowercase IPv4-mapped prefix", () => {
     const request = requestWith({ "x-forwarded-for": "::ffff:203.0.113.9" });
 
     expect(clientIp(request, true)).toBe("203.0.113.9");
+  });
+
+  it("converts a non-loopback hexadecimal IPv4-mapped address", () => {
+    const request = requestWith({ "x-forwarded-for": "::ffff:8000:1" });
+
+    expect(clientIp(request, true)).toBe("128.0.0.1");
   });
 
   it("leaves a real IPv6 address unchanged", () => {
