@@ -4,7 +4,7 @@
   "server/collaboration.ts": 1011,
   "server/index.ts": 979,
   "src/App.collaboration-terminal.test.tsx": 402,
-  "src/App.tsx": 988,
+  "src/App.tsx": 933,
   "src/components/AgentAssistant.tsx": 705,
   "src/components/AppErrorBoundary.tsx": 403,
   "src/components/AssetPanel.tsx": 754,

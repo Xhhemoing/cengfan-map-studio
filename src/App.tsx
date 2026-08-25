@@ -57,7 +57,9 @@ import type { GlobalSettingsSection } from "./components/GlobalSettingsScreen";
 import type { ContentAssetPanelProps } from "./components/workspaces/ContentLayoutWorkspace";
 import { ExportProjectDialog } from "./components/editor/ExportProjectDialog";
 import { GlobalSettingsShell } from "./components/editor/GlobalSettingsShell";
+import { LegacyEditorInspector } from "./components/editor/LegacyEditorInspector";
 import { LegacyEditorSidebar } from "./components/editor/LegacyEditorSidebar";
+import { LegacyEditorStage } from "./components/editor/LegacyEditorStage";
 import { LegacyEditorTopbar } from "./components/editor/LegacyEditorTopbar";
 import { MissingProjectShell } from "./components/editor/MissingProjectShell";
 import { ProjectLoadingShell } from "./components/editor/ProjectLoadingShell";
@@ -94,10 +96,8 @@ import {
 } from "./lib/template-store";
 import { createTemplateCaptureAction } from "./lib/editor-template-capture-action";
 import { createProjectResetActions } from "./lib/editor-project-reset-actions";
-import { PosterCanvas } from "./components/canvas/PosterCanvas";
 import { type SceneSelection } from "./lib/scene-document";
 
-import { InspectorPanel } from "./components/inspector/InspectorPanel";
 import { loadUserFonts, type UserFont } from "./lib/fonts";
 import {
   loadUserAssets,
@@ -257,10 +257,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const template = renderProject.templateId;
   const dataView = renderProject.dataView;
-  const students = renderProject.students;
 
-  const selectedTextId = selection.type === "text" ? selection.id : null;
-  const summary = buildProvinceSummary(students);
+  const summary = buildProvinceSummary(renderProject.students);
   const resolvedTemplate = useMemo(() => resolveRenderedTemplate(renderProject), [renderProject]);
 
   const { readWorkspace, hasLocalEdits } = useEditorWorkspaceHydration({
@@ -421,10 +419,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
     applyFont,
     applyProvinceThemes,
     applySystemTemplate,
-    changeAssetLayer,
     createDecoration,
     createLandmark,
-    duplicateAsset,
     moveAsset,
     moveCard,
     moveGuests,
@@ -432,8 +428,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     moveText,
     patchScene,
     refreshDisplayFramePositions,
-    removeAsset,
-    removeText,
     resetSceneTarget,
     resizeAsset,
     resizeMapImage,
@@ -450,15 +444,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     reportStatus: setStatusMessage,
   });
 
-  const {
-    addUserAsset,
-    deleteUserAsset,
-    deleteUserFont,
-    exportResourcePack,
-    importResourcePack,
-    replaceUserAsset,
-    uploadUserFont,
-  } = createEditorLibraryActions({
+  const libraryActions = createEditorLibraryActions({
     project,
     userAssets,
     userFonts,
@@ -467,6 +453,15 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setStatusMessage,
     commitProject,
   });
+  const {
+    addUserAsset,
+    deleteUserAsset,
+    deleteUserFont,
+    exportResourcePack,
+    importResourcePack,
+    replaceUserAsset,
+    uploadUserFont,
+  } = libraryActions;
 
   const assetUsageById = useMemo(() => buildAssetUsageLabels(project, userAssets), [project, userAssets]);
 
@@ -876,87 +871,37 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onSelectStyleLayer={selectStyleLayer}
         />
 
-        <section className="editor-area">
-          <div className="canvas-stage" ref={stageRef}>
-            <div
-              className="canvas-zoom-shell"
-              style={{
-                width: Math.round(project.canvas.width * zoomPercent / 100),
-                height: Math.round(project.canvas.height * zoomPercent / 100),
-              }}
-            >
-              <div
-                className="canvas-zoom-inner"
-                style={{
-                  width: project.canvas.width,
-                  height: project.canvas.height,
-                  transform: `scale(${zoomPercent / 100})`,
-                  transformOrigin: "top left",
-                }}
-              >
-                <PosterCanvas
-                  project={renderProject}
-                  posterRef={posterRef}
-                  selectedTextId={selectedTextId}
-                  selectedAssetId={selection.type === "asset" ? selection.id : null}
-                  selectedProvince={selection.type === "province" ? selection.province : null}
-                  userFonts={userFonts}
-                  showGrid={showGrid}
-                  gridSize={gridSize}
-                  renderIntervalMs={resolvedRenderInterval}
-                  onSelect={selectLegacyScene}
-                  onMoveText={moveText}
-                  onMoveAsset={moveAsset}
-                  onResizeAsset={resizeAsset}
-                  mapSelected={selection.type === "map"}
-                  onMoveProvinceTexture={moveProvinceTexture}
-                  onResizeMapImage={resizeMapImage}
-                  onCardPositionsResolved={captureCardPositions}
-                  selectedStudentId={selectedStudentId}
-                  onSelectStudent={setSelectedStudentId}
-                  onMoveCard={moveCard}
-                  onMoveGuests={moveGuests}
-                />
-              </div>
-            </div>
-          </div>
-        </section>
+        <LegacyEditorStage
+          stageRef={stageRef}
+          project={project}
+          renderProject={renderProject}
+          posterRef={posterRef}
+          zoomPercent={zoomPercent}
+          selection={selection}
+          selectedStudentId={selectedStudentId}
+          userFonts={userFonts}
+          showGrid={showGrid}
+          gridSize={gridSize}
+          renderIntervalMs={resolvedRenderInterval}
+          canvasActions={canvasActions}
+          onSelect={selectLegacyScene}
+          onSelectStudent={setSelectedStudentId}
+          onCardPositionsResolved={captureCardPositions}
+        />
 
-        <aside id="editor-inspector" className={`inspector${mobileInspectorOpen ? " is-open" : ""}`}>
-          <InspectorPanel
-            project={renderProject}
-            selection={selection}
-            userFonts={userFonts}
-            onPatch={patchScene}
-            onReset={resetSceneTarget}
-            onDeleteText={removeText}
-            onDeleteAsset={removeAsset}
-            onDuplicateAsset={duplicateAsset}
-            onLayerChange={changeAssetLayer}
-            onAddUserAsset={addUserAsset}
-            provinces={provinceNames}
-            onOpenGlobalSettings={setGlobalSettingsSection}
-            onApplyFont={applyFont}
-            onUploadFont={uploadUserFont}
-            onDeleteUserFont={deleteUserFont}
-          />
-          <details className="project-summary">
-            <summary>项目摘要</summary>
-            <div className="summary-number"><strong>{students.length}</strong><span>学生</span></div>
-            <div className="summary-number"><strong>{summary.length}</strong><span>目的省市</span></div>
-            <p>{dataViews.find((view) => view.id === dataView)?.description}</p>
-            <p>已记录 {project.history.past.length} 步，可重做 {project.history.future.length} 步。</p>
-            <div className="status" data-sync-status={syncState.status}>
-              <span />
-              {syncState.status === "saving" ? "正在覆盖本地数据" : syncState.status === "saved" ? "全部数据已保存" : syncState.status === "failed" ? "本地保存失败" : "有未保存修改"}
-            </div>
-            <p className="panel-note">
-              本地：仅点击强制保存时覆盖本地数据
-              {syncState.savedAt && ` · ${new Date(syncState.savedAt).toLocaleTimeString("zh-CN", { hour12: false })}`}
-            </p>
-            {statusMessage && <p className="panel-note">{statusMessage}</p>}
-          </details>
-        </aside>
+        <LegacyEditorInspector
+          open={mobileInspectorOpen}
+          project={project}
+          renderProject={renderProject}
+          summary={summary}
+          selection={selection}
+          userFonts={userFonts}
+          syncState={syncState}
+          statusMessage={statusMessage}
+          canvasActions={canvasActions}
+          libraryActions={libraryActions}
+          onOpenGlobalSettings={setGlobalSettingsSection}
+        />
 
         <ResizablePanelDivider
           side="sidebar"
