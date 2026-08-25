@@ -144,7 +144,7 @@ export function WorkflowGuide({
               aria-current={active ? "step" : undefined}
               onClick={() => onSelectStep(step.id)}
             >
-              <span className="workflow-nav__icon" aria-hidden="true">{Icon && <Icon size={16} />}</span>
+              <span className="workflow-nav__icon" aria-hidden="true">{Icon && <Icon size={16} aria-hidden />}</span>
               <span className="workflow-nav__text">
                 <strong>{step.index} {step.title}</strong>
                 <small>{stepSubtitle(progressForStep, dataViewLabel)}</small>

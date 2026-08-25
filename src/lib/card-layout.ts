@@ -144,16 +144,17 @@ function sanitizeCards(cards: readonly CardLayoutInput[]): CardLayoutInput[] {
  * repack, then a dense obstacle-aware sweep. The sweep is handed back when it
  * had to run, because the saturated path scores it too and it is much the most
  * expensive rung to compute twice.
+ *
+ * Both rungs already end in `orderResult`, so they arrive in caller order with
+ * every leftover seated at the margin; ordering them again here would only
+ * re-derive the same array.
  */
 function repairLadder(
   cards: CardLayoutInput[],
   space: LayoutSpace,
 ): { legal: CardPlacement[] | null; swept: CardPlacement[] | null } {
   const repacked = repackAll(cards, space);
-  if (repacked) {
-    const ordered = orderResult(cards, repacked, space);
-    if (validateHard(ordered, space)) return { legal: ordered, swept: null };
-  }
+  if (repacked && validateHard(repacked, space)) return { legal: repacked, swept: null };
   const swept = sweepPack(cards, space);
   return { legal: validateHard(swept, space) ? swept : null, swept };
 }
@@ -161,11 +162,11 @@ function repairLadder(
 /**
  * Ship the least-bad of several contained candidates as a `fallback` result.
  *
- * The winner is put back into caller order the same way every solved path
- * does. Input order is part of the public contract, and it is the one property
- * a saturated result cannot get for free: `validateHard` never runs on this
- * path, so a candidate strategy that packed in its own order would ship a
- * permuted `placements` array with nothing left to catch it.
+ * The winner is put back into caller order the same way each packing strategy
+ * does for itself. Input order is part of the public contract, and it is the
+ * one property a saturated result cannot get for free: `validateHard` never
+ * runs on this path, so a candidate strategy that packed in its own order
+ * would ship a permuted `placements` array with nothing left to catch it.
  */
 function leastBad(
   cards: CardLayoutInput[],
@@ -274,9 +275,12 @@ function solve(
     return saturated(inputs, space, mode);
   }
 
+  // Every packing strategy below already ends in `orderResult`, so what they
+  // hand back is in caller order with each leftover seated — and sided — at the
+  // margin. The facade composes them; it does not reorder them.
   if (mode === "grid") {
     debug.decision = "skipped-mode";
-    const grid = orderResult(inputs, layoutGrid(inputs, space), space);
+    const grid = layoutGrid(inputs, space);
     if (validateHard(grid, space)) return { status: "solved", placements: grid, mode };
     return degrade(inputs, space, mode, grid);
   }
@@ -284,7 +288,7 @@ function solve(
   // Side packing first, then the repair ladder: whichever legal layout comes
   // out is both what the solver ships and what the connector-aware search has
   // to beat, so the search can only ever improve the result.
-  const packed = orderResult(inputs, packSides(inputs, space, mode, options), space);
+  const packed = packSides(inputs, space, mode, options);
   if (validateHard(packed, space)) return refine(inputs, space, mode, options, packed, debug);
   const { legal, swept } = repairLadder(inputs, space);
   if (legal) return refine(inputs, space, mode, options, legal, debug);

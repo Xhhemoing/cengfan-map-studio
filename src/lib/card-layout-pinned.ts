@@ -14,7 +14,7 @@
  * canvas actually draws.
  */
 import { finiteOr } from "./card-layout-geometry";
-import { orderResult } from "./card-layout-pack";
+import { marginSeat, orderResult } from "./card-layout-pack";
 import { LayoutSpace, normalizeBounds, protectedZones } from "./card-layout-space";
 import {
   type CardArea,
@@ -91,16 +91,26 @@ export function planPinnedCards(
   };
 }
 
-/** Weave the solved free cards back between the pinned ones, in input order. */
+/**
+ * Weave the solved free cards back between the pinned ones, in input order.
+ *
+ * A free slot takes the next solved placement. `orderResult` already pads a
+ * margin seat for every free card the solve dropped, so there is one waiting
+ * for each of them; the explicit fallback names what that seat would be rather
+ * than asserting the leftover path away, and it reuses the one
+ * {@link LayoutSpace} the ordering was done against so the side still comes off
+ * the seat instead of a placeholder.
+ */
 export function mergePinnedCards(
   plan: PinnedCardPlan,
   solved: readonly CardPlacement[],
 ): CardPlacement[] {
-  const placed = orderResult(plan.free, solved, new LayoutSpace(plan.bounds));
+  const space = new LayoutSpace(plan.bounds);
+  const placed = orderResult(plan.free, solved, space);
   let cursor = 0;
   return plan.slots.map((slot) => {
     if (slot) return slot;
-    const placement = placed[cursor]!;
+    const placement = placed[cursor] ?? marginSeat(plan.free[cursor], space);
     cursor += 1;
     return placement;
   });

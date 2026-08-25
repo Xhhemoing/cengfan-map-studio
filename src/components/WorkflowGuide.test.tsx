@@ -315,7 +315,13 @@ describe("WorkflowGuide", () => {
 
     const icons = Array.from(container.querySelectorAll(".workflow-nav__icon"));
     expect(icons.length).toBe(5);
-    for (const icon of icons) expect(icon.getAttribute("aria-hidden")).toBe("true");
+    for (const icon of icons) {
+      expect(icon.getAttribute("aria-hidden")).toBe("true");
+      // The Lucide svg itself must stay pinned even if the wrapper span changes.
+      const svg = icon.querySelector("svg");
+      expect(svg).not.toBeNull();
+      expect(svg?.getAttribute("aria-hidden")).toBe("true");
+    }
   });
 
   it("groups the export warning lists and actions with accessible names", () => {

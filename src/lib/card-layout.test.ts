@@ -10,7 +10,9 @@ import {
   type CardPlacement,
   type ConnectorSearchDecision,
 } from "./card-layout";
+import { packSides } from "./card-layout-modes";
 import { optimizedLayout } from "./card-layout-optimizer";
+import { layoutGrid } from "./card-layout-pack";
 import { LayoutSpace } from "./card-layout-space";
 import { buildConnectorGeometry, connectorGeometriesIntersect } from "./connector-geometry";
 
@@ -1334,4 +1336,107 @@ describe("hand-placed cards", () => {
       .toEqual(roster.map((card) => fixedPositions[card.id]));
     expect(solveCardLayout(roster, bounds, { mode: "quadrant", fixedPositions })).toEqual(result);
   });
+});
+
+/**
+ * Every packing strategy already ends in `orderResult`, so it hands back the
+ * caller's order with each leftover seated — and sided — at the margin. The
+ * facade composes those arrays rather than re-deriving them, and these pin both
+ * halves of that: what the solve ships is the packer's own array, and a card
+ * the packer had no column for is still labelled by the seat it landed in
+ * rather than by the side it was classified into.
+ */
+describe("leftover cards on the facade path", () => {
+  /** A wide, shallow map behind a band that leaves only the margin column free. */
+  const banded: CardLayoutBounds = {
+    width: 1500,
+    height: 1000,
+    map: { x: 200, y: 420, width: 1100, height: 160 },
+    occupiedAreas: [{ x: 300, y: 60, width: 1160, height: 880 }],
+    margin: 32,
+    gap: 14,
+  };
+
+  function crowd(count: number): CardLayoutInput[] {
+    return Array.from({ length: count }, (_, index) => cardInput({
+      id: `crowd-${index}`,
+      anchorX: 300 + (index % 4) * 250,
+      anchorY: 480,
+    }));
+  }
+
+  it("ships the grid's own array rather than a re-derived copy of it", () => {
+    const space = new LayoutSpace(bounds);
+    const roster = crowd(6);
+
+    expect(solveCardLayout(roster, bounds, { mode: "grid" }).placements).toEqual(layoutGrid(roster, space));
+  });
+
+  it("ships the side pack's own array rather than a re-derived copy of it", () => {
+    // Nothing to route around on these bounds, so the connector search is
+    // skipped and the packed layout is exactly what the solve returns.
+    const space = new LayoutSpace(bounds);
+    const roster = crowd(6);
+    const options = { mode: "quadrant" as const };
+
+    expect(solveCardLayout(roster, bounds, options).placements)
+      .toEqual(packSides(roster, space, "quadrant", options));
+  });
+
+  it("labels a grid leftover by the seat it was stacked into", () => {
+    const space = new LayoutSpace(banded);
+    const roster = crowd(5);
+
+    const result = solveCardLayout(roster, banded, { mode: "grid" });
+
+    expect(result.status).toBe("solved");
+    expect(result.placements.map((placement) => placement.id)).toEqual(roster.map((card) => card.id));
+    for (const placement of result.placements) {
+      // Every cell of the grid lands on the band, so all five cards fell
+      // through to the margin column.
+      expect(placement.x).toBe(banded.margin);
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+    // The column starts north of the wide map and runs down past its left
+    // edge, so no single placeholder side could describe it.
+    expect(new Set(result.placements.map((placement) => placement.side))).toEqual(new Set(["top", "left"]));
+  });
+
+  it("labels a side-pack leftover by its seat, not by the column it was classified into", () => {
+    // `right-stack` classifies every card as "right", and the right flank is
+    // entirely under the band, so each card is repaired into the free column on
+    // the far side instead. Carrying the classification over would point all
+    // five leader lines out of the edge facing away from the map.
+    const space = new LayoutSpace(banded);
+    const roster = crowd(5);
+
+    const result = solveCardLayout(roster, banded, { mode: "right-stack" });
+
+    expect(result.status).toBe("solved");
+    expect(result.placements.map((placement) => placement.id)).toEqual(roster.map((card) => card.id));
+    for (const placement of result.placements) {
+      expect(placement.x).toBe(banded.margin);
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+    expect(result.placements.map((placement) => placement.side)).not.toContain("right");
+  });
+
+  it.each<CardLayoutMode>(["quadrant", "radial", "right-stack", "grid"])(
+    "keeps input order and seat-derived sides in %s mode when nothing fits at all",
+    (mode) => {
+      // The whole canvas is protected, so no rung of the ladder finds a legal
+      // layout and every card is a leftover.
+      const walled: CardLayoutBounds = { ...banded, occupiedAreas: [{ x: 0, y: 0, width: 1500, height: 1000 }] };
+      const space = new LayoutSpace(walled);
+      const roster = crowd(4);
+
+      const result = solveCardLayout(roster, walled, { mode });
+
+      expect(result.status).toBe("fallback");
+      expect(result.placements.map((placement) => placement.id)).toEqual(roster.map((card) => card.id));
+      for (const placement of result.placements) {
+        expect(placement.side).toBe(space.sideOf(placement));
+      }
+    },
+  );
 });

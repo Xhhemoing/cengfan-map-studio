@@ -97,7 +97,7 @@ export function AssistantConversationView({
               {activeWriteSteps.filter((step) => step.result.ok).map((step) => (
                 <label key={step.id} className="review-row agent-review-row">
                   <input type="checkbox" checked={selectedIds.has(step.id)} onChange={(event) => onToggleStep(step.id, event.target.checked)} aria-label={`选择 ${stepLabel(step)}`} />
-                  <span className="agent-review-icon" aria-hidden>{step.risk === "high" ? <AlertTriangle size={16} /> : step.result.ok ? <Check size={16} /> : <ShieldCheck size={16} />}</span>
+                  <span className="agent-review-icon" aria-hidden>{step.risk === "high" ? <AlertTriangle size={16} aria-hidden /> : step.result.ok ? <Check size={16} aria-hidden /> : <ShieldCheck size={16} aria-hidden />}</span>
                   <span><strong>{stepLabel(step)}</strong><small>{riskLabel(step.risk)} · 影子画布已执行{step.lostManualLayout ? " · 将丢弃手工位置" : ""}</small></span>
                 </label>
               ))}

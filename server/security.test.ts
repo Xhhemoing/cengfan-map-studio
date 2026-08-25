@@ -289,6 +289,7 @@ describe("server request security", () => {
     "127.0.0.1",
     "localhost:8787",
     "[::1]:8787",
+    "[::FFFF:127.0.0.1]",
   ])("allows loopback Host header %s on a loopback listener", async (host) => {
     const server = createAiServer();
     servers.push(server);
@@ -302,13 +303,16 @@ describe("server request security", () => {
     expect(JSON.parse(response.body)).toMatchObject({ ok: true });
   });
 
-  it("rejects DNS-rebinding Host headers on a loopback listener", async () => {
+  it.each([
+    "evil.example",
+    "[::FFFF:128.0.0.1]",
+  ])("rejects non-loopback Host header %s on a loopback listener", async (host) => {
     const server = createAiServer();
     servers.push(server);
     const origin = await startServer(server);
 
     const response = await rawRequest(origin, "/api/health", "GET", undefined, {
-      Host: "evil.example",
+      Host: host,
       Origin: "http://evil.example",
     });
 
