@@ -191,6 +191,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 - R10-8 (`05e72d2` / `a00dc75`+`2937baf`): `collaboration-client.test.ts` 948→119 + fixture + 4 domain files, all ≤400. Allowlist entry deleted. Rollback: revert `05e72d2`.
 - Allowlist after R10-3/5/8: 42 entries. App.tsx 1066; index.ts 1367; index.test.ts 2378.
 - R10-4 (`96b353d` / `fad35fc`+`c06fb88`): non-SSE room HTTP → `server/room-routes.ts` (deps struct). SSE `events` + `events-ticket` byte-identical in index.ts. index.ts 1367→1146. Rollback: revert `96b353d`.
+- Full suite on `4ec6b7f`: **238 files passed / 1 skipped (239); 1942 passed / 2 skipped (1944)** (93.28s). Lint: 0 errors / **1 warning** (frozen DataWorkspace exhaustive-deps). Typecheck: `tsc -b --noEmit` 0. Fable review pending.
 
 ## Round Briefings
 
