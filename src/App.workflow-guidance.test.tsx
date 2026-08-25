@@ -34,11 +34,11 @@ describe("App workflow guidance", () => {
   it("keeps the assistant rail available across focused Atelier workspaces", () => {
     const container = renderApp();
 
-    click(workflowStage(container, "数据与素材"));
+    click(workflowStage(container, "名单"));
     expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(5);
     expect(container.querySelector(".studio-sidebar .studio-assistant-rail")).not.toBeNull();
 
-    click(workflowStage(container, "最终导出"));
+    click(workflowStage(container, "交付"));
     expect(container.querySelectorAll(".topbar-workflow .workflow-stage-stepper button")).toHaveLength(5);
     expect(container.querySelector(".studio-sidebar .studio-assistant-rail")).not.toBeNull();
   });
@@ -47,7 +47,7 @@ describe("App workflow guidance", () => {
     const container = renderLegacyApp();
 
     click(container.querySelector<HTMLButtonElement>('button[aria-label="切换到经典界面"]')!);
-    click(workflowStage(container, "地图样式"));
+    click(workflowStage(container, "地图"));
 
     expect(container.querySelector<HTMLElement>(".app-shell")?.dataset.editorSkin).toBe("classic");
     expect(container.querySelector('.studio-editor-shell[data-has-left-rail="true"]')).not.toBeNull();
@@ -99,16 +99,16 @@ describe("App workflow guidance", () => {
 
     expect(steps).toHaveLength(5);
     expect(steps[3]?.getAttribute("aria-current")).toBe("step");
-    expect(steps[3]?.getAttribute("aria-label")).toBe("内容与排版");
+    expect(steps[3]?.getAttribute("aria-label")).toBe("内容");
     expect(container.querySelector(".workflow-guide")).toBeNull();
   });
 
   it("opens the dedicated map stage from the left workflow rail", () => {
     const container = renderApp();
-    click(workflowStage(container, "地图样式"));
+    click(workflowStage(container, "地图"));
 
-    expect(container.querySelector('main[aria-label="地图样式"]')).not.toBeNull();
-    expect(workflowStage(container, "地图样式").getAttribute("aria-current")).toBe("step");
+    expect(container.querySelector('main[aria-label="地图"]')).not.toBeNull();
+    expect(workflowStage(container, "地图").getAttribute("aria-current")).toBe("step");
   });
 
   it("opens global canvas settings from the stable rail", () => {
@@ -130,11 +130,11 @@ describe("App workflow guidance", () => {
 
   it("applies a glass statistics style from the dedicated display-frame stage", () => {
     const container = renderApp();
-    click(workflowStage(container, "展示框样式"));
+    click(workflowStage(container, "版式"));
     const option = Array.from(container.querySelectorAll<HTMLButtonElement>(".reference-card-style-option"))
       .find((button) => button.textContent?.includes("半透明统计卡"));
     click(option!);
-    click(workflowStage(container, "内容与排版"));
+    click(workflowStage(container, "内容"));
 
     expect(container.querySelector('[data-card-presentation="glass-stat"]')).not.toBeNull();
     expect(container.querySelector(".project-summary")?.textContent).toContain("已记录 1 步");
@@ -256,13 +256,13 @@ describe("Docked AI assistant integration", () => {
     const container = renderLegacyApp({ clearStorage: false });
     expect(container.querySelector('[data-agent-presentation="docked"]')).not.toBeNull();
 
-    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="地图样式"]')!);
+    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="地图"]')!);
     expect(container.querySelector('button[aria-label="打开AI助手与高级功能"]')).not.toBeNull();
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开AI助手与高级功能"]')!);
     expect(document.querySelector('[data-agent-presentation="docked"]')).not.toBeNull();
     click(document.querySelector<HTMLButtonElement>('button[aria-label="关闭AI 助手与高级功能"]')!);
 
-    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="内容与排版"]')!);
+    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="内容"]')!);
     expect(container.querySelector('[data-agent-presentation="docked"]')).not.toBeNull();
   });
 });

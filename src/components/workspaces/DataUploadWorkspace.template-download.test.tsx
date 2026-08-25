@@ -37,8 +37,6 @@ function render(dataWorkspaceOverrides: Partial<ComponentProps<typeof DataWorksp
         onSetStudentsVisibility: vi.fn(),
         ...dataWorkspaceOverrides,
       }}
-      assetPanelProps={{ onApplyBackground: vi.fn() }}
-      onCreateDecoration={vi.fn()}
       onSelectStudent={vi.fn()}
     />,
   ));

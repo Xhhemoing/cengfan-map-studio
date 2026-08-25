@@ -45,11 +45,12 @@ describe("deriveStageOverviewCards", () => {
     expect(cards.every((c) => c.action?.kind === "data-diagnostics")).toBe(true);
   });
 
-  it("reports a healthy roster with a single ok card", () => {
+  it("reports a healthy roster with a single ok card pointing to the map stage", () => {
     const health: DataHealthSummary = { total: 10, visible: 10, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 };
     const cards = deriveStageOverviewCards(makeInput({ stage: "data", dataHealth: health }));
     expect(cards).toHaveLength(1);
-    expect(cards[0]).toMatchObject({ id: "data-clean", severity: "ok" });
+    expect(cards[0]).toMatchObject({ id: "data-clean", severity: "ok", action: { kind: "stage", stage: "map" } });
+    expect(cards[0].question).toContain("下一步：地图");
   });
 
   it("treats an empty roster as a warning to import, never as healthy", () => {
@@ -103,6 +104,38 @@ describe("deriveStageOverviewCards", () => {
     expect(resource?.action).toMatchObject({ kind: "locate-delivery", issue: { kind: "resource" } });
     const state = cards.find((c) => c.id === "export-state");
     expect(state).toMatchObject({ severity: "warning", action: { kind: "export-png" } });
+  });
+
+  it("offers a next-stage card only when the current stage has no blocking warnings", () => {
+    // 地图健康 → 下一步：版式；有未定位告警时不给下一步，优先保留告警卡。
+    const healthyMap = deriveStageOverviewCards(makeInput({
+      stage: "map",
+      dataHealth: { total: 3, visible: 3, hidden: 0, international: 0, unresolved: 0, missingRequired: 0, duplicate: 0 },
+    }));
+    expect(healthyMap.find((c) => c.id === "map-next")).toMatchObject({ action: { kind: "stage", stage: "frame" } });
+    const warningMap = deriveStageOverviewCards(makeInput({
+      stage: "map",
+      dataHealth: { total: 3, visible: 3, hidden: 0, international: 0, unresolved: 2, missingRequired: 0, duplicate: 0 },
+    }));
+    expect(warningMap.some((c) => c.id === "map-next")).toBe(false);
+
+    // 版式无溢出 → 下一步：内容。
+    const healthyFrame = deriveStageOverviewCards(makeInput({ stage: "frame" }));
+    expect(healthyFrame.find((c) => c.id === "frame-next")).toMatchObject({ action: { kind: "stage", stage: "content" } });
+    const overflowFrame = deriveStageOverviewCards(makeInput({
+      stage: "frame",
+      layoutIssues: [{ id: "li1", kind: "overflow", severity: "warning", detail: "卡片文字超出边界" }],
+    }));
+    expect(overflowFrame.some((c) => c.id === "frame-next")).toBe(false);
+
+    // 内容排版健康 → 下一步：交付。
+    const healthyContent = deriveStageOverviewCards(makeInput({ stage: "content" }));
+    expect(healthyContent.find((c) => c.id === "content-next")).toMatchObject({ action: { kind: "stage", stage: "export" } });
+    const warningContent = deriveStageOverviewCards(makeInput({
+      stage: "content",
+      layoutIssues: [{ id: "li1", kind: "occlusion", severity: "warning", detail: "元素相互遮挡" }],
+    }));
+    expect(warningContent.some((c) => c.id === "content-next")).toBe(false);
   });
 
   it("caps every stage at MAX_OVERVIEW_CARDS cards", () => {

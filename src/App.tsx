@@ -12,7 +12,6 @@ import {
   type CSSProperties,
 } from "react";
 import { loadInitialProject, loadBrowserState } from "./lib/app-initialization";
-import { CHINA_PROVINCE_ADJACENCY } from "./lib/map-data";
 import {
   provinceNames,
   dataViews,
@@ -95,6 +94,7 @@ import {
   loadCustomTemplates,
   type CustomTemplateRecord,
 } from "./lib/template-store";
+import { createContentAssetPanelProps } from "./lib/editor-asset-panel-props";
 import { createEditorTemplateActions } from "./lib/editor-template-actions";
 import { createProjectResetActions } from "./lib/editor-project-reset-actions";
 import { type SceneSelection } from "./lib/scene-document";
@@ -487,6 +487,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     },
     setCollaborationOpen: collaboration.setCollaborationOpen,
     exportPng: () => void posterExport.exportPng(),
+    legacyEditorEnabled,
   }));
   const {
     changeWorkflowPanel,
@@ -542,38 +543,24 @@ function StudioApp({ projectId }: { projectId?: string }) {
     onSelectStudent: setSelectedStudentId,
   };
 
-  const mapStyleAssetPanelProps: ContentAssetPanelProps = {
-    instances: project.assetElements
-      .filter((element) => element.kind !== "province-texture")
-      .map((element) => ({ id: element.id, assetId: element.assetId, label: element.label, kind: element.kind })),
-    provinces: provinceNames,
+  const contentAssetPanelProps: ContentAssetPanelProps = createContentAssetPanelProps({
+    project,
+    provinceNames,
     dataProvinces: summary.map((item) => item.province),
-    provinceStyles: project.map.provinceStyles,
-    provinceAdjacency: CHINA_PROVINCE_ADJACENCY,
-    mapBaseColor: project.map.landColor,
-    posterBackground: project.canvas.backgroundColor,
     userAssets,
     assetUsageById,
-    onApplyBackground: applyBackgroundAsset,
-    onSelectInstance: (id) => setSelection({ type: "asset", id }),
-    onPatchProvinceTextureUniformSize: (next) => patchScene({ type: "map" }, { provinceTextureUniformSize: next }),
-    onApplyProvinceAppearance: (province, appearance, fill) => {
-      setSelection({ type: "province", province });
-      patchScene({ type: "province", province }, { appearance, ...(fill ? { fill } : {}) });
-      setStatusMessage(`已应用到地图：${province}`);
-    },
-    onApplyProvinceThemes: applyProvinceThemes,
-    onResetProvinceAppearance: (province) => {
-      setSelection({ type: "province", province });
-      patchScene({ type: "province", province }, { appearance: undefined, fill: undefined, textureSrc: undefined });
-      setStatusMessage(`已恢复系统默认：${province}`);
-    },
-    onAddUserAsset: addUserAsset,
-    onReplaceUserAsset: replaceUserAsset,
-    onDeleteUserAsset: deleteUserAsset,
-    onExportResourcePack: exportResourcePack,
-    onImportResourcePack: importResourcePack,
-  };
+    createDecoration,
+    applyBackgroundAsset,
+    applyProvinceThemes,
+    addUserAsset,
+    replaceUserAsset,
+    deleteUserAsset,
+    exportResourcePack,
+    importResourcePack,
+    setSelection,
+    patchScene,
+    reportStatus: setStatusMessage,
+  });
 
   const projectExportActions = (
     <ToolbarGroup label="导出与工程">
@@ -599,6 +586,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       collaborationOpen={collaboration.collaborationOpen}
       pngScale={posterExport.pngScale}
       transparentExport={posterExport.transparentExport}
+      exportState={posterExport.exportState}
       syncStatus={syncState.status}
       onSetCollaborationOpen={collaboration.setCollaborationOpen}
       onRoomInputChange={collaboration.setRoomInput}
@@ -613,6 +601,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onSaveLocal={() => void overwriteBrowserStorage()}
       onPngScaleChange={posterExport.setPngScale}
       onTransparentChange={posterExport.setTransparentExport}
+      onExportPng={() => void posterExport.exportPng()}
       onExportSvg={posterExport.exportSvg}
       onExportProject={posterExport.openProjectExportDialog}
       onImportProject={posterExport.importProjectPackage}
@@ -647,6 +636,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
       onOpenCollaboration={openCollaborationSettings}
       onOpenDataDiagnostics={openDataDiagnostics}
       onOpenRenderSettings={openRenderSettings}
+      advancedMode={legacyEditorEnabled ? "legacy-settings" : "stage-nav"}
       selection={selection}
       layoutIssues={contentLayoutIssues}
       onSelectElement={selectScene}
@@ -671,7 +661,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   );
 
   const historyActionsNode = (
-    <ToolbarGroup label="历史与缩放" className="topbar-action-group--history">
+    <ToolbarGroup label="历史" className="topbar-action-group--history">
       <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
       <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
     </ToolbarGroup>
@@ -755,7 +745,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         layoutIssues={contentLayoutIssues}
         resourceHealthIssues={resourceHealthIssues}
         dataWorkspaceProps={dataWorkspaceProps}
-        assetPanelProps={mapStyleAssetPanelProps}
+        assetPanelProps={contentAssetPanelProps}
         userAssets={userAssets}
         userFonts={userFonts}
         selection={selection}
@@ -771,7 +761,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onSelect={selectScene}
         onSelectStudent={setSelectedStudentId}
         onChangeDataView={dataWorkspaceProps.onChangeDataView}
-        onCreateDecoration={createDecoration}
         onAddUserAsset={addUserAsset}
         onCardPositionsResolved={captureCardPositions}
         onMoveProvinceTexture={moveProvinceTexture}

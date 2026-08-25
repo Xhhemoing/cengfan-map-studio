@@ -15,12 +15,17 @@ export interface WorkflowStageProgress {
   counts: WorkflowProgress["roster"]["counts"];
 }
 
+/**
+ * 一级步骤条文案以「用户要完成的事」命名（对齐 function.md 的制作顺序）：
+ * 名单 → 地图 → 版式 → 内容 → 交付。素材不占一级导航，
+ * 主入口在内容阶段（素材库），省份贴图从地图阶段直达。
+ */
 export const WORKFLOW_STAGES: readonly WorkflowStageDefinition[] = [
-  { id: "data", label: "数据与素材", description: "导入名单并准备地图素材" },
-  { id: "map", label: "地图样式", description: "确定地图表达与外观" },
-  { id: "frame", label: "展示框样式", description: "设计数据展示框" },
-  { id: "content", label: "内容与排版", description: "编辑内容并完成排版" },
-  { id: "export", label: "最终导出", description: "检查并导出最终文件" },
+  { id: "data", label: "名单", description: "导入并校验毕业去向名单" },
+  { id: "map", label: "地图", description: "选择呈现方式并调整地图外观" },
+  { id: "frame", label: "版式", description: "设计展示框与海报结构" },
+  { id: "content", label: "内容", description: "编辑文字、卡片并管理素材" },
+  { id: "export", label: "交付", description: "检查并导出海报" },
 ];
 
 export const LEGACY_PANEL_TO_WORKFLOW_STAGE: Record<string, WorkflowStageId> = {

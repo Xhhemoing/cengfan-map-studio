@@ -112,7 +112,13 @@ function dataCards(input: StageOverviewInput): StageOverviewCard[] {
   }
   // 空名单不算健康：data-clean 仅在确有名单且无任何问题卡时出现。
   if (cards.length === 0 && h.total > 0) {
-    cards.push({ id: "data-clean", question: "名单数据健康", status: `${h.visible} 人 · 无缺失、无重复、全部可定位`, severity: "ok" });
+    cards.push({
+      id: "data-clean",
+      question: "名单数据健康 · 下一步：地图",
+      status: `${h.visible} 人 · 无缺失、无重复、全部可定位`,
+      severity: "ok",
+      action: { kind: "stage", stage: "map" },
+    });
   }
   return cards.slice(0, MAX_OVERVIEW_CARDS);
 }
@@ -130,6 +136,16 @@ function mapCards(input: StageOverviewInput): StageOverviewCard[] {
     cards.push({ id: "map-manual", question: "省份覆盖", status: `${manual} 人使用手动省份覆盖（优先于自动定位）`, severity: "info", action: { kind: "data-diagnostics" } });
   }
   cards.push({ id: "map-view", question: "数据呈现方式", status: input.dataViewLabel, severity: "info" });
+  // 告警卡优先；地图无严重告警时才给「下一步」。
+  if (h.unresolved === 0) {
+    cards.push({
+      id: "map-next",
+      question: "下一步：版式",
+      status: "地图外观确认后可设计展示框与海报结构",
+      severity: "ok",
+      action: { kind: "stage", stage: "frame" },
+    });
+  }
   return cards.slice(0, MAX_OVERVIEW_CARDS);
 }
 
@@ -153,7 +169,16 @@ function frameCards(input: StageOverviewInput): StageOverviewCard[] {
     status: frame.fixed ? "已自定义固定展示框" : "使用默认展示框",
     severity: "info",
   });
-  return cards;
+  if (!hasOverflow) {
+    cards.push({
+      id: "frame-next",
+      question: "下一步：内容",
+      status: "版式无溢出，可编辑文字、卡片与素材",
+      severity: "ok",
+      action: { kind: "stage", stage: "content" },
+    });
+  }
+  return cards.slice(0, MAX_OVERVIEW_CARDS);
 }
 
 function contentCards(input: StageOverviewInput): StageOverviewCard[] {
@@ -178,7 +203,16 @@ function contentCards(input: StageOverviewInput): StageOverviewCard[] {
     severity: "info",
     action: { kind: "elements" },
   });
-  return cards;
+  if (input.layoutIssues.length === 0) {
+    cards.push({
+      id: "content-next",
+      question: "下一步：交付",
+      status: "排版健康，可以检查并导出海报",
+      severity: "ok",
+      action: { kind: "stage", stage: "export" },
+    });
+  }
+  return cards.slice(0, MAX_OVERVIEW_CARDS);
 }
 
 function exportCards(input: StageOverviewInput): StageOverviewCard[] {

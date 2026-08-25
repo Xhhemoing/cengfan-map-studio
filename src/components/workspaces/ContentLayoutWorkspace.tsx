@@ -78,7 +78,8 @@ function selectionLabel(selection: SceneSelection): string {
 /**
  * Props for the content stage's right rail. The shell owns the rail chrome
  * (labelled aside + resizer + mobile drawer); this component supplies the
- * 当前对象 inspector and the 素材与实例 asset context. History and the
+ * 当前对象 inspector and the 素材库 (the primary asset-management entry of
+ * the whole flow — the roster stage no longer exposes one). History and the
  * position-refresh / back-to-map actions live in the topbar instead.
  */
 export type ContentLayoutRailProps = Omit<
@@ -164,8 +165,9 @@ export function ContentLayoutRail({
           />
         </details>
       )}
-      <details open className="content-layout-workspace__assets" aria-label="内容素材上下文">
-        <summary>素材与实例</summary>
+      {/* 无选中对象（画布态）时展开素材库；编辑具体对象时默认收起，把空间让给检查器。 */}
+      <details open={selection.type === "canvas"} className="content-layout-workspace__assets" aria-label="素材库">
+        <summary>素材库 · 装饰与实例</summary>
         <AssetPanel {...assetPanelProps} userAssets={userAssets} />
       </details>
     </aside>
@@ -174,8 +176,8 @@ export function ContentLayoutRail({
 
 /**
  * Center content of the content stage: the poster canvas preview. The
- * 当前对象 inspector and 素材与实例 context live in the unified right rail
- * (`ContentLayoutRail`); undo/redo, 刷新展示框位置 and 返回地图样式 actions
+ * 当前对象 inspector and 素材库 context live in the unified right rail
+ * (`ContentLayoutRail`); undo/redo, 刷新展示框位置 and 返回地图 actions
  * live in the topbar's stage-actions slot.
  */
 export function ContentLayoutWorkspace({
@@ -195,7 +197,7 @@ export function ContentLayoutWorkspace({
   selectedStudentId = null,
 }: ContentLayoutWorkspaceProps) {
   return (
-    <main className="content-layout-workspace workflow-panel--content" aria-label="内容与排版">
+    <main className="content-layout-workspace workflow-panel--content" aria-label="内容">
       <div className="content-layout-workspace__body">
         <section className="content-layout-workspace__preview" aria-label="内容排版画布">
           <div className="content-layout-workspace__preview-heading"><strong>实时画布</strong><span>{project.canvas.width} × {project.canvas.height}</span></div>

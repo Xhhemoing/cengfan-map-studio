@@ -103,10 +103,10 @@ export function workflowStage(container: HTMLElement, label: string): HTMLButton
 }
 
 export function openGlobalData(container: HTMLElement): void {
-  click(workflowStage(container, "数据与素材"));
+  click(workflowStage(container, "名单"));
 }
 
-export function leaveFocusedWorkspace(container: HTMLElement, stage = "内容与排版"): void {
+export function leaveFocusedWorkspace(container: HTMLElement, stage = "内容"): void {
   click(workflowStage(container, stage));
 }
 

@@ -164,19 +164,37 @@ describe("stage and panel navigation", () => {
 });
 
 describe("settings entrances", () => {
-  it("opens each settings section from its own entrance", () => {
-    const studio = harness();
+  it("opens each settings section from its own entrance in the legacy editor", () => {
+    const studio = harness({ legacyEditorEnabled: true });
     studio.actions.openStudioSettings();
     expect(studio.log.steps).toEqual(["layout"]);
     expect(studio.log.sections).toEqual(["canvas"]);
 
-    const diagnostics = harness();
+    const diagnostics = harness({ legacyEditorEnabled: true });
     diagnostics.actions.openDataDiagnostics();
     expect(diagnostics.log.sections).toEqual(["cards"]);
 
-    const render = harness();
+    const render = harness({ legacyEditorEnabled: true });
     render.actions.openRenderSettings();
     expect(render.log.sections).toEqual(["advanced"]);
+  });
+
+  it("sends the same entrances to their owning stage on the public path", () => {
+    const studio = harness();
+    studio.actions.openStudioSettings();
+    expect(studio.log.stages).toEqual(["frame"]);
+    expect(studio.log.sections).toEqual([null]);
+
+    const diagnostics = harness({ activeStage: "map" });
+    diagnostics.actions.openDataDiagnostics();
+    expect(diagnostics.log.stages).toEqual(["data"]);
+    expect(diagnostics.log.panels).toEqual(["roster"]);
+    expect(diagnostics.log.sections).toEqual([null]);
+
+    const render = harness();
+    render.actions.openRenderSettings();
+    expect(render.log.stages).toEqual(["content"]);
+    expect(render.log.sections).toEqual([null]);
   });
 
   it("unfolds the topbar project menu before opening the collaboration panel inside it", () => {
@@ -195,9 +213,13 @@ describe("stage overview actions", () => {
   }
 
   it("routes every overview action to its own destination", () => {
-    const diagnostics = harness();
+    const diagnostics = harness({ legacyEditorEnabled: true });
     diagnostics.actions.runStageOverviewAction({ kind: "data-diagnostics" });
     expect(diagnostics.log.sections).toEqual(["cards"]);
+
+    const publicDiagnostics = harness();
+    publicDiagnostics.actions.runStageOverviewAction({ kind: "data-diagnostics" });
+    expect(publicDiagnostics.log.stages).toEqual(["data"]);
 
     const stage = harness();
     stage.actions.runStageOverviewAction({ kind: "stage", stage: "frame" });

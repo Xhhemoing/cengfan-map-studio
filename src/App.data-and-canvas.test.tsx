@@ -218,7 +218,7 @@ describe("App student editing", () => {
     container.querySelector<HTMLInputElement>("#map-x")?.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
 
     expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform")).toBe(initialTransform);
-    click(workflowStage(container, "展示框样式"));
+    click(workflowStage(container, "版式"));
     expect(container.querySelector('button[aria-label="刷新展示框位置"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="一键智能排版"]')).toBeNull();
   });
@@ -234,12 +234,12 @@ describe("App student editing", () => {
     container.querySelector<HTMLInputElement>("#map-x")?.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
     expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform")).toBe(initialTransform);
 
-    click(workflowStage(container, "展示框样式"));
+    click(workflowStage(container, "版式"));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     click(container.querySelector<HTMLButtonElement>('button[aria-label="刷新展示框位置"]')!);
 
     expect(confirm).toHaveBeenCalledTimes(1);
-    click(workflowStage(container, "内容与排版"));
+    click(workflowStage(container, "内容"));
     expect(container.querySelector('[data-destination-card="北京市"]')?.getAttribute("transform")).toBe(initialTransform);
   });
 
@@ -262,7 +262,7 @@ describe("App student editing", () => {
     expect(issue).not.toBeUndefined();
     click(issue!);
 
-    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="内容"]')).not.toBeNull();
     expect(container.querySelector('[data-text-id="text-title"]')?.classList.contains("is-selected")).toBe(true);
   });
 });

@@ -38,12 +38,12 @@ function renderWorkspace(onRefreshPositions = vi.fn(), onBackToMap = vi.fn()) {
       <StudioTopbar
         stageActions={
           <>
-            <ToolbarGroup label="历史与缩放">
+            <ToolbarGroup label="历史">
               <ToolbarButton label="撤销内容修改" icon={null} disabled={false} onClick={vi.fn()} />
               <ToolbarButton label="重做内容修改" icon={null} disabled={false} onClick={vi.fn()} />
             </ToolbarGroup>
             <ToolbarButton label="刷新展示框位置" icon={null} onClick={onRefreshPositions} />
-            <ToolbarButton label="返回地图样式" icon={null} onClick={onBackToMap} />
+            <ToolbarButton label="返回地图" icon={null} onClick={onBackToMap} />
           </>
         }
         projectActions={<></>}
@@ -102,15 +102,15 @@ describe("ContentLayoutWorkspace", () => {
   it("renders the center canvas preview and the right rail with the object inspector and asset context", () => {
     const { container } = renderWorkspace();
 
-    expect(container.querySelector('main[aria-label="内容与排版"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="内容"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="内容大纲"]')).toBeNull();
     expect(container.querySelector('[aria-label="内容排版画布"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="内容对象属性"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="当前对象属性"]')).not.toBeNull();
     expect(container.querySelector('.content-layout-workspace__context .property-panel')).not.toBeNull();
-    expect(container.querySelector('[aria-label="内容素材上下文"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="素材库"]')).not.toBeNull();
     expect(container.querySelector('.content-layout-workspace__context')?.textContent).toContain("当前对象");
-    expect(container.querySelector('.content-layout-workspace__context')?.textContent).toContain("素材与实例");
+    expect(container.querySelector('.content-layout-workspace__context')?.textContent).toContain("素材库");
     expect(container.querySelector('button[aria-label="仅排未手调"]')).toBeNull();
     expect(container.querySelector('button[aria-label="全部重新排版"]')).toBeNull();
     expect(container.querySelector('button[aria-label="返回编辑器"]')).toBeNull();
@@ -123,7 +123,7 @@ describe("ContentLayoutWorkspace", () => {
 
     const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="刷新展示框位置"]');
     expect(refresh?.closest(".topbar")).not.toBeNull();
-    const backToMap = container.querySelector<HTMLButtonElement>('button[aria-label="返回地图样式"]');
+    const backToMap = container.querySelector<HTMLButtonElement>('button[aria-label="返回地图"]');
     expect(backToMap?.closest(".topbar")).not.toBeNull();
     expect(container.querySelector(".content-layout-workspace__header")).toBeNull();
 
@@ -131,6 +131,29 @@ describe("ContentLayoutWorkspace", () => {
     flushSync(() => backToMap?.click());
     expect(onRefreshPositions).toHaveBeenCalledTimes(1);
     expect(onBackToMap).toHaveBeenCalledTimes(1);
+  });
+
+  it("collapses the asset library by default while an object is selected", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push({ root, container });
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    flushSync(() => root.render(
+      <ContentLayoutRail
+        project={project}
+        selection={{ type: "map" }}
+        userAssets={[]}
+        userFonts={[]}
+        onPatch={vi.fn()}
+        onReset={vi.fn()}
+        assetPanelProps={{ onApplyBackground: vi.fn() }}
+      />,
+    ));
+
+    const details = container.querySelector<HTMLDetailsElement>('details[aria-label="素材库"]');
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
   });
 
   it("keeps layout management out of the canvas workspace", () => {

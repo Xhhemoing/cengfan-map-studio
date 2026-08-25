@@ -2,7 +2,7 @@
 // 共享挂载/交互装置见 src/app-test-harness.tsx。
 import { describe, expect, it } from "vitest";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
-import { installAppTestHarness, renderApp, renderPublicApp, renderLegacyApp, click, openGlobalSettingsSection, workflowStage, closeGlobalSettings } from "./app-test-harness";
+import { installAppTestHarness, renderApp, renderPublicApp, renderLegacyApp, click, openGlobalSettingsSection, openRailAdvancedTab, workflowStage } from "./app-test-harness";
 
 installAppTestHarness();
 
@@ -78,11 +78,11 @@ describe("Responsive editor shell", () => {
 describe("Stage slot contract (T0)", () => {
   // 单一事实源快照：T1 把 rightRailLabel 抽成 STAGE_METADATA 时，此表是回归锚点。
   const STAGE_SLOTS = [
-    ["数据与素材", "数据质量与素材"],
-    ["地图样式", "地图对象属性"],
-    ["展示框样式", "展示框公共样式"],
-    ["内容与排版", "内容对象属性"],
-    ["最终导出", "导出与检查"],
+    ["名单", "数据质量"],
+    ["地图", "地图对象属性"],
+    ["版式", "版式与展示框样式"],
+    ["内容", "内容对象属性"],
+    ["交付", "导出与检查"],
   ] as const;
 
   it("maps every workflow stage to its right inspector slot and active step", () => {
@@ -112,27 +112,30 @@ describe("Stage slot contract (T0)", () => {
     expect(labels).toEqual(STAGE_SLOTS.map(([label]) => label));
   });
 
-  it("opens the global settings screen over any focused stage in public mode", () => {
+  it("sends the public advanced entrance to the 版式 stage instead of the settings screen", () => {
     const container = renderPublicApp();
-    openGlobalSettingsSection(container, "canvas");
-    expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).not.toBeNull();
-    expect(container.querySelector(".studio-editor-shell")).toBeNull();
+    openRailAdvancedTab(container);
 
-    closeGlobalSettings(container);
+    expect(container.querySelector('button[aria-label="打开全局设置"]')).toBeNull();
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="前往版式"]')!);
+
     expect(container.querySelector('.global-settings-screen[aria-label="全局设置"]')).toBeNull();
     expect(container.querySelector(".studio-editor-shell")).not.toBeNull();
+    expect(
+      container.querySelector('.workflow-stage-stepper button[aria-current="step"]')?.getAttribute("aria-label"),
+    ).toBe("版式");
   });
 });
 
 describe("Stage overview (T2)", () => {
   it("shows the stage overview in the left rail with progress badge and cards", () => {
     const container = renderPublicApp();
-    click(workflowStage(container, "数据与素材"));
+    click(workflowStage(container, "名单"));
     click(container.querySelector('[role="tab"][aria-controls="studio-stage-panel"]')!);
 
     const panel = container.querySelector("#studio-stage-panel");
     expect(panel).not.toBeNull();
-    expect(panel!.textContent).toContain("数据与素材");
+    expect(panel!.textContent).toContain("名单");
     expect(panel!.querySelector("[data-stage-status]")).not.toBeNull();
     expect(panel!.querySelectorAll(".studio-stage-overview__card").length).toBeGreaterThan(0);
   });
@@ -142,9 +145,9 @@ describe("Stage overview (T2)", () => {
     click(container.querySelector('[role="tab"][aria-controls="studio-stage-panel"]')!);
 
     const dataPanel = container.querySelector("#studio-stage-panel")!;
-    expect(dataPanel.textContent).toContain("数据与素材");
+    expect(dataPanel.textContent).toContain("名单");
 
-    click(workflowStage(container, "最终导出"));
+    click(workflowStage(container, "交付"));
     const exportPanel = container.querySelector("#studio-stage-panel")!;
     expect(exportPanel.textContent).toMatch(/导出状态|导出检查|数据告警|排版问题|资源缺失/);
   });
@@ -166,7 +169,7 @@ describe("Extracted render branches (R10-5)", () => {
 
   it("keeps every focused stage inside the studio editor shell with its stage actions", () => {
     const container = renderPublicApp();
-    click(workflowStage(container, "展示框样式"));
+    click(workflowStage(container, "版式"));
 
     expect(container.querySelector(".studio-editor-shell")).not.toBeNull();
     expect(container.querySelector('button[aria-label="刷新展示框位置"]')).not.toBeNull();
@@ -174,13 +177,14 @@ describe("Extracted render branches (R10-5)", () => {
   });
 
   it("keeps the global settings topbar trimmed to brand and workflow navigation", () => {
-    const container = renderPublicApp();
+    // 全局设置整屏只剩 legacy 一条入口：公开路径的「前往版式」改为跳阶段。
+    const container = renderLegacyApp();
     openGlobalSettingsSection(container, "canvas");
 
     const topbar = container.querySelector(".app-shell > .topbar");
     expect(topbar?.querySelector(".brand .brand-label__full")?.textContent).toBe("蹭饭地图工作室");
     expect(topbar?.querySelector(".topbar-workflow .workflow-stage-stepper")).not.toBeNull();
-    expect(topbar?.querySelector('[role="group"][aria-label="历史与缩放"]')).toBeNull();
+    expect(topbar?.querySelector('[role="group"][aria-label="历史"]')).toBeNull();
   });
 });
 
@@ -234,9 +238,9 @@ describe("Extracted render branches (R12-1)", () => {
 describe("Topbar action layering (T4)", () => {
   it("keeps global undo/redo visible in the topbar across every focused stage", () => {
     const container = renderPublicApp();
-    for (const stage of ["数据与素材", "地图样式", "展示框样式", "内容与排版", "最终导出"]) {
+    for (const stage of ["名单", "地图", "版式", "内容", "交付"]) {
       click(workflowStage(container, stage));
-      expect(container.querySelector('.topbar-actions [role="group"][aria-label="历史与缩放"]')).not.toBeNull();
+      expect(container.querySelector('.topbar-actions [role="group"][aria-label="历史"]')).not.toBeNull();
     }
   });
 

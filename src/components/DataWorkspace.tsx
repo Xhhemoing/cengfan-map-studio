@@ -22,34 +22,11 @@ import { DataMessageRegions } from "./DataMessageRegions";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
 import { findDuplicateStudentGroups } from "../lib/data-duplicate";
-import { searchCities, searchProvinces, searchUniversities } from "../lib/search-catalog";
-import { SearchCombobox, type SearchComboboxOption } from "./SearchCombobox";
+import { cityOptions, provinceOptions, universityOptions } from "../lib/roster-search-options";
+import { SearchCombobox } from "./SearchCombobox";
 import { FileDropzone } from "./FileDropzone";
 import { UniversityEmblem } from "./UniversityEmblem";
 import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, SegmentedControl } from "./StudioUi";
-
-function universityOptions(query: string): SearchComboboxOption[] {
-  return searchUniversities(query).map((university) => ({
-    value: university.name,
-    label: university.name,
-    detail: university.city,
-  }));
-}
-
-function cityOptions(query: string): SearchComboboxOption[] {
-  return searchCities(query).map((city) => ({
-    value: city.name,
-    label: city.name,
-    detail: city.province,
-  }));
-}
-
-function provinceOptions(query: string): SearchComboboxOption[] {
-  return searchProvinces(query).map((province) => ({
-    value: province,
-    label: province,
-  }));
-}
 
 /** 未导入行最多列几条：一份 60 行的名单全废时不该把整个面板刷满。 */
 const UNPARSED_PREVIEW_LIMIT = 20;
@@ -98,6 +75,7 @@ export function DataWorkspace({
   confirmReplace = ({ currentCount, nextCount }) => window.confirm(`确认替换全部名单？当前 ${currentCount} 条 -> 新 ${nextCount} 条`),
   hideDataExpression = false,
   hideTemplateDownload = false,
+  hideWorkbenchHeader = false,
   compactRosterControls = false,
 }: {
   students: Student[];
@@ -116,6 +94,8 @@ export function DataWorkspace({
   confirmReplace?: (input: { currentCount: number; nextCount: number }) => boolean;
   hideDataExpression?: boolean;
   hideTemplateDownload?: boolean;
+  /** 名单阶段外壳已有「名单」标题时隐藏内部的「学生数据中心」头。 */
+  hideWorkbenchHeader?: boolean;
   compactRosterControls?: boolean;
 }) {
   const [draft, setDraft] = useState<StudentDraft>(createEmptyStudentDraft());
@@ -516,7 +496,7 @@ export function DataWorkspace({
 
   return (
     <div className={`data-workspace${compactRosterControls ? " data-workspace--roster" : ""}`}>
-      <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />
+      {!hideWorkbenchHeader && <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />}
 
       {!hideDataExpression && <section className="data-expression" aria-labelledby="data-expression-title">
         <PanelHeader id="data-expression-title" title="地图呈现方式" meta="同一份名单，实时切换" />

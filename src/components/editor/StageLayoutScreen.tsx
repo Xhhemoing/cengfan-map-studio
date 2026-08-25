@@ -31,7 +31,7 @@ import {
   type DeliveryIssue,
 } from "../workspaces/DeliveryWorkspace";
 import { MapStyleRail, MapStyleWorkspace, type MapStyleWorkspaceProps } from "../workspaces/MapStyleWorkspace";
-import { ReferenceCardStyleWorkspace } from "../workspaces/ReferenceCardStyleWorkspace";
+import { ReferenceCardStyleRail, ReferenceCardStyleWorkspace } from "../workspaces/ReferenceCardStyleWorkspace";
 
 type CardsInspectorProps = ComponentProps<typeof CardsInspector>;
 
@@ -70,7 +70,6 @@ export interface StageLayoutScreenProps {
   onSelect: ContentLayoutWorkspaceProps["onSelect"];
   onSelectStudent: (id: string) => void;
   onChangeDataView: MapStyleWorkspaceProps["onChangeDataView"];
-  onCreateDecoration: DataUploadWorkspaceProps["onCreateDecoration"];
   onAddUserAsset: NonNullable<MapStyleWorkspaceProps["onAddUserAsset"]>;
   onCardPositionsResolved: NonNullable<MapStyleWorkspaceProps["onCardPositionsResolved"]>;
   onMoveProvinceTexture: NonNullable<MapStyleWorkspaceProps["onMoveProvinceTexture"]>;
@@ -157,7 +156,6 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
     onSelect,
     onSelectStudent,
     onChangeDataView,
-    onCreateDecoration,
     onAddUserAsset,
     onCardPositionsResolved,
     onMoveProvinceTexture,
@@ -193,8 +191,6 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             summary={dataHealth}
             issues={dataIssues}
             dataWorkspaceProps={dataWorkspaceProps}
-            assetPanelProps={assetPanelProps}
-            onCreateDecoration={onCreateDecoration}
             onSelectStudent={onSelectStudent}
           />
         ),
@@ -204,8 +200,6 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             summary={dataHealth}
             issues={dataIssues}
             dataWorkspaceProps={{ ...dataWorkspaceProps, hideDataExpression: true }}
-            assetPanelProps={assetPanelProps}
-            onCreateDecoration={onCreateDecoration}
             onSelectStudent={onSelectStudent}
           />
         ),
@@ -254,6 +248,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
         ),
       };
     case "frame": {
+      const framePicker = templatePickerProps(templateActions);
       return {
         stageActions: (
           <>
@@ -261,19 +256,28 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
           </>
         ),
         rightRail: (
-          <CardsInspector
+          <ReferenceCardStyleRail
             cards={project.cards}
             userFonts={userFonts}
             onPatch={patchCards}
-            onReset={resetCards}
-            mode="global"
-            collapsible
+            onResetCards={resetCards}
+            templates={framePicker.templates}
+            currentTemplateId={framePicker.currentTemplateId}
+            customTemplates={framePicker.customTemplates}
+            onApplyTemplate={framePicker.onApplyTemplate}
+            onApplyCustomTemplate={framePicker.onApplyCustomTemplate}
+            onSaveTemplate={framePicker.onSaveTemplate}
           />
         ),
         workspace: (
           <ReferenceCardStyleWorkspace
-            cards={project.cards}
-            onPatch={patchCards}
+            project={renderProject}
+            selection={selection}
+            userFonts={userFonts}
+            onSelect={onSelect}
+            onMoveCard={onMoveCard}
+            onMoveGuests={onMoveGuests}
+            onCardPositionsResolved={onCardPositionsResolved}
           />
         ),
       };
@@ -334,7 +338,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
         stageActions: (
           <>
             <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={onRefreshPositions} />
-            <ToolbarButton label="返回地图样式" icon={<MapPinned size={18} />} onClick={onBackToMap} />
+            <ToolbarButton label="返回地图" icon={<MapPinned size={18} />} onClick={onBackToMap} />
           </>
         ),
         rightRail: (

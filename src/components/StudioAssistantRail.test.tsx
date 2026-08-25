@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { StudioAssistantRail, type StudioAssistantRailProps } from "./StudioAssistantRail";
 import { AssistantConversationProvider } from "./AgentAssistant";
 import { createProjectDocument } from "../lib/project-document";
+import { sampleStudents } from "../lib/project-data";
 
 const roots: Root[] = [];
 
@@ -65,19 +66,27 @@ describe("StudioAssistantRail", () => {
     const onOpenSettings = vi.fn();
     const { container } = renderRail({ onOpenSettings });
 
-    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("AI 助手");
+    // 空名单默认落在「本阶段」（导入名单是第一件事），不是 AI。
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("本阶段");
     expect(container.textContent).not.toContain("工程状态");
     expect(Array.from(container.querySelectorAll("button")).filter((button) => button.textContent?.includes("高级功能"))).toHaveLength(1);
 
     click(container.querySelector('[role="tab"]:last-child')!);
     expect(container.textContent).toContain("工程状态");
     expect(container.textContent).toContain("0 条名单");
-    click(container.querySelector<HTMLButtonElement>('button[aria-label="打开全局设置"]')!);
+    // public 默认路径：入口写明去处（版式），不再自称「全局设置」。
+    expect(container.querySelector('button[aria-label="打开全局设置"]')).toBeNull();
+    expect(container.textContent).not.toContain("全局设置");
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="前往版式"]')!);
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the docked assistant as the only AI surface with no duplicate advanced entry", () => {
-    const { container } = renderRail();
+    const { container } = renderRail({
+      project: createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" }),
+    });
+    // 名单非空 → 默认 AI 助手 tab。
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("AI 助手");
     expect(container.querySelectorAll('[data-agent-presentation="docked"]')).toHaveLength(1);
     expect(container.querySelector('[role="dialog"]')).toBeNull();
     expect(Array.from(container.querySelectorAll("button")).filter((button) => button.textContent?.includes("高级功能"))).toHaveLength(1);
@@ -86,7 +95,6 @@ describe("StudioAssistantRail", () => {
   it("reports collaboration, data and render status from the advanced tab", () => {
     const onOpenCollaboration = vi.fn();
     const onOpenDataDiagnostics = vi.fn();
-    const onOpenRenderSettings = vi.fn();
     const onSelectElement = vi.fn();
     const { container } = renderRail({
       syncStatus: "saving",
@@ -95,7 +103,6 @@ describe("StudioAssistantRail", () => {
       renderIntervalMs: 60,
       onOpenCollaboration,
       onOpenDataDiagnostics,
-      onOpenRenderSettings,
       onSelectElement,
     });
     click(container.querySelector('[role="tab"]:last-child')!);
@@ -103,17 +110,36 @@ describe("StudioAssistantRail", () => {
     expect(container.textContent).toContain("ROOM42");
     expect(container.textContent).toContain("3 人");
     expect(container.textContent).toContain("5 项");
+    // public 路径没有渲染设置页：渲染间隔只读展示，不再是按钮。
     expect(container.textContent).toContain("60 ms");
+    expect(container.querySelector('button[aria-label="打开渲染设置"]')).toBeNull();
+    // 数据诊断写清会前往名单阶段处理。
+    expect(container.querySelector('button[aria-label="打开数据诊断"]')?.textContent).toContain("前往名单阶段");
     click(container.querySelector('button[aria-label="管理协作与邀请"]'));
     click(container.querySelector('button[aria-label="打开数据诊断"]'));
-    click(container.querySelector('button[aria-label="打开渲染设置"]'));
     expect(onOpenCollaboration).toHaveBeenCalledTimes(1);
     expect(onOpenDataDiagnostics).toHaveBeenCalledTimes(1);
-    expect(onOpenRenderSettings).toHaveBeenCalledTimes(1);
 
     click(container.querySelector('button[aria-label="打开元素查看"]'));
     click(container.querySelector('[role="option"]'));
     expect(onSelectElement).toHaveBeenCalledWith({ type: "canvas" });
+  });
+
+  it("keeps the legacy fullscreen settings entries when advancedMode is legacy-settings", () => {
+    const onOpenSettings = vi.fn();
+    const onOpenRenderSettings = vi.fn();
+    const { container } = renderRail({
+      advancedMode: "legacy-settings",
+      renderIntervalMs: 60,
+      onOpenSettings,
+      onOpenRenderSettings,
+    });
+    click(container.querySelector('[role="tab"]:last-child')!);
+
+    click(container.querySelector('button[aria-label="打开全局设置"]'));
+    click(container.querySelector('button[aria-label="打开渲染设置"]'));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(onOpenRenderSettings).toHaveBeenCalledTimes(1);
   });
 
   it("renders the stage overview tab with cards and dispatches card actions", () => {

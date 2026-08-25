@@ -5,7 +5,7 @@
  * the room nickname, a device-local preference read/written here.
  */
 import { useState } from "react";
-import { Copy, Download, FolderOpen, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
+import { Copy, Download, FolderOpen, ImageDown, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
 import type { CollaborationRole, RoomAccessAction, RoomMember, RoomPersistenceOutcome } from "../lib/collaboration-client";
 import {
   describeRole,
@@ -78,6 +78,8 @@ export interface ProjectMenuProps {
   collaborationOpen: boolean;
   pngScale: number;
   transparentExport: boolean;
+  /** 任一导出在途时置灰 PNG 入口:导出互相打断会毁掉正在写的那一份文件。 */
+  exportState: "idle" | "exporting" | "success" | "error";
   syncStatus: LocalOverwriteStatus;
   onSetCollaborationOpen: (open: boolean) => void;
   onRoomInputChange: (value: string) => void;
@@ -92,6 +94,7 @@ export interface ProjectMenuProps {
   onSaveLocal: () => void;
   onPngScaleChange: (scale: number) => void;
   onTransparentChange: (checked: boolean) => void;
+  onExportPng: () => void;
   onExportSvg: () => void;
   onExportProject: () => void;
   onImportProject: (file: File | null) => void;
@@ -119,6 +122,7 @@ export function ProjectMenu({
   collaborationOpen,
   pngScale,
   transparentExport,
+  exportState,
   syncStatus,
   onSetCollaborationOpen,
   onRoomInputChange,
@@ -133,6 +137,7 @@ export function ProjectMenu({
   onSaveLocal,
   onPngScaleChange,
   onTransparentChange,
+  onExportPng,
   onExportSvg,
   onExportProject,
   onImportProject,
@@ -176,6 +181,7 @@ export function ProjectMenu({
             </select>
           </label>
           <label className="project-menu__check boolean-control checkbox-row"><input type="checkbox" checked={transparentExport} onChange={(event) => onTransparentChange(event.target.checked)} />透明背景</label>
+          <button type="button" aria-label="导出 PNG" onClick={onExportPng} disabled={exportState === "exporting"}><ImageDown size={16} /> 导出 PNG</button>
           <button type="button" onClick={onExportSvg}><Download size={16} /> 导出 SVG</button>
         </section>
         <section>

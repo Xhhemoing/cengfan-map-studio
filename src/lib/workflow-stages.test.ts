@@ -22,12 +22,20 @@ describe("workflow stages", () => {
       "content",
       "export",
     ]);
+    // 文案以用户目标命名（名单 → 地图 → 版式 → 内容 → 交付），素材不占一级导航。
     expect(WORKFLOW_STAGES.map((stage) => stage.label)).toEqual([
-      "数据与素材",
-      "地图样式",
-      "展示框样式",
-      "内容与排版",
-      "最终导出",
+      "名单",
+      "地图",
+      "版式",
+      "内容",
+      "交付",
+    ]);
+    expect(WORKFLOW_STAGES.map((stage) => stage.description)).toEqual([
+      "导入并校验毕业去向名单",
+      "选择呈现方式并调整地图外观",
+      "设计展示框与海报结构",
+      "编辑文字、卡片并管理素材",
+      "检查并导出海报",
     ]);
   });
 

@@ -156,7 +156,7 @@ describe("Editor action seams extracted into src/lib (R8-7)", () => {
   it("keeps the topbar stage stepper opening the data workspace", () => {
     const container = renderLegacyStage("content");
 
-    click(workflowStage(container, "数据与素材"));
+    click(workflowStage(container, "名单"));
 
     expect(container.querySelector(".data-upload-workspace")).not.toBeNull();
   });

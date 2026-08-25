@@ -114,13 +114,13 @@ export function MapStyleWorkspace({
   onCardPositionsResolved,
 }: MapStyleWorkspaceProps) {
   return (
-    <main className="map-style-workspace" aria-label="地图样式">
+    <main className="map-style-workspace" aria-label="地图">
       <div className="map-style-workspace__body">
-        <section className="map-style-workspace__preview" aria-label="地图样式预览">
+        <section className="map-style-workspace__preview" aria-label="地图预览">
           <div className="map-style-workspace__preview-heading">
             <div>
-              <strong>实时预览</strong>
-              <small>{selectedProvince ? `正在编辑 ${selectedProvince}` : "点击地图省份进入省份样式"}</small>
+              <strong>地图</strong>
+              <small>{selectedProvince ? `正在编辑 ${selectedProvince}` : "点击省份改外观"}</small>
             </div>
             <span>{project.students.length} 条名单</span>
           </div>

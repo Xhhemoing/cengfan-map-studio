@@ -28,8 +28,10 @@ describe("App PNG export busy state", () => {
 
     expect(pngExportButtons.length).toBeGreaterThanOrEqual(2);
     for (const button of pngExportButtons) {
+      // 有的入口拿到整个 posterExport,有的(ProjectMenu)只收一个 exportState prop;
+      // 约束的是「同一个导出状态」,不是它在哪个对象上。
       expect(button).toMatch(
-        /disabled\s*=\s*\{\s*posterExport\.exportState\s*===\s*["']exporting["']\s*\}/,
+        /disabled\s*=\s*\{\s*(?:posterExport\.)?exportState\s*===\s*["']exporting["']\s*\}/,
       );
     }
   });

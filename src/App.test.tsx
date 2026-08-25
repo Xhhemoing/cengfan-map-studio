@@ -35,7 +35,7 @@ describe("App student editing", () => {
     if (flag !== undefined) window.localStorage.setItem(LEGACY_EDITOR_STORAGE_KEY, flag);
     const container = renderPublicApp({ clearStorage: false });
 
-    expect(container.querySelector('main[aria-label="数据与素材工作台"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="名单工作台"]')).not.toBeNull();
     expect(container.querySelector(".workspace")).toBeNull();
     expect(container.querySelector(".workflow-guide")).toBeNull();
     expect(container.querySelector('button[aria-label="打开AI助手与高级功能"]')).not.toBeNull();
@@ -46,7 +46,7 @@ describe("App student editing", () => {
   it("opens the data workspace by default without the legacy compatibility flag", () => {
     const container = renderPublicApp();
 
-    expect(container.querySelector('main[aria-label="数据与素材工作台"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="名单工作台"]')).not.toBeNull();
     expect(container.querySelector(".workspace")).toBeNull();
   });
 
@@ -69,9 +69,9 @@ describe("App student editing", () => {
   it("opens the full-screen final export workspace from the workflow stage", () => {
     const container = renderPublicApp();
 
-    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="最终导出"]')!);
+    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="交付"]')!);
 
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(container.querySelector('select[aria-label="PNG 导出倍率"]')).not.toBeNull();
   });
 
@@ -80,12 +80,12 @@ describe("App student editing", () => {
       throw new Error("下载不可用");
     });
     const container = renderApp();
-    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="最终导出"]')!);
+    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="交付"]')!);
     const scale = container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')!;
     changeSelect(scale, "3");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="导出 SVG"]')!);
 
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("下载不可用");
     expect(scale.value).toBe("3");
     expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();
@@ -109,7 +109,7 @@ describe("App student editing", () => {
       } as unknown as HTMLCanvasElement;
     });
     const container = renderApp();
-    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="最终导出"]')!);
+    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="交付"]')!);
     const scale = container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')!;
     changeSelect(scale, "3");
     click(Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "PNG")!);
@@ -117,7 +117,7 @@ describe("App student editing", () => {
     await vi.waitFor(() => {
       expect(container.querySelector('[role="alert"]')?.textContent).toContain("PNG 下载不可用");
     });
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(scale.value).toBe("3");
     expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();
   });
@@ -127,12 +127,12 @@ describe("App student editing", () => {
       throw new Error("工程包下载不可用");
     });
     const container = renderApp();
-    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="最终导出"]')!);
+    click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="交付"]')!);
     const scale = container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')!;
     changeSelect(scale, "3");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="导出工程包"]')!);
 
-    expect(container.querySelector('main[aria-label="最终导出"]')).not.toBeNull();
+    expect(container.querySelector('main[aria-label="交付"]')).not.toBeNull();
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("工程包下载不可用");
     expect(scale.value).toBe("3");
     expect(container.querySelector('button[aria-label="重试导出"]')).not.toBeNull();

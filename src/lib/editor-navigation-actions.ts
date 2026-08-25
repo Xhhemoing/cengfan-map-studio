@@ -37,6 +37,11 @@ export interface EditorNavigationActionDeps {
   toggleProjectMenu(): void;
   setCollaborationOpen(open: boolean): void;
   exportPng(): void;
+  /**
+   * 旧版编辑器仍以「全局设置」承载画布/展示框/渲染三块设置;新版把它们拆进了
+   * 名单/版式/内容三个阶段,同一个入口按钮在两条路径上要落到不同的地方。
+   */
+  legacyEditorEnabled?: boolean;
 }
 
 export function createEditorNavigationActions(deps: EditorNavigationActionDeps) {
@@ -68,8 +73,26 @@ export function createEditorNavigationActions(deps: EditorNavigationActionDeps) 
     setActiveStage("data");
   };
 
+  const changeWorkflowStage = (stage: WorkflowStageId) => {
+    setSettingsSection(null);
+    if (stage !== "data") deps.rememberStage(stage);
+    setActiveStage(stage);
+    if (stage === "data") {
+      openGlobalData();
+      return;
+    }
+    const navigation = resolveWorkflowStageNavigation(stage);
+    if (!navigation) return;
+    setActivePanel(navigation.panel);
+    setActiveWorkflowStep(navigation.step);
+  };
+
   const openDataDiagnostics = () => {
-    setSettingsSection("cards");
+    if (deps.legacyEditorEnabled) {
+      setSettingsSection("cards");
+      return;
+    }
+    openGlobalData();
   };
 
   const openTopbarProjectMenu = () => {
@@ -97,19 +120,7 @@ export function createEditorNavigationActions(deps: EditorNavigationActionDeps) 
       if (deps.activeStage === "content" && next.type === "province") setActivePanel("assets");
     },
 
-    changeWorkflowStage: (stage: WorkflowStageId) => {
-      setSettingsSection(null);
-      if (stage !== "data") deps.rememberStage(stage);
-      setActiveStage(stage);
-      if (stage === "data") {
-        openGlobalData();
-        return;
-      }
-      const navigation = resolveWorkflowStageNavigation(stage);
-      if (!navigation) return;
-      setActivePanel(navigation.panel);
-      setActiveWorkflowStep(navigation.step);
-    },
+    changeWorkflowStage,
 
     changeWorkflowPanel: (panel: ActivePanel) => {
       const navigation = resolveWorkflowPanelNavigation(panel);
@@ -123,8 +134,12 @@ export function createEditorNavigationActions(deps: EditorNavigationActionDeps) 
     },
 
     openStudioSettings: () => {
-      setActiveWorkflowStep("layout");
-      setSettingsSection("canvas");
+      if (deps.legacyEditorEnabled) {
+        setActiveWorkflowStep("layout");
+        setSettingsSection("canvas");
+        return;
+      }
+      changeWorkflowStage("frame");
     },
 
     openCollaborationSettings: () => {
@@ -133,7 +148,11 @@ export function createEditorNavigationActions(deps: EditorNavigationActionDeps) 
     },
 
     openRenderSettings: () => {
-      setSettingsSection("advanced");
+      if (deps.legacyEditorEnabled) {
+        setSettingsSection("advanced");
+        return;
+      }
+      changeWorkflowStage("content");
     },
 
     /** 阶段总览卡片上的按钮:每种动作都落到上面某一条既有导航。 */
