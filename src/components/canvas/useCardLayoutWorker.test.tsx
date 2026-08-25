@@ -188,7 +188,7 @@ describe("useCardLayoutWorker", () => {
     expect(current?.pending).toBe(false);
   });
 
-  it("does not expose the previous result while a new key is pending", () => {
+  it("keeps serving the previous result while a new key is pending", () => {
     const first = makeRequest("stale-first");
     const second = makeRequest("stale-second");
     const { root } = trackedRoot();
@@ -210,9 +210,21 @@ describe("useCardLayoutWorker", () => {
 
     const currentKeyRenders = rendered.filter((render) => render.key === second.key);
     expect(currentKeyRenders).not.toHaveLength(0);
-    expect(currentKeyRenders.every((render) => render.result === null)).toBe(true);
-    expect(current?.result).toBeNull();
+    expect(currentKeyRenders.every((render) => render.result === firstResult)).toBe(true);
+    expect(current?.result).toEqual(firstResult);
     expect(current?.pending).toBe(true);
+
+    const secondMessage = worker.messages[1] as { requestId: number; generation: number; key: string };
+    const secondResult = makeResult(second, 260);
+    flushSync(() => worker.emit({
+      type: "result",
+      requestId: secondMessage.requestId,
+      generation: secondMessage.generation,
+      key: secondMessage.key,
+      result: secondResult,
+    }));
+    expect(current?.result).toEqual(secondResult);
+    expect(current?.pending).toBe(false);
   });
 
   it("keeps a cache miss pending until the worker responds but forceSync solves and caches immediately", () => {
@@ -258,7 +270,8 @@ describe("useCardLayoutWorker", () => {
     expect(replacement).not.toBe(worker);
     expect(replacement.messages).toHaveLength(1);
     expect((replacement.messages[0] as { key: string }).key).toBe(third.key);
-    expect(current?.result).toBeNull();
+    const fallbackResult = current?.result;
+    expect(fallbackResult?.placements.map((placement) => placement.id)).toEqual([second.cards[0]!.id]);
     expect(current?.pending).toBe(true);
 
     const staleMessage = worker.messages[0] as { requestId: number; generation: number; key: string };
@@ -269,7 +282,7 @@ describe("useCardLayoutWorker", () => {
       key: staleMessage.key,
       result: makeResult(first, 180),
     }));
-    expect(current?.result).toBeNull();
+    expect(current?.result).toBe(fallbackResult);
     expect(current?.pending).toBe(true);
   });
 

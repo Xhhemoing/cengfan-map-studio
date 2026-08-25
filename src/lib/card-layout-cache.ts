@@ -7,10 +7,25 @@ import type {
   CardPolygon,
 } from "./card-layout";
 
+/**
+ * Pre-translation form of `bounds.occupiedPolygons`: geometry stated as offsets from an
+ * origin, plus that origin. Callers that pan by moving the origin keep the same polygon
+ * array instance, which is what lets the key reuse an already serialized ring segment.
+ *
+ * The caller owns the invariant that `bounds.occupiedPolygons` is exactly `polygons`
+ * translated by `originX`/`originY`; the key trusts it instead of re-walking the rings.
+ */
+export interface CardLayoutPolygonOrigin {
+  polygons: readonly CardPolygon[];
+  originX: number;
+  originY: number;
+}
+
 export interface CardLayoutCacheInput {
   cards: readonly CardLayoutInput[];
   bounds: CardLayoutBounds;
   options: CardLayoutOptions;
+  polygonOrigin?: CardLayoutPolygonOrigin;
 }
 
 function areaKey(area: CardArea): [number, number, number, number] {
@@ -61,9 +76,42 @@ function geometryHash(polygons: readonly CardPolygon[]): string {
   return `${(hashA >>> 0).toString(16).padStart(8, "0")}${(hashB >>> 0).toString(16).padStart(8, "0")}`;
 }
 
+const EMPTY_POLYGONS: readonly CardPolygon[] = [];
+
+// Province outlines dominate the key: every ring point is folded into the hash. Map styling
+// edits (colors, labels) keep the same polygon array instance, so memoizing on that
+// identity skips the whole traversal for the most common re-key.
+const hashedPolygons = new WeakMap<object, string>();
+
+function polygonsKey(polygons: readonly CardPolygon[]): string {
+  const memoized = hashedPolygons.get(polygons);
+  if (memoized !== undefined) return memoized;
+  const hashed = geometryHash(polygons);
+  hashedPolygons.set(polygons, hashed);
+  return hashed;
+}
+
+// A pan hands over freshly translated polygons — a new array of new points every frame —
+// so keying on those defeats the memo above and re-stringifies every ring. Keying the
+// origin-relative geometry instead keeps one array instance alive across the whole gesture
+// and reduces the pan to appending two numbers. Origin-relative rings and the origin
+// together pin down the translated geometry, so the key stays as discriminating as before.
+function occupiedPolygonsSegment({ bounds, polygonOrigin }: CardLayoutCacheInput): string {
+  if (!polygonOrigin) return polygonsKey(bounds.occupiedPolygons ?? EMPTY_POLYGONS);
+  const rings = polygonsKey(polygonOrigin.polygons);
+  // With nothing to translate the origin cannot change the solver input, and folding it in
+  // would miss the cache on every pan of a map whose provinces are not obstacles.
+  if (polygonOrigin.polygons.length === 0) return rings;
+  return `${polygonOrigin.originX},${polygonOrigin.originY}@${rings}`;
+}
+
 /** Creates a stable key for solver inputs without including renderer-only styling. */
-export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutCacheInput): string {
-  return JSON.stringify({
+export function createCardLayoutCacheKey(input: CardLayoutCacheInput): string {
+  const { cards, bounds, options } = input;
+  // The polygon segment is appended rather than nested so it can be reused verbatim;
+  // it only ever contains hex digits, numbers and `,`/`@`, so the `|` separator
+  // stays unambiguous.
+  return `${JSON.stringify({
     cards: cards.map(({ id, anchorX, anchorY, width, height }) => [id, anchorX, anchorY, width, height]),
     bounds: {
       width: bounds.width,
@@ -73,7 +121,6 @@ export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutC
       gap: bounds.gap,
       allowMapOverlap: bounds.allowMapOverlap === true,
       occupiedAreas: (bounds.occupiedAreas ?? []).map(areaKey),
-      occupiedPolygonHash: geometryHash(bounds.occupiedPolygons ?? []),
     },
     options: {
       mode: options.mode ?? "quadrant",
@@ -82,7 +129,7 @@ export function createCardLayoutCacheKey({ cards, bounds, options }: CardLayoutC
       connectorStyle: options.connectorStyle ?? "curve",
       connectorWidth: options.connectorWidth ?? 1.5,
     },
-  });
+  })}|${occupiedPolygonsSegment(input)}`;
 }
 
 export class CardLayoutCache {

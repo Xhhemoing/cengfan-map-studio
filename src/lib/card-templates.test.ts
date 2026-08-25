@@ -77,6 +77,20 @@ describe("card-templates", () => {
 
   });
 
+  it("resets the presentation so a standard template leaves the reference renderer", () => {
+    // PosterCanvas draws a reference visual whenever `(presentation ?? "standard") !== "standard"`,
+    // so the patch has to state "standard" instead of leaving the pill value behind.
+    const pillCards: CardSettings = { ...baseCards, presentation: "color-pill", templateId: "color-pill" };
+
+    expect(applyCardTemplate("standard", pillCards).presentation).toBe("standard");
+    expect(applyCardTemplate("ticket", pillCards).presentation).toBe("standard");
+    expect(applyCardTemplate("compact", pillCards).presentation).toBe("standard");
+    // switching between two reference styles still lands on the new one
+    expect(applyCardTemplate("glass-stat", pillCards).presentation).toBe("glass-stat");
+    // and the rest of the template payload is untouched
+    expect(applyCardTemplate("ticket", pillCards)).toMatchObject({ preset: "ticket", connectorDash: "dashed", templateId: "ticket" });
+  });
+
   it("applying a plain template clears a previously applied custom display frame", () => {
     const withCustomFrame: CardSettings = {
       ...baseCards,

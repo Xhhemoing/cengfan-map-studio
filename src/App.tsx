@@ -4,6 +4,7 @@ import {
   Undo2,
 } from "lucide-react";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -40,6 +41,7 @@ import {
 import { createEditorLibraryActions } from "./lib/editor-library-actions";
 import { buildAssetUsageLabels } from "./lib/resource-library";
 import { createEditorNavigationActions } from "./lib/editor-navigation-actions";
+import { useStableCallbacks } from "./lib/stable-callbacks";
 import { loadStoredRenderSettings } from "./lib/editor-chrome";
 import { useEditorChromeEffects } from "./lib/editor-chrome-effects";
 import { resolveRenderedTemplate } from "./lib/rendered-template";
@@ -393,14 +395,16 @@ function StudioApp({ projectId }: { projectId?: string }) {
   });
 
   const resolvedCardPositionsRef = useRef<CardPositions | null>(null);
-  const captureCardPositions = (positions: CardPositions) => {
+  // PosterCanvas memoizes on prop identity, so a fresh callback each render would
+  // re-render the whole canvas on every unrelated editor state change.
+  const captureCardPositions = useCallback((positions: CardPositions) => {
     resolvedCardPositionsRef.current = positions;
-  };
+  }, []);
 
   // 卡片位置只在事件处理器与事务 apply 里读写,渲染期不取值;react-hooks/refs 看不穿
   // 工厂函数这层间接,与下方 createWorkspaceSync 同理按行豁免。
   // eslint-disable-next-line react-hooks/refs
-  const canvasActions = createEditorCanvasActions({
+  const canvasActions = useStableCallbacks(createEditorCanvasActions({
     project,
     selection,
     readCardPositions: () => resolvedCardPositionsRef.current,
@@ -410,7 +414,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setSelection,
     setStatusMessage,
     snap: maybeSnap,
-  });
+  }));
   const {
     addNote,
     addText,
@@ -468,7 +472,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   // rememberStage 只在阶段切换的事件处理器里写 ref,渲染期不碰;react-hooks/refs 看不穿
   // 工厂函数这层间接,与上面的画布动作同理按行豁免。
   // eslint-disable-next-line react-hooks/refs
-  const navigationActions = createEditorNavigationActions({
+  const navigationActions = useStableCallbacks(createEditorNavigationActions({
     project,
     activeStage,
     rememberStage: (stage: WorkflowStageId) => { lastNonTemplateStageRef.current = stage; },
@@ -484,7 +488,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     },
     setCollaborationOpen: collaboration.setCollaborationOpen,
     exportPng: () => void posterExport.exportPng(),
-  });
+  }));
   const {
     changeWorkflowPanel,
     changeWorkflowStage,

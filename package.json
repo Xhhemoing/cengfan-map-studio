@@ -16,6 +16,7 @@
     "typecheck": "tsc -b --noEmit",
     "security:audit": "node scripts/run-heavy.mjs npm audit --registry=https://registry.npmjs.org",
     "perf:layout": "tsx scripts/perf-layout-bench.ts",
+    "perf:canvas": "tsx scripts/perf-canvas-bench.ts",
     "data:sync:china-locations": "node scripts/sync-china-locations.mjs",
     "data:sync:china-universities": "node scripts/sync-china-universities.mjs",
     "preview": "npm run start",

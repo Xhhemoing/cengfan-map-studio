@@ -33,6 +33,8 @@ export function ReferenceCardStyleWorkspace({ cards, onPatch }: {
               key={template.id}
               type="button"
               className={`reference-card-style-option${selected ? " is-selected" : ""}`}
+              data-reference-card-style={template.id}
+              data-reference-card-style-selected={selected ? "true" : "false"}
               aria-pressed={selected}
               onClick={() => onPatch(applyCardTemplate(template.id, cards))}
             >

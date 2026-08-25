@@ -1,5 +1,12 @@
 import { useRef, useState, type PointerEvent } from "react";
 import type { DisplayFrameDefinition, DisplayFrameFixedItem } from "../../lib/display-frame";
+import {
+  displayFrameTextBaseline,
+  displayFrameTextX,
+  resolveDisplayFrameItemPaint,
+  resolveDisplayFrameSurface,
+} from "../../lib/display-frame-style";
+import { resolveFontFamily, type UserFont } from "../../lib/fonts";
 
 const LOCAL_WIDTH = 240;
 const LOCAL_HEIGHT = 160;
@@ -19,35 +26,27 @@ function itemPreview(item: DisplayFrameFixedItem): string {
   return item.content || "自定义文字";
 }
 
-function itemTextAnchor(item: DisplayFrameFixedItem): "start" | "middle" | "end" {
-  if (item.style?.align === "center") return "middle";
-  if (item.style?.align === "right") return "end";
-  return "start";
-}
-
-function itemTextX(item: DisplayFrameFixedItem): number {
-  if (item.style?.align === "center") return item.x + item.width / 2;
-  if (item.style?.align === "right") return item.x + item.width;
-  return item.x;
-}
-
 export function DisplayFrameSubcanvas({
   frame,
   selectedItemId,
   onSelectItem,
   onChangeItem,
+  userFonts = [],
 }: {
   frame: DisplayFrameDefinition;
   selectedItemId: string | null;
   onSelectItem: (id: string) => void;
   onChangeItem: (id: string, patch: Partial<DisplayFrameFixedItem>) => void;
+  userFonts?: UserFont[];
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [drag, setDrag] = useState<{ id: string; mode: "move" | "resize"; startX: number; startY: number; originX: number; originY: number; originWidth: number; originHeight: number } | null>(null);
   // Local preview refs for smooth drag without per-frame React state commits
-  const dragPreviewRef = useRef<{ id: string; el: SVGElement | null; raf: number | null } | null>(null);
+  const dragPreviewRef = useRef<{ id: string; el: SVGElement | null; raf: number | null; next: { x: number; y: number } | null } | null>(null);
   const sortedItems = frame.fixed.items.slice().sort((left, right) => left.zIndex - right.zIndex || left.id.localeCompare(right.id));
   const selected = selectedItemId ? frame.fixed.items.find((item) => item.id === selectedItemId) : null;
+  const surface = resolveDisplayFrameSurface(frame.style);
+  const paddingGuide = Math.min(surface.padding, LOCAL_WIDTH / 2 - 2, LOCAL_HEIGHT / 2 - 2);
 
   const pointForEvent = (event: PointerEvent<SVGGElement>) => {
     const svg = svgRef.current;
@@ -69,7 +68,7 @@ export function DisplayFrameSubcanvas({
     setDrag({ id: item.id, mode: "move", startX: point.x, startY: point.y, originX: item.x, originY: item.y, originWidth: item.width, originHeight: item.height });
     // Prepare local preview element for smooth drag
     const g = event.currentTarget as unknown as SVGElement;
-    dragPreviewRef.current = { id: item.id, el: g, raf: null };
+    dragPreviewRef.current = { id: item.id, el: g, raf: null, next: null };
   };
 
   const beginResize = (item: DisplayFrameFixedItem, event: PointerEvent<SVGRectElement>) => {
@@ -87,42 +86,30 @@ export function DisplayFrameSubcanvas({
       onChangeItem(drag.id, { width: Math.round(drag.originWidth + point.x - drag.startX), height: Math.round(drag.originHeight + point.y - drag.startY) });
       return;
     }
+    const deltaX = Math.round(point.x - drag.startX);
+    const deltaY = Math.round(point.y - drag.startY);
     // Live local preview via DOM transform to avoid per-frame React commits (prevents stutter)
     const preview = dragPreviewRef.current;
     if (preview && preview.id === drag.id && preview.el) {
-      const nx = Math.round(drag.originX + point.x - drag.startX);
-      const ny = Math.round(drag.originY + point.y - drag.startY);
+      preview.next = { x: drag.originX + deltaX, y: drag.originY + deltaY };
       if (preview.raf) cancelAnimationFrame(preview.raf);
       preview.raf = requestAnimationFrame(() => {
-        if (preview.el) preview.el.setAttribute("transform", `translate(${nx} ${ny})`);
+        if (preview.el) preview.el.setAttribute("transform", `translate(${deltaX} ${deltaY})`);
         preview.raf = null;
       });
       return;
     }
-    onChangeItem(drag.id, { x: Math.round(drag.originX + point.x - drag.startX), y: Math.round(drag.originY + point.y - drag.startY) });
+    onChangeItem(drag.id, { x: drag.originX + deltaX, y: drag.originY + deltaY });
   };
 
   const endMove = (event: PointerEvent<SVGGElement | SVGRectElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    // Commit final position and clear local preview transform/ref
+    // Commit the last previewed position, then drop the local transform so React owns the geometry again.
     const preview = dragPreviewRef.current;
-    if (preview && preview.raf) cancelAnimationFrame(preview.raf);
-    if (preview && preview.el) {
-      const t = preview.el.getAttribute("transform");
-      preview.el.removeAttribute("transform");
-      if (t && drag) {
-        const m = /translate\(([-\d.]+)\s+([-\d.]+)\)/.exec(t);
-        if (m) {
-          const nx = Math.round(Number(m[1]));
-          const ny = Math.round(Number(m[2]));
-          onChangeItem(preview.id, { x: nx, y: ny });
-        }
-      }
-    }
-    // Always ensure a final commit happens using the last known drag state if no transform was parsed
-    if (drag && drag.mode === "move" && (!preview || !preview.el || !preview.el.getAttribute("transform"))) {
-      // Recompute from last drag values is not possible here; rely on parsed transform path or direct call in real usage.
-      // For jsdom tests we force a call with current drag origin shift approximated by last pointer in test harness.
+    if (preview) {
+      if (preview.raf) cancelAnimationFrame(preview.raf);
+      preview.el?.removeAttribute("transform");
+      if (preview.next && drag?.mode === "move") onChangeItem(preview.id, preview.next);
     }
     dragPreviewRef.current = null;
     setDrag(null);
@@ -144,25 +131,37 @@ export function DisplayFrameSubcanvas({
       >
         <rect
           data-display-frame-surface
+          data-display-frame-mode={frame.mode}
           x={0.5}
           y={0.5}
           width={LOCAL_WIDTH - 1}
           height={LOCAL_HEIGHT - 1}
-          rx={frame.style.borderRadius ?? 6}
-          fill={frame.style.background}
-          fillOpacity={frame.style.opacity}
-          stroke={frame.style.borderColor ?? frame.style.color}
-          strokeWidth={frame.style.borderWidth ?? 1}
+          rx={surface.borderRadius}
+          fill={surface.background}
+          fillOpacity={surface.opacity}
+          stroke={surface.borderColor}
+          strokeWidth={surface.borderWidth}
         />
+        {paddingGuide > 0 && (
+          <rect
+            data-display-frame-padding-guide={paddingGuide}
+            className="display-frame-subcanvas__padding-guide"
+            x={paddingGuide}
+            y={paddingGuide}
+            width={LOCAL_WIDTH - paddingGuide * 2}
+            height={LOCAL_HEIGHT - paddingGuide * 2}
+            fill="none"
+          />
+        )}
         {sortedItems.map((item) => {
           const isSelected = item.id === selectedItemId;
-          const fill = item.style?.color ?? frame.style.color;
-          const fontSize = item.style?.fontSize ?? frame.style.fontSize;
-          const fontWeight = item.style?.fontWeight === "bold" ? 700 : item.style?.fontWeight === "medium" ? 500 : undefined;
+          const paint = resolveDisplayFrameItemPaint(item, surface);
+          const fontFamily = resolveFontFamily(paint.fontId, userFonts);
           return (
             <g
               key={item.id}
               data-display-frame-item={item.id}
+              data-display-frame-kind={item.kind}
               className={isSelected ? "is-selected" : undefined}
               tabIndex={0}
               role="button"
@@ -180,17 +179,48 @@ export function DisplayFrameSubcanvas({
               onPointerCancel={endMove}
             >
               {item.kind === "decoration" && item.decoration === "line" ? (
-                <line x1={item.x} y1={item.y} x2={item.x + item.width} y2={item.y} stroke={fill} strokeWidth={item.style?.strokeWidth ?? 1} />
+                <line
+                  data-display-frame-decoration={item.id}
+                  x1={item.x}
+                  y1={item.y}
+                  x2={item.x + item.width}
+                  y2={item.y}
+                  stroke={paint.color}
+                  strokeWidth={paint.strokeWidth}
+                  opacity={paint.opacity}
+                />
               ) : item.kind === "decoration" ? (
-                <rect x={item.x} y={item.y} width={item.width} height={item.height} fill={item.style?.fill ?? "transparent"} stroke={fill} strokeWidth={item.style?.strokeWidth ?? 1} />
+                <rect
+                  data-display-frame-decoration={item.id}
+                  x={item.x}
+                  y={item.y}
+                  width={item.width}
+                  height={item.height}
+                  fill={paint.fill}
+                  stroke={paint.color}
+                  strokeWidth={paint.strokeWidth}
+                  opacity={paint.opacity}
+                />
               ) : (
-                <text x={itemTextX(item)} y={item.y + Math.min(item.height, fontSize)} fill={fill} fontSize={fontSize} fontWeight={fontWeight} textAnchor={itemTextAnchor(item)}>
+                <text
+                  data-display-frame-text={item.id}
+                  data-display-frame-weight={paint.fontWeight}
+                  x={displayFrameTextX(item, paint)}
+                  y={displayFrameTextBaseline(item, paint)}
+                  fill={paint.fill}
+                  fontSize={paint.fontSize}
+                  fontWeight={paint.fontWeight}
+                  fontFamily={fontFamily}
+                  textAnchor={paint.textAnchor}
+                  dominantBaseline="alphabetic"
+                  opacity={paint.opacity}
+                >
                   {itemPreview(item)}
                 </text>
               )}
               <rect className="display-frame-subcanvas__hit-area" x={item.x} y={item.y} width={Math.max(item.width, 12)} height={Math.max(item.height, 12)} fill="transparent" />
               {isSelected && <>
-                <rect className="display-frame-subcanvas__selection" x={item.x - 2} y={item.y - 2} width={item.width + 4} height={item.height + 4} fill="none" />
+                <rect className="display-frame-subcanvas__selection" x={item.x - 2} y={item.y - 2} width={item.width + 4} height={item.height + 4} rx={2} fill="none" />
                 <rect
                   data-display-frame-resize-handle={item.id}
                   className="display-frame-subcanvas__resize-handle"

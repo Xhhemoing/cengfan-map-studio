@@ -63,6 +63,39 @@ export interface ResolvedEdgeStyle {
   filters: Array<{ id: string; markupKey: string }>;
 }
 
+/**
+ * Keep only characters that are safe in an SVG `id`, a `url(#…)` reference and a
+ * `querySelector`. React's `useId` returns tokens such as `«r0»`, which serialize to
+ * invalid XML and would break the exported `data:image/svg+xml` payload.
+ */
+function sanitizeIdToken(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "");
+}
+
+/**
+ * Re-scope the filter ids of an already resolved edge style so two canvases mounted on the
+ * same page (editor + template preview) do not share `<defs>` entries. Stroke geometry and
+ * colors are untouched — only the filter ids and the `url(#…)` references to them change.
+ * Returns the input unchanged when the style needs no filter or the scope is empty, so
+ * memoized layers keep their identity.
+ */
+export function scopeEdgeStyleFilters(resolved: ResolvedEdgeStyle, scope: string): ResolvedEdgeStyle {
+  const token = sanitizeIdToken(scope);
+  if (!token || resolved.filters.length === 0) return resolved;
+  const renamed = new Map(resolved.filters.map((filter) => [filter.id, `${filter.id}-${token}`]));
+  const rescope = (spec: EdgeStrokeSpec): EdgeStrokeSpec => {
+    const match = spec.filter?.match(/^url\(#(.+)\)$/);
+    const next = match ? renamed.get(match[1]!) : undefined;
+    return next ? { ...spec, filter: `url(#${next})` } : spec;
+  };
+  return {
+    id: resolved.id,
+    underlays: resolved.underlays.map(rescope),
+    strokes: resolved.strokes.map(rescope),
+    filters: resolved.filters.map((filter) => ({ ...filter, id: renamed.get(filter.id)! })),
+  };
+}
+
 function clampWidth(width: number): number {
   if (!Number.isFinite(width) || width <= 0) return 0;
   return Math.min(20, Math.max(0.25, width));
