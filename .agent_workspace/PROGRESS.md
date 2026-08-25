@@ -26,7 +26,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 | 7 | CLOSED | R7-1–R7-9 + R7-3b + R7-10 | — | 189/1757/2; lint 0/6; CI `362c318`; fable 8 ACCEPT + 2 NITS; no blocker. |
 | 8 | CLOSED | R8-1–R8-9 + R8-3b + R8-10 | — | 197/1846/2; lint 0/1; CI `553d5c1`; fable 9 ACCEPT + 1 NITS; no blocker. |
 | 9 | CLOSED | R9-1–R9-9 + R9-10 | — | 222/1905/2; lint 0/1; CI `7834c47`; fable 8 ACCEPT + 1 NITS; no blocker. |
-| 10 | IN_PROGRESS | — | — | AI tmp hygiene; boot sweep; index/App extract; test splits; size ratchet. |
+| 10 | IN_PROGRESS | R10-9 | — | AI tmp hygiene; boot sweep; index/App extract; test splits; size ratchet. |
 
 ## Round 0 Baseline (pre-optimization)
 
@@ -180,6 +180,7 @@ Quality bar: SOTA. No metric, no merge. No cosmetic refactors.
 
 - Queue on `server/index.ts`: R10-2 → R10-3 → R10-4. Independent at open: R10-1, R10-5, R10-6, R10-7, R10-8, R10-9. R10-10 last.
 - Headline: AI state store `.tmp` leak + uncapped `.corrupt-*`; no boot-time `.tmp` sweep; size debt with honest metrics.
+- R10-9 (`5b1e35c`): file-size ratchet, 45 allowlisted violators. Rollback: revert `5b1e35c`. Later shrinks must lower their allowlist entries in the same merge.
 
 ## Round Briefings
 
