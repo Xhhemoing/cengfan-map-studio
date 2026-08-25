@@ -150,6 +150,40 @@ describe("Stage overview (T2)", () => {
   });
 });
 
+describe("Extracted render branches (R10-5)", () => {
+  // App.tsx 把 legacy 左栏、聚焦阶段整屏与全局设置整屏搬到 src/components/editor/*。
+  // 这三条 pin 从 App 这一侧确认接缝没有改变 DOM 结构、class 名与文案。
+  it("keeps the legacy sidebar rail and panel wrappers around the roster panel", () => {
+    const container = renderLegacyApp();
+    const sidebar = container.querySelector("aside.sidebar.studio-sidebar");
+
+    expect(sidebar).not.toBeNull();
+    expect(sidebar?.querySelector(":scope > .studio-sidebar__rail .studio-assistant-rail")).not.toBeNull();
+    const panel = sidebar?.querySelector<HTMLElement>(":scope > .studio-sidebar__panel > .workflow-panel--roster");
+    expect(panel?.className).toBe("panel-content workflow-panel workflow-panel--roster");
+    expect(panel?.querySelector(".panel-heading span")?.textContent).toBe("名单检查");
+  });
+
+  it("keeps every focused stage inside the studio editor shell with its stage actions", () => {
+    const container = renderPublicApp();
+    click(workflowStage(container, "展示框样式"));
+
+    expect(container.querySelector(".studio-editor-shell")).not.toBeNull();
+    expect(container.querySelector('button[aria-label="刷新展示框位置"]')).not.toBeNull();
+    expect(container.querySelector(".reference-card-style-workspace")).not.toBeNull();
+  });
+
+  it("keeps the global settings topbar trimmed to brand and workflow navigation", () => {
+    const container = renderPublicApp();
+    openGlobalSettingsSection(container, "canvas");
+
+    const topbar = container.querySelector(".app-shell > .topbar");
+    expect(topbar?.querySelector(".brand .brand-label__full")?.textContent).toBe("蹭饭地图工作室");
+    expect(topbar?.querySelector(".topbar-workflow .workflow-stage-stepper")).not.toBeNull();
+    expect(topbar?.querySelector('[role="group"][aria-label="历史与缩放"]')).toBeNull();
+  });
+});
+
 describe("Topbar action layering (T4)", () => {
   it("keeps global undo/redo visible in the topbar across every focused stage", () => {
     const container = renderPublicApp();
