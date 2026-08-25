@@ -15,13 +15,9 @@ import {
   type AiConfig,
 } from "./ai/llm-client";
 import { createAgentLoopBackend, normalizeAgentRuntimeConfig, resolveAgentConfig, resolveAgentRuntimeConfig, type AgentRuntimeConfig } from "./ai/agent-routing";
-import { parseAgentRequest } from "./ai/agent-request";
 import { createRateLimiter } from "./ai/rate-limit";
 import { createAiLogger } from "./ai/ai-observability";
-import {
-  parseDataRequestSchema,
-  proposeEditsRequestSchema,
-} from "./ai/schemas";
+import { createAiRoutes } from "./ai-routes";
 import { CollaborationError, createRoomStore, type CollaborationRoom, type LifecycleEvent, type RoomPersistOutcome, type RoomStore, type RoomStoreOptions, type RoomStoreSnapshot } from "./collaboration";
 import { createRoomSnapshotWriter, isRestorableRoomSnapshot, loadRoomSnapshot, sweepStaleTemporaryFiles, sweepStaleTemporaryFilesBesideFile, writeFileAtomically } from "./room-snapshot-store";
 import { createRoomErrorSender, createRoomRoutes, roomAccessToken } from "./room-routes";
@@ -64,9 +60,6 @@ export function resolvePort(value: string | undefined = process.env.PORT): numbe
   return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : DEFAULT_PORT;
 }
 const DEFAULT_DATA_DIR = fileURLToPath(new URL("../.data", import.meta.url));
-function createAgentTaskId(): string {
-  return `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-}
 
 function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
   if (trustProxy) {
@@ -122,7 +115,6 @@ export interface AiServerOptions {
 
 const DEFAULT_MAX_JSON_BODY_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_WORKSPACE_BYTES = 64 * 1024 * 1024;
-const DEFAULT_MAX_AI_BODY_BYTES = 512 * 1024;
 const DEFAULT_MAX_ROOMS = 100;
 const DEFAULT_MAX_ROOM_SUBSCRIBERS = 50;
 const DEFAULT_ROOM_TTL_MS = 30 * 60 * 1000;
@@ -300,6 +292,19 @@ export function createAiServer(options: AiServerOptions = {}) {
   const maxJsonBodyBytes = options.maxJsonBodyBytes ?? DEFAULT_MAX_JSON_BODY_BYTES;
   const maxWorkspaceBytes = options.maxWorkspaceBytes ?? Number(process.env.MAX_WORKSPACE_BYTES ?? DEFAULT_MAX_WORKSPACE_BYTES);
   const trustProxy = options.trustProxy ?? process.env.TRUST_PROXY === "1";
+  // 四条 AI HTTP 路由住在 server/ai-routes.ts；`/api/ai/` 前缀上的 token 门禁、限流与
+  // 状态降级仍在下面，因为它们对未命中的 AI 路径同样生效。
+  const aiRoutes = createAiRoutes({
+    ai,
+    agent,
+    agentRuntime,
+    budgetReceipts,
+    budgetReceiptLedger,
+    aiLogger,
+    readJson,
+    maxJsonBodyBytes,
+    isRecord,
+  });
   const workspaceFile = join(dataDir, "workspace.json");
   const roomStoreOptions: RoomStoreFactoryOptions = {
     maxRooms: options.maxRooms ?? Number(process.env.MAX_ROOMS ?? DEFAULT_MAX_ROOMS),
@@ -831,179 +836,7 @@ export function createAiServer(options: AiServerOptions = {}) {
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/ai/agent") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        const parsed = parseAgentRequest(body, { maxTokens: agentRuntime.tokenBudget, maxRounds: agentRuntime.maxRounds });
-        if (!parsed.ok) {
-          sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: parsed.error, aiCode: "AI_VALIDATION_ERROR" } });
-          return;
-        }
-        const historyHasAssistantOrTool = parsed.value.messages.some((message) => message.role === "assistant" || message.role === "tool");
-        const taskId = parsed.value.taskId || createAgentTaskId();
-        const receiptClaim = parsed.value.budgetReceipt
-          ? budgetReceiptLedger.beginConsume(parsed.value.budgetReceipt, taskId)
-          : null;
-        const initialClaim = parsed.value.budgetReceipt ? null : budgetReceiptLedger.reserveInitial(taskId);
-        const claim = receiptClaim ?? initialClaim;
-        const receipt = receiptClaim?.payload ?? null;
-        if ((historyHasAssistantOrTool && !parsed.value.budgetReceipt)
-          || (parsed.value.budgetReceipt && (!receiptClaim || receipt!.maxTokens !== agentRuntime.tokenBudget || receipt!.maxRounds !== agentRuntime.maxRounds))
-          || (!parsed.value.budgetReceipt && !initialClaim)) {
-          if (claim) budgetReceiptLedger.rollback(claim);
-          sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: "会话预算回执无效、已过期或已被使用" } });
-          return;
-        }
-        parsed.value.budget = receipt
-          ? { usedTokens: receipt.usedTokens, maxTokens: receipt.maxTokens, rounds: receipt.rounds, maxRounds: receipt.maxRounds }
-          : { usedTokens: 0, maxTokens: agentRuntime.tokenBudget, rounds: 0, maxRounds: agentRuntime.maxRounds };
-        aiLogger.log("ai.request.started", { requestId, route: "primary", messageCount: parsed.value.messages.length, promptBytes: Buffer.byteLength(parsed.value.userMessage, "utf8") });
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const outcome = await agent.runTurn({
-            ...parsed.value,
-            requestId,
-            signal: requestController.signal,
-            retryMaxAttempts: agentRuntime.retryMaxAttempts,
-            retryBaseDelayMs: agentRuntime.retryBaseDelayMs,
-          });
-          const meta = "meta" in outcome ? outcome.meta : undefined;
-          if (meta?.route === "fallback" || meta?.route === "local") {
-            aiLogger.log("ai.route.fallback", {
-              requestId,
-              route: meta.route,
-              provider: meta.provider,
-              model: meta.model,
-              latencyMs: meta.latencyMs,
-              attempts: meta.attempts,
-              usage: meta.usage,
-              fallbackReason: meta.fallbackReason,
-            });
-          }
-          aiLogger.log("ai.agent.finished", { requestId, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage, fallbackReason: meta?.fallbackReason });
-          aiLogger.log("ai.request.completed", { requestId, route: meta?.route, provider: meta?.provider, model: meta?.model, latencyMs: meta?.latencyMs, attempts: meta?.attempts, usage: meta?.usage });
-          const responseBudget = "budget" in outcome && outcome.budget ? outcome.budget : parsed.value.budget;
-          const budgetReceipt = budgetReceipts.issue({ taskId, usedTokens: responseBudget.usedTokens, rounds: responseBudget.rounds, maxTokens: responseBudget.maxTokens, maxRounds: responseBudget.maxRounds, sequence: (receipt?.sequence ?? 0) + 1, issuedAt: Date.now() });
-          const budgetPayload = budgetReceipts.verify(budgetReceipt, taskId);
-          if (!budgetPayload || !claim) throw new Error("预算回执签发失败");
-          let committed = false;
-          const commitReceipt = () => {
-            if (committed) return;
-            committed = budgetReceiptLedger.commit(claim, budgetReceipt, budgetPayload);
-            if (!committed) budgetReceiptLedger.rollback(claim);
-          };
-          const rollbackReceipt = () => {
-            if (!committed) budgetReceiptLedger.rollback(claim);
-          };
-          response.once("finish", commitReceipt);
-          response.once("close", rollbackReceipt);
-          sendAi(200, { ...outcome, provider: meta?.provider ?? agent.provider, taskId, budget: responseBudget, budgetReceipt });
-        } catch (error) {
-          if (claim) budgetReceiptLedger.rollback(claim);
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
-
-      if (request.method === "POST" && pathname === "/api/ai/parse-data") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        aiLogger.log("ai.request.started", { requestId });
-        const parsed = parseDataRequestSchema(body);
-        if (!parsed.ok || !parsed.value) {
-          sendAi(400, {
-            error: { code: "AI_VALIDATION_ERROR", message: parsed.error },
-          });
-          return;
-        }
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const result = await ai.parseData(parsed.value, { requestId, signal: requestController.signal });
-          if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: "local", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
-          aiLogger.log("ai.request.completed", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider });
-          sendAi(200, result);
-        } catch (error) {
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
-
-      if (request.method === "POST" && pathname === "/api/ai/propose-edits") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        aiLogger.log("ai.request.started", { requestId });
-        const parsed = proposeEditsRequestSchema(body);
-        if (!parsed.ok || !parsed.value) {
-          sendAi(400, {
-            error: { code: "AI_VALIDATION_ERROR", message: parsed.error },
-          });
-          return;
-        }
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const result = await ai.proposeEdits(parsed.value, { requestId, signal: requestController.signal });
-          if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: "local", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
-          aiLogger.log("ai.request.completed", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider });
-          sendAi(200, result);
-        } catch (error) {
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
-
-      if (request.method === "POST" && pathname === "/api/ai/explain") {
-        const body = await readJson(request, Math.min(maxJsonBodyBytes, DEFAULT_MAX_AI_BODY_BYTES));
-        aiLogger.log("ai.request.started", { requestId });
-        if (!isRecord(body) || typeof body.message !== "string" || !body.message.trim()) {
-          sendAi(400, {
-            error: { code: "AI_VALIDATION_ERROR", message: "message 不能为空" },
-          });
-          return;
-        }
-        const requestController = new AbortController();
-        const abortRequest = () => requestController.abort();
-        const abortResponse = () => { if (!response.writableEnded) abortRequest(); };
-        request.once("aborted", abortRequest);
-        response.once("close", abortResponse);
-        try {
-          const result = await ai.explain(body.message, Number(body.studentCount ?? 0), { requestId, signal: requestController.signal });
-          if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: "local", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
-          aiLogger.log("ai.request.completed", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider });
-          sendAi(200, result);
-        } catch (error) {
-          const code = error && typeof error === "object" && "code" in error ? String(error.code) : "AI_UPSTREAM_UNAVAILABLE";
-          aiLogger.log(code === "AI_ABORTED" ? "ai.agent.cancelled" : "ai.request.failed", { requestId, errorCode: code });
-          if (!response.destroyed) sendAi(code === "AI_ABORTED" ? 499 : 502, { error: { code, message: code === "AI_ABORTED" ? "AI 调用已取消" : "AI 服务暂时不可用" } });
-        } finally {
-          request.removeListener("aborted", abortRequest);
-          response.removeListener("close", abortResponse);
-        }
-        return;
-      }
+      if (await aiRoutes.handle({ request, response, pathname, requestId, sendAi })) return;
 
       if (url.startsWith("/api/")) {
         send( 404, {
