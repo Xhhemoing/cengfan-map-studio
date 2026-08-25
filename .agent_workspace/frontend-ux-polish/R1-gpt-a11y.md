@@ -14,7 +14,7 @@ open:
 7. [P2][details/menu] `src/components/ProjectMenu.tsx`、`src/components/HelpFeedbackMenu.tsx`：native summary 本身可 Tab/Enter/Space 打开，但弹出内容没有菜单焦点管理或 Esc/外点关闭。复现：键盘打开“项目”或“帮助”，Tab 进入内容后按 Esc，details 仍保持 open；继续 Tab 可穿到页面其余控件，不符合 `frontUI2.md`“Esc 关闭菜单”。
 8. [误报] 工作台空态与检查器关联：`src/components/workbench/ProjectGrid.tsx` 的空态不是覆盖层，示例按钮和顶栏“新建项目/导入”均为原生 button；`MapInspector.tsx`、`CardsInspector.tsx`、`ProvinceInspector.tsx` 的 `boolean-control` 均由包裹 input 或 `htmlFor/id` 正确关联。原生 details/summary 也不是“键盘到不了”；问题仅限第 7 条的菜单生命周期。
 tests:
-- 待跑只读目标 Vitest；静态证据已逐项交叉检查组件与 `src/styles.css` 覆盖顺序。
+- `npx vitest run src/components/FileDropzone.test.tsx src/components/StudioEditorShell.test.tsx src/components/StudioAssistantRail.test.tsx src/components/workspaces/ContentLayoutWorkspace.test.tsx src/components/GlobalDataScreen.test.tsx src/App.project-persistence.test.tsx`：6 files / 31 tests 全绿（4.01s）。这些回归确认 disabled drop、MUI drawer Esc/焦点返回、native summary、legacy 导出对话框未退化，同时暴露当前测试未覆盖 FileDropzone Tab、两个 tablist 方向键、新版对话框挂载和 320/390/760px 几何。
 p0/p1/p2:
 - P0: 0；P1: 4；P2: 3；误报: 1 组。
 assumptions:
