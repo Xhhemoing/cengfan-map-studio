@@ -78,7 +78,7 @@ export interface ProjectMenuProps {
   collaborationOpen: boolean;
   pngScale: number;
   transparentExport: boolean;
-  /** 任一导出在途时置灰 PNG 入口:导出互相打断会毁掉正在写的那一份文件。 */
+  /** 任一导出在途时置灰两个海报导出入口:导出互相打断会毁掉正在写的那一份文件。 */
   exportState: "idle" | "exporting" | "success" | "error";
   syncStatus: LocalOverwriteStatus;
   onSetCollaborationOpen: (open: boolean) => void;
@@ -182,7 +182,7 @@ export function ProjectMenu({
           </label>
           <label className="project-menu__check boolean-control checkbox-row"><input type="checkbox" checked={transparentExport} onChange={(event) => onTransparentChange(event.target.checked)} />透明背景</label>
           <button type="button" aria-label="导出 PNG" onClick={onExportPng} disabled={exportState === "exporting"}><ImageDown size={16} /> 导出 PNG</button>
-          <button type="button" onClick={onExportSvg}><Download size={16} /> 导出 SVG</button>
+          <button type="button" onClick={onExportSvg} disabled={exportState === "exporting"}><Download size={16} /> 导出 SVG</button>
         </section>
         <section>
           <strong>在线协作</strong>

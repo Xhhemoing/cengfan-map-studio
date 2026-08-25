@@ -122,6 +122,28 @@ function mountHook(options: { withPoster?: boolean; getProjectName?: () => strin
   };
 }
 
+/**
+ * 卡住下一次 SVG 解码，制造一个「PNG 还在导出」的窗口，好让别的导出插进来。
+ * 装置只作用于此刻发起的那一次：拿到句柄后立即换回真实 Image。
+ */
+function startGatedPngExport(harness: Harness): { settled: Promise<void>; release: () => void } {
+  const originalImage = window.Image;
+  let release: (() => void) | undefined;
+  class GatedImage {
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    set src(_value: string) {
+      release = () => this.onload?.();
+    }
+  }
+  vi.stubGlobal("Image", GatedImage);
+  let settled: Promise<void> | undefined;
+  act(() => { settled = harness.result().exportPng(); });
+  vi.stubGlobal("Image", originalImage);
+  if (!settled) throw new Error("png export did not start");
+  return { settled, release: () => release?.() };
+}
+
 beforeEach(() => {
   imageBehavior = "load";
   canvasBehavior = "ok";
@@ -252,6 +274,35 @@ describe("usePosterExport", () => {
     expect(harness.result().exportError).toBeUndefined();
     expect(harness.result().exportingPng).toBe(false);
     expect(downloads).toHaveLength(1);
+  });
+
+  it("still writes the png when another kind of export starts mid-flight", async () => {
+    const harness = mountHook();
+    const png = startGatedPngExport(harness);
+
+    // SVG 是另一份文件，不是这次 PNG 的替代品：它可以接管导出状态，但不能吃掉用户已经要过的 PNG。
+    act(() => { harness.result().exportSvg(); });
+    await act(async () => { png.release(); await png.settled; });
+
+    expect(downloads.map((entry) => entry.filename)).toEqual([
+      "我的毕业去向图.svg",
+      "我的毕业去向图-1x.png",
+    ]);
+    // 代次守卫仍然生效：落地晚的 PNG 不改写 SVG 已经写下的状态与提示。
+    expect(harness.result().exportState).toBe("success");
+    expect(harness.result().lastExportFileName).toBe("我的毕业去向图.svg");
+    expect(harness.statuses.at(-1)).toBe("SVG 已导出");
+  });
+
+  it("releases the png busy flag even when a later export supersedes it", async () => {
+    const harness = mountHook();
+    const png = startGatedPngExport(harness);
+    expect(harness.result().exportingPng).toBe(true);
+
+    act(() => { harness.result().exportProjectPackage(); });
+    await act(async () => { png.release(); await png.settled; });
+
+    expect(harness.result().exportingPng).toBe(false);
   });
 
   it("rejects an oversized package by File.size without starting a read", () => {
