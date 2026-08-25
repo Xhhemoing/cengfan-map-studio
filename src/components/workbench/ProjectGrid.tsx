@@ -1,6 +1,7 @@
 import { MapPinned } from "lucide-react";
 import type { StoredProject } from "../../lib/project-store";
 import { ProjectCard } from "./ProjectCard";
+import { WORKBENCH_PROJECTS_TARGET_ID } from "./projects-target";
 
 export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete }: {
   projects: StoredProject[];
@@ -15,7 +16,8 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
   onExport: (project: StoredProject) => void;
   onDelete: (project: StoredProject) => void;
 }) {
-  return <section className="workbench-grid" aria-label="项目列表">
+  // id + tabIndex=-1：工作台 skip-link 的落点，.focus() 需要可编程聚焦。
+  return <section id={WORKBENCH_PROJECTS_TARGET_ID} className="workbench-grid" aria-label="项目列表" tabIndex={-1}>
     {loading && projects.length === 0 ? (
       <div className="workbench-empty" role="status">
         <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} aria-hidden /></span>

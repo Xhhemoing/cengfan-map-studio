@@ -64,3 +64,23 @@ describe("ProjectGrid empty states", () => {
     expect(icon?.getAttribute("aria-hidden")).toBe("true");
   });
 });
+
+describe("ProjectGrid skip-link target", () => {
+  it("exposes a stable, programmatically focusable landmark for the workbench skip link", () => {
+    const { container } = renderGrid();
+    const section = container.querySelector<HTMLElement>("section.workbench-grid");
+    expect(section).not.toBeNull();
+    expect(section?.id).toBe("workbench-projects");
+    expect(section?.getAttribute("tabindex")).toBe("-1");
+    expect(section?.getAttribute("aria-label")).toBe("项目列表");
+    section?.focus();
+    expect(document.activeElement).toBe(section);
+  });
+
+  it("keeps the landmark during the loading state so the skip link never dangles", () => {
+    const { container } = renderGrid({ loading: true });
+    const section = container.querySelector<HTMLElement>("#workbench-projects");
+    expect(section).not.toBeNull();
+    expect(section?.getAttribute("tabindex")).toBe("-1");
+  });
+});

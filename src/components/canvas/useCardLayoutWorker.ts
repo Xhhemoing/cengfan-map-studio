@@ -18,11 +18,11 @@ export interface CardLayoutWorkerState {
 /**
  * Keep small solves on the main thread and avoid paying worker startup latency.
  *
- * Linux/Node 22 probes measured 21.397 ms startup p50 (24.109 ms p95) and
- * 0.423 ms warm p95 transfer cost at 24 cards. Main-thread p95 stayed at or
- * below 10.836 ms through 16 cards, then reached 16.147–29.206 ms at 24 cards.
+ * Linux/Node 22 probes measured 20.648 ms startup p50 at 48 cards while the
+ * same-fixture main-thread solve stayed at 12.905 ms p95. At 48 cards all four
+ * layout modes remained at or below 12.968 ms p95.
  */
-export const DEFAULT_WORKER_CARD_THRESHOLD = 24;
+export const DEFAULT_WORKER_CARD_THRESHOLD = 49;
 
 export function shouldUseCardLayoutWorker(cardCount: number): boolean {
   return cardCount >= DEFAULT_WORKER_CARD_THRESHOLD;

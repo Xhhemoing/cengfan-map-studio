@@ -494,7 +494,7 @@ function workerRoundTrip(worker: Worker, payload: object, requestId: number): Pr
  */
 export async function runWorkerMessageBenchmark(
   // Keep this default aligned with DEFAULT_WORKER_CARD_THRESHOLD.
-  count = 24,
+  count = 49,
   startupIterations = 7,
   warmupIterations = 2,
   iterations = 30,

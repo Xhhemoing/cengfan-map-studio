@@ -290,6 +290,7 @@ describe("server request security", () => {
     "localhost:8787",
     "[::1]:8787",
     "[::FFFF:127.0.0.1]",
+    "[::ffff:7f00:1]",
   ])("allows loopback Host header %s on a loopback listener", async (host) => {
     const server = createAiServer();
     servers.push(server);

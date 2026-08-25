@@ -4,6 +4,7 @@ import {
   PlacementIndex,
   normalizeBounds,
   protectedZones,
+  sideForShippedPlacement,
   validateHard,
 } from "./card-layout-space";
 import { rectangleIntersectsPolygon } from "./card-layout-geometry";
@@ -121,6 +122,18 @@ describe("layout space", () => {
         }
       }
     }
+  });
+
+  it("labels a shipped placement by its seat, whatever side it arrived with", () => {
+    const space = new LayoutSpace(bounds);
+    // North of the map, but stamped "right" — the label a column packer or a
+    // repair probe carries when it never looked at where the card ended up.
+    const seat = placement("north", 420, 40);
+
+    const shipped = sideForShippedPlacement(seat, space);
+
+    expect(shipped).toEqual({ ...seat, side: "top" });
+    expect(seat.side).toBe("right");
   });
 
   it("rejects layouts that break any hard constraint", () => {

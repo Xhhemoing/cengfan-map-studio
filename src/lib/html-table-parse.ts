@@ -18,7 +18,8 @@ import { trimImportCell } from "./import-data";
  */
 const HTML_NAMED_ENTITIES: Record<string, string> = {
   amp: "&", apos: "'", emsp: " ", emsp13: " ", emsp14: " ", ensp: " ", gt: ">",
-  hairsp: " ", lt: "<", nbsp: " ", numsp: " ", puncsp: " ", quot: '"', thinsp: " ",
+  hairsp: " ", lt: "<", mediumspace: " ", nbsp: " ", numsp: " ", puncsp: " ", quot: '"',
+  thickspace: " ", thinsp: " ",
 };
 
 const MAX_HTML_SPAN = 512;

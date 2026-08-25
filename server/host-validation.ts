@@ -1,4 +1,5 @@
 import type http from "node:http";
+import { normalizeIpv4MappedAddress } from "./ipv4-mapped";
 
 function isLoopbackIpv4Address(address: string): boolean {
   const octets = address.split(".");
@@ -8,16 +9,9 @@ function isLoopbackIpv4Address(address: string): boolean {
 }
 
 function isLoopbackAddress(address: string): boolean {
-  const mappedPrefix = /^::ffff:/i;
-  const isMapped = mappedPrefix.test(address);
-  const normalized = address.replace(mappedPrefix, "").toLowerCase();
-  if (!isMapped && normalized === "::1") return true;
-  if (isLoopbackIpv4Address(normalized)) return true;
-  if (!isMapped) return false;
-
-  // WHATWG URL parsing serializes mapped dotted IPv4 as two hexadecimal groups.
-  const mappedHex = normalized.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  return Boolean(mappedHex && (Number.parseInt(mappedHex[1], 16) >> 8) === 127);
+  const normalized = normalizeIpv4MappedAddress(address).toLowerCase();
+  if (address.toLowerCase() === "::1") return true;
+  return isLoopbackIpv4Address(normalized);
 }
 
 function requestHostname(host: string | undefined): string | undefined {

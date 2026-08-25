@@ -7,6 +7,8 @@ import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
 import { ContinueEditingCard } from "./workbench/ContinueEditingCard";
+import { SkipToStageLink } from "./studio-editor/SkipToStageLink";
+import { WORKBENCH_PROJECTS_TARGET_ID } from "./workbench/projects-target";
 
 interface ProjectWorkbenchProps {
   store: ProjectStore;
@@ -186,6 +188,9 @@ export function ProjectWorkbench({ store, navigate }: ProjectWorkbenchProps) {
       data-editor-skin={skin}
       data-editor-theme={resolvedTheme}
     >
+      {/* 与编辑器/设置页同款键盘跳转链接（.skip-link 视觉隐藏、拦截片段跳转
+          保住 hash 路由），落点是下方 ProjectGrid 的 tabindex=-1 项目列表。 */}
+      <SkipToStageLink targetId={WORKBENCH_PROJECTS_TARGET_ID} label="跳到项目列表" />
       <WorkbenchHeader importInputRef={importInputRef} onCreateProject={() => void createProject()} onImportProject={(file) => void importProject(file)} />
 
       {error && <section className="workbench-error" role="alert">{error}</section>}

@@ -1478,3 +1478,67 @@ describe("leftover cards on the facade path", () => {
     },
   );
 });
+
+/**
+ * The leftover paths above each derive the side from the seat for themselves.
+ * The column packer is the one that cannot: it stamps the column a card was
+ * classified into, which describes the seat only while the column stays on
+ * that flank of the map. On a tall canvas behind a short map the same right
+ * column runs far north and south of it, so the label has to come off the seat
+ * at the solve's single public exit instead.
+ */
+describe("side labels at the solve exit", () => {
+  const tall: CardLayoutBounds = {
+    width: 900,
+    height: 1400,
+    map: { x: 300, y: 600, width: 300, height: 200 },
+    margin: 24,
+    gap: 12,
+  };
+
+  const eastward: CardLayoutInput[] = Array.from({ length: 8 }, (_, index) => cardInput({
+    id: `east-${index}`,
+    anchorX: 700,
+    anchorY: 120 + index * 160,
+    width: 200,
+    height: 110,
+  }));
+
+  it("relabels a column-packed card its column no longer describes", () => {
+    const space = new LayoutSpace(tall);
+    const options = { mode: "quadrant" as const };
+    // There is no geography to route around here, so the connector search is
+    // skipped and the side pack is exactly what the facade has to ship.
+    const packed = packSides(eastward, space, "quadrant", options);
+    expect(packed.map((placement) => placement.side)).toEqual(eastward.map(() => "right"));
+    expect(packed.filter((placement) => placement.side !== space.sideOf(placement)).length)
+      .toBeGreaterThan(0);
+
+    const result = solveCardLayout(eastward, tall, options);
+
+    expect(result.status).toBe("solved");
+    // Same seats, relabelled: the exit moves no card.
+    expect(result.placements.map((placement) => ({ id: placement.id, x: placement.x, y: placement.y })))
+      .toEqual(packed.map((placement) => ({ id: placement.id, x: placement.x, y: placement.y })));
+    for (const placement of result.placements) {
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+    expect(new Set(result.placements.map((placement) => placement.side)))
+      .toEqual(new Set(["top", "right", "bottom"]));
+  });
+
+  it("relabels a pinned card by its seat without moving it", () => {
+    // North of the map and well right of centre; the pin is honoured as given.
+    const fixedPositions = { "east-0": { x: 620, y: 40 } };
+    const space = new LayoutSpace(tall);
+
+    const result = solveCardLayout(eastward, tall, { mode: "quadrant", fixedPositions });
+    const pinnedPlacement = result.placements.find((placement) => placement.id === "east-0")!;
+
+    expect({ x: pinnedPlacement.x, y: pinnedPlacement.y }).toEqual(fixedPositions["east-0"]);
+    expect(pinnedPlacement.side).toBe(space.sideOf(pinnedPlacement));
+    for (const placement of result.placements) {
+      expect(placement.side).toBe(space.sideOf(placement));
+    }
+  });
+});

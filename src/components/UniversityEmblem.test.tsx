@@ -83,4 +83,49 @@ describe("UniversityEmblem", () => {
     expect(host.querySelector("img")).toBeNull();
     expect(host.querySelector(".university-emblem__placeholder")?.textContent).toBe("北");
   });
+
+  it("keeps the accessible name while out of view (host not aria-hidden)", () => {
+    installIntersectionObserver(false);
+    const host = render(<UniversityEmblem university="浙江大学" />);
+    const emblem = host.querySelector(".university-emblem") as HTMLElement;
+    expect(host.querySelector("img")).toBeNull();
+    expect(host.querySelector(".university-emblem__placeholder")).not.toBeNull();
+    expect(emblem.getAttribute("role")).toBe("img");
+    expect(emblem.hasAttribute("aria-hidden")).toBe(false);
+    expect(emblem.getAttribute("aria-label")).toBe("浙江大学校徽");
+  });
+
+  it("keeps the accessible name for universities without an emblem", () => {
+    installIntersectionObserver(true);
+    const host = render(<UniversityEmblem university="北京航空航天大学北海学院" />);
+    const emblem = host.querySelector(".university-emblem") as HTMLElement;
+    expect(emblem.getAttribute("aria-label")).toBe("北京航空航天大学北海学院校徽");
+    expect(emblem.hasAttribute("aria-hidden")).toBe(false);
+    const placeholder = host.querySelector(".university-emblem__placeholder") as HTMLElement;
+    expect(placeholder.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("keeps the host exposed with its aria-label after the image errors", () => {
+    const observer = installIntersectionObserver(true);
+    const host = render(<UniversityEmblem university="浙江大学" />);
+    observer.fire();
+    const img = host.querySelector("img") as HTMLImageElement;
+    act(() => {
+      img.dispatchEvent(new Event("error"));
+    });
+    const emblem = host.querySelector(".university-emblem") as HTMLElement;
+    expect(host.querySelector(".university-emblem__placeholder")).not.toBeNull();
+    expect(emblem.hasAttribute("aria-hidden")).toBe(false);
+    expect(emblem.getAttribute("aria-label")).toBe("浙江大学校徽");
+  });
+
+  it("keeps the host aria-label and an empty img alt when the image is shown", () => {
+    const observer = installIntersectionObserver(true);
+    const host = render(<UniversityEmblem university="浙江大学" />);
+    observer.fire();
+    const emblem = host.querySelector(".university-emblem") as HTMLElement;
+    expect(emblem.getAttribute("aria-label")).toBe("浙江大学校徽");
+    const img = host.querySelector("img") as HTMLImageElement;
+    expect(img.getAttribute("alt")).toBe("");
+  });
 });

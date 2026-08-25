@@ -11,6 +11,8 @@
  *   2. Cards never overlap (with `gap`).
  *   3. Cards never overlap protected `occupiedAreas`; map overlap is opt-in.
  *   4. The solver never throws; saturation degrades to a contained grid.
+ *   5. Every shipped `side` names the seat the card occupies, not the column a
+ *      strategy classified it into.
  *
  * Soft goals: keep each card near its geographic anchor; deterministic output —
  * the same input always yields the same placements, in input order.
@@ -49,7 +51,7 @@ import {
 } from "./card-layout-optimizer";
 import { mergePinnedCards, planPinnedCards } from "./card-layout-pinned";
 import { betterLayout, layeredPack, provablyInfeasible } from "./card-layout-saturation";
-import { LayoutSpace, validateHard } from "./card-layout-space";
+import { LayoutSpace, sideForShippedPlacement, validateHard } from "./card-layout-space";
 import {
   type CardArea,
   type CardLayoutBounds,
@@ -264,12 +266,11 @@ function saturated(cards: CardLayoutInput[], space: LayoutSpace, mode: CardLayou
 
 function solve(
   inputs: CardLayoutInput[],
-  bounds: CardLayoutBounds,
+  space: LayoutSpace,
   mode: CardLayoutMode,
   options: CardLayoutOptions,
   debug: SearchDebug,
 ): CardLayoutResult {
-  const space = new LayoutSpace(bounds);
   if (provablyInfeasible(inputs, space)) {
     debug.decision = "skipped-infeasible";
     return saturated(inputs, space, mode);
@@ -307,12 +308,18 @@ export function solveCardLayout(
   // Hand-placed cards keep their coordinates and are solved around, not for.
   const pinned = planPinnedCards(inputs, bounds, options.fixedPositions);
   const solvable = pinned?.free ?? inputs;
+  // One space for the bounds actually solved, shared with the exit relabel so
+  // the two can never disagree about where the map is.
+  const space = new LayoutSpace(pinned?.bounds ?? bounds);
   const solved = solvable.length === 0
     ? { status: "solved" as const, placements: [], mode }
-    : solve(solvable, pinned?.bounds ?? bounds, mode, options, debug);
-  const result = pinned
-    ? { ...solved, placements: mergePinnedCards(pinned, solved.placements) }
-    : solved;
+    : solve(solvable, space, mode, options, debug);
+  const merged = pinned ? mergePinnedCards(pinned, solved.placements) : solved.placements;
+  // Last word on the side label: whatever a packer, a search or a repair probe
+  // stamped on the way here, what ships names the seat the card ended up in.
+  // Coordinates pass through untouched, pinned ones included.
+  const placements = merged.map((placement) => sideForShippedPlacement(placement, space));
+  const result = { ...solved, placements };
   __layoutDebug.last = { mode, status: result.status, cards: inputs.length, ...debug };
   return result;
 }

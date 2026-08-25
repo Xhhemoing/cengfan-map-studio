@@ -76,6 +76,28 @@ describe("pasted html tables", () => {
     expect(result.unparsed).toEqual([]);
   });
 
+  it("reads a name padded with the &MediumSpace; of an HTML5 export", () => {
+    // The wider maths spaces of HTML5 — &MediumSpace; (U+205F) and &ThickSpace; — are the ones a
+    // Word export writes for a name it cannot pad with a plain space. Their names carry capitals
+    // where the older entities do not, and the decoder lowercases, so &MEDIUMSPACE; shouted by an
+    // older exporter has to fold to the same single space instead of staying inside the name.
+    const result = parseHtmlTable(
+      "<table><tr><th>姓名</th><th>院校</th><th>城市</th></tr>"
+      + "<tr><td>苏&MediumSpace;禾</td><td>浙江大学</td><td>杭州市</td></tr>"
+      + "<tr><td>林&MEDIUMSPACE;舟</td><td>北京大学</td><td>北京市</td></tr>"
+      + "<tr><td>顾&ThickSpace;言</td><td>宁波大学</td><td>宁波市</td></tr>"
+      + "<tr><td>陈&MediumSpace;&ThickSpace;白</td><td>南京大学</td><td>南京市</td></tr></table>",
+    );
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "苏 禾", university: "浙江大学", city: "杭州市" }),
+      expect.objectContaining({ name: "林 舟", university: "北京大学", city: "北京市" }),
+      expect.objectContaining({ name: "顾 言", university: "宁波大学", city: "宁波市" }),
+      expect.objectContaining({ name: "陈 白", university: "南京大学", city: "南京市" }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("leaves an entity that is not whitespace alone", () => {
     // Only the spacing entities become a space: a quote decodes to itself, and an entity
     // nobody knows stays as written instead of silently losing a character of the cell.

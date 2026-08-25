@@ -292,6 +292,20 @@ export class LayoutSpace {
   }
 }
 
+/**
+ * Re-label one placement by the seat it actually occupies.
+ *
+ * Every strategy sets `side` for itself, and most of them set it from the seat
+ * already; a column packer sets it from the column it classified into, which
+ * is the same thing only while the column stays on that flank of the map. This
+ * is the one call the solver's public exit makes on every placement so the
+ * shipped label can never be the one a strategy hoped for. Coordinates are
+ * copied through untouched — a hand-placed card must stay where it was put.
+ */
+export function sideForShippedPlacement(placement: CardPlacement, space: LayoutSpace): CardPlacement {
+  return { ...placement, side: space.sideOf(placement) };
+}
+
 /** Occupancy of already-placed cards, backed by the same uniform grid. */
 export class PlacementIndex {
   readonly items: CardPlacement[] = [];

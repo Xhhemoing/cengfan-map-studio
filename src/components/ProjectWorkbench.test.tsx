@@ -8,6 +8,8 @@ import { serializeProjectPackage } from "../lib/project-package";
 let roots: Array<{ root: Root; container: HTMLElement }> = [];
 function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, navigate = vi.fn()) {
   const container = document.createElement("div");
+  // 挂到 document 上：skip-link 测试要断言 .focus() 落点，游离节点聚焦无效。
+  document.body.append(container);
   const root = createRoot(container);
   roots.push({ root, container });
   flushSync(() => root.render(<ProjectWorkbench store={store} navigate={navigate} />));
@@ -15,7 +17,10 @@ function renderWorkbench(store: ReturnType<typeof createMemoryProjectStore>, nav
 }
 
 afterEach(() => {
-  roots.forEach(({ root }) => root.unmount());
+  roots.forEach(({ root, container }) => {
+    root.unmount();
+    container.remove();
+  });
   roots = [];
   window.localStorage.clear();
   vi.unstubAllGlobals();
@@ -219,5 +224,41 @@ describe("ProjectWorkbench", () => {
     const second = renderWorkbench(store);
     await vi.waitFor(() => expect(second.container.textContent).toContain("示例：2026届毕业去向"));
     expect(await store.list()).toHaveLength(1);
+  });
+});
+
+describe("ProjectWorkbench skip link", () => {
+  it("focuses the project list without touching the hash route", async () => {
+    const store = createMemoryProjectStore();
+    const { container } = renderWorkbench(store);
+
+    const skip = container.querySelector<HTMLAnchorElement>("a.skip-link");
+    expect(skip).not.toBeNull();
+    expect(skip?.textContent).toBe("跳到项目列表");
+    expect(skip?.getAttribute("href")).toBe("#workbench-projects");
+
+    // 落点是 ProjectGrid 的项目列表 section，加载阶段就已存在且可编程聚焦。
+    const target = container.querySelector<HTMLElement>("#workbench-projects");
+    expect(target).not.toBeNull();
+    expect(target?.getAttribute("tabindex")).toBe("-1");
+    expect(target?.getAttribute("aria-label")).toBe("项目列表");
+
+    await vi.waitFor(() => expect(container.textContent).toContain("示例：2026届毕业去向"));
+
+    const hashBefore = window.location.hash;
+    flushSync(() => skip!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(document.activeElement).toBe(target);
+    // Hash 路由（#/project/…）不受片段跳转影响。
+    expect(window.location.hash).toBe(hashBefore);
+  });
+
+  it("puts the skip link ahead of the header actions in the tab order", async () => {
+    const store = createMemoryProjectStore();
+    const { container } = renderWorkbench(store);
+    await vi.waitFor(() => expect(container.textContent).toContain("示例：2026届毕业去向"));
+    const skip = container.querySelector("a.skip-link")!;
+    const header = container.querySelector(".workbench-header")!;
+    // DOM 顺序即 Tab 顺序：跳转链接先于页头「导入 / 新建项目」。
+    expect(skip.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 });
