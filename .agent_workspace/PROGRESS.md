@@ -39,6 +39,7 @@
 | Round 28 | complete | 2026-08-24 | 2026-08-24 | 画布/数据框图标；饱和 orderResult；﹕ 分隔；引号 XFF |
 | Round 29 | complete | 2026-08-25 | 2026-08-25 | 地图/阶段图标；手摆卡 sideOf；numsp；::ffff: 大小写 |
 | Round 30 | complete | 2026-08-25 | 2026-08-25 | 预览/导航图标；门面去冗余 order；emsp13；映射回环 Host |
+| Round 31 | complete | 2026-08-25 | 2026-08-25 | 工作台图标；搜索 leftover 锁；直排冒号；映射 hex IP |
 
 ## Round 1 结论摘要
 
@@ -182,15 +183,19 @@
 
 详见 [round30/BRIEF.md](round30/BRIEF.md)。集成：**tsc 绿、eslint --max-warnings 0、224×2006 tests 绿**。预览/导航图标 hidden；门面信任 packer 自带 orderResult；HTML `&emsp13;`；映射回环 Host；cache-key 位置数组。
 
-## 全局成果（三十轮合计）
+## Round 31 结论简报
 
-| 指标 | main 基线 | Round 30 结束 |
+详见 [round31/BRIEF.md](round31/BRIEF.md)。集成：**tsc 绿、eslint --max-warnings 0、226×2024 tests 绿**。工作台空状态/继续编辑图标 hidden；搜索路径 leftover `sideOf`；直排冒号；`::ffff:H:L` 点分还原；worker hook 去掉重复 LRU。
+
+## 全局成果（三十一轮合计）
+
+| 指标 | main 基线 | Round 31 结束 |
 | --- | ---: | ---: |
 | App.tsx 行数 | 2466 | **333** |
-| card-layout 门面 | 1297 | 模块化 + leftover side + 列序重扫 + gap 占用 + orderResult 必填 space + grid/sweep/packSides/repackAll/slotPlacements/saturated/pinned sideOf 入座 + 门面去冗余包裹 |
+| card-layout 门面 | 1297 | 模块化 + leftover side + 列序重扫 + gap 占用 + orderResult 必填 space + grid/sweep/packSides/repackAll/slotPlacements/saturated/pinned sideOf 入座 + 门面去冗余包裹 + 搜索路径 leftover 锁 |
 | DataWorkspace | 705 | 组合器 + 子面板 |
 | server/index | 1076 | **389** |
-| 测试 | （基线已有大量单测） | **2006 passed / 224 files** |
+| 测试 | （基线已有大量单测） | **2024 passed / 226 files** |
 
 ## 回滚
 

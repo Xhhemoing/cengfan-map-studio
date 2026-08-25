@@ -1,37 +1,31 @@
-# Round 31 任务书
+# Round 31 结论简报
 
 - **时间**: 2026-08-25
-- **前置**: Round 30 BRIEF（224 files / 2006 tests；HEAD `95e67d3`）
+- **前置**: Round 30 BRIEF（224 files / 2006 tests）
 - **模型**: 2× claude-fable-5-thinking-xhigh · 2× claude-opus-5-thinking-high-fast · 2× gpt-5.6-sol-xhigh-fast
-- **状态**: 已集成，验证中
+- **集成**: `tsc` app+node 0 error；`npx eslint . --max-warnings 0`；全量 vitest **226 files / 2024 tests passed**（78.25s）
 
-## 相对 Round 30 的真实剩余缺口
+## 相对 Round 30
 
-| 槽位 | 真实缺口 | 禁止 |
+| 代理 | Round 30 | Round 31 |
 | --- | --- | --- |
-| R31-fable-arch | `ProjectGrid.tsx` 空状态 `MapPinned` 未钉（父 span 已 hidden） | 不改 StudioUi 兜底测；不引入 Playwright |
-| R31-fable-sota | `ContinueEditingCard.tsx` `History` 未钉（父 span 已 hidden） | 不改 ProjectCard 已 pinned 的菜单图标 |
-| R31-opus-layout | 连接线搜索**跑过**的路径尚未锁 leftover `side === sideOf`（R30 测的是 skipped-no-geography / grid） | 禁止改 `repairPlacement` `side: "right"`；禁止第二列；禁止改 pack 几何 |
-| R31-opus-data | `import-data.ts` 缺 Word 直排冒号 `︰` U+FE30（及可选 `︓` U+FE13）；文件已 400 行须压注释 | 禁止 `·`；禁止 ASCII `:` `/`；禁止把 `ldquo` 当空格 |
-| R31-gpt-server | `clientIp` 剥 `::ffff:` 后若剩余 `cb00:7109` 两段十六进制，不会还原成点分 IPv4 | 禁止发明 CF-Connecting-IP；禁止改 XFF 跳数顺序 |
-| R31-gpt-perf | cache-key 已做；只查 cache/worker/`layout-perf` 新的测得赢 | 禁止重写 pack；禁止重试 nearestValues / cache-key |
+| R31-fable-arch | AI 预览行图标 | ProjectGrid 空状态 MapPinned hidden |
+| R31-fable-sota | WorkflowGuide 导航 | ContinueEditingCard History hidden |
+| R31-opus-layout | 门面去冗余 orderResult | 搜索路径 leftover side 锁；非法 repair 提前结束插入序 |
+| R31-opus-data | HTML emsp13/emsp14/puncsp | CELL_DELIMITERS `︓` `︰` |
+| R31-gpt-perf | cache-key 位置数组 | worker hook 去掉重复 LRU get/set |
+| R31-gpt-server | 回环 Host `::ffff:7f00:1` | `clientIp` 将 `::ffff:H:L` 还原为点分 IPv4 |
 
-## 落地（验证前）
+## 验证链
 
-| 槽位 | 结果 |
-| --- | --- |
-| R31-fable-arch | ProjectGrid 空状态 MapPinned 钉 `aria-hidden`；新测试 |
-| R31-fable-sota | ContinueEditingCard History 钉 `aria-hidden`；新测试 |
-| R31-opus-layout | 搜索路径 leftover side 锁；非法 repair 提前结束插入序 |
-| R31-opus-data | CELL_DELIMITERS 增加 `︓` `︰`；文件仍 400 行 |
-| R31-gpt-server | `::ffff:H:L` 十六进制映射还原为点分 IPv4 |
-| R31-gpt-perf | worker hook 去掉重复 LRU get/set（cache 路径测得 −65%） |
+| failure | cause | fix | recheck |
+| --- | --- | --- | --- |
+| 无集成失败 | — | 子代理路径隔离；perf 有测得的 cache 路径赢 | tsc 0；eslint --max-warnings 0；226 / 2024 |
+| XFF `::ffff:cb00:7109` 原样返回 | 只剥前缀不解析两段十六进制 | `normalizeIpv4MappedAddress` 转点分 | client-ip 39 绿 |
+| 直排 `林舟︰北京大学︰北京市` 无法识别 | CELL_DELIMITERS 无 U+FE30/U+FE13 | 加入 `︓` `︰`，2-cell 规则 | import-data 套件绿 |
+| 搜索跑过后 leftover side 未锁 | R30 只覆盖 skipped-no-geography / grid | 新测 decision===ran 且 side===sideOf；非法 repair 提前返回 | card-layout + optimizer 绿 |
 
-## 共享约束
+## 仍未达印刷级 SOTA
 
-- 回复第一行必须是 `MODEL_SLUG: <slug>`。
-- 禁止 git commit / stash / checkout / push / 新分支。
-- 实现文件 ≤400 行（静态目录除外）。
-- 根 `tsc --noEmit` 是 solution no-op；用 `-p tsconfig.app.json` / `tsconfig.node.json`。
-- 支付/套餐不得进入仓库。
-- 报告写到 `.agent_workspace/round31/<slot>.md`。
+- 无真浏览器 E2E；协作 flock 只保证单机。
+- 饱和溢出仍堆在 `y = maxY`。浏览器 PNG 仍为 sRGB。
