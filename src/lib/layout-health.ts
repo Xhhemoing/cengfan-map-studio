@@ -182,6 +182,9 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
       if (leftZ === rightZ) continue;
       const back = leftZ < rightZ ? left.object : right.object;
       const front = leftZ < rightZ ? right.object : left.object;
+      // 地图是底图：卡片、标题、素材本来就摆在它上面，把这种压盖报成遮挡
+      // 会让体检面板长期挂着一串永远不该修的告警，真正的互相遮挡反而被淹没。
+      if (back.kind === "map") continue;
       issues.push({
         id: `${back.id}:${front.id}`,
         kind: "occlusion",

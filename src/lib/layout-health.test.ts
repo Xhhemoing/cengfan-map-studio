@@ -38,6 +38,22 @@ describe("layout health", () => {
     ]));
   });
 
+  it("treats the map as a backdrop instead of an occluded object", () => {
+    const issues = checkLayoutHealth({
+      canvas: { width: 500, height: 400, safeMargin: 8 },
+      objects: [
+        { id: "map", kind: "map", zIndex: 1, bounds: { x: 40, y: 40, width: 400, height: 300 } },
+        { id: "title", kind: "text", zIndex: 40, bounds: { x: 60, y: 60, width: 160, height: 32 }, content: "标题" },
+        { id: "card-a", kind: "card", zIndex: 10, bounds: { x: 100, y: 120, width: 120, height: 80 } },
+        { id: "card-b", kind: "card", zIndex: 11, bounds: { x: 140, y: 150, width: 120, height: 80 } },
+      ],
+    });
+
+    const occlusions = issues.filter((issue) => issue.kind === "occlusion");
+    // 标题压在地图上是常态版式，两张卡片互相压才是要修的问题。
+    expect(occlusions.map((issue) => issue.id)).toEqual(["card-a:card-b"]);
+  });
+
   it("uses cards.positions as the stable manual position selector", () => {
     const issues = checkLayoutHealth({
       canvas: { width: 300, height: 240, safeMargin: 12 },
