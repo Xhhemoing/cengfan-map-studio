@@ -12,7 +12,12 @@
 
 ## [Unreleased]
 
-（空。）
+下一版（建议 0.2.0）改左右栏信息架构：**本段只指向规格，编辑器壳尚未改。**
+
+- 规格（已锁定）：[docs/superpowers/specs/2026-08-26-left-right-rail-ia.md](docs/superpowers/specs/2026-08-26-left-right-rail-ia.md)
+- 任务拆分：[docs/superpowers/plans/2026-08-26-left-right-rail-ia.md](docs/superpowers/plans/2026-08-26-left-right-rail-ia.md)
+
+0.1.1 仍是三页签左栏。实现须从 `v0.1.1` 另开分支，不要夹进本发布热修。
 
 ## [0.1.1] - 2026-08-26
 
