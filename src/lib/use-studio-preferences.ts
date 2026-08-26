@@ -6,7 +6,8 @@
  * 面板宽度是模块级单一状态:legacy 编辑器与六阶段外壳同时挂载时共享同一份布局、
  * 同一个 resize 归一化入口与同一次写盘,避免任一侧用未见过拖拽的旧值覆写存储。
  *
- * 生产路径尚未接线，仅测试引用(唯一的非测试引用方 DataImportConsent 同样未接线)。
+ * 主题与面板宽度的生产路径尚未接线，仅测试引用；AI 出境同意(loadAiParseConsent /
+ * saveAiParseConsent)已经过 DataImportConsent 接进 DataWorkspace 的导入面板。
  */
 import {
   useEffect,

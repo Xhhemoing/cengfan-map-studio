@@ -123,6 +123,8 @@ export function installDataWorkspaceTestHarness(): void {
     });
     vi.useRealTimers();
     globalWithWorker.Worker = originalWorker;
+    // 记住过的出境同意会被下一个用例的挂载读回来，用例之间必须互不影响。
+    window.localStorage.clear();
   });
 }
 
@@ -150,6 +152,21 @@ export function changeInput(input: HTMLInputElement | HTMLTextAreaElement, value
 
 export function getInput(container: HTMLDivElement, label: string): HTMLInputElement {
   return container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+}
+
+/** 粘贴原文出境前的那道闸门；智能识别的每条路径都要先过它。 */
+export function consentDialog(container: HTMLDivElement): HTMLElement | null {
+  return container.querySelector<HTMLElement>(".ai-consent");
+}
+
+export function grantAiUpload(container: HTMLDivElement): void {
+  click(consentDialog(container)!.querySelector<HTMLButtonElement>('button[aria-label="同意并发送"]')!);
+}
+
+export function declineAiUpload(container: HTMLDivElement, remember = false): void {
+  const dialog = consentDialog(container)!;
+  if (remember) click(dialog.querySelector<HTMLInputElement>('input[aria-label="记住我的选择"]')!);
+  click(dialog.querySelector<HTMLButtonElement>('button[aria-label="仅用本地识别"]')!);
 }
 
 /** 校验过的 GBK 双字节：中文版 Excel/WPS 另存 CSV 就是这套编码。 */

@@ -8,7 +8,7 @@
   "src/components/AgentAssistant.tsx": 705,
   "src/components/AppErrorBoundary.tsx": 403,
   "src/components/AssetPanel.tsx": 754,
-  "src/components/DataWorkspace.tsx": 865,
+  "src/components/DataWorkspace.tsx": 748,
   "src/components/canvas/MapDataLayer.tsx": 508,
   "src/components/canvas/MapLayer.tsx": 606,
   "src/components/canvas/PosterCanvas.tsx": 948,

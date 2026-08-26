@@ -10,6 +10,7 @@ import {
   render,
   click,
   changeInput,
+  grantAiUpload,
   students,
 } from "./data-workspace-test-harness";
 
@@ -117,6 +118,7 @@ describe("DataWorkspace import recognition", () => {
 
     changeInput(container.querySelector("textarea")!, "智能同学 北京大学 北京");
     click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("一键识别并导入"))!);
+    grantAiUpload(container);
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     flushSync(() => {});
 
@@ -194,6 +196,7 @@ describe("DataWorkspace import recognition", () => {
 
     changeInput(container.querySelector("textarea")!, "候选名单");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    grantAiUpload(container);
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     flushSync(() => {});
 
@@ -260,6 +263,7 @@ describe("DataWorkspace import recognition", () => {
 
     changeInput(container.querySelector("textarea")!, "苏禾 浙江大学 杭州");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    grantAiUpload(container);
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     flushSync(() => {});
     expect(container.textContent).toContain("确认候选");
@@ -289,6 +293,8 @@ describe("DataWorkspace import recognition", () => {
 
     changeInput(container.querySelector("textarea")!, "智能同学 北京大学 北京");
     click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("一键识别并导入"))!);
+    expect(requestAiParse).not.toHaveBeenCalled();
+    grantAiUpload(container);
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     flushSync(() => {});
 
@@ -335,6 +341,7 @@ describe("DataWorkspace import recognition", () => {
     );
     changeInput(container.querySelector("textarea")!, "追加同学 浙江大学 杭州");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    grantAiUpload(container);
     await vi.waitFor(() => {
       expect(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("追加导入"))).toBeDefined();
     });
