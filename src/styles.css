@@ -1572,7 +1572,7 @@ button { font: inherit; }
 .action-button:hover { color: var(--editor-ink); background: var(--editor-surface-raised); border-color: var(--editor-accent); }
 .compact-button:disabled,
 .action-button:disabled,
-.icon-button:disabled { opacity: .48; cursor: not-allowed; }
+.icon-button:disabled, .project-menu__popover button:disabled { opacity: .48; cursor: not-allowed; }
 .compact-button--secondary { color: #725744; background: #f8f0e8; border-color: #ddc2aa; }
 .compact-button--danger,
 .icon-button--danger { color: var(--editor-danger); background: #fff3f0; border-color: #e5b9ae; }
