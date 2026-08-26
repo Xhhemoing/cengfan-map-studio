@@ -38,6 +38,10 @@ export type StudioLayoutTemplateProps = {
   /** 移动端 AI 抽屉开关状态。 */
   drawerOpen: boolean;
   onDrawerClose: () => void;
+  /** 外壳底部的常驻状态条（读屏 live region）。 */
+  statusStrip?: ReactNode;
+  /** 覆盖在外壳之上的弹层（导出工程确认等）。放在 app-shell 内才继承主题与皮肤变量。 */
+  dialogs?: ReactNode;
   /** 中心画布内容（各阶段 workspace）。 */
   children: ReactNode;
 };
@@ -63,6 +67,8 @@ export function StudioLayoutTemplate({
   rightRailLabel,
   drawerOpen,
   onDrawerClose,
+  statusStrip,
+  dialogs,
   children,
 }: StudioLayoutTemplateProps) {
   return (
@@ -77,9 +83,11 @@ export function StudioLayoutTemplate({
       <StudioEditorShell stage={stage} leftRail={leftRail} rightRail={rightRail} rightRailLabel={rightRailLabel}>
         {children}
       </StudioEditorShell>
+      {statusStrip}
       <StudioAssistantDrawer open={drawerOpen} onClose={onDrawerClose} label="AI 助手与高级功能">
         {leftRail}
       </StudioAssistantDrawer>
+      {dialogs}
     </div>
   );
 }
