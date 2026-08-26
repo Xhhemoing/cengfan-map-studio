@@ -81,8 +81,8 @@ export function ProjectWorkbench({ store, health, recoverError, navigate, public
     try {
       setProjects(await store.list());
       setError("");
-    } catch {
-      setError("读取项目失败：浏览器存储不可用");
+    } catch (reason) {
+      setError(storeFailureMessage(reason, "读取项目失败"));
     } finally {
       setLoading(false);
       syncHealth();

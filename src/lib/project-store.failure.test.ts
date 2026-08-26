@@ -98,6 +98,24 @@ describe("project store failure taxonomy", () => {
     expect(store.health).toBe("memory");
   });
 
+  it("rejects list() when a read transaction aborts instead of pretending the library is empty", async () => {
+    const real = new IDBFactory();
+    let armed = false;
+    const store = createIndexedDbProjectStore(hookedFactory(real, (tx) => {
+      if (!armed || tx.mode !== "readonly") return;
+      armed = false;
+      queueMicrotask(() => tx.abort());
+    }));
+    await store.put(storedProject("proj-still-there", "还在盘上"));
+    armed = true;
+    const failure = await store.list().then(() => null, (error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ProjectStoreError);
+    expect((failure as ProjectStoreError).code).toBe("read-aborted");
+    expect((failure as ProjectStoreError).message).toBe("IndexedDB 读取中止");
+    expect(store.health).toBe("persistent");
+  });
+
   it("does not reopen the database once it degraded to memory", async () => {
     const open = vi.fn();
     const store = createIndexedDbProjectStore(failingFactory(open), { openRetries: 0, retryDelayMs: 0 });
