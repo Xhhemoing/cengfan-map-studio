@@ -11,6 +11,7 @@ import {
   dropFile,
   encodeGbk,
   fileWithBytes,
+  grantAiUpload,
   renderWorkspace,
   settle,
   workbookBytes,
@@ -323,6 +324,9 @@ describe("DataWorkspace import fidelity", () => {
 
     changeInput(container.querySelector("textarea")!, "智能同学 北京大学 北京");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    grantAiUpload(container);
+    await settle();
+    expect(requestAiParse).toHaveBeenCalledTimes(1);
     changeInput(container.querySelector("textarea")!, "本地同学 浙江大学 杭州");
     click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("识别文本"))!);
     expect(container.textContent).toContain("本地同学");
