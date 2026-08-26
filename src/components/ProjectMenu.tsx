@@ -260,7 +260,7 @@ export function ProjectMenu({
                   </>
                 ) : (
                   <>
-                    <p>未连接时不会上传或覆盖工程。创建者可生成可编辑或仅查看的一次性邀请凭证。房间保存在服务器内存，约 30 分钟无操作后失效；邀请凭证约 24 小时有效。</p>
+                    <p>未连接时不会上传或覆盖工程。创建者可生成可编辑或仅查看的一次性邀请凭证。房间约 30 分钟无操作后失效；邀请凭证约 24 小时有效。</p>
                     <DisplayNameInput value={displayName} connected={false} onChange={handleDisplayNameChange} />
                     <button type="button" className="collaboration-create" disabled={collaborationStatus === "connecting"} onClick={onStartRoom}><Share2 size={14} /> 创建房间</button>
                     <div className="collaboration-join">

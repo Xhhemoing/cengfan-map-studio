@@ -102,7 +102,7 @@ describe("ProjectMenu", () => {
     const { container } = renderMenu({ collaborationOpen: true });
 
     const panel = container.querySelector('section[aria-label="增量协作设置"]')!;
-    expect(panel.textContent).toContain("房间保存在服务器内存，约 30 分钟无操作后失效；邀请凭证约 24 小时有效。");
+    expect(panel.textContent).toContain("房间约 30 分钟无操作后失效；邀请凭证约 24 小时有效。");
   });
 
   it("changes the PNG scale and transparency through the supplied callbacks", () => {
