@@ -107,10 +107,11 @@ describe("import data", () => {
       "姓名：陈宁，毕业去向：清华大学，城市：北京",
     ].join("\n"));
     expect(labeled.unparsed).toEqual([]);
-    expect(labeled.candidates.map((candidate) => candidate.university)).toEqual([
-      "浙江大学",
-      "复旦大学",
-      "清华大学",
+    // 姓名也要一起钉住：别名若从「院校」处起匹配，「去向」会被并进上一个字段的值里。
+    expect(labeled.candidates.map(({ name, university }) => [name, university])).toEqual([
+      ["苏禾", "浙江大学"],
+      ["顾言", "复旦大学"],
+      ["陈宁", "清华大学"],
     ]);
   });
 
