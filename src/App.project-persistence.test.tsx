@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createProjectDocument, serializeProjectDocument } from "./lib/project-document";
 import { sampleStudents } from "./lib/project-data";
 import { createProjectPackage } from "./lib/project-package";
-import { installAppTestHarness, renderApp, saveWorkspaceMirror, click, openPeopleData, changeInput, changeSelect } from "./app-test-harness";
+import { installAppTestHarness, renderApp, renderPublicApp, saveWorkspaceMirror, click, openPeopleData, changeInput, changeSelect } from "./app-test-harness";
 
 installAppTestHarness();
 
@@ -94,6 +94,32 @@ describe("App student editing", () => {
     expect(dialog?.textContent).toContain("地图背景、地图贴图、素材和字体");
     expect(dialog?.querySelector<HTMLInputElement>('input[aria-label="导出时包含资源包"]')?.checked).toBe(true);
     expect(dialog?.querySelector<HTMLButtonElement>('button[aria-label="确认导出工程"]')).not.toBeNull();
+  });
+
+  it("asks the same question from the five-stage project menu", () => {
+    // 五阶段外壳曾经根本不挂弹层：菜单里的「导出工程」只是把 state 翻成 true，
+    // 屏幕上什么都不发生，非 legacy 用户导不出工程包。
+    const container = renderPublicApp();
+    const menu = container.querySelector(".topbar .project-menu")!;
+
+    click(Array.from(menu.querySelectorAll("button")).find((button) => button.textContent?.includes("导出工程"))!);
+
+    const dialog = container.querySelector<HTMLElement>('[role="dialog"][aria-label="导出工程确认"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain("包含资源包");
+    expect(dialog?.querySelector<HTMLButtonElement>('button[aria-label="确认导出工程"]')).not.toBeNull();
+    // 弹层挂在 app-shell 内，才跟着主题/皮肤走。
+    expect(container.querySelector(".app-shell")?.contains(dialog)).toBe(true);
+  });
+
+  it("closes the five-stage export confirmation again", () => {
+    const container = renderPublicApp();
+    const menu = container.querySelector(".topbar .project-menu")!;
+    click(Array.from(menu.querySelectorAll("button")).find((button) => button.textContent?.includes("导出工程"))!);
+
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="关闭导出工程确认"]')!);
+
+    expect(container.querySelector('[role="dialog"][aria-label="导出工程确认"]')).toBeNull();
   });
 
   it("immediately applies imported backgrounds, province textures and resource catalog", () => {

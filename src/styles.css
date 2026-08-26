@@ -462,7 +462,7 @@ button { font: inherit; }
 /* 常驻 live region：无消息时收成不可见的 1px，既不撑出空框也不离开无障碍树。 */
 .data-message:empty { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; background: none; border: 0; clip-path: inset(50%); }
 .data-message__line { display: block; }
-.data-message__line + .data-message__line { margin-top: 4px; }
+.data-message__line + .data-message__line { margin-top: 4px; }.editor-status-strip { display: grid; padding: 0 18px; }.editor-status-strip .data-message { margin-top: 8px; }
 .search-combobox { position: relative; }
 .search-combobox__list { position: absolute; z-index: 20; right: 0; left: 0; max-height: 168px; overflow: auto; background: #fff; border: 1px solid #9dafbb; border-radius: 4px; box-shadow: 0 5px 14px rgb(37 57 73 / 18%); }
 .search-combobox__list button { display: flex; align-items: baseline; width: 100%; gap: 3px; padding: 7px 9px; color: #385066; text-align: left; background: #fff; border: 0; border-bottom: 1px solid #edf1f3; cursor: pointer; font: inherit; font-size: 11px; }
