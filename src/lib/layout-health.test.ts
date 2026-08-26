@@ -54,6 +54,21 @@ describe("layout health", () => {
     expect(occlusions.map((issue) => issue.id)).toEqual(["card-a:card-b"]);
   });
 
+  it("still reports the map when it is stacked in front of a card", () => {
+    const issues = checkLayoutHealth({
+      canvas: { width: 500, height: 400, safeMargin: 8 },
+      objects: [
+        { id: "card-a", kind: "card", zIndex: 10, bounds: { x: 100, y: 120, width: 120, height: 80 } },
+        { id: "map", kind: "map", zIndex: 60, bounds: { x: 40, y: 40, width: 400, height: 300 } },
+      ],
+    });
+
+    // 底图的豁免只对「地图在后面」成立：地图被抬到卡片前面就是真把卡片盖住了，得报。
+    expect(issues.filter((issue) => issue.kind === "occlusion")).toEqual([
+      expect.objectContaining({ id: "card-a:map", severity: "warning", detail: "map 遮挡了 card-a" }),
+    ]);
+  });
+
   it("uses cards.positions as the stable manual position selector", () => {
     const issues = checkLayoutHealth({
       canvas: { width: 300, height: 240, safeMargin: 12 },
