@@ -14,6 +14,8 @@
  * （output intent），也无法做四色分色；印厂需要的 CMYK 转换必须在印前软件
  * （Acrobat / Illustrator / Scribus）里按纸张与油墨曲线完成。这里只负责把
  * 出血尺寸和裁切标记做对，让印前环节有正确的几何可用。
+ *
+ * 生产路径尚未接线，仅测试引用。
  */
 
 export const MM_PER_INCH = 25.4;
