@@ -132,6 +132,22 @@ describe("workbook row fidelity", () => {
     ]);
   });
 
+  it("reads 毕业去向 as the university column", () => {
+    const result = parseExcelWorkbookRows([
+      ["姓名", "毕业去向", "城市"],
+      ["林舟", "北京大学", "北京市"],
+    ]);
+
+    expect(result.missingRequiredFields).toEqual([]);
+    expect(result.columnMappings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "university", sourceHeader: "毕业去向", columnIndex: 1 }),
+    ]));
+    expect(result.candidates).toEqual([
+      expect.objectContaining({ name: "林舟", university: "北京大学", city: "北京市", sourceLine: 2 }),
+    ]);
+    expect(result.unparsed).toEqual([]);
+  });
+
   it("stringifies numeric and formula-evaluated cells", () => {
     const rows = [
       ["学生姓名", "录取院校", "城市", "去向类型"],

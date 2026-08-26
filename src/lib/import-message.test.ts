@@ -17,6 +17,9 @@ describe("isImportFailureMessage", () => {
     "没有可导入的有效记录，2 条校验问题",
     "识别结果无法转换为有效记录",
     "无法定位城市：火星城",
+    "文件过大，Excel / CSV 最大支持 25 MB",
+    "解析超时，文件可能已损坏",
+    "当前浏览器不支持后台解析",
   ])("classifies %s as a failure", (text) => {
     expect(isImportFailureMessage(text)).toBe(true);
   });
