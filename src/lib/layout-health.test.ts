@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { checkLayoutHealth } from "./layout-health";
+import { buildProjectLayoutHealthInput } from "./layout-health-input";
+import { createProjectDocument } from "./project-document";
+import { createSampleProject } from "./project-store";
 
 describe("layout health", () => {
   it("reports visible objects that overflow the safe area or leave the canvas", () => {
@@ -67,4 +70,24 @@ describe("layout health", () => {
       expect.objectContaining({ id: "card-a", kind: "out-of-bounds" }),
     ]));
   });
+});
+
+describe("layout health of the documents we ship", () => {
+  const documents = {
+    示例工程: () => createSampleProject().pack.project,
+    空白工程: () => createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
+  };
+
+  for (const [label, build] of Object.entries(documents)) {
+    // 默认版式把标题与卡片摆在地图上，卡片右缘也压着地图右缘。少了底图豁免，
+    // 用户一打开就会看到一串永远不该修的遮挡告警，体检面板从此没人再信。
+    it(`${label} 打开时没有一条牵扯到地图的遮挡告警`, () => {
+      const occlusions = checkLayoutHealth(buildProjectLayoutHealthInput(build()))
+        .filter((issue) => issue.kind === "occlusion");
+
+      expect(occlusions.filter((issue) => issue.id.split(":").includes("map"))).toEqual([]);
+      // 这两份文档现在整体也是干净的：真冒出卡片互压这类告警，这里会把它点名报出来。
+      expect(occlusions).toEqual([]);
+    });
+  }
 });
