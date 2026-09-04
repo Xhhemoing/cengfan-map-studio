@@ -22,9 +22,11 @@ import { CollaborationError, createRoomStore, type CollaborationRoom, type Lifec
 import { createRoomSnapshotWriter, isRestorableRoomSnapshot, loadRoomSnapshot, sweepStaleTemporaryFiles, sweepStaleTemporaryFilesBesideFile, writeFileAtomically } from "./room-snapshot-store";
 import { createRoomErrorSender, createRoomRoutes, roomAccessToken } from "./room-routes";
 import { corsHeaders, securityHeaders, sendJson, serveStatic } from "./static-files";
+import { DEFAULT_BIND_HOST, DEFAULT_PORT, resolveBindHost, resolvePort } from "./runtime-bindings";
 
-export const DEFAULT_PORT = 8787;
-export const DEFAULT_BIND_HOST = "0.0.0.0";
+// 既有调用方（测试、脚本）一直从 ./index 取这些名字，保持入口不变。
+export { DEFAULT_BIND_HOST, DEFAULT_PORT, resolveBindHost, resolvePort };
+
 
 /** SSE 背压观测量：字节数是进程内实际持有的未刷出数据，可直接作为内存上界的证据。 */
 export interface RoomStreamStats {
@@ -56,18 +58,6 @@ export type AiServer = http.Server & {
   roomStreamStats?: () => RoomStreamStats;
 };
 
-export function resolvePort(value: string | undefined = process.env.PORT): number {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : DEFAULT_PORT;
-}
-/**
- * 绑定网卡。默认 `0.0.0.0` 保持既有部署与容器行为不变；放在 nginx / caddy
- * 后面时用 `HOST=127.0.0.1` 把进程收回环回地址，端口就不会直接对着公网。
- */
-export function resolveBindHost(value: string | undefined = process.env.HOST): string {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : DEFAULT_BIND_HOST;
-}
 const DEFAULT_DATA_DIR = fileURLToPath(new URL("../.data", import.meta.url));
 
 function clientIp(request: http.IncomingMessage, trustProxy: boolean): string {
