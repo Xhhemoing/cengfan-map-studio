@@ -38,6 +38,7 @@
 | 项 | 说明 |
 |---|---|
 | ✅ `HOST` 可配 | 此前 `0.0.0.0` 硬编码在启动处，运维无法收口到回环 |
+| ✅ 生产启动不依赖 devDependency | `npm run start` 走 `tsx server/index.ts`，而 `tsx` 原本是 devDependency。`npm ci --omit=dev` 后它只是碰巧作为 vite 的传递依赖存在，依赖链一变生产就起不来。已提为正式 dependency |
 | 反代示例配置 | 提供 nginx / caddy 片段：`HOST=127.0.0.1` + 代理终止 TLS |
 | 部署自检清单 | 上线前确认：端口未直接对公网、有 TLS、`WORKSPACE_API_TOKEN` 已设或明确 `AI_PUBLIC_ACCESS=1` |
 
