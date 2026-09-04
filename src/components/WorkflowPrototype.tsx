@@ -78,7 +78,7 @@ function Inspector({ selection }: { selection: Selection }) {
     : selection === "title"
       ? { title: "标题属性", detail: "文本 · 已选中", actions: ["更换字体", "调整对齐", "编辑文案"] }
       : selection === "cards"
-        ? { title: "数据卡片", detail: "省份分组 · 紧凑样式", actions: ["一键智能排版", "设置显示字段", "调整连接线"] }
+        ? { title: "数据卡片", detail: "省份分组 · 紧凑样式", actions: ["刷新展示框位置", "设置显示字段", "调整连接线"] }
         : selection === "map"
           ? { title: "地图属性", detail: "矢量地图 · 省份标签已开启", actions: ["更换地图颜色", "切换图片地图", "编辑热力色阶"] }
           : { title: "画布属性", detail: "1500 × 1000 · 横向", actions: ["更换背景", "调整安全边距", "设置画布尺寸"] };

@@ -49,4 +49,15 @@ describe("WorkflowPrototype", () => {
     expect(container.querySelector(".prototype-inspector h2")?.textContent).toBe("浙江省");
     expect(container.textContent).toContain("使用浙江贴图");
   });
+
+  it("does not advertise the retired 一键智能排版 action", () => {
+    const container = renderPrototype();
+
+    click(container, '[aria-label="选择湖北"]');
+    click(container, ".prototype-poster-card");
+    expect(container.querySelector(".prototype-inspector h2")?.textContent).toBe("数据卡片");
+    // 主编辑器已把该动作改名为「刷新展示框位置」；原型页是产品门面，不得再展示已下线的名字。
+    expect(container.textContent).not.toContain("一键智能排版");
+    expect(container.textContent).toContain("刷新展示框位置");
+  });
 });
