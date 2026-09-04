@@ -14,18 +14,36 @@
 
 版本路线与优先级见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
-### 修复
-
-- **自建部署可以把端口收到回环**：新增 `HOST` 环境变量（默认仍是 `0.0.0.0`，既有部署行为不变）。此前监听地址硬编码在启动处，放在 nginx / caddy 后面时端口仍然直接对公网开放。配套新增 [docs/deployment/reverse-proxy.md](docs/deployment/reverse-proxy.md)：完整反代片段、SSE 长连接注意事项、`TRUST_PROXY` 的正确用法与误用风险、上线自检清单。
-- **原型页不再展示已下线的「一键智能排版」**：`/prototype` 的检查器假按钮改为与主编辑器一致的「刷新展示框位置」。
-- **部署文档不再包含公网 IP 与本机路径**。
-
 下一版（建议 0.2.0）改左右栏信息架构：**本段只指向规格，编辑器壳尚未改。**
 
 - 规格（已锁定）：[docs/superpowers/specs/2026-08-26-left-right-rail-ia.md](docs/superpowers/specs/2026-08-26-left-right-rail-ia.md)
 - 任务拆分：[docs/superpowers/plans/2026-08-26-left-right-rail-ia.md](docs/superpowers/plans/2026-08-26-left-right-rail-ia.md)
 
-0.1.1 仍是三页签左栏。实现须从 `v0.1.1` 另开分支，不要夹进本发布热修。
+0.1.2 仍是三页签左栏。实现须从 `v0.1.2` 另开分支，不要夹进发布热修。
+
+## [0.1.2] - 2026-09-04
+
+面向**自己架服务器的使用者**的一版修复：0.1.1 按文档一路部署下来，会得到一个端口直接对公网开放、且没有 TLS 的服务。本版把这条路补上。编辑器功能与 0.1.1 相同。
+
+### 修复
+
+- **自建部署可以把端口收到回环**：新增 `HOST` 环境变量（默认仍是 `0.0.0.0`，既有部署与容器行为不变）。此前监听地址硬编码在启动处，放在 nginx / caddy 后面时端口仍然直接对公网开放。配套新增 [docs/deployment/reverse-proxy.md](docs/deployment/reverse-proxy.md)：nginx / caddy 完整片段、SSE 长连接注意事项（关缓冲、放宽超时）、`TRUST_PROXY` 的正确用法与误用风险、上线自检清单。
+- **生产启动不再依赖 devDependency**：`npm run start` 走 `tsx server/index.ts`，而 `tsx` 此前是 devDependency。`npm ci --omit=dev` 之后它只是碰巧作为 vite 的传递依赖被装上，依赖链一变照文档部署的人就会卡在启动。已提为正式依赖。
+- **原型页不再展示已下线的「一键智能排版」**：`/prototype` 的检查器假按钮改为与主编辑器一致的「刷新展示框位置」。该页在生产产物内且用户可直接访问，此前会让人以为主编辑器还有这个功能。
+- **部署文档不再包含公网 IP 与本机绝对路径**：`DEPLOY-SERVER.md` 与宣发总流程中的服务器地址、`function.md` 头部的本机路径均已移除。
+
+### 新增
+
+- **[docs/ROADMAP.md](docs/ROADMAP.md)**：项目计划的唯一入口。此前计划散落在 `PROJECT_REQUIREMENTS.md`、`docs/superpowers/` 的规格与任务、CHANGELOG 的 Unreleased、以及多个未合并 PR 的正文里，没有一个地方能回答「下一版做什么」。现在按 0.1.2 / 0.2.0 / 0.3.0 分档，并写明「明确不做」与发布纪律。
+
+### 内部
+
+- 端口与绑定网卡的解析抽到 `server/runtime-bindings.ts`（`server/index.ts` 受 file-size-ratchet 约束，只能往下棘轮），`./index` 继续再导出，既有 import 路径不变。
+
+### 明确不做（附原因）
+
+- **左右栏信息架构改版**：规格已锁定，实现放 0.2.0，不夹进本次热修。
+- **出血导出与主题偏好接线**：`print-bleed.ts`、`use-studio-preferences.ts` 仍无生产调用方，排 0.3.0，避免半成品入口。
 
 ## [0.1.1] - 2026-08-26
 

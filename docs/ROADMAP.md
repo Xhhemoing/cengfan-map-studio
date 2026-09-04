@@ -1,7 +1,7 @@
 # 蹭饭地图工作室 · 路线图
 
 > **本文件是项目计划的唯一入口。** 任何新计划先改这里，再落到 GitHub milestone / issue。
-> 当前版本：**v0.1.1**（2026-08-26 发布，2026-09-03 合入 `main`）。演示站：https://xhhemoing.github.io/cengfan-map-studio/
+> 当前版本：**v0.1.2**（2026-09-04）。演示站：https://xhhemoing.github.io/cengfan-map-studio/
 
 ## 计划文档在哪
 
@@ -14,7 +14,19 @@
 | [superpowers/plans/2026-08-26-left-right-rail-ia.md](superpowers/plans/2026-08-26-left-right-rail-ia.md) | 0.2 任务拆分（P0→P3） |
 | [开源与收费边界.md](开源与收费边界.md) | 不进本仓库的东西 |
 
-## 0.1.2 — 快速收口（不改编辑器壳）
+## 0.1.2 — 已发布（2026-09-04）
+
+自建部署的安全与可启动性。编辑器功能与 0.1.1 相同，明细见 [CHANGELOG](../CHANGELOG.md)。
+
+| 项 | 说明 |
+|---|---|
+| ✅ `HOST` 可配 | 此前 `0.0.0.0` 硬编码在启动处，运维无法收口到回环 |
+| ✅ 生产启动不依赖 devDependency | `npm run start` 走 `tsx server/index.ts`，而 `tsx` 原本是 devDependency。`npm ci --omit=dev` 后它只是碰巧作为 vite 的传递依赖存在，依赖链一变生产就起不来。已提为正式 dependency |
+| ✅ 反代示例配置 | [reverse-proxy.md](deployment/reverse-proxy.md)：nginx / caddy 片段 + 上线自检清单 |
+| ✅ 原型页按钮名对齐 | `/prototype` 不再展示已下线的「一键智能排版」 |
+| ✅ 部署文档去公网 IP 与本机路径 | — |
+
+## 0.1.3 — 快速收口（不改编辑器壳）
 
 面向「用户第一次打开就撞到的东西」，都是小改动。
 
@@ -30,17 +42,9 @@
 | 首次导出后提醒备份工程包 | 「换浏览器项目就没了」 |
 | 协作文案诚实：内存房间、无账号、重启即失 | 「服务器一重启房间没了」 |
 | 清 eslint warning 与 `expect(true)` | — |
+| 修 `AgentAssistant` 系列的测试隔离 | 慢机/高负载下 `AgentAssistant.project-change` 与同目录邻居并行时会失败（残留 `stale-step`、digest 续接历史）。单文件跑必过，CI 因机器快而侥幸通过——是真实的时序/隔离缺陷，不是环境噪声 |
 
-### 自建部署的安全基线
-
-面向自己架服务器的使用者。`HOST` 支持已在 0.1.2 落地，其余为文档与默认值工作。
-
-| 项 | 说明 |
-|---|---|
-| ✅ `HOST` 可配 | 此前 `0.0.0.0` 硬编码在启动处，运维无法收口到回环 |
-| ✅ 生产启动不依赖 devDependency | `npm run start` 走 `tsx server/index.ts`，而 `tsx` 原本是 devDependency。`npm ci --omit=dev` 后它只是碰巧作为 vite 的传递依赖存在，依赖链一变生产就起不来。已提为正式 dependency |
-| 反代示例配置 | 提供 nginx / caddy 片段：`HOST=127.0.0.1` + 代理终止 TLS |
-| 部署自检清单 | 上线前确认：端口未直接对公网、有 TLS、`WORKSPACE_API_TOKEN` 已设或明确 `AI_PUBLIC_ACCESS=1` |
+碰 `App.tsx` / `DataWorkspace.tsx` 的项要先拆文件：这两个文件已在 `scripts/file-size-allowlist.json` 记录值上，闸门只允许往下棘轮。
 
 ## 0.2.0 — 左右栏信息架构
 
