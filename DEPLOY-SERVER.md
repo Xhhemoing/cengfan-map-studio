@@ -25,6 +25,8 @@ NODE_ENV=production npm run start
 - `AI_BUDGET_RECEIPT_SECRET`：不少于 32 个字符
 - 配置远程模型时设置 `WORKSPACE_API_TOKEN`，或明确 `AI_PUBLIC_ACCESS=1`
 - `DATA_DIR` 建议指向持久目录（默认 `.data`，已在 `.gitignore`）
+- `PORT` 监听端口（默认 `8787`）
+- `HOST` 绑定网卡（默认 `0.0.0.0`）。放在 nginx / caddy 等反向代理后面时设为 `127.0.0.1`，让端口只对本机开放，由代理终止 TLS 并对外服务
 
 可选：`WORKSPACE_API_TOKEN` 保护 `/api/workspace` 读写。设置后请求需带 `Authorization: Bearer <token>`。
 

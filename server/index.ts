@@ -24,6 +24,7 @@ import { createRoomErrorSender, createRoomRoutes, roomAccessToken } from "./room
 import { corsHeaders, securityHeaders, sendJson, serveStatic } from "./static-files";
 
 export const DEFAULT_PORT = 8787;
+export const DEFAULT_BIND_HOST = "0.0.0.0";
 
 /** SSE 背压观测量：字节数是进程内实际持有的未刷出数据，可直接作为内存上界的证据。 */
 export interface RoomStreamStats {
@@ -58,6 +59,14 @@ export type AiServer = http.Server & {
 export function resolvePort(value: string | undefined = process.env.PORT): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : DEFAULT_PORT;
+}
+/**
+ * 绑定网卡。默认 `0.0.0.0` 保持既有部署与容器行为不变；放在 nginx / caddy
+ * 后面时用 `HOST=127.0.0.1` 把进程收回环回地址，端口就不会直接对着公网。
+ */
+export function resolveBindHost(value: string | undefined = process.env.HOST): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : DEFAULT_BIND_HOST;
 }
 const DEFAULT_DATA_DIR = fileURLToPath(new URL("../.data", import.meta.url));
 
@@ -966,9 +975,10 @@ if (isDirectRun) {
     process.once("SIGINT", () => shutdown("SIGINT"));
     process.once("SIGTERM", () => shutdown("SIGTERM"));
     const port = resolvePort();
-    server.listen(port, "0.0.0.0", () => {
+    const host = resolveBindHost();
+    server.listen(port, host, () => {
       console.log(
-        `Cengfan studio listening on http://0.0.0.0:${port}${staticDir ? ` (static: ${staticDir})` : ""}`,
+        `Cengfan studio listening on http://${host}:${port}${staticDir ? ` (static: ${staticDir})` : ""}`,
       );
       console.log(`AI provider: ${resolveAgentConfig().model || "local-fallback"}`);
     });
