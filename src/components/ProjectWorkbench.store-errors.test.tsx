@@ -54,6 +54,17 @@ describe("ProjectWorkbench store write failures", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).not.toContain("创建项目失败");
   });
 
+  it("does not seed a sample project when listing the library fails", async () => {
+    const store = createMemoryProjectStore();
+    const putSpy = vi.spyOn(store, "put");
+    vi.spyOn(store, "list").mockRejectedValue(new ProjectStoreError("read-aborted", "IndexedDB 读取中止"));
+    const { container } = renderWorkbench(store);
+
+    await vi.waitFor(() => expect(container.querySelector(".workbench-error")?.textContent).toContain("IndexedDB 读取中止"));
+    expect(putSpy).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("还没有项目");
+  });
+
   it("shows the typed quota message when duplicating a project fails", async () => {
     const store = createMemoryProjectStore();
     const sample = createSampleProject();

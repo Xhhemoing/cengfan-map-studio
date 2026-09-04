@@ -618,7 +618,7 @@ export function useCollaborationRoom(options: UseCollaborationRoomOptions): UseC
   const joinCollaborationRoom = async () => {
     const normalizedRoomId = roomInput.trim().toUpperCase();
     if (!normalizedRoomId) return;
-    const persistedToken = storedRoomAccess(normalizedRoomId);
+    const persistedToken = inviteTokenInput.trim() ? null : storedRoomAccess(normalizedRoomId);
     if (!inviteTokenInput.trim() && !persistedToken) return;
     abortRoomRequests();
     clearTerminalState();

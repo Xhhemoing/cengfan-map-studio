@@ -12,24 +12,13 @@ import { templatePickerProps, type EditorTemplateActions } from "../../lib/edito
 import type { UsePosterExportResult } from "../../lib/usePosterExport";
 import type { WorkflowStageId } from "../../lib/workflow-stages";
 import { CardsInspector } from "../inspector/CardsInspector";
+import { StatusStrip } from "../StatusStrip";
 import { StudioLayoutTemplate, type StageSlots } from "../StudioLayoutTemplate";
 import { ToolbarButton } from "../StudioUi";
-import {
-  ContentLayoutRail,
-  ContentLayoutWorkspace,
-  type ContentAssetPanelProps,
-  type ContentLayoutWorkspaceProps,
-} from "../workspaces/ContentLayoutWorkspace";
-import {
-  DataUploadRail,
-  DataUploadWorkspace,
-  type DataUploadWorkspaceProps,
-} from "../workspaces/DataUploadWorkspace";
-import {
-  DeliveryRail,
-  DeliveryWorkspace,
-  type DeliveryIssue,
-} from "../workspaces/DeliveryWorkspace";
+import { ExportProjectDialog } from "./ExportProjectDialog";
+import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps, type ContentLayoutWorkspaceProps } from "../workspaces/ContentLayoutWorkspace";
+import { DataUploadRail, DataUploadWorkspace, type DataUploadWorkspaceProps } from "../workspaces/DataUploadWorkspace";
+import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "../workspaces/DeliveryWorkspace";
 import { MapStyleRail, MapStyleWorkspace, type MapStyleWorkspaceProps } from "../workspaces/MapStyleWorkspace";
 import { ReferenceCardStyleRail, ReferenceCardStyleWorkspace } from "../workspaces/ReferenceCardStyleWorkspace";
 
@@ -65,6 +54,8 @@ export interface StageLayoutScreenProps {
   redoLabel: string;
   posterRef: RefObject<SVGSVGElement | null>;
   posterExport: UsePosterExportResult;
+  /** App 的一句话反馈（保存/模板/素材/导出）。五阶段外壳靠底部状态条把它说出来。 */
+  statusMessage?: string;
   onPatch: ContentLayoutWorkspaceProps["onPatch"];
   onReset: ContentLayoutWorkspaceProps["onReset"];
   onSelect: ContentLayoutWorkspaceProps["onSelect"];
@@ -106,6 +97,8 @@ export function StageLayoutScreen(props: StageLayoutScreenProps) {
     leftRail,
     drawerOpen,
     onDrawerClose,
+    posterExport,
+    statusMessage,
   } = props;
 
   const slots = buildStageSlots(stage, props);
@@ -125,6 +118,8 @@ export function StageLayoutScreen(props: StageLayoutScreenProps) {
       rightRailLabel={STAGE_METADATA[stage].rightRailLabel}
       drawerOpen={drawerOpen}
       onDrawerClose={onDrawerClose}
+      statusStrip={<StatusStrip message={statusMessage} />}
+      dialogs={<ExportProjectDialog posterExport={posterExport} />}
     >
       {slots.workspace}
     </StudioLayoutTemplate>

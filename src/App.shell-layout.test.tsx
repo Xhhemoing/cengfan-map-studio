@@ -1,6 +1,6 @@
 // 从 src/App.test.tsx 原样搬出：外壳布局契约：CSS、响应式面板、阶段插槽与顶栏分层。
 // 共享挂载/交互装置见 src/app-test-harness.tsx。
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "./lib/editor-layout";
 import { installAppTestHarness, renderApp, renderPublicApp, renderLegacyApp, click, openGlobalSettingsSection, openRailAdvancedTab, workflowStage } from "./app-test-harness";
 
@@ -248,5 +248,36 @@ describe("Topbar action layering (T4)", () => {
     const container = renderPublicApp();
     const themeGroup = container.querySelector('.topbar-actions [role="group"][aria-label="界面主题"]');
     expect(themeGroup?.className).toContain("topbar-action-group--theme");
+  });
+});
+
+describe("Five-stage status strip", () => {
+  // App 的 statusMessage 以前只有 legacy 检查器能看到：五阶段外壳里保存、模板、
+  // 导出说的每一句话都掉在地上。状态条常驻在外壳底部，成功/失败分走两条通道。
+  it("keeps both live regions mounted and speaks the startup status", () => {
+    const container = renderPublicApp();
+
+    const strip = container.querySelector(".editor-status-strip")!;
+    expect(container.querySelector(".app-shell")?.contains(strip)).toBe(true);
+    expect(strip.querySelector('[role="status"][aria-live="polite"]')?.textContent).toContain("仅在点击强制保存时写入本地");
+    expect(strip.querySelector('[role="alert"][aria-live="assertive"]')?.textContent).toBe("");
+  });
+
+  it("reuses the same regions across stages and routes a failure to the alert channel", () => {
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => {
+      throw new Error("SVG 导出失败：下载被浏览器拒绝");
+    });
+    const container = renderPublicApp();
+    const status = container.querySelector('.editor-status-strip [role="status"]')!;
+    const alert = container.querySelector('.editor-status-strip [role="alert"]')!;
+
+    click(workflowStage(container, "交付"));
+    click(container.querySelector<HTMLButtonElement>('button[aria-label="导出 SVG"]')!);
+
+    // 同一个节点被复用（区域先于消息存在），读屏才会播报后来的这条失败。
+    expect(container.querySelector('.editor-status-strip [role="status"]')).toBe(status);
+    expect(container.querySelector('.editor-status-strip [role="alert"]')).toBe(alert);
+    expect(alert.textContent).toBe("SVG 导出失败：下载被浏览器拒绝");
+    expect(status.textContent).toBe("");
   });
 });

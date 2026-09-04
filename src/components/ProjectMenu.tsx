@@ -78,7 +78,7 @@ export interface ProjectMenuProps {
   collaborationOpen: boolean;
   pngScale: number;
   transparentExport: boolean;
-  /** 任一导出在途时置灰两个海报导出入口:导出互相打断会毁掉正在写的那一份文件。 */
+  /** 任一导出在途时置灰海报与工程导出入口:导出互相打断会毁掉正在写的那一份文件。 */
   exportState: "idle" | "exporting" | "success" | "error";
   syncStatus: LocalOverwriteStatus;
   onSetCollaborationOpen: (open: boolean) => void;
@@ -260,7 +260,7 @@ export function ProjectMenu({
                   </>
                 ) : (
                   <>
-                    <p>未连接时不会上传或覆盖工程。创建者可生成可编辑或仅查看的一次性邀请凭证。</p>
+                    <p>未连接时不会上传或覆盖工程。创建者可生成可编辑或仅查看的一次性邀请凭证。房间约 30 分钟无操作后失效；邀请凭证约 24 小时有效。</p>
                     <DisplayNameInput value={displayName} connected={false} onChange={handleDisplayNameChange} />
                     <button type="button" className="collaboration-create" disabled={collaborationStatus === "connecting"} onClick={onStartRoom}><Share2 size={14} /> 创建房间</button>
                     <div className="collaboration-join">
@@ -296,7 +296,7 @@ export function ProjectMenu({
           >
             <Save size={16} /> {syncStatus === "saving" ? "保存中" : "保存到本机"}
           </button>
-          <button type="button" onClick={onExportProject}><PackageOpen size={16} /> 导出工程</button>
+          <button type="button" onClick={onExportProject} disabled={exportState === "exporting"}><PackageOpen size={16} /> 导出工程</button>
           <label className="project-menu__file"><PackageOpen size={16} /> 导入工程
             <input type="file" accept={PROJECT_PACKAGE_FILE_ACCEPT} aria-label="导入完整工程包" onChange={(event) => onImportProject(event.target.files?.[0] ?? null)} />
           </label>

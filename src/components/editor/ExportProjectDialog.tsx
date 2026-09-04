@@ -8,6 +8,8 @@ export interface ExportProjectDialogProps {
  * 导出工程确认弹层:背景遮罩 + 资源包开关 + 取消/确认。
  * 开关与可见性状态仍由 App 持有的 `posterExport` 接缝提供,这里只负责渲染;
  * DOM 结构、class 名、role、aria 标签与文案与旧的 App 内联分支逐字一致。
+ * 确认按钮在导出在途时置灰:两次导出互相打断会毁掉正在写的那一份文件,
+ * 顶栏与侧栏的导出入口已经这么做了,这里是同一道闸的最后一段。
  */
 export function ExportProjectDialog({ posterExport }: ExportProjectDialogProps) {
   if (!posterExport.showProjectExportDialog) return null;
@@ -45,7 +47,7 @@ export function ExportProjectDialog({ posterExport }: ExportProjectDialogProps) 
         )}
         <footer>
           <button type="button" className="secondary-button" onClick={() => posterExport.setShowProjectExportDialog(false)}>取消</button>
-          <button type="button" className="primary-button" aria-label="确认导出工程" onClick={posterExport.exportProjectPackage}>确认导出</button>
+          <button type="button" className="primary-button" aria-label="确认导出工程" onClick={posterExport.exportProjectPackage} disabled={posterExport.exportState === "exporting"}>确认导出</button>
         </footer>
       </section>
     </div>

@@ -42,7 +42,7 @@ export type ProjectStoreHealth = "persistent" | "memory";
 export type ProjectStoreErrorCode =
   | "unsupported"
   | "quota-exceeded"
-  | "write-aborted"
+  | "read-aborted" | "write-aborted"
   | "delete-aborted"
   | "open-failed";
 
@@ -700,7 +700,7 @@ export function createIndexedDbProjectStore(
       return fallback ? "memory" : "persistent";
     },
     async list() {
-      return withFallback(() => run(METADATA_STORE_NAME, "readonly", (tx) => new Promise<ProjectListItem[]>((resolve) => {
+      return withFallback(() => run(METADATA_STORE_NAME, "readonly", (tx) => new Promise<ProjectListItem[]>((resolve, reject) => {
         const request = tx.objectStore(METADATA_STORE_NAME).getAll();
         request.onsuccess = () => {
           // 单条元数据损坏只丢弃该条，其余项目必须照常列出。
@@ -710,8 +710,8 @@ export function createIndexedDbProjectStore(
             .map(projectListItem);
           resolve(items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
         };
-        request.onerror = () => resolve([]);
-        tx.onabort = () => resolve([]);
+        request.onerror = (event) => reject(abortFailure(tx, requestErrorOf(event), "read-aborted", "IndexedDB 读取中止"));
+        tx.onabort = () => reject(abortFailure(tx, null, "read-aborted", "IndexedDB 读取中止"));
       })), (store) => store.list());
     },
     async get(id) {

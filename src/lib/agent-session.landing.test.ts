@@ -25,6 +25,17 @@ describe("AgentSession landing", () => {
     expect(applied.history).toEqual(project.history);
   });
 
+  it("accepts mapBoundaryMargin as a writable map property", async () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(response({ kind: "tool-call", calls: [{ id: "call-margin", name: "update_map", arguments: { patch: { mapBoundaryMargin: 24 } } }], assistantMessage: { role: "assistant", content: null } }))
+      .mockResolvedValueOnce(response({ kind: "finish", summary: "已加大留白" })));
+    const session = new AgentSession(project, { mode: "conservative" });
+    await session.run("地图周围留白大一点");
+    expect(session.shadowProject.map.mapBoundaryMargin).toBe(24);
+    expect(session.transactionForSteps(new Set(["call-margin"]))!.apply(project).map.mapBoundaryMargin).toBe(24);
+  });
+
   it("builds a selected-step transaction without applying deselected writes", async () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const originalFontSize = project.cards.fontSize;

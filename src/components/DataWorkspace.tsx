@@ -1,5 +1,5 @@
 import { Check, Download, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   applyUniversityAutoLocation,
   confirmImportCandidates,
@@ -16,8 +16,13 @@ import {
   STUDENT_COLUMN_LABELS,
   type ExcelImportResult,
 } from "../lib/binary-import";
-import type { WorkbookImportRequest, WorkbookImportResponse } from "../workers/workbook-import.worker";
+import {
+  describeSkippedSheets,
+  useWorkbookImportSession,
+  MAX_WORKBOOK_FILE_BYTES,
+} from "../lib/data-workspace-workbook";
 import { requestAiParseData, type ParseDataResult } from "../lib/ai-client";
+import { AiUploadConsentDialog, AiUploadConsentMemo, useAiUploadConsent } from "./DataImportConsent";
 import { DataMessageRegions } from "./DataMessageRegions";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
@@ -30,33 +35,10 @@ import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, Segm
 
 /** 未导入行最多列几条：一份 60 行的名单全废时不该把整个面板刷满。 */
 const UNPARSED_PREVIEW_LIMIT = 20;
-/** 提示里最多点名几张未读取的工作表，其余用「等」收尾。 */
-const SKIPPED_SHEET_PREVIEW = 3;
-/** 压缩工作簿解包后的体积可能远大于文件本身，先挡住异常大的输入再读取到内存。 */
-const MAX_WORKBOOK_FILE_BYTES = 25 * 1024 * 1024;
-/** 病态工作簿不能无限占住导入流程；超时后销毁 worker，避免其继续消耗 CPU。 */
-const WORKBOOK_PARSE_DEADLINE_MS = 30_000;
-/** 连续导入复用已加载 XLSX 的 worker，空闲后再释放其模块和堆内存。 */
-const WORKBOOK_WORKER_IDLE_MS = 30_000;
-const WORKBOOK_IMPORT_CANCELLED = Symbol("workbook-import-cancelled");
-
-interface ActiveWorkbookImport {
-  worker: Worker;
-  requestId: number;
-  deadlineTimer: ReturnType<typeof setTimeout>;
-  reject: (reason: unknown) => void;
-}
-
-function createWorkbookImportWorker(): Worker {
-  if (typeof Worker === "undefined") throw new Error("当前浏览器不支持后台解析 Excel / CSV");
-  return new Worker(new URL("../workers/workbook-import.worker.ts", import.meta.url), { type: "module" });
-}
-
-function describeSkippedSheets(names: readonly string[]): string {
-  if (names.length === 0) return "";
-  const preview = names.slice(0, SKIPPED_SHEET_PREVIEW).join("、");
-  return `，另有 ${names.length} 张工作表未读取（${preview}${names.length > SKIPPED_SHEET_PREVIEW ? " 等" : ""}）`;
-}
+/** 未取得出境同意时的识别口径，与 AI 失败回退共用同一条本地路径。 */
+const LOCAL_TEXT_SOURCE_LABEL = "本地文本识别";
+/** 拒绝发送后追加在识别口径之后，说清这次为什么没走智能识别。 */
+const CONSENT_DECLINED_NOTE = "（未同意发送原文，只用了本地规则）";
 
 export function DataWorkspace({
   students,
@@ -111,131 +93,13 @@ export function DataWorkspace({
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
   const [unparsedRows, setUnparsedRows] = useState<UnparsedLine[]>([]);
-  /**
-   * 每次发起识别都领一个号，只有仍持有最新号的那次才能落到候选状态上。
-   * 连点两次文件选择时，先发出的那次可能后返回，没有这道闸就会用旧文件覆盖新文件。
-   */
-  const importGenerationRef = useRef(0);
-  const workbookWorkerRef = useRef<Worker | null>(null);
-  const activeWorkbookImportRef = useRef<ActiveWorkbookImport | null>(null);
-  const workbookWorkerIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearWorkbookWorkerIdleTimer = () => {
-    if (workbookWorkerIdleTimerRef.current === null) return;
-    clearTimeout(workbookWorkerIdleTimerRef.current);
-    workbookWorkerIdleTimerRef.current = null;
-  };
-  const terminateWorkbookWorker = (worker: Worker | null = workbookWorkerRef.current) => {
-    if (!worker) return;
-    clearWorkbookWorkerIdleTimer();
-    if (workbookWorkerRef.current === worker) workbookWorkerRef.current = null;
-    worker.terminate();
-  };
-  const scheduleWorkbookWorkerIdleTeardown = (worker: Worker) => {
-    clearWorkbookWorkerIdleTimer();
-    if (workbookWorkerRef.current !== worker) return;
-    workbookWorkerIdleTimerRef.current = setTimeout(() => {
-      workbookWorkerIdleTimerRef.current = null;
-      if (workbookWorkerRef.current === worker && activeWorkbookImportRef.current?.worker !== worker) {
-        terminateWorkbookWorker(worker);
-      }
-    }, WORKBOOK_WORKER_IDLE_MS);
-  };
-  const acquireWorkbookWorker = (): Worker => {
-    clearWorkbookWorkerIdleTimer();
-    if (!workbookWorkerRef.current) workbookWorkerRef.current = createWorkbookImportWorker();
-    return workbookWorkerRef.current;
-  };
-  const cancelWorkbookImport = () => {
-    const active = activeWorkbookImportRef.current;
-    if (!active) return;
-    activeWorkbookImportRef.current = null;
-    clearTimeout(active.deadlineTimer);
-    terminateWorkbookWorker(active.worker);
-    active.reject(WORKBOOK_IMPORT_CANCELLED);
-  };
-  const beginImport = (): number => {
-    importGenerationRef.current += 1;
-    cancelWorkbookImport();
-    return importGenerationRef.current;
-  };
-  const isCurrentImport = (generation: number): boolean => importGenerationRef.current === generation;
-
-  const parseWorkbookInWorker = async (
-    buffer: ArrayBuffer,
-    isCsv: boolean,
-    requestId: number,
-  ): Promise<Extract<WorkbookImportResponse, { type: "result" }>> => {
-    const worker = acquireWorkbookWorker();
-    try {
-      return await new Promise((resolve, reject) => {
-        let settled = false;
-        let deadlineTimer: ReturnType<typeof setTimeout>;
-        const settle = () => {
-          if (settled) return false;
-          settled = true;
-          clearTimeout(deadlineTimer);
-          if (
-            activeWorkbookImportRef.current?.worker === worker
-            && activeWorkbookImportRef.current.requestId === requestId
-          ) {
-            activeWorkbookImportRef.current = null;
-          }
-          return true;
-        };
-        const rejectOnce = (reason: unknown) => {
-          if (!settle()) return;
-          reject(reason);
-        };
-        const resolveOnce = (response: Extract<WorkbookImportResponse, { type: "result" }>) => {
-          if (!settle()) return;
-          resolve(response);
-        };
-        deadlineTimer = setTimeout(() => {
-          terminateWorkbookWorker(worker);
-          rejectOnce(new Error("解析超时，文件可能已损坏"));
-        }, WORKBOOK_PARSE_DEADLINE_MS);
-        activeWorkbookImportRef.current = { worker, requestId, deadlineTimer, reject: rejectOnce };
-        worker.onmessage = (event: MessageEvent<WorkbookImportResponse>) => {
-          const response = event.data;
-          if (response.requestId !== requestId) return;
-          if (response.type === "error") {
-            rejectOnce(new Error(response.message));
-            return;
-          }
-          resolveOnce(response);
-        };
-        worker.onerror = (event) => {
-          event.preventDefault();
-          terminateWorkbookWorker(worker);
-          rejectOnce(new Error(event.message || "工作簿后台解析失败"));
-        };
-        worker.onmessageerror = () => {
-          terminateWorkbookWorker(worker);
-          rejectOnce(new Error("工作簿后台解析结果无法读取"));
-        };
-        const request: WorkbookImportRequest = {
-          type: "parse-workbook",
-          requestId,
-          buffer,
-          isCsv,
-        };
-        try {
-          worker.postMessage(request, [buffer]);
-        } catch (error) {
-          terminateWorkbookWorker(worker);
-          rejectOnce(error);
-        }
-      });
-    } finally {
-      if (workbookWorkerRef.current === worker) scheduleWorkbookWorkerIdleTeardown(worker);
-    }
-  };
-
-  useEffect(() => () => {
-    importGenerationRef.current += 1;
-    cancelWorkbookImport();
-    terminateWorkbookWorker();
-  }, []);
+  const {
+    begin: beginImport,
+    isCurrent: isCurrentImport,
+    parseWorkbook: parseWorkbookInWorker,
+  } = useWorkbookImportSession();
+  // 粘贴原文（含学生姓名）出境前的闸门：没拿到同意就不调用 requestAiParse。
+  const consentGate = useAiUploadConsent(setMessage);
 
   const filteredStudents = useMemo(() => {
     const query = filter.trim().toLocaleLowerCase("zh-CN");
@@ -385,7 +249,15 @@ export function DataWorkspace({
       setMessage("请先粘贴需要智能识别的名单");
       return;
     }
+    // 询问已经挂在屏幕上时再点一次，会顶掉正在等待的那个 promise。
+    if (consentGate.isAsking) return;
+    const granted = await consentGate.requestConsent("paste");
     const generation = beginImport();
+    if (!granted) {
+      const parsed = parseStudentText(importText);
+      setCandidates(parsed.candidates, parsed.unparsed, LOCAL_TEXT_SOURCE_LABEL, undefined, CONSENT_DECLINED_NOTE);
+      return;
+    }
     setIsAiParsing(true);
     try {
       const parsed = await requestAiParse({ text: importText, source: "paste" });
@@ -462,25 +334,34 @@ export function DataWorkspace({
       setMessage("请先粘贴名单");
       return;
     }
+    if (consentGate.isAsking) return;
+    const granted = await consentGate.requestConsent("paste");
     const generation = beginImport();
     setExcelRecognition(null);
-    setIsAiParsing(true);
-    let parsed;
+    let parsed: { candidates: ImportCandidate[]; unparsed: UnparsedLine[] };
     let sourceLabel: string;
-    try {
-      const aiParsed = await requestAiParse({ text: importText, source: "paste" });
-      parsed = { candidates: aiParsed.candidates, unparsed: aiParsed.unparsed };
-      sourceLabel = `智能识别（${aiParsed.provider}）`;
-    } catch {
+    let note = "";
+    if (granted) {
+      setIsAiParsing(true);
+      try {
+        const aiParsed = await requestAiParse({ text: importText, source: "paste" });
+        parsed = { candidates: aiParsed.candidates, unparsed: aiParsed.unparsed };
+        sourceLabel = `智能识别（${aiParsed.provider}）`;
+      } catch {
+        parsed = parseStudentText(importText);
+        sourceLabel = LOCAL_TEXT_SOURCE_LABEL;
+      } finally {
+        setIsAiParsing(false);
+      }
+    } else {
       parsed = parseStudentText(importText);
-      sourceLabel = "本地文本识别";
-    } finally {
-      setIsAiParsing(false);
+      sourceLabel = LOCAL_TEXT_SOURCE_LABEL;
+      note = CONSENT_DECLINED_NOTE;
     }
     if (!isCurrentImport(generation)) return;
     setUnparsedRows(parsed.unparsed);
     if (parsed.candidates.length === 0) {
-      setMessage(`没有从${sourceLabel}识别到可导入的学生记录，跳过 ${parsed.unparsed.length} 行`);
+      setMessage(`没有从${sourceLabel}识别到可导入的学生记录，跳过 ${parsed.unparsed.length} 行${note}`);
       return;
     }
     const result = confirmImportCandidates(parsed.candidates.map((c) => ({ ...c, accepted: true })));
@@ -491,7 +372,7 @@ export function DataWorkspace({
     onAppendStudents(result.students);
     setReviewRows([]);
     setImportText("");
-    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录，跳过 ${parsed.unparsed.length + result.rejected.length} 行`);
+    setMessage(`已从${sourceLabel}导入 ${result.students.length} 条学生记录，跳过 ${parsed.unparsed.length + result.rejected.length} 行${note}`);
   };
 
   return (
@@ -626,14 +507,16 @@ export function DataWorkspace({
             />
             <ActionGroup label="导入处理" className="review-actions">
               <CompactButton icon={<FileUp size={14} aria-hidden />} onClick={prepareImport}>识别文本</CompactButton>
-              <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing}>
+              <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing || consentGate.isAsking}>
                 {isAiParsing ? "智能识别中..." : "智能识别名单"}
               </CompactButton>
               <CompactButton variant="secondary" onClick={prepareOcrImport}>识别 OCR 文本</CompactButton>
-              <ActionButton onClick={importDirectly} disabled={isAiParsing}>
+              <ActionButton onClick={importDirectly} disabled={isAiParsing || consentGate.isAsking}>
                 {isAiParsing ? "识别并导入中..." : "一键识别并导入"}
               </ActionButton>
             </ActionGroup>
+            <AiUploadConsentDialog gate={consentGate} />
+            <AiUploadConsentMemo gate={consentGate} />
             <div className="file-import-row">
               <FileDropzone
                 id="data-excel-upload"

@@ -1,14 +1,19 @@
-// R12-1 从 App.tsx 拆出的旧版编辑器中栏(画布舞台)与右栏(属性面板 + 项目摘要)的直接契约。
+// R12-1 从 App.tsx 拆出的旧版编辑器左栏(交付面板)、中栏(画布舞台)与右栏
+// (属性面板 + 项目摘要)的直接契约。
 // App 分片 pin(src/App.shell-layout.test.tsx)从 App 那一侧盯同一份 DOM;
-// 这里从组件这一侧盯缩放数学、id/class 与摘要文案,拆分后两侧应当同时为真。
+// 这里从组件这一侧盯缩放数学、id/class、摘要文案与导出闸门,拆分后两侧应当同时为真。
 import { createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInitialProject } from "../../lib/app-initialization";
 import type { LocalWorkspaceOverwriteState } from "../../lib/incremental-workspace-sync";
 import { buildProvinceSummary } from "../../lib/project-data";
+import { createSystemTemplate } from "../../lib/template-document";
+import type { UsePosterExportResult } from "../../lib/usePosterExport";
+import { listStudentWarnings } from "../../lib/workflow-progress";
 import { LegacyEditorInspector } from "./LegacyEditorInspector";
+import { LegacyEditorSidebar, type LegacyEditorSidebarProps } from "./LegacyEditorSidebar";
 import { LegacyEditorStage } from "./LegacyEditorStage";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -216,5 +221,130 @@ describe("LegacyEditorInspector", () => {
   it("drops the status note when there is no message", () => {
     const container = renderInspector(false, { status: "idle", savedAt: null });
     expect(container.querySelectorAll(".project-summary .panel-note")).toHaveLength(1);
+  });
+});
+
+describe("LegacyEditorSidebar 交付面板", () => {
+  const project = createInitialProject();
+
+  function createPosterExport(overrides: Partial<UsePosterExportResult> = {}): UsePosterExportResult {
+    return {
+      exportingPng: false,
+      exportState: "idle",
+      exportError: undefined,
+      lastExportFileName: undefined,
+      pngScale: 1,
+      transparentExport: false,
+      showProjectExportDialog: false,
+      includeResourcesInProjectExport: true,
+      setPngScale: noop,
+      setTransparentExport: noop,
+      setShowProjectExportDialog: noop,
+      setIncludeResourcesInProjectExport: noop,
+      openProjectExportDialog: vi.fn(),
+      exportSvg: vi.fn(),
+      exportPng: vi.fn(async () => {}),
+      exportProjectPackage: vi.fn(),
+      retryLastExport: noop,
+      importProjectPackage: noop,
+      ...overrides,
+    };
+  }
+
+  function renderDeliverPanel(posterExport: UsePosterExportResult): HTMLDivElement {
+    const props: LegacyEditorSidebarProps = {
+      assistantRail: null,
+      activePanel: "deliver",
+      project,
+      dataView: "province",
+      summary: buildProvinceSummary(project.students),
+      selection: { type: "canvas" },
+      userAssets: [],
+      assetUsageById: {},
+      customTemplates: [],
+      resolvedTemplate: createSystemTemplate("original"),
+      exportWarnings: listStudentWarnings(project),
+      dataWorkspaceProps: {
+        students: project.students,
+        onReplaceStudents: noop,
+        onAppendStudents: noop,
+        onUpdateStudent: noop,
+        onToggleVisibility: noop,
+        onDeleteStudent: noop,
+        onSetStudentsVisibility: noop,
+      },
+      posterExport,
+      syncStatus: "idle",
+      onChangeDataView: noop,
+      onPatchScene: noop,
+      onResetScene: noop,
+      onSetSelection: noop,
+      onSetActivePanel: noop,
+      onReportStatus: noop,
+      onApplySystemTemplate: noop,
+      onApplyCustomTemplate: noop,
+      onSaveTemplate: noop,
+      onApplyBackground: noop,
+      onCreateLandmark: noop,
+      onCreateDecoration: noop,
+      onApplyProvinceThemes: noop,
+      onAddUserAsset: noop,
+      onReplaceUserAsset: noop,
+      onDeleteUserAsset: noop,
+      onExportResourcePack: noop,
+      onImportResourcePack: noop,
+      onSaveLocal: noop,
+      onAddText: noop,
+      onAddNote: noop,
+      onSelectStyleLayer: noop,
+    };
+    return mount(<LegacyEditorSidebar {...props} />);
+  }
+
+  function deliveryButton(container: HTMLDivElement, label: string): HTMLButtonElement {
+    const group = container.querySelector('[role="group"][aria-label="交付操作"]')!;
+    const button = Array.from(group.querySelectorAll("button")).find((node) =>
+      node.textContent?.includes(label),
+    );
+    if (!button) throw new Error(`交付操作里找不到「${label}」`);
+    return button;
+  }
+
+  it("keeps SVG and project exports clickable while the pipeline is idle", () => {
+    const posterExport = createPosterExport();
+    const container = renderDeliverPanel(posterExport);
+
+    const svg = deliveryButton(container, "导出 SVG");
+    const projectPackage = deliveryButton(container, "导出工程");
+    expect(svg.disabled).toBe(false);
+    expect(projectPackage.disabled).toBe(false);
+
+    flushSync(() => svg.click());
+    flushSync(() => projectPackage.click());
+    expect(posterExport.exportSvg).toHaveBeenCalledTimes(1);
+    expect(posterExport.openProjectExportDialog).toHaveBeenCalledTimes(1);
+  });
+
+  // 这三个入口写的是同一条下载通道:导出在途时放行任意一个,两次写文件互相打断,
+  // 毁掉的是正在写的那一份。PNG 早就按 exportState 置灰,SVG 与工程导出必须同闸。
+  it("greys out SVG and project exports while an export is in flight", () => {
+    const posterExport = createPosterExport({ exportState: "exporting" });
+    const container = renderDeliverPanel(posterExport);
+
+    const svg = deliveryButton(container, "导出 SVG");
+    const projectPackage = deliveryButton(container, "导出工程");
+    expect(svg.disabled).toBe(true);
+    expect(projectPackage.disabled).toBe(true);
+
+    flushSync(() => svg.click());
+    flushSync(() => projectPackage.click());
+    expect(posterExport.exportSvg).not.toHaveBeenCalled();
+    expect(posterExport.openProjectExportDialog).not.toHaveBeenCalled();
+  });
+
+  it("leaves 保存到本机 on its own local-save gate, not the export gate", () => {
+    const container = renderDeliverPanel(createPosterExport({ exportState: "exporting" }));
+
+    expect(deliveryButton(container, "保存到本机").disabled).toBe(false);
   });
 });

@@ -11,7 +11,7 @@ export const SCENE_DOMAIN_PROPS: Record<SceneDomain, readonly string[]> = {
     "activeColor", "edgeColor", "edgeStyle", "edgeWidth", "showProvinceLabels",
     "provinceLabelFontId", "provinceLabelTypography", "collapseSouthChinaSea",
     "fillMode", "heatScale", "emptyProvinceFill", "renderSource", "provinceStyles",
-    "provinceTextureUniformSize",
+    "provinceTextureUniformSize", "mapBoundaryMargin",
   ],
   province: ["fill", "textureSrc", "visible", "labelFontId", "appearance"],
   cards: [

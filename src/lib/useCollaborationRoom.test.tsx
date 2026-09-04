@@ -99,6 +99,33 @@ describe("useCollaborationRoom", () => {
     harness.unmount();
   });
 
+  it("validates a typed invitation instead of reusing the token left in local storage", async () => {
+    const request = installFetch({
+      snapshotVersion: 1,
+      snapshot: samplePackage(),
+      operations: (afterVersion) => json({ id: ROOM_ID, version: 1, afterVersion, operations: [] }),
+      join: () => json({
+        room: { id: ROOM_ID, version: 0, ready: true },
+        access: { id: "p-member", participantId: "p-member", displayName: "成员", role: "editor", accessToken: "fresh-token" },
+      }),
+    });
+    const harness = mountHook(samplePackage());
+    // 上一次加入留下的凭证已经被踢掉/改角色了,用户拿着新邀请凭证回来:
+    // 无条件复用旧凭证只会拿一个失效的 token 去撞墙,报错还指不到真正的原因。
+    window.localStorage.setItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`, "revoked-token");
+    flushSync(() => {
+      harness.controller().setRoomInput(ROOM_ID);
+      harness.controller().setInviteTokenInput("fresh-invite");
+    });
+    harness.controller().joinRoom();
+    await vi.waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(0));
+
+    expect(request.mock.calls.some(([input]) => String(input).endsWith(`/api/rooms/${ROOM_ID}/join`))).toBe(true);
+    expect(harness.refs.accessTokenRef.current).toBe("fresh-token");
+    expect(window.localStorage.getItem(`${ROOM_ACCESS_STORAGE_PREFIX}${ROOM_ID}`)).toBe("fresh-token");
+    harness.unmount();
+  });
+
   it("mints a fresh events ticket and keeps exactly one stream through a reconnect storm", async () => {
     vi.useFakeTimers();
     const request = installFetch({

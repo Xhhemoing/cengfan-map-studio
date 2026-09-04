@@ -755,7 +755,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         undoLabel={undoLabel}
         redoLabel={redoLabel}
         posterRef={posterRef}
-        posterExport={posterExport}
+        posterExport={posterExport} statusMessage={statusMessage}
         onPatch={patchScene}
         onReset={resetSceneTarget}
         onSelect={selectScene}

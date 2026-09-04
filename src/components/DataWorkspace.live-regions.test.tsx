@@ -10,6 +10,7 @@ import {
   settle,
   click,
   changeInput,
+  grantAiUpload,
 } from "./data-workspace-test-harness";
 
 installDataWorkspaceTestHarness();
@@ -46,6 +47,7 @@ describe("DataWorkspace import live regions", () => {
 
     changeInput(container.querySelector("textarea")!, "苏禾 浙江大学 杭州");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="智能识别名单"]')!);
+    grantAiUpload(container);
     await settle();
     click(Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("替换全部"))!);
 

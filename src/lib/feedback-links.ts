@@ -15,7 +15,7 @@ export const CHANGELOG_URL = `${REPO_URL}/blob/main/CHANGELOG.md`;
  * 与 package.json 的 version 手抄同步——导入 package.json 会把整份清单
  * （依赖名、脚本）打进客户端产物，为了一个字符串不值得。漂移由测试守着。
  */
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.1.1";
 
 export const ISSUE_TEMPLATES = {
   feedback: "feedback.yml",

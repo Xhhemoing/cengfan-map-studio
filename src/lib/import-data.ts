@@ -34,6 +34,10 @@ function looksLikeHeader(parts: string[]): boolean {
     "学生名称",
     "院校",
     "录取院校",
+    // 教务导出的「毕业去向」列填的就是院校名，与 binary-import 的表头别名保持一致。
+    "毕业去向",
+    "去向院校",
+    "去向学校",
     "大学",
     "学校",
     "城市",
@@ -95,7 +99,8 @@ function parseLabeledCandidate(
   sourceLine: number,
 ): ImportCandidate | null {
   const fields = new Map<string, string>();
-  const labelPattern = /(姓名|学生(?:姓名)?|name|就读院校|就读学校|录取院校|院校|学校|university|school|城市|所在城市|city)\s*[：:]/giu;
+  // 长别名排在短别名之前：否则「去向院校：」只会从「院校」处起匹配，把「去向」留给上一字段。
+  const labelPattern = /(姓名|学生(?:姓名)?|name|就读院校|就读学校|录取院校|毕业去向|去向院校|去向学校|院校|学校|university|school|城市|所在城市|city)\s*[：:]/giu;
   const matches = Array.from(line.matchAll(labelPattern));
   for (const [index, match] of matches.entries()) {
     const label = match[1]!.toLocaleLowerCase("zh-CN");
@@ -105,6 +110,7 @@ function parseLabeledCandidate(
   }
   const name = fields.get("姓名") ?? fields.get("学生") ?? fields.get("学生姓名") ?? fields.get("name");
   const university = fields.get("就读院校") ?? fields.get("就读学校") ?? fields.get("录取院校")
+    ?? fields.get("毕业去向") ?? fields.get("去向院校") ?? fields.get("去向学校")
     ?? fields.get("院校") ?? fields.get("学校") ?? fields.get("university") ?? fields.get("school");
   const city = fields.get("城市") ?? fields.get("所在城市") ?? fields.get("city");
   return name && university && city ? { name, university, city, sourceLine, rawLine: line } : null;

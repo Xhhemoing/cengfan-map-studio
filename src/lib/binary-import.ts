@@ -56,14 +56,15 @@ const HEADER_ALIASES: Record<StudentColumn, readonly string[]> = {
     "大学",
     "学校",
     "就读学校",
-    "就读院校",
+    // 教务导出的「毕业去向」列填的就是院校名，认不出它整表会缺必填列。
+    "就读院校", "毕业去向", "去向院校", "去向学校",
     "university",
     "school",
     "college",
     "enrolled university",
   ],
   city: ["城市", "所在城市", "目的地城市", "city", "destination city", "location"],
-  locationScope: ["去向类型", "去向", "地区类型", "destination type", "location scope", "scope"],
+  locationScope: ["去向类型", "去向", "类型", "地区类型", "destination type", "location scope", "scope"],
 };
 
 /** 认到几列才算表头行：一列命中太容易被普通数据行碰上，两列起才当表头。 */

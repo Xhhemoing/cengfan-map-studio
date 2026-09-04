@@ -462,7 +462,7 @@ button { font: inherit; }
 /* 常驻 live region：无消息时收成不可见的 1px，既不撑出空框也不离开无障碍树。 */
 .data-message:empty { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; background: none; border: 0; clip-path: inset(50%); }
 .data-message__line { display: block; }
-.data-message__line + .data-message__line { margin-top: 4px; }
+.data-message__line + .data-message__line { margin-top: 4px; }/* 阶段外壳把 100vh 占满，状态条只能浮在画布之上；空态时两个 region 都收成 1px，整条不占位也不挡点击。 */ .editor-status-strip { position: fixed; z-index: 30; right: 16px; bottom: 14px; left: 16px; display: grid; justify-items: center; pointer-events: none; }.editor-status-strip .data-message { max-width: min(720px, 100%); pointer-events: auto; box-shadow: 0 6px 18px rgb(23 44 74 / 18%); }
 .search-combobox { position: relative; }
 .search-combobox__list { position: absolute; z-index: 20; right: 0; left: 0; max-height: 168px; overflow: auto; background: #fff; border: 1px solid #9dafbb; border-radius: 4px; box-shadow: 0 5px 14px rgb(37 57 73 / 18%); }
 .search-combobox__list button { display: flex; align-items: baseline; width: 100%; gap: 3px; padding: 7px 9px; color: #385066; text-align: left; background: #fff; border: 0; border-bottom: 1px solid #edf1f3; cursor: pointer; font: inherit; font-size: 11px; }
@@ -1572,7 +1572,7 @@ button { font: inherit; }
 .action-button:hover { color: var(--editor-ink); background: var(--editor-surface-raised); border-color: var(--editor-accent); }
 .compact-button:disabled,
 .action-button:disabled,
-.icon-button:disabled { opacity: .48; cursor: not-allowed; }
+.icon-button:disabled, .project-menu__popover button:disabled { opacity: .48; cursor: not-allowed; }
 .compact-button--secondary { color: #725744; background: #f8f0e8; border-color: #ddc2aa; }
 .compact-button--danger,
 .icon-button--danger { color: var(--editor-danger); background: #fff3f0; border-color: #e5b9ae; }

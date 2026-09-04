@@ -90,6 +90,21 @@ describe("ProjectMenu", () => {
     expect(svg?.disabled).toBe(true);
   });
 
+  it("greys out the project package export while a poster export is in flight", () => {
+    const { container } = renderMenu({ exportState: "exporting" });
+
+    // 工程包和海报走同一条下载通道：导出在途时再触发一次，会顶掉正在写的那份文件。
+    const project = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("导出工程"));
+    expect(project?.disabled).toBe(true);
+  });
+
+  it("tells the creator how long a room and its invitation live", () => {
+    const { container } = renderMenu({ collaborationOpen: true });
+
+    const panel = container.querySelector('section[aria-label="增量协作设置"]')!;
+    expect(panel.textContent).toContain("房间约 30 分钟无操作后失效；邀请凭证约 24 小时有效。");
+  });
+
   it("changes the PNG scale and transparency through the supplied callbacks", () => {
     const onPngScaleChange = vi.fn();
     const onTransparentChange = vi.fn();
