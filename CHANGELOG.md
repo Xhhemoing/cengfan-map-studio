@@ -12,6 +12,14 @@
 
 ## [Unreleased]
 
+版本路线与优先级见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+
+### 修复
+
+- **自建部署可以把端口收到回环**：新增 `HOST` 环境变量（默认仍是 `0.0.0.0`，既有部署行为不变）。此前监听地址硬编码在启动处，放在 nginx / caddy 后面时端口仍然直接对公网开放。配套新增 [docs/deployment/reverse-proxy.md](docs/deployment/reverse-proxy.md)：完整反代片段、SSE 长连接注意事项、`TRUST_PROXY` 的正确用法与误用风险、上线自检清单。
+- **原型页不再展示已下线的「一键智能排版」**：`/prototype` 的检查器假按钮改为与主编辑器一致的「刷新展示框位置」。
+- **部署文档不再包含公网 IP 与本机路径**。
+
 下一版（建议 0.2.0）改左右栏信息架构：**本段只指向规格，编辑器壳尚未改。**
 
 - 规格（已锁定）：[docs/superpowers/specs/2026-08-26-left-right-rail-ia.md](docs/superpowers/specs/2026-08-26-left-right-rail-ia.md)
