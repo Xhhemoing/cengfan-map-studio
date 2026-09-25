@@ -253,7 +253,8 @@ describe("降级会话里的崩溃灾难演练", () => {
     // —— 3. 编辑器路由读同一个工程：三实例分裂时这里会渲染成"项目不存在"。
     expect((await editorProjectStore.get(sampleId))?.name).toBe(SAMPLE_PROJECT_NAME);
     const editor = render(<ProjectRoute projectId={sampleId} />);
-    expect(editor.querySelector("[data-editor-canvas]")?.getAttribute("data-editor-canvas")).toBe(sampleId);
+    await vi.waitFor(() => expect(editor.querySelector("[data-editor-canvas]")?.getAttribute("data-editor-canvas"))
+      .toBe(sampleId));
 
     const files = stubDownloads();
     editor.querySelector<HTMLButtonElement>('button[aria-label="导出当前项目"]')?.click();
