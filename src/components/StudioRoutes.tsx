@@ -1,7 +1,6 @@
-import { useCallback, useState, useSyncExternalStore } from "react";
-import { App } from "../App";
-import { ProjectWorkbench } from "./ProjectWorkbench";
+import { lazy, Suspense, useCallback, useState, useSyncExternalStore } from "react";
 import { StorageNotice, StorageNoticeActionError, StorageNoticeExportAction } from "./StorageNotice";
+import { RouteLoadingShell } from "./RouteLoadingShell";
 import { projectPackageFileName } from "../lib/project-package-file-name";
 import {
   editorProjectStore,
@@ -10,6 +9,16 @@ import {
 } from "../lib/editor-project-store";
 import { downloadProjectPackage } from "../lib/project-package";
 import type { ProjectStore, ProjectStoreError, ProjectStoreHealth } from "../lib/project-store";
+
+const LazyApp = lazy(async () => {
+  const { App } = await import("../App");
+  return { default: App };
+});
+
+const LazyProjectWorkbench = lazy(async () => {
+  const { ProjectWorkbench } = await import("./ProjectWorkbench");
+  return { default: ProjectWorkbench };
+});
 
 interface StudioRouteProps {
   /** 覆盖共享项目库,只用于测试。 */
@@ -34,7 +43,11 @@ function useStoreHealth(channel: ProjectStoreHealthChannel): {
 
 export function WorkbenchRoute({ store = editorProjectStore, healthChannel = projectStoreHealthChannel }: StudioRouteProps) {
   const { health, recoverError } = useStoreHealth(healthChannel);
-  return <ProjectWorkbench store={store} health={health} recoverError={recoverError} />;
+  return (
+    <Suspense fallback={<RouteLoadingShell message="正在加载项目工作台…" />}>
+      <LazyProjectWorkbench store={store} health={health} recoverError={recoverError} />
+    </Suspense>
+  );
 }
 
 /**
@@ -81,7 +94,9 @@ export function ProjectRoute({
           }
         />
       )}
-      <App projectId={projectId} />
+      <Suspense fallback={<RouteLoadingShell message="正在加载编辑器…" />}>
+        <LazyApp projectId={projectId} />
+      </Suspense>
     </>
   );
 }

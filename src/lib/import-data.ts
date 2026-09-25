@@ -18,12 +18,20 @@ export interface TextImportResult {
   unparsed: UnparsedLine[];
 }
 
-function splitLines(text: string): string[] {
+interface SourceLine {
+  sourceLine: number;
+  rawLine: string;
+}
+
+function splitLines(text: string): SourceLine[] {
   return text
     .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .map((line, index) => ({
+      sourceLine: index + 1,
+      rawLine: line.replace(/^[^\S\r\n\t]+|[^\S\r\n\t]+$/g, ""),
+    }))
+    .filter(({ rawLine }) => rawLine.trim().length > 0);
 }
 
 function looksLikeHeader(parts: string[]): boolean {
@@ -63,8 +71,7 @@ function splitParts(line: string, delimiter: string | null): string[] {
   if (delimiter) {
     return line
       .split(delimiter)
-      .map((part) => part.trim())
-      .filter(Boolean);
+      .map((part) => part.trim());
   }
 
   return line
@@ -72,6 +79,13 @@ function splitParts(line: string, delimiter: string | null): string[] {
     .split(/[\s,，、;；\-\|]+/)
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+export function parseLocationScope(value: string | undefined): "international" | undefined {
+  const normalized = value?.trim().toLocaleLowerCase("zh-CN") ?? "";
+  return normalized.includes("海外") || normalized.includes("international") || normalized.includes("overseas")
+    ? "international"
+    : undefined;
 }
 
 function toCandidate(
@@ -86,9 +100,7 @@ function toCandidate(
     name,
     university,
     city,
-    ...(scope?.trim().toLocaleLowerCase("zh-CN") === "海外" || scope?.trim().toLocaleLowerCase("zh-CN") === "international"
-      ? { locationScope: "international" as const }
-      : {}),
+    ...(parseLocationScope(scope) ? { locationScope: "international" as const } : {}),
     sourceLine,
     rawLine,
   };
@@ -120,13 +132,13 @@ export function parseDelimitedTable(text: string): ImportCandidate[] {
   const lines = splitLines(text);
   if (lines.length === 0) return [];
 
-  const delimiter = detectDelimiter(lines[0] ?? "") ?? detectDelimiter(lines[1] ?? "") ?? ",";
+  const delimiter = detectDelimiter(lines[0]?.rawLine ?? "") ?? detectDelimiter(lines[1]?.rawLine ?? "") ?? ",";
   const candidates: ImportCandidate[] = [];
 
-  lines.forEach((line, index) => {
-    const parts = splitParts(line, delimiter);
+  lines.forEach(({ rawLine, sourceLine }, index) => {
+    const parts = splitParts(rawLine, delimiter);
     if (index === 0 && looksLikeHeader(parts)) return;
-    const candidate = toCandidate(parts, index + 1, line);
+    const candidate = toCandidate(parts, sourceLine, rawLine);
     if (candidate) candidates.push(candidate);
   });
 
@@ -138,27 +150,27 @@ export function parseStudentText(text: string): TextImportResult {
   const candidates: ImportCandidate[] = [];
   const unparsed: UnparsedLine[] = [];
 
-  lines.forEach((line, index) => {
-    const labeledCandidate = parseLabeledCandidate(line, index + 1);
+  lines.forEach(({ rawLine, sourceLine }, index) => {
+    const labeledCandidate = parseLabeledCandidate(rawLine, sourceLine);
     if (labeledCandidate) {
       candidates.push(labeledCandidate);
       return;
     }
-    const delimiter = detectDelimiter(line);
-    const parts = splitParts(line, delimiter);
+    const delimiter = detectDelimiter(rawLine);
+    const parts = splitParts(rawLine, delimiter);
     if (index === 0 && looksLikeHeader(parts) && parts.length >= 3) {
       return;
     }
 
-    const candidate = toCandidate(parts, index + 1, line);
+    const candidate = toCandidate(parts, sourceLine, rawLine);
     if (candidate) {
       candidates.push(candidate);
       return;
     }
 
     unparsed.push({
-      sourceLine: index + 1,
-      rawLine: line,
+      sourceLine,
+      rawLine,
       reason: "无法识别学生名称、录取院校和城市",
     });
   });

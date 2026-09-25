@@ -11,6 +11,7 @@ import {
 } from "../lib/project-store";
 
 const QUOTA_MESSAGE = "本机存储空间不足，请清理浏览器数据或删除不再需要的项目后重试。";
+const ROUTE_LOAD_TIMEOUT_MS = 15_000;
 
 // 编辑器画布本身不在测试范围内,只关心降级提示是否包在它外面。
 vi.mock("../App", () => ({
@@ -132,12 +133,16 @@ describe("shared project store", () => {
 });
 
 describe("ProjectRoute", () => {
-  it("wraps the editor with the memory-mode notice and clears it once storage recovers", () => {
+  it("wraps the editor with the memory-mode notice and clears it once storage recovers", async () => {
     const { channel, push } = controllableChannel("memory");
     const container = render(<ProjectRoute projectId="proj-1" healthChannel={channel} />);
 
     const notice = storageNotice(container);
     expect(notice?.textContent).toContain("本次编辑不会保存到本机，请及时导出工程备份");
+    await vi.waitFor(
+      () => expect(container.querySelector("[data-editor-canvas]")).not.toBeNull(),
+      { timeout: ROUTE_LOAD_TIMEOUT_MS },
+    );
     // 提示在编辑器外面:不改 App.tsx 也能让编辑器路由说出降级实情。
     expect(notice?.nextElementSibling?.getAttribute("data-editor-canvas")).toBe("proj-1");
 
@@ -212,7 +217,10 @@ describe("WorkbenchRoute", () => {
   it("passes the subscribed health down to the workbench", async () => {
     const { channel, push } = controllableChannel("persistent");
     const container = render(<WorkbenchRoute store={createMemoryProjectStore()} healthChannel={channel} />);
-    await vi.waitFor(() => expect(container.querySelector(".workbench-shell")).not.toBeNull());
+    await vi.waitFor(
+      () => expect(container.querySelector(".workbench-grid")).not.toBeNull(),
+      { timeout: ROUTE_LOAD_TIMEOUT_MS },
+    );
     expect(storageNotice(container)).toBeNull();
 
     push("memory");
@@ -223,7 +231,10 @@ describe("WorkbenchRoute", () => {
   it("shows the same write-back failure the editor route shows", async () => {
     const { channel, push } = controllableChannel("memory");
     const container = render(<WorkbenchRoute store={createMemoryProjectStore()} healthChannel={channel} />);
-    await vi.waitFor(() => expect(storageNotice(container)).not.toBeNull());
+    await vi.waitFor(
+      () => expect(storageNotice(container)).not.toBeNull(),
+      { timeout: ROUTE_LOAD_TIMEOUT_MS },
+    );
 
     push("memory", new ProjectStoreError("quota-exceeded", QUOTA_MESSAGE));
 

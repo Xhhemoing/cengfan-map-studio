@@ -1,4 +1,10 @@
-import { parseStudentText, type ImportCandidate, type TextImportResult, type UnparsedLine } from "./import-data";
+import {
+  parseLocationScope,
+  parseStudentText,
+  type ImportCandidate,
+  type TextImportResult,
+  type UnparsedLine,
+} from "./import-data";
 
 export type StudentColumn = "name" | "university" | "city" | "locationScope";
 
@@ -179,13 +185,6 @@ function createMetadata(
     unmappedHeaders,
     missingRequiredFields: [...missingRequiredFields],
   };
-}
-
-function parseLocationScope(value: string | undefined): "international" | undefined {
-  const normalized = value?.trim().toLocaleLowerCase("zh-CN") ?? "";
-  return normalized.includes("海外") || normalized.includes("international") || normalized.includes("overseas")
-    ? "international"
-    : undefined;
 }
 
 interface SheetRow {
@@ -391,6 +390,7 @@ export function parseOcrLikeText(text: string): TextImportResult {
     .replace(/\u00a0/g, " ")
     .replace(/[|｜]/g, " ")
     .replace(/[：:]/g, " ")
-    .replace(/\s{2,}/g, " ");
+    // 只收紧同一行里的连续空格；换行和制表符携带行号/列位，不能一起压掉。
+    .replace(/ {2,}/g, " ");
   return parseStudentText(normalized);
 }

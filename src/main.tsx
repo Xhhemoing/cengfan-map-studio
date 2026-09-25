@@ -1,10 +1,10 @@
 import { StrictMode, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { WorkflowPrototype } from "./components/WorkflowPrototype";
 import { StudioMuiProvider } from "./components/StudioMuiProvider";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { ProjectRoute, WorkbenchRoute } from "./components/StudioRoutes";
+import { WorkflowPrototypeRoute } from "./components/WorkflowPrototypeRoute";
 import { editorProjectStore } from "./lib/editor-project-store";
 import { isPrototypePath } from "./lib/public-base-path";
 import "./styles.css";
@@ -46,7 +46,7 @@ function renderView(container: HTMLElement, view: ReactElement) {
 export function renderApp(container: HTMLElement): void {
   const render = () => {
     if (isPrototypePath(window.location.pathname)) {
-      renderView(container, <WorkflowPrototype />);
+      renderView(container, <WorkflowPrototypeRoute />);
       return;
     }
     const projectId = projectIdFromHash(window.location.hash);

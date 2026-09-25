@@ -34,8 +34,11 @@ npm run dev          # 前端 5173 + API 8787
 
 ```
 src/
-├── App.tsx                 # 应用入口（项目工作台 + 编辑器）
+├── main.tsx                # 稳定入口、错误边界与顶层路由选择
+├── App.tsx                 # 编辑器主体（按项目路由异步加载）
 ├── components/
+│   ├── StudioRoutes.tsx    # 工作台 / 编辑器路由壳与存储健康提示
+│   ├── ProjectWorkbench.tsx# 项目工作台（按工作台路由异步加载）
 │   ├── canvas/             # 地图画布、图层、数据层
 │   ├── inspector/          # 右侧检查器面板
 │   ├── workspaces/         # 工作区（卡片样式、布局等）
@@ -74,7 +77,7 @@ public/                     # 静态资源（Logo、校徽）
 
 ### 4. 协作（server/collaboration.ts）
 - 创建房间 + 邀请码
-- 实时同步（WebSocket）
+- 实时同步（EventSource / SSE 下行，HTTP 事务上行）
 - 权限控制（编辑/查看）
 
 ### 5. AI 助手（server/ai/）
