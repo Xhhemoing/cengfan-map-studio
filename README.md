@@ -14,6 +14,8 @@
 <p align="center">
   <a href="USER_GUIDE.md">用户指南</a>
   ·
+  <a href="docs/README.md">文档导航</a>
+  ·
   <a href="docs/示例数据/毕业名单-脱敏.csv">脱敏名单 CSV</a>
   ·
   <a href="docs/示例数据/示例项目.cengfan">示例工程包</a>
@@ -94,7 +96,7 @@ npm run dev
 | 素材库 | 校徽、字体、贴图，主入口在「内容」阶段；省份贴图可在「地图」阶段点省份直达 |
 | 卡片模板 | 多种内置样式，可改颜色与字号 |
 | 高清导出 | PNG / SVG / `.cengfan` 工程包；A3 / A2 / 展板尺寸用厘米说话 |
-| 本机协作（可选） | `npm run dev` 会带上本地 API；房间在内存里，关掉进程即消失 |
+| 本机协作（可选） | `npm run dev` 会带上本地 API；房间运行态在内存，受控关停时写入 `.data/collaboration-rooms.json`，重启后恢复未过期房间 |
 
 ---
 
@@ -104,7 +106,7 @@ npm run dev
 
 - 使用问题、劝退点、导入/布局/导出槽点：<https://github.com/Xhhemoing/cengfan-map-studio/issues/new/choose>
 - 改代码、文档、模板：[CONTRIBUTING.md](CONTRIBUTING.md)
-- 开发约定：[AGENTS.md](AGENTS.md) · [DEVELOPER.md](DEVELOPER.md)
+- 开发约定：[AGENTS.md](AGENTS.md) · [DEVELOPER.md](DEVELOPER.md) · [文档导航](docs/README.md)
 
 Star 是结果，不是请求。更有用的是一条真实意见。
 

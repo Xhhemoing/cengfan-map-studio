@@ -12,7 +12,7 @@
 |------|--------|------|
 | **Cloudflare Pages** 静态演示 | 行，推荐 | 编辑器是 Vite SPA，路由用 hash，工程在 IndexedDB |
 | **GitHub Pages** 静态演示 | 行，本仓库已接 workflow | 同上；项目站 base 为 `/cengfan-map-studio/` |
-| **Cloudflare Workers** 跑 `server/` | 不行 | API 用 Node `http`、本地文件、内存房间、SSE，不是 Worker 运行时 |
+| **Cloudflare Workers** 跑 `server/` | 不行 | API 用 Node `http`、本地文件快照、内存运行态和 SSE，不是 Worker 运行时 |
 | **Cloudflare Containers** | 能跑 Node，但不是「免费常驻」 | 按用量计费，不适合当对外主 Demo |
 
 微信/QQ 仍可能拦截 `github.io`、未备案域名。Pages 能解决「有 HTTPS、能打开」；要进微信会话，仍需备案域名（可把 Pages 接到已备案自定义域，或给现网 8787 加 Caddy）。
@@ -23,7 +23,7 @@
 
 | 有 | 没有（需要本机 `npm run dev` 或自建 Node） |
 |----|------------------------------------------|
-| 工作台、示例项目、导入 Excel/CSV | 协作房间（内存，约 30 分钟过期） |
+| 工作台、示例项目、导入 Excel/CSV | 协作房间（需 Node；运行态在内存，受控关停时写入快照，默认约 30 分钟无活动后过期） |
 | 地图排版、素材、导出 PNG/SVG/工程包 | 智能助手 / 名单智能识别（要配置模型 key） |
 | 工程只留在访问者自己的浏览器 | 服务端工作区 `/api/workspace` |
 

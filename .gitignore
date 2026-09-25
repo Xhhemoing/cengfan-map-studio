@@ -11,6 +11,7 @@ coverage/
 .worktrees/
 
 # Local agent state, transient probes, and development-server output.
+.agent_workspace/
 .pi/
 .superpowers/
 .tmp-*
@@ -27,6 +28,9 @@ nul
 # Generated graph cache; keep the tracked report and graph artifacts only.
 graphify-out/cache/ast/
 graphify-out/cache/
+graphify-out/.graphify_analysis.json
+graphify-out/.graphify_python
+graphify-out/.graphify_root
 graphify-out/.graphify_labels.json
 graphify-out/.graphify_labels.json.sig
 graphify-out/graph.html
