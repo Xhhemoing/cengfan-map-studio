@@ -1,0 +1,36 @@
+name: Review implementation bootstrap
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/review-bootstrap.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    if: github.head_ref == 'feat/review-delivery-roster-20260927' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # Temporary, versioned-input-only workspace for the isolated review runner.
+      # No .git/config, credentials, untracked files, or student data is archived.
+      - name: Package reproducible workspace
+        run: |
+          git ls-files -z > /tmp/review-files
+          printf 'node_modules\0' >> /tmp/review-files
+          tar --null -T /tmp/review-files -czf /tmp/review-workspace.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-workspace
+          path: /tmp/review-workspace.tar.gz
+          retention-days: 1
