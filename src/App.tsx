@@ -17,21 +17,8 @@ import {
   dataViews,
   type ActivePanel,
 } from "./lib/app-constants";
-import {
-  buildProvinceSummary,
-  type DataViewId,
-  type Student,
-} from "./lib/project-data";
-import {
-  appendStudentsTransaction,
-  changeDataViewTransaction,
-  deleteStudentTransaction,
-  replaceStudentsTransaction,
-  setStudentsVisibilityTransaction,
-  toggleStudentVisibilityTransaction,
-  updateStudentTransaction,
-  type StudentPatch,
-} from "./lib/student-transactions";
+import { buildProvinceSummary } from "./lib/project-data";
+import { createEditorStudentActions } from "./lib/editor-student-actions";
 import { createId } from "./lib/ids";
 import {
   createEditorCanvasActions,
@@ -532,13 +519,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const dataWorkspaceProps = {
     students: project.students,
     dataView: project.dataView,
-    onChangeDataView: (view: DataViewId) => commitProjectTransaction(changeDataViewTransaction(view)),
-    onAppendStudents: (records: Student[]) => commitProjectTransaction(appendStudentsTransaction(records)),
-    onReplaceStudents: (records: Student[]) => commitProjectTransaction(replaceStudentsTransaction(records)),
-    onUpdateStudent: (id: string, patch: StudentPatch) => commitProjectTransaction(updateStudentTransaction(id, patch)),
-    onToggleVisibility: (id: string) => commitProjectTransaction(toggleStudentVisibilityTransaction(id)),
-    onDeleteStudent: (id: string) => commitProjectTransaction(deleteStudentTransaction(id)),
-    onSetStudentsVisibility: (visibility: boolean) => commitProjectTransaction(setStudentsVisibilityTransaction(visibility)),
+    ...createEditorStudentActions({ students: project.students, canEdit: collaboration.canEdit, commit: commitProjectTransaction }),
     selectedStudentId,
     onSelectStudent: setSelectedStudentId,
   };
