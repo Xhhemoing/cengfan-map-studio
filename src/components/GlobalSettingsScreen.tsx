@@ -83,6 +83,7 @@ const workflowStepLabels: Record<WorkflowStepId, string> = {
 };
 
 export function GlobalSettingsScreen({
+  embeddedHeader = false,
   project,
   userFonts = [],
   initialSection = "canvas",
@@ -124,6 +125,8 @@ export function GlobalSettingsScreen({
   resolvedTheme,
   onThemeChange,
 }: {
+  /** The route already renders StudioTopbar; do not render a second toolbar. */
+  embeddedHeader?: boolean;
   project: ProjectDocument;
   userFonts?: UserFont[];
   initialSection?: GlobalSettingsSection;
@@ -188,8 +191,8 @@ export function GlobalSettingsScreen({
   };
 
   return (
-    <main className="global-settings-screen" aria-label="全局设置">
-      <header className="global-settings-header">
+    <main className="global-settings-screen" aria-label="全局设置" data-embedded-header={embeddedHeader}>
+      {!embeddedHeader && <header className="global-settings-header">
         <ActionGroup label="全局设置历史" className="global-settings-history">
           <IconButton label={undoLabel} icon={<Undo2 size={17} aria-hidden />} disabled={!canUndo} onClick={onUndo} />
           <IconButton label={redoLabel} icon={<Redo2 size={17} aria-hidden />} disabled={!canRedo} onClick={onRedo} />
@@ -198,7 +201,7 @@ export function GlobalSettingsScreen({
           )}
           <CompactButton className="global-settings-done" onClick={onClose}>完成</CompactButton>
         </ActionGroup>
-      </header>
+      </header>}
 
       <div className="global-settings-guide" role="status">
         <strong className="global-settings-guide__step">当前流程：{workflowStepLabels[workflowActiveStep]}</strong>

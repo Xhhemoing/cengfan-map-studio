@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { AlertTriangle, Check, Circle } from "lucide-react";
 import type { WorkflowProgress, WorkflowStepStatus } from "../lib/workflow-progress";
 import {
@@ -25,8 +26,15 @@ export function WorkflowStageStepper({
   project?: ProjectDocument;
   onChange: (id: WorkflowStageId) => void;
 }) {
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    // A route remount must not leave the active step offscreen on narrow views.
+    navRef.current?.querySelector<HTMLElement>('[aria-current="step"]')
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeId]);
+
   return (
-    <nav className="workflow-stage-stepper" aria-label="制作步骤">
+    <nav ref={navRef} className="workflow-stage-stepper" aria-label="制作步骤">
       {WORKFLOW_STAGES.map((stage, index) => {
         const status = project ? getWorkflowStageStatus(stage.id, project, progress) : "ready";
         const warningCount = getWorkflowStageWarningCount(stage.id, progress);

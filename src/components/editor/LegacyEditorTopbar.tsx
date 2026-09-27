@@ -1,10 +1,11 @@
-import { ImageDown, MapPinned, PanelRight, PanelRightClose, Redo2, Undo2 } from "lucide-react";
+import { ImageDown, PanelRight, PanelRightClose, Redo2, Undo2 } from "lucide-react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { ActivePanel } from "../../lib/app-constants";
 import type { ResolvedTheme, StudioSkin, ThemeMode } from "../../lib/theme";
 import type { UsePosterExportResult } from "../../lib/usePosterExport";
 import type { WorkflowProgress } from "../../lib/workflow-progress";
 import { SkinSelector } from "../SkinSelector";
+import { StudioTopbar } from "../StudioTopbar";
 import { ToolbarButton, ToolbarGroup } from "../StudioUi";
 import { ThemeToggle } from "../ThemeToggle";
 import { WorkflowStepper } from "../WorkflowStepper";
@@ -35,10 +36,7 @@ export interface LegacyEditorTopbarProps {
   onThemeChange: (mode: ThemeMode) => void;
 }
 
-/**
- * 旧版编辑器顶栏:品牌 + 阶段导航插槽(含隐藏的 legacy 步骤条)+ 历史/属性面板/主题/
- * 工程与导出四组工具栏。DOM 结构、class 名、role、aria 标签与文案与旧的 App 内联分支逐字一致。
- */
+/** Legacy controls share the same header and navigation geometry as every stage. */
 export function LegacyEditorTopbar({
   workflowNav,
   legacyActivePanel,
@@ -64,21 +62,14 @@ export function LegacyEditorTopbar({
   onThemeChange,
 }: LegacyEditorTopbarProps) {
   return (
-    <header className="topbar">
-      <div className="brand">
-        <MapPinned size={24} />
-        <span className="brand-label brand-label__full">蹭饭地图工作室</span>
-        <span className="brand-label brand-label__compact" aria-hidden="true">蹭饭图</span>
-        <em>Beta</em>
-      </div>
-      <div className="topbar-workflow">
+    <StudioTopbar
+      workflowNav={<>
         {workflowNav}
         <div className="topbar-workflow__legacy" aria-hidden="true">
           <WorkflowStepper activeId={legacyActivePanel} progress={workflowProgress} onChange={onChangeLegacyPanel} />
         </div>
-      </div>
-      <div className="topbar-actions">
-        {backButton}
+      </>}
+      historyActions={
         <ToolbarGroup label="历史与缩放">
           <ToolbarButton
             label={undoLabel}
@@ -92,6 +83,10 @@ export function LegacyEditorTopbar({
             disabled={!canRedo}
             onClick={onRedo}
           />
+        </ToolbarGroup>
+      }
+      stageActions={<>
+        <ToolbarGroup label="画布缩放">
           <ZoomControls
             zoomPercent={zoomPercent}
             onZoomOut={() => onZoomPercentChange((v) => Math.max(25, v - 10))}
@@ -110,19 +105,21 @@ export function LegacyEditorTopbar({
           />
         </ToolbarGroup>
 
+      </>}
+      projectActions={<>
+        {backButton}
+        {projectExportActions}
         <ToolbarGroup label="界面主题">
           <SkinSelector skin={skin} onChange={onSkinChange} />
           <ThemeToggle mode={themeMode} resolvedTheme={resolvedTheme} onChange={onThemeChange} />
         </ToolbarGroup>
-
-        {projectExportActions}
 
         <ToolbarGroup label="导出">
           <button className="primary-button" onClick={() => void posterExport.exportPng()} disabled={posterExport.exportState === "exporting"}>
             <ImageDown size={16} /> {posterExport.exportingPng || posterExport.exportState === "exporting" ? "导出中..." : "导出 PNG"}
           </button>
         </ToolbarGroup>
-      </div>
-    </header>
+      </>}
+    />
   );
 }
