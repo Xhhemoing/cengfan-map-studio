@@ -47,11 +47,14 @@ try {
               const rect = header.querySelector(selector).getBoundingClientRect();
               return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
             };
+            const activeStep = header.querySelector('[aria-current="step"]').getBoundingClientRect();
+            const navigation = header.querySelector(".topbar-workflow").getBoundingClientRect();
             const style = getComputedStyle(header);
             const brandStyle = getComputedStyle(header.querySelector(".brand > svg"));
             const primaryButtons = header.querySelectorAll(".studio-topbar__stage-actions > button.primary-button, .studio-topbar__project-actions > .topbar-action-group > button.primary-button");
             const body = document.querySelector(".studio-editor-shell, .workspace, .global-settings-screen");
             return {
+              activeStepVisible: activeStep.left >= navigation.left - 1 && activeStep.right <= navigation.right + 1,
               primaryColorsMatch: [...primaryButtons].every((button) => {
                 const buttonStyle = getComputedStyle(button);
                 return buttonStyle.backgroundColor === brandStyle.backgroundColor && buttonStyle.color === brandStyle.color;
@@ -73,6 +76,7 @@ try {
           });
           const { documentWidth, viewportWidth, bodyTop, bodyBottom, redundantSettingsHeaders, ...chrome } = values;
           measurements.push({ skin, theme, width, view, ...values });
+          assert.equal(values.activeStepVisible, true, `${view}: current step is offscreen after navigation or resize`);
           assert.equal(values.primaryColorsMatch, true, `${view}: primary action lost its semantic colors`);
           assert.equal(values.moreVisible, width <= 1120, `${view}: wrong tools breakpoint`);
           assert.equal(values.headerCount, 1, `${view}: duplicate topbars`);

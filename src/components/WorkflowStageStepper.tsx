@@ -28,9 +28,14 @@ export function WorkflowStageStepper({
 }) {
   const navRef = useRef<HTMLElement>(null);
   useEffect(() => {
-    // A route remount must not leave the active step offscreen on narrow views.
-    navRef.current?.querySelector<HTMLElement>('[aria-current="step"]')
-      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    // Keep the current step visible after both route changes and viewport resize.
+    const revealActiveStep = () => {
+      navRef.current?.querySelector<HTMLElement>('[aria-current="step"]')
+        ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    };
+    revealActiveStep();
+    window.addEventListener("resize", revealActiveStep);
+    return () => window.removeEventListener("resize", revealActiveStep);
   }, [activeId]);
 
   return (
