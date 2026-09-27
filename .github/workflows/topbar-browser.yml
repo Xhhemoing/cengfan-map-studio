@@ -34,8 +34,10 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Install isolated browser-test tooling
-        run: npm install --no-save --package-lock=false --ignore-scripts playwright@1.58.2
-      - run: npx playwright install --with-deps chromium
+        run: |
+          npm install --prefix "$RUNNER_TEMP/topbar-tools" --no-save --package-lock=false --ignore-scripts playwright@1.58.2
+          ln -s "$RUNNER_TEMP/topbar-tools/node_modules/playwright" node_modules/playwright
+      - run: node "$RUNNER_TEMP/topbar-tools/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Install Chinese UI font
         run: sudo apt-get install -y fonts-noto-cjk
       - name: Header component regression

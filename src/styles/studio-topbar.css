@@ -130,7 +130,7 @@
   outline-offset: -2px;
 }
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar button:disabled { opacity: .45; cursor: not-allowed; }
-.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .studio-topbar__more { display: none; }
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar button.studio-topbar__more { display: none; }
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .inspector-toggle-group { display: none; }
 
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .topbar-workflow {
@@ -235,7 +235,7 @@
 @media (max-width: 1120px) {
   .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar { grid-template-columns: minmax(0, 1fr) auto; }
   .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .topbar-actions { gap: 8px; }
-  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .studio-topbar__more { display: inline-flex; }
+  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar button.studio-topbar__more { display: inline-flex; }
   .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .studio-topbar__tools {
     display: none;
     position: absolute;

@@ -49,6 +49,7 @@ try {
             const style = getComputedStyle(header);
             const body = document.querySelector(".studio-editor-shell, .workspace, .global-settings-screen");
             return {
+              moreVisible: getComputedStyle(header.querySelector(".studio-topbar__more")).display !== "none",
               headerCount: document.querySelectorAll(".app-shell > header").length,
               height: header.getBoundingClientRect().height,
               color: style.color, background: style.backgroundColor,
@@ -65,6 +66,7 @@ try {
           });
           const { documentWidth, viewportWidth, bodyTop, bodyBottom, redundantSettingsHeaders, ...chrome } = values;
           measurements.push({ skin, theme, width, view, ...values });
+          assert.equal(values.moreVisible, width <= 1120, `${view}: wrong tools breakpoint`);
           assert.equal(values.headerCount, 1, `${view}: duplicate topbars`);
           assert.equal(values.height, 104, `${view}: wrong header height`);
           assert.ok(documentWidth <= viewportWidth + 1, `${view}: document overflows horizontally`);
