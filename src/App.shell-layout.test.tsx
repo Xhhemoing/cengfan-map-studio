@@ -155,7 +155,7 @@ describe("Stage overview (T2)", () => {
 
 describe("Extracted render branches (R10-5)", () => {
   // App.tsx 把 legacy 左栏、聚焦阶段整屏与全局设置整屏搬到 src/components/editor/*。
-  // 这三条 pin 从 App 这一侧确认接缝没有改变 DOM 结构、class 名与文案。
+  // 分支继续保留各自的内容，但顶部栏现在由共享组件统一拥有。
   it("keeps the legacy sidebar rail and panel wrappers around the roster panel", () => {
     const container = renderLegacyApp();
     const sidebar = container.querySelector("aside.sidebar.studio-sidebar");
@@ -176,42 +176,48 @@ describe("Extracted render branches (R10-5)", () => {
     expect(container.querySelector(".reference-card-style-workspace")).not.toBeNull();
   });
 
-  it("keeps the global settings topbar trimmed to brand and workflow navigation", () => {
+  it("keeps settings history and completion in one shared topbar", () => {
     // 全局设置整屏只剩 legacy 一条入口：公开路径的「前往版式」改为跳阶段。
     const container = renderLegacyApp();
     openGlobalSettingsSection(container, "canvas");
 
-    const topbar = container.querySelector(".app-shell > .topbar");
+    const topbar = container.querySelector(".app-shell > .studio-topbar");
     expect(topbar?.querySelector(".brand .brand-label__full")?.textContent).toBe("蹭饭地图工作室");
-    expect(topbar?.querySelector(".topbar-workflow .workflow-stage-stepper")).not.toBeNull();
-    expect(topbar?.querySelector('[role="group"][aria-label="历史"]')).toBeNull();
+    expect(topbar?.querySelector(":scope > .topbar-workflow .workflow-stage-stepper")).not.toBeNull();
+    expect(topbar?.querySelectorAll('.studio-topbar__leading [aria-label="全局设置历史"] button')).toHaveLength(2);
+    expect(topbar?.querySelector(".studio-topbar__stage-actions .global-settings-done")).not.toBeNull();
+    expect(container.querySelectorAll("button.global-settings-done")).toHaveLength(1);
+    expect(container.querySelector(".global-settings-screen > .global-settings-header")).toBeNull();
   });
 });
 
 describe("Extracted render branches (R11-5)", () => {
-  // legacy 顶栏与导出工程弹层搬到 src/components/editor/*。这条 pin 从 App 这一侧
-  // 确认顶栏接缝没有改变品牌区、阶段导航插槽、工具栏分组顺序与导出按钮文案。
-  it("keeps the legacy topbar brand, workflow slot and toolbar groups in order", () => {
+  // 不再约束已移除的平铺分组顺序；约束共享顶栏的历史、页面工具、项目操作插槽。
+  it("keeps the legacy brand accessible and delegates actions to shared header slots", () => {
     const container = renderLegacyApp();
-    const topbar = container.querySelector(".app-shell > .topbar")!;
+    expect(container.querySelectorAll(".app-shell > .studio-topbar")).toHaveLength(1);
+    const topbar = container.querySelector(".app-shell > .studio-topbar")!;
 
     expect(topbar.querySelector(".brand .brand-label__full")?.textContent).toBe("蹭饭地图工作室");
     const compact = topbar.querySelector(".brand .brand-label__compact");
     expect(compact?.textContent).toBe("蹭饭图");
-    expect(compact?.getAttribute("aria-hidden")).toBe("true");
+    // CSS 负责切换完整/紧凑名称，手机端可见名称不能被永久排除在无障碍树之外。
+    expect(compact?.getAttribute("aria-hidden")).toBeNull();
 
-    const workflow = topbar.querySelector(".topbar-workflow")!;
+    const workflow = topbar.querySelector(":scope > .topbar-workflow")!;
     expect(workflow.querySelector(".workflow-stage-stepper")).not.toBeNull();
     const legacySlot = workflow.querySelector(".topbar-workflow__legacy");
     expect(legacySlot?.getAttribute("aria-hidden")).toBe("true");
 
-    const groups = Array.from(topbar.querySelectorAll('.topbar-actions [role="group"]')).map((group) =>
-      group.getAttribute("aria-label"),
-    );
-    expect(groups.slice(0, 3)).toEqual(["历史与缩放", "属性面板", "界面主题"]);
-    expect(groups).toContain("导出");
+    const history = topbar.querySelector('.studio-topbar__leading [role="group"][aria-label="历史与缩放"]');
+    expect(history?.querySelectorAll("button")).toHaveLength(2);
+    const stageActions = topbar.querySelector(".studio-topbar__stage-actions")!;
+    expect(stageActions.querySelector('[role="group"][aria-label="画布缩放"]')).not.toBeNull();
+    expect(stageActions.querySelector('[role="group"][aria-label="属性面板"]')).not.toBeNull();
+    const projectActions = topbar.querySelector(".studio-topbar__project-actions")!;
+    expect(projectActions.querySelector('[role="group"][aria-label="界面主题"]')).not.toBeNull();
 
-    const exportGroup = topbar.querySelector('[role="group"][aria-label="导出"]');
+    const exportGroup = projectActions.querySelector('[role="group"][aria-label="导出"]');
     expect(exportGroup?.querySelector("button.primary-button")?.textContent).toContain("导出 PNG");
   });
 });
