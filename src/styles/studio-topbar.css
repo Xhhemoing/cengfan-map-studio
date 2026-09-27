@@ -1,13 +1,10 @@
-/*
- * Header ownership: StudioTopbar only. The explicit scope wins over historical
- * .topbar / skin overrides without !important or selectors tied to a stage.
- * UI colors are tokens; poster/export styles are deliberately not targeted.
- */
+/* StudioTopbar owns header geometry in every editing view. Desktop workflow
+ * navigation shares the toolbar row; only narrow screens use a second row. */
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar {
   position: relative;
   z-index: 80;
   display: grid;
-  grid-template-columns: 208px minmax(0, 1fr);
+  grid-template-columns: minmax(208px, 1fr) minmax(0, 604px) minmax(208px, 1fr);
   grid-template-rows: 56px;
   gap: 0;
   flex: none;
@@ -23,11 +20,6 @@
   border: 0;
   border-bottom: 1px solid var(--editor-line);
   font-family: var(--studio-font, "Noto Sans SC", system-ui, sans-serif);
-}
-.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar[data-has-workflow="true"] {
-  grid-template-rows: 56px 48px;
-  height: 104px;
-  min-height: 104px;
 }
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .brand {
   display: flex;
@@ -59,7 +51,7 @@
 
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .topbar-actions {
   display: flex;
-  grid-area: 1 / 2;
+  grid-area: 1 / 3;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
@@ -69,7 +61,6 @@
   overflow: visible;
 }
 .studio-topbar__leading,
-.studio-topbar__tools,
 .studio-topbar__stage-actions,
 .studio-topbar__project-actions {
   display: flex;
@@ -77,9 +68,8 @@
   gap: 8px;
   min-width: 0;
 }
-.studio-topbar__leading { margin-right: auto; flex: none; }
+.studio-topbar__leading { flex: none; }
 .studio-topbar__assistant { flex: none; width: var(--studio-control-height, 36px); }
-.studio-topbar__tools { margin-left: auto; }
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .topbar-action-group {
   display: inline-flex;
   flex: none;
@@ -122,32 +112,32 @@
   background: var(--editor-accent);
   border-color: var(--editor-accent);
 }
-.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(button, summary):hover:not(:disabled) {
-  filter: brightness(.97);
-}
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(button, summary):hover:not(:disabled) { filter: brightness(.97); }
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(button, summary):focus-visible {
   outline: 2px solid var(--editor-focus);
   outline-offset: -2px;
 }
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar button:disabled { opacity: .45; cursor: not-allowed; }
-.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar button.studio-topbar__more { display: none; }
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar button.studio-topbar__more { display: inline-flex; }
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .inspector-toggle-group { display: none; }
 
+/* A fixed central track and equal side tracks keep steps centred, regardless
+ * of the current page's tools. Tools use one disclosure at every width. */
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .topbar-workflow {
   display: flex;
-  grid-area: 2 / 1 / 3 / -1;
+  grid-area: 1 / 2;
   align-items: center;
   justify-content: flex-start;
   justify-self: stretch;
   min-width: 0;
   width: 100%;
-  height: 48px;
+  height: 56px;
   margin: 0;
-  padding: 0 16px;
+  padding: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  border-top: 1px solid var(--editor-line);
-  background: var(--editor-surface);
+  border: 0;
+  background: transparent;
   scrollbar-width: thin;
 }
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .workflow-stage-stepper {
@@ -211,10 +201,44 @@
 }
 .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .topbar-workflow__legacy { display: none; }
 
-/* Size the workspace from the actual shared header, not 52/56/62px skin magic
- * numbers. Flex also accounts for storage notices and the live status strip. */
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .studio-topbar__tools {
+  display: none;
+  position: absolute;
+  z-index: 1;
+  top: 52px;
+  right: 12px;
+  left: auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100dvh - 76px);
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: var(--editor-ink);
+  background: var(--editor-surface-raised);
+  border: 1px solid var(--editor-line);
+  border-radius: var(--studio-radius, 10px);
+  box-shadow: var(--studio-shadow, 0 8px 24px #0002);
+}
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar[data-tools-open="true"] .studio-topbar__tools { display: flex; }
+.studio-topbar__stage-actions,
+.studio-topbar__project-actions { flex-wrap: wrap; gap: 10px; }
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .skin-selector { display: inline-flex; }
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .zoom-label { display: inline; }
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(.project-menu__popover, .help-menu__popover) {
+  position: static;
+  width: 100%;
+  max-width: 100%;
+  margin-top: 8px;
+  box-shadow: none;
+}
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(.project-menu, .help-menu)[open] { width: 100%; }
+
+/* The workspace fills actual remaining space, including notices and status. */
 .app-shell[data-editor-skin][data-editor-theme]:has(> .studio-topbar[data-has-workflow="true"]) {
-  --studio-topbar-height: 104px;
+  --studio-topbar-height: 56px;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -234,42 +258,21 @@
 
 @media (max-width: 1120px) {
   .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar { grid-template-columns: minmax(0, 1fr) auto; }
-  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .topbar-actions { gap: 8px; }
-  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar button.studio-topbar__more { display: inline-flex; }
-  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .studio-topbar__tools {
-    display: none;
-    position: absolute;
-    z-index: 1;
-    top: 52px;
-    right: 12px;
-    left: auto;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-    width: min(360px, calc(100vw - 24px));
-    max-height: calc(100dvh - 120px);
-    margin: 0;
-    padding: 12px;
-    overflow: auto;
-    color: var(--editor-ink);
-    background: var(--editor-surface-raised);
-    border: 1px solid var(--editor-line);
-    border-radius: var(--studio-radius, 10px);
-    box-shadow: var(--studio-shadow, 0 8px 24px #0002);
+  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar[data-has-workflow="true"] {
+    grid-template-rows: 56px 48px;
+    height: 104px;
+    min-height: 104px;
   }
-  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar[data-tools-open="true"] .studio-topbar__tools { display: flex; }
-  .studio-topbar__stage-actions,
-  .studio-topbar__project-actions { flex-wrap: wrap; gap: 10px; }
-  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(.inspector-toggle-group, .skin-selector) { display: inline-flex; }
-  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .zoom-label { display: inline; }
-  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(.project-menu__popover, .help-menu__popover) {
-    position: static;
-    width: 100%;
-    max-width: 100%;
-    margin-top: 8px;
-    box-shadow: none;
+  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .topbar-actions { grid-area: 1 / 2; gap: 8px; }
+  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .topbar-workflow {
+    grid-area: 2 / 1 / 3 / -1;
+    height: 48px;
+    padding: 0 16px;
+    border-top: 1px solid var(--editor-line);
+    background: var(--editor-surface);
   }
-  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(.project-menu, .help-menu)[open] { width: 100%; }
+  .app-shell[data-editor-skin][data-editor-theme]:has(> .studio-topbar[data-has-workflow="true"]) { --studio-topbar-height: 104px; }
+  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .inspector-toggle-group { display: inline-flex; }
   .app-shell[data-editor-skin][data-editor-theme]:has(> .studio-topbar) > .studio-editor-shell { grid-template-rows: minmax(0, 1fr); }
 }
 @media (max-width: 560px) {

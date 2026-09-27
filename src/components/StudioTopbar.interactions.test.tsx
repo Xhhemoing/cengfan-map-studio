@@ -42,6 +42,16 @@ describe("shared topbar disclosure", () => {
     expect(view.querySelectorAll("button")).toHaveLength(5);
   });
 
+  it("puts workflow before tools in reading and desktop visual order", () => {
+    const view = mount();
+    const header = view.querySelector("header")!;
+    expect([...header.children].map((child) => child.className)).toEqual([
+      "brand", "topbar-workflow", "topbar-actions",
+    ]);
+    expect(header.querySelectorAll(".topbar-workflow")).toHaveLength(1);
+    expect(header.querySelector(".studio-topbar__tools .topbar-workflow")).toBeNull();
+  });
+
   it("opens the labelled disclosure and returns focus on Escape", () => {
     const view = mount();
     const toggle = view.querySelector<HTMLButtonElement>('[aria-label="更多操作"]')!;

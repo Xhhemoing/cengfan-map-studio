@@ -11,9 +11,9 @@ export type StudioTopbarProps = {
 };
 
 /**
- * The only application header. Stages, legacy editing and settings supply actions, never
- * their own brand/layout/breakpoint rules.
- * Workflow navigation has its own row so changing tools cannot move it.
+ * The only editing header: brand, workflow, then actions in DOM and desktop order.
+ * Narrow screens wrap navigation within this same header. Page-specific tools
+ * stay in one disclosure so they cannot displace the centred workflow.
  */
 export function StudioTopbar({
   assistantEntry,
@@ -74,6 +74,9 @@ export function StudioTopbar({
           <span className="brand-label brand-label__compact">蹭饭图</span>
         </span>
       </div>
+      {workflowNav && (
+        <div className="topbar-workflow" onClick={() => setToolsOpen(false)}>{workflowNav}</div>
+      )}
       <div className="topbar-actions">
         {(assistantEntry || historyActions) && (
           <div className="studio-topbar__leading">
@@ -97,9 +100,6 @@ export function StudioTopbar({
           <div className="studio-topbar__project-actions">{projectActions}</div>
         </div>
       </div>
-      {workflowNav && (
-        <div className="topbar-workflow" onClick={() => setToolsOpen(false)}>{workflowNav}</div>
-      )}
     </header>
   );
 }

@@ -15,7 +15,8 @@ let activePage;
 try {
   for (const skin of ["atelier", "classic"]) {
     for (const theme of ["light", "dark"]) {
-      for (const width of [320, 390, 768, 1440]) {
+      // Include both sides of the wrap breakpoint, not just wide/mobile views.
+      for (const width of [320, 390, 768, 1120, 1121, 1280, 1440]) {
         const context = await browser.newContext({
           viewport: { width, height: 900 }, hasTouch: width <= 760,
           reducedMotion: "reduce", colorScheme: theme,
@@ -67,6 +68,8 @@ try {
               brand: rectangle(".brand"),
               workflow: rectangle(".topbar-workflow"),
               leading: rectangle(".studio-topbar__leading"),
+              actions: rectangle(".topbar-actions"),
+              more: rectangle(".studio-topbar__more"),
               viewportWidth: innerWidth,
               documentWidth: document.documentElement.scrollWidth,
               bodyTop: body.getBoundingClientRect().top,
@@ -75,16 +78,28 @@ try {
             };
           });
           const { documentWidth, viewportWidth, bodyTop, bodyBottom, redundantSettingsHeaders, ...chrome } = values;
+          const expectedHeight = width > 1120 ? 56 : 104;
           measurements.push({ skin, theme, width, view, ...values });
           assert.equal(values.activeStepVisible, true, `${view}: current step is offscreen after navigation or resize`);
           assert.equal(values.primaryColorsMatch, true, `${view}: primary action lost its semantic colors`);
-          assert.equal(values.moreVisible, width <= 1120, `${view}: wrong tools breakpoint`);
+          assert.equal(values.moreVisible, true, `${view}: tools disclosure is unreachable`);
           assert.equal(values.headerCount, 1, `${view}: duplicate topbars`);
-          assert.equal(values.height, 104, `${view}: wrong header height`);
+          assert.equal(values.height, expectedHeight, `${view}: wrong header height`);
           assert.ok(documentWidth <= viewportWidth + 1, `${view}: document overflows horizontally`);
-          assert.equal(bodyTop, 104, `${view}: workspace does not meet the header`);
+          assert.equal(bodyTop, expectedHeight, `${view}: workspace does not meet the header`);
           assert.ok(bodyBottom <= 901, `${view}: workspace extends beyond the viewport`);
           assert.equal(redundantSettingsHeaders, 0, `${view}: stacked settings toolbar`);
+          assert.ok(values.leading.x + values.leading.width <= values.more.x + 1, `${view}: history overlaps more actions`);
+          assert.ok(values.more.x + values.more.width <= viewportWidth, `${view}: actions extend outside viewport`);
+          if (width > 1120) {
+            assert.equal(values.workflow.y, values.brand.y, `${view}: desktop steps are not in the top row`);
+            assert.equal(values.workflow.y, values.actions.y, `${view}: desktop actions are on another row`);
+            assert.ok(Math.abs(values.workflow.x + values.workflow.width / 2 - viewportWidth / 2) <= 1, `${view}: steps are not centred`);
+            assert.ok(values.brand.x + values.brand.width <= values.workflow.x + 1, `${view}: brand overlaps workflow`);
+            assert.ok(values.workflow.x + values.workflow.width <= values.leading.x + 1, `${view}: workflow overlaps tools`);
+          } else {
+            assert.equal(values.workflow.y, 56, `${view}: narrow navigation must wrap inside the same header`);
+          }
           if (baseline) assert.deepEqual(chrome, baseline, `${skin}/${theme}/${width}/${view}: header moved or changed style`);
           else baseline = chrome;
           assert.deepEqual(errors, [], `${view}: browser runtime errors`);
@@ -100,17 +115,16 @@ try {
           await page.locator(`.studio-editor-shell[data-stage="${stage}"]`).waitFor();
           await inspect(stage);
         }
-        if (width <= 1120) {
-          const more = page.getByRole("button", { name: "更多操作", exact: true });
-          await more.click();
-          assert.equal(await more.getAttribute("aria-expanded"), "true");
-          await page.locator(".studio-topbar .project-menu > summary").click();
-          const menu = await page.locator(".studio-topbar__tools").boundingBox();
-          assert.ok(menu.x >= 0 && menu.x + menu.width <= width, "mobile tools overflow");
-          await page.keyboard.press("Escape");
-          assert.equal(await more.getAttribute("aria-expanded"), "false");
-          assert.equal(await more.evaluate((element) => element === document.activeElement), true);
-        }
+        // Project, help and page tools remain accessible on desktop as well.
+        const more = page.getByRole("button", { name: "更多操作", exact: true });
+        await more.click();
+        assert.equal(await more.getAttribute("aria-expanded"), "true");
+        await page.locator(".studio-topbar .project-menu > summary").click();
+        const menu = await page.locator(".studio-topbar__tools").boundingBox();
+        assert.ok(menu.x >= 0 && menu.x + menu.width <= width, "tools overflow");
+        await page.keyboard.press("Escape");
+        assert.equal(await more.getAttribute("aria-expanded"), "false");
+        assert.equal(await more.evaluate((element) => element === document.activeElement), true);
 
         await page.evaluate(() => localStorage.setItem("cengfan-legacy-editor", "1"));
         await page.reload();
@@ -127,7 +141,7 @@ try {
           await page.locator(`#global-settings-tab-${section}`).click();
           await inspect(`settings-${section}`);
         }
-        if (width <= 1120) await page.getByRole("button", { name: "更多操作", exact: true }).click();
+        await more.click();
         await page.locator(".studio-topbar .global-settings-done").click();
         await page.locator(".workspace").waitFor();
         await inspect("legacy-return");
