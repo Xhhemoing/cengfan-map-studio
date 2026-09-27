@@ -117,7 +117,7 @@
   color: var(--editor-ink-muted);
   border-color: transparent;
 }
-.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(.primary-button, .global-settings-done) {
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar :is(button.primary-button, button.global-settings-done) {
   color: var(--studio-on-accent, #fff);
   background: var(--editor-accent);
   border-color: var(--editor-accent);

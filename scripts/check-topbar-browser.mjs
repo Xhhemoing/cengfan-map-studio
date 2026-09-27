@@ -39,6 +39,7 @@ try {
 
         async function inspect(view) {
           await page.locator(".studio-topbar").waitFor();
+          await page.mouse.move(0, 899);
           await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
           const values = await page.evaluate(() => {
             const header = document.querySelector(".studio-topbar");
@@ -47,8 +48,14 @@ try {
               return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
             };
             const style = getComputedStyle(header);
+            const brandStyle = getComputedStyle(header.querySelector(".brand > svg"));
+            const primaryButtons = header.querySelectorAll(".studio-topbar__stage-actions > button.primary-button, .studio-topbar__project-actions > .topbar-action-group > button.primary-button");
             const body = document.querySelector(".studio-editor-shell, .workspace, .global-settings-screen");
             return {
+              primaryColorsMatch: [...primaryButtons].every((button) => {
+                const buttonStyle = getComputedStyle(button);
+                return buttonStyle.backgroundColor === brandStyle.backgroundColor && buttonStyle.color === brandStyle.color;
+              }),
               moreVisible: getComputedStyle(header.querySelector(".studio-topbar__more")).display !== "none",
               headerCount: document.querySelectorAll(".app-shell > header").length,
               height: header.getBoundingClientRect().height,
@@ -66,6 +73,7 @@ try {
           });
           const { documentWidth, viewportWidth, bodyTop, bodyBottom, redundantSettingsHeaders, ...chrome } = values;
           measurements.push({ skin, theme, width, view, ...values });
+          assert.equal(values.primaryColorsMatch, true, `${view}: primary action lost its semantic colors`);
           assert.equal(values.moreVisible, width <= 1120, `${view}: wrong tools breakpoint`);
           assert.equal(values.headerCount, 1, `${view}: duplicate topbars`);
           assert.equal(values.height, 104, `${view}: wrong header height`);
@@ -108,7 +116,7 @@ try {
         // at each target size (the legacy rail itself is desktop-only).
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.locator('[role="tab"][aria-controls="studio-advanced-panel"]').click();
-        await page.getByRole("button", { name: "打开全局设置", exact: true }).click();
+        await page.locator("#studio-advanced-panel").getByRole("button", { name: "打开全局设置", exact: true }).click();
         await page.locator(".global-settings-screen").waitFor();
         await page.setViewportSize({ width, height: 900 });
         for (const section of ["canvas", "map", "cards", "guests", "typography", "advanced"]) {
@@ -126,6 +134,7 @@ try {
   }
   console.log(`PASS: ${measurements.length} real application header snapshots`);
 } catch (error) {
+  await writeFile(`${output}/failure.txt`, String(error.stack ?? error));
   if (activePage && !activePage.isClosed()) {
     await activePage.screenshot({ path: `${output}/failure.png`, fullPage: true });
   }
