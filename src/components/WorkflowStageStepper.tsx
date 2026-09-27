@@ -28,14 +28,44 @@ export function WorkflowStageStepper({
 }) {
   const navRef = useRef<HTMLElement>(null);
   useEffect(() => {
-    // Keep the current step visible after both route changes and viewport resize.
+    const nav = navRef.current;
+    if (!nav) return;
+    const viewport = nav.closest<HTMLElement>(".topbar-workflow") ?? nav;
+    let frame = 0;
     const revealActiveStep = () => {
-      navRef.current?.querySelector<HTMLElement>('[aria-current="step"]')
-        ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      frame = 0;
+      const active = nav.querySelector<HTMLElement>('[aria-current="step"]');
+      if (!active || viewport.clientWidth === 0) return;
+      const bounds = viewport.getBoundingClientRect();
+      const step = active.getBoundingClientRect();
+      const style = window.getComputedStyle(viewport);
+      const left = bounds.left + viewport.clientLeft + (parseFloat(style.paddingLeft) || 0);
+      const right = bounds.left + viewport.clientLeft + viewport.clientWidth - (parseFloat(style.paddingRight) || 0);
+      let target = viewport.scrollLeft;
+      if (step.left < left) target += step.left - left;
+      else if (step.right > right) target += step.right - right;
+      target = Math.max(0, Math.min(target, viewport.scrollWidth - viewport.clientWidth));
+      if (target !== viewport.scrollLeft) {
+        // Scroll this horizontal viewport only, not the header/page ancestors.
+        // Instant placement also avoids a partially clipped step during motion.
+        viewport.scrollTo({ left: target, behavior: "instant" });
+      }
+    };
+    const scheduleReveal = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(revealActiveStep);
     };
     revealActiveStep();
-    window.addEventListener("resize", revealActiveStep);
-    return () => window.removeEventListener("resize", revealActiveStep);
+    window.addEventListener("resize", scheduleReveal);
+    // Observe the actual scrollport: wrapping and parent layout changes need
+    // not coincide with a window resize event or a changed activeId.
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleReveal);
+    observer?.observe(viewport);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", scheduleReveal);
+      observer?.disconnect();
+    };
   }, [activeId]);
 
   return (
