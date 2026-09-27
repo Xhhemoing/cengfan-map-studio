@@ -17,6 +17,7 @@
   color: var(--editor-ink-muted);
   border-color: var(--editor-line);
 }
+.app-shell[data-editor-skin] .global-settings-guide { background: var(--editor-surface); }
 .app-shell[data-editor-skin] :is(.sidebar, .inspector, .workspace-nav, .global-settings-nav, .global-data-nav, .studio-editor-shell__right) {
   color: var(--editor-ink);
   background: var(--editor-surface);
@@ -30,13 +31,18 @@
   font-weight: 600;
   letter-spacing: 0;
 }
-.app-shell[data-editor-skin] :is(.asset-section, .data-summary, .template-card,
-  .delivery-workspace__check, .delivery-workspace__controls, .reference-card-style-option) {
+.app-shell[data-editor-skin] :is(.asset-section, .data-summary,
+  .delivery-workspace__check, .delivery-workspace__controls) {
   color: var(--editor-ink);
   background: var(--editor-surface-raised);
   border-color: var(--editor-line);
   border-radius: var(--studio-radius);
   box-shadow: none;
+}
+/* Selectable cards own their hover/selected colors, borders and indicators.
+ * A shared panel reset must not erase those interaction states. */
+.app-shell[data-editor-skin] :is(.template-card, .reference-card-style-option) {
+  border-radius: var(--studio-radius);
 }
 
 /* Ordinary actions are neutral; only the primary action is filled. */
@@ -121,6 +127,11 @@
 }
 .app-shell[data-editor-skin] :is(input, textarea)::placeholder { color: var(--editor-ink-muted); opacity: 1; }
 .app-shell[data-editor-skin] :is(input[type="checkbox"], input[type="radio"], input[type="range"]) { accent-color: var(--editor-accent); }
+.app-shell[data-editor-skin] :is(.workflow-data-views button, .delivery-workspace__result button) {
+  color: var(--editor-ink);
+  background: var(--editor-surface-raised);
+  border-color: var(--editor-line);
+}
 .app-shell[data-editor-skin] :is(.workflow-data-views button, .global-settings-nav button, .global-data-nav button) {
   color: var(--editor-ink-muted);
   border-radius: var(--studio-radius-sm);
