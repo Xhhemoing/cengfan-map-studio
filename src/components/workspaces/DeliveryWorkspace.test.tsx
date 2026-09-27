@@ -141,8 +141,8 @@ describe("DeliveryWorkspace", () => {
     expect(bar?.textContent).toContain("已导出");
     expect(withoutName.querySelector('button[aria-label="再次导出"]')).not.toBeNull();
 
-    expect(renderWorkspace({ exportState: "idle" }).querySelector('[role="status"]')).toBeNull();
-    expect(renderWorkspace({ exportState: "exporting" }).querySelector('[role="status"]')).toBeNull();
+    expect(renderWorkspace({ exportState: "idle" }).querySelector(".delivery-workspace__result")).toBeNull();
+    expect(renderWorkspace({ exportState: "exporting" }).querySelector(".delivery-workspace__result")).toBeNull();
     expect(renderWorkspace({ exportState: "error", exportError: "PNG 导出失败" }).querySelector('[role="status"]')).toBeNull();
   });
 
@@ -167,4 +167,11 @@ describe("DeliveryWorkspace", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).not.toContain("我的毕业去向图-2x.png");
     expect(container.textContent).not.toContain("我的毕业去向图-2x.png");
   });
+  it("counts hidden source records and distinguishes download from disk save", () => {
+    const privateProject = createProjectDocument({ students: [{ ...sampleStudents[0]!, visibility: false }], templateId: "original", dataView: "province" });
+    const container = renderWorkspace({ project: privateProject, includeResources: false, exportState: "success" });
+    expect(container.querySelector('[role="note"]')?.textContent).toContain("1 条，其中隐藏 1 条");
+    expect(container.textContent).toContain("应用不能确认是否已写入磁盘");
+  });
+
 });

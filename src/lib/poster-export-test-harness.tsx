@@ -127,6 +127,8 @@ export interface Harness {
   statuses: string[];
   imported: ProjectPackage[];
   render: () => void;
+  poster: SVGSVGElement | null;
+  project: ReturnType<typeof createProjectDocument>;
 }
 
 export function mountHook(options: { withPoster?: boolean; getProjectName?: () => string | null } = {}): Harness {
@@ -167,6 +169,8 @@ export function mountHook(options: { withPoster?: boolean; getProjectName?: () =
     },
     statuses,
     imported,
+    poster,
+    project,
     render: () => act(() => root.render(<HookHarness />)),
   };
 }

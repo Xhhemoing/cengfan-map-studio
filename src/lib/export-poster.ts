@@ -44,7 +44,7 @@ export function serializePosterSvg(svg: SVGSVGElement, options: { transparentBac
 }
 
 /** 导出失败的分类；UI 与重试逻辑靠它区分「等太久」「解码失败」「编码失败」「画布被污染」。 */
-export type PosterExportFailureCode = "timeout" | "decode" | "encode" | "taint" | "canvas";
+export type PosterExportFailureCode = "timeout" | "decode" | "encode" | "taint" | "canvas" | "budget";
 
 export class PosterExportError extends Error {
   readonly code: PosterExportFailureCode;
