@@ -15,11 +15,13 @@ export interface StatusStripProps {
 }
 
 export function StatusStrip({ message = "" }: StatusStripProps) {
+  // These persistent text-only announcements may overlap bottom toolbar actions.
+  // Keep screen-reader delivery without intercepting the underlying click target.
   const failed = message.length > 0 && isImportFailureMessage(message);
   return (
     <div className="editor-status-strip">
-      <div role="status" aria-live="polite" aria-atomic="true" className="panel-note data-message">{message && !failed ? <span className="data-message__line">{message}</span> : null}</div>
-      <div role="alert" aria-live="assertive" aria-atomic="true" className="panel-note data-message data-message--alert">{failed ? <span className="data-message__line">{message}</span> : null}</div>
+      <div style={{ pointerEvents: "none" }} role="status" aria-live="polite" aria-atomic="true" className="panel-note data-message">{message && !failed ? <span className="data-message__line">{message}</span> : null}</div>
+      <div style={{ pointerEvents: "none" }} role="alert" aria-live="assertive" aria-atomic="true" className="panel-note data-message data-message--alert">{failed ? <span className="data-message__line">{message}</span> : null}</div>
     </div>
   );
 }
