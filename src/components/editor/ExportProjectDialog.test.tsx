@@ -79,4 +79,12 @@ describe("ExportProjectDialog", () => {
     expect(mount({ includeResourcesInProjectExport: false }).container.textContent)
       .toContain("其他设备可能缺少素材库条目和自定义字体");
   });
+  it("warns about complete source data with and without resources", () => {
+    for (const include of [true, false]) {
+      const notice = mount({ includeResourcesInProjectExport: include }).container.querySelector('[role="note"]');
+      expect(notice?.textContent).toContain("隐藏学生或不显示姓名不会删除源数据");
+      expect(notice?.textContent).toContain("不包含资源包也不会移除名单");
+    }
+  });
+
 });

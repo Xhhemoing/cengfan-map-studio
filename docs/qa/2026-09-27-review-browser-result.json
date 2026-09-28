@@ -1,0 +1,25 @@
+{
+  "checks": [
+    "add three synthetic records through diff preview",
+    "identical reimport preserves IDs and hidden state",
+    "mobile preview cancellation and re-entry at 390px",
+    "explicit match updates one person and keeps absent records",
+    "single-step undo and redo",
+    "actual SVG and PNG browser downloads",
+    "source package retains complete roster without resources",
+    "return-to-workbench save, reopen, and refresh preserve edits",
+    "source package import round-trip preserves roster identities"
+  ],
+  "page_errors": [],
+  "browser": "143.0.7499.4",
+  "mobile_dimensions": {
+    "client": 368,
+    "scroll": 368,
+    "viewport": 390
+  },
+  "png_dimensions": [
+    1500,
+    1000
+  ],
+  "status": "passed"
+}

@@ -68,3 +68,11 @@ describe("StatusStrip", () => {
     expect(status.textContent).toBe("");
   });
 });
+
+it("keeps both announcement regions non-interactive over bottom actions", () => {
+  const { container } = mount("Ready");
+  const regions = container.querySelectorAll<HTMLElement>("[aria-live]");
+  expect(regions).toHaveLength(2);
+  regions.forEach((region) => expect(region.style.pointerEvents).toBe("none"));
+  expect(regions[0]!.textContent).toBe("Ready");
+});

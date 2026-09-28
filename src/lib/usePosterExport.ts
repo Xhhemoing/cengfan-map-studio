@@ -10,6 +10,7 @@
  * `svgToPngDataUrl` + `downloadDataUrl` 并删掉 generation 判断。
  */
 import { useRef, useState, type RefObject } from "react";
+import { capturePngExport, waitForExportFonts } from "./export-job";
 import { buildExportFileName } from "./export-filename";
 import { downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
@@ -192,14 +193,14 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
-      await ensureUserFontsLoaded(userFonts);
-      const source = serializePosterSvg(svg, { transparentBackground: transparentExport, blockFontDisplay: true });
-      const blob = await svgToPngBlob(source, {
-        width: project.canvas.width * pngScale,
-        height: project.canvas.height * pngScale,
-        transparentBackground: transparentExport,
+      const job = capturePngExport({
+        svg, width: project.canvas.width, height: project.canvas.height,
+        scale: pngScale, transparentBackground: transparentExport, projectName: getProjectName?.(),
       });
-      const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "png", scale: pngScale });
+      await waitForExportFonts(ensureUserFontsLoaded(userFonts.map((font) => ({ ...font }))));
+      if (!isLatestPng()) return;
+      const blob = await svgToPngBlob(job.source, job);
+      const fileName = job.fileName;
       // 只有更晚的一次 PNG 才让这份成为多余的文件。SVG / 工程包是另一份东西，它顶掉的
       // 是状态而不是产物——把用户点过的 PNG 一起吞掉，等来的会是「SVG 已导出」加一个
       // 从未出现的 PNG。

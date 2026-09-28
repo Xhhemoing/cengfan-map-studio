@@ -1,3 +1,4 @@
+import type { ApplyImportDiff } from "../lib/import-diff";
 import { Database, LayoutPanelTop, Map, Redo2, RectangleHorizontal, Settings2, Type, Undo2, Wallpaper } from "lucide-react";
 import { useState, type KeyboardEvent } from "react";
 import type { ProjectDocument } from "../lib/project-document";
@@ -101,6 +102,7 @@ export function GlobalSettingsScreen({
   onChangeDataView,
   onAppendStudents,
   onReplaceStudents,
+  onApplyImportDiff,
   onUpdateStudent,
   onToggleStudentVisibility,
   onDeleteStudent,
@@ -144,6 +146,7 @@ export function GlobalSettingsScreen({
   onChangeDataView: (view: DataViewId) => void;
   onAppendStudents: (students: Student[]) => void;
   onReplaceStudents: (students: Student[]) => void;
+  onApplyImportDiff?: ApplyImportDiff;
   onUpdateStudent: (id: string, patch: Partial<Pick<Student, "name" | "university" | "city" | "province" | "locationScope">>) => void;
   onToggleStudentVisibility: (id: string) => void;
   onDeleteStudent: (id: string) => void;
@@ -303,6 +306,7 @@ export function GlobalSettingsScreen({
                     onChangeDataView={onChangeDataView}
                     onAppendStudents={onAppendStudents}
                     onReplaceStudents={onReplaceStudents}
+                    onApplyImportDiff={onApplyImportDiff}
                     onUpdateStudent={onUpdateStudent}
                     onToggleVisibility={onToggleStudentVisibility}
                     onDeleteStudent={onDeleteStudent}

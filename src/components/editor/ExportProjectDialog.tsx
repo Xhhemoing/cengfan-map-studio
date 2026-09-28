@@ -1,3 +1,4 @@
+import { SourceProjectNotice } from "../SourceProjectNotice";
 import type { UsePosterExportResult } from "../../lib/usePosterExport";
 
 export interface ExportProjectDialogProps {
@@ -30,6 +31,7 @@ export function ExportProjectDialog({ posterExport }: ExportProjectDialogProps) 
           </div>
           <button type="button" aria-label="关闭导出工程确认" onClick={() => posterExport.setShowProjectExportDialog(false)}>×</button>
         </header>
+        <SourceProjectNotice />
         <label className="export-resource-option boolean-control checkbox-row">
           <input
             type="checkbox"

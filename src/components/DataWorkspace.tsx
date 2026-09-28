@@ -26,7 +26,8 @@ import { AiUploadConsentDialog, AiUploadConsentMemo, useAiUploadConsent } from "
 import { DataMessageRegions } from "./DataMessageRegions";
 import type { DataViewId, Student } from "../lib/project-data";
 import { resolveStudentLocation } from "../lib/student-data";
-import { findDuplicateStudentGroups } from "../lib/data-duplicate";
+import { ImportReviewPanel } from "./ImportReviewPanel";
+import type { ApplyImportDiff } from "../lib/import-diff";
 import { cityOptions, provinceOptions, universityOptions } from "../lib/roster-search-options";
 import { SearchCombobox } from "./SearchCombobox";
 import { FileDropzone } from "./FileDropzone";
@@ -43,6 +44,7 @@ const CONSENT_DECLINED_NOTE = "（未同意发送原文，只用了本地规则�
 export function DataWorkspace({
   students,
   onReplaceStudents,
+  onApplyImportDiff,
   onAppendStudents,
   onUpdateStudent,
   onToggleVisibility,
@@ -62,6 +64,7 @@ export function DataWorkspace({
 }: {
   students: Student[];
   onReplaceStudents: (students: Student[]) => void;
+  onApplyImportDiff?: ApplyImportDiff;
   onAppendStudents: (students: Student[]) => void;
   onUpdateStudent: (id: string, patch: Partial<Pick<Student, "name" | "university" | "city" | "province" | "locationScope">>) => void;
   onToggleVisibility: (id: string) => void;
@@ -119,23 +122,6 @@ export function DataWorkspace({
     () => filteredStudents.filter((student) => student.visibility !== false).length,
     [filteredStudents],
   );
-  const candidateSummary = useMemo(() => {
-    const duplicateIds = new Set(findDuplicateStudentGroups(reviewRows.map((row, index) => ({
-      id: `${row.sourceLine}-${index}`,
-      name: row.name,
-      university: row.university,
-      city: row.city,
-      locationScope: row.locationScope,
-    }))).flatMap((group) => group.studentIds));
-    const valid = reviewRows.filter((row) => row.name.trim() && row.university.trim() && row.city.trim());
-    return {
-      valid: valid.length,
-      missing: reviewRows.length - valid.length,
-      duplicate: reviewRows.filter((_, index) => duplicateIds.has(`${reviewRows[index]!.sourceLine}-${index}`)).length,
-    };
-  }, [reviewRows]);
-
-
   const [showImport, setShowImport] = useState(!compactRosterControls);
   const [showNewStudent, setShowNewStudent] = useState(!compactRosterControls);
 
@@ -579,44 +565,9 @@ export function DataWorkspace({
         </section>
       )}
 
-      {reviewRows.length > 0 && (
-        <div className="import-review">
-          <PanelHeader title="确认候选" meta={`有效 ${candidateSummary.valid} · 未识别 ${unparsedRows.length} · 缺失字段 ${candidateSummary.missing} · 重复 ${candidateSummary.duplicate}`} />
-          <div className="review-list">
-            {reviewRows.map((row, index) => (
-              <label key={`${row.sourceLine}-${index}`} className="review-row">
-                <input
-                  type="checkbox"
-                  checked={row.accepted}
-                  onChange={(event) => {
-                    setReviewRows((current) =>
-                      current.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? { ...item, accepted: event.target.checked }
-                          : item,
-                      ),
-                    );
-                  }}
-                />
-                <span>
-                  <strong>{row.name}</strong>
-                  <small>
-                    {row.university} · {row.city}
-                  </small>
-                </span>
-              </label>
-            ))}
-          </div>
-          <ActionGroup label="确认导入" className="review-actions">
-            <ActionButton onClick={() => applyImport("append")}>
-              追加导入
-            </ActionButton>
-            <CompactButton variant="secondary" onClick={() => applyImport("replace")}>
-              替换全部
-            </CompactButton>
-          </ActionGroup>
-        </div>
-      )}
+      {reviewRows.length > 0 && <ImportReviewPanel reviewRows={reviewRows} setReviewRows={setReviewRows} unparsedCount={unparsedRows.length} students={students} applyImport={applyImport} onApplyImportDiff={onApplyImportDiff} onComplete={(message) => {
+        setReviewRows([]); setExcelRecognition(null); setUnparsedRows([]); setImportText(""); setMessage(message + (unparsedRows.length ? `；另有 ${unparsedRows.length} 行未识别、未导入` : ""));
+      }} />}
 
       <DataMessageRegions message={message} replaceConfirmation={replaceConfirmation} />
 

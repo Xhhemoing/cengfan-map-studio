@@ -117,6 +117,7 @@ export function GlobalSettingsShell({
         onChangeDataView={dataWorkspaceProps.onChangeDataView}
         onAppendStudents={dataWorkspaceProps.onAppendStudents}
         onReplaceStudents={dataWorkspaceProps.onReplaceStudents}
+        onApplyImportDiff={dataWorkspaceProps.onApplyImportDiff}
         onUpdateStudent={dataWorkspaceProps.onUpdateStudent}
         onToggleStudentVisibility={dataWorkspaceProps.onToggleVisibility}
         onDeleteStudent={dataWorkspaceProps.onDeleteStudent}
