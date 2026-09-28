@@ -8,6 +8,8 @@ import { WorkflowPrototypeRoute } from "./components/WorkflowPrototypeRoute";
 import { editorProjectStore } from "./lib/editor-project-store";
 import { isPrototypePath } from "./lib/public-base-path";
 import "./styles.css";
+import "./styles/studio-tokens.css";
+import "./styles/studio-chrome.css";
 
 /** 工作台路由沿用的旧名字,指向同一个共享实例。 */
 export const workbenchStore = editorProjectStore;

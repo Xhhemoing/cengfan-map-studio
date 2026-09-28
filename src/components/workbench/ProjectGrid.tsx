@@ -2,11 +2,7 @@ import { MapPinned } from "lucide-react";
 import type { ProjectListItem } from "../../lib/project-store";
 import { ProjectCard } from "./ProjectCard";
 
-/**
- * 列表页只有元数据视图:`store.list()` 不加载工程包本体,卡片需要的字段
- * (名称、更新时间、学生数)都在 `ProjectListItem` 里。用完整的 `StoredProject`
- * 声明属性会逼调用方伪造工程包,所以这里按元数据形状收窄。
- */
+/** Cards consume list metadata, not the full stored project payload. */
 export type ProjectGridItem = Pick<ProjectListItem, "id" | "name" | "updatedAt" | "pack">;
 
 export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpdatedAt, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete, onLoadSample }: {
@@ -23,33 +19,42 @@ export function ProjectGrid({ projects, loading, hasError, openMenuId, formatUpd
   onDelete: (project: ProjectGridItem) => void;
   onLoadSample: () => void;
 }) {
-  return <section className="workbench-grid" aria-label="项目列表">
-    {loading && projects.length === 0 ? (
-      <div className="workbench-empty" role="status">
-        <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} /></span>
-        <strong>正在加载项目…</strong>
-        <p>稍候，正在读取本机项目列表。</p>
+  return <>
+    <header className="workbench-section-heading">
+      <div>
+        <h1>我的项目</h1>
+        <p>继续编辑，或从一张新地图开始。</p>
       </div>
-    ) : projects.length === 0 && !hasError ? (
-      <div className="workbench-empty">
-        <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} /></span>
-        <strong>还没有项目</strong>
-        <p>点击「新建项目」或「导入」，做毕业去向、开学合影或校庆班级图。</p>
-        <button type="button" className="secondary-button" aria-label="载入示例项目" onClick={onLoadSample}>载入示例项目</button>
-      </div>
-    ) : projects.map((project) => (
-      <ProjectCard
-        key={project.id}
-        project={project}
-        updatedAtLabel={formatUpdatedAt(project.updatedAt)}
-        menuOpen={openMenuId === project.id}
-        onOpen={() => onOpen(project.id)}
-        onToggleMenu={() => onToggleMenu(project.id)}
-        onRename={() => onRename(project)}
-        onDuplicate={() => onDuplicate(project)}
-        onExport={() => onExport(project)}
-        onDelete={() => onDelete(project)}
-      />
-    ))}
-  </section>;
+      {!loading && !hasError && <span className="workbench-project-count">{projects.length} 个项目</span>}
+    </header>
+    <section className="workbench-grid" aria-label="项目列表" aria-busy={loading}>
+      {loading && projects.length === 0 ? (
+        <div className="workbench-empty" role="status">
+          <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} /></span>
+          <strong>正在加载项目…</strong>
+          <p>稍候，正在读取本机项目列表。</p>
+        </div>
+      ) : projects.length === 0 && !hasError ? (
+        <div className="workbench-empty">
+          <span className="workbench-empty__mark" aria-hidden="true"><MapPinned size={22} /></span>
+          <strong>还没有项目</strong>
+          <p>点击「新建项目」或「导入」，做毕业去向、开学合影或校庆班级图。</p>
+          <button type="button" className="secondary-button" aria-label="载入示例项目" onClick={onLoadSample}>载入示例项目</button>
+        </div>
+      ) : projects.map((project) => (
+        <ProjectCard
+          key={project.id}
+          project={project}
+          updatedAtLabel={formatUpdatedAt(project.updatedAt)}
+          menuOpen={openMenuId === project.id}
+          onOpen={() => onOpen(project.id)}
+          onToggleMenu={() => onToggleMenu(project.id)}
+          onRename={() => onRename(project)}
+          onDuplicate={() => onDuplicate(project)}
+          onExport={() => onExport(project)}
+          onDelete={() => onDelete(project)}
+        />
+      ))}
+    </section>
+  </>;
 }

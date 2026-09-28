@@ -1,0 +1,114 @@
+/* Application chrome only. Poster/SVG colors and typography belong to the project.
+ * Define palettes on the document AND shell: MUI portals render under body, and
+ * custom-property aliases resolve where declared, not where they are consumed.
+ * :has() also follows workbench routes, which do not run editor chrome effects. */
+:root {
+  --studio-font: "Noto Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --studio-radius-sm: 6px;
+  --studio-radius: 10px;
+  --studio-radius-lg: 14px;
+  --studio-control-height: 36px;
+  --studio-control-compact: 32px;
+  --studio-shadow: 0 8px 28px rgb(20 35 30 / 8%);
+  --studio-on-accent: #ffffff;
+  --studio-on-danger: #ffffff;
+}
+
+:root:has(.app-shell[data-editor-skin="atelier"]),
+.app-shell[data-editor-skin="atelier"] {
+  --editor-bg: #f5f7f6;
+  --editor-surface: #fafcfb;
+  --editor-surface-raised: #ffffff;
+  --editor-surface-muted: #edf2ef;
+  --editor-ink: #24352e;
+  --editor-ink-muted: #5d6d64;
+  --editor-line: #dbe4de;
+  --editor-accent: #24665a;
+  --editor-accent-soft: #e8f2ec;
+  --editor-danger: #b44335;
+  --editor-focus: #24665a;
+  --editor-warning: #895919;
+}
+
+:root:has(.app-shell[data-editor-skin="classic"]),
+.app-shell[data-editor-skin="classic"] {
+  --editor-bg: #f2f5f8;
+  --editor-surface: #f8fafc;
+  --editor-surface-raised: #ffffff;
+  --editor-surface-muted: #eaf0f5;
+  --editor-ink: #24374c;
+  --editor-ink-muted: #566b7d;
+  --editor-line: #d7e1e9;
+  --editor-accent: #245d57;
+  --editor-accent-soft: #e6f1ef;
+  --editor-danger: #b44335;
+  --editor-focus: #245d57;
+  --editor-warning: #895919;
+}
+
+:root:has(.app-shell[data-editor-theme="dark"]),
+.app-shell[data-editor-skin][data-editor-theme="dark"] {
+  color-scheme: dark;
+  --editor-bg: #171e1c;
+  --editor-surface: #1e2824;
+  --editor-surface-raised: #24312b;
+  --editor-surface-muted: #2c3a33;
+  --editor-ink: #eaf2ed;
+  --editor-ink-muted: #afc1b5;
+  --editor-line: #405448;
+  --editor-accent: #94cfb9;
+  --editor-accent-soft: #304c3f;
+  --editor-danger: #f3a294;
+  --editor-focus: #b2e4ce;
+  --editor-warning: #efc57b;
+  --studio-on-accent: #142a21;
+  --studio-on-danger: #351a15;
+  --studio-shadow: 0 8px 28px rgb(0 0 0 / 24%);
+}
+
+:root:has(.app-shell[data-editor-skin="classic"][data-editor-theme="dark"]),
+.app-shell[data-editor-skin="classic"][data-editor-theme="dark"] {
+  --editor-bg: #141e27;
+  --editor-surface: #1c2934;
+  --editor-surface-raised: #23333f;
+  --editor-surface-muted: #2c3d49;
+  --editor-ink: #eaf1f7;
+  --editor-ink-muted: #b1c2d0;
+  --editor-line: #415766;
+}
+
+:root:has(.app-shell[data-editor-theme="light"]),
+.app-shell[data-editor-theme="light"] { color-scheme: light; }
+
+/* Rebind aliases in both scopes; inherited var(--editor-*) aliases otherwise
+ * retain the root's computed light values when the shell switches skin. */
+html:root, .app-shell[data-editor-skin] {
+  --studio-bg: var(--editor-bg);
+  --studio-surface: var(--editor-surface-raised);
+  --studio-surface-muted: var(--editor-surface-muted);
+  --studio-ink: var(--editor-ink);
+  --studio-ink-muted: var(--editor-ink-muted);
+  --studio-line: var(--editor-line);
+  --studio-accent: var(--editor-accent);
+  --studio-accent-soft: var(--editor-accent-soft);
+  --studio-danger: var(--editor-danger);
+  --studio-focus: var(--editor-focus);
+  --status-success: var(--editor-accent);
+  --status-warning: var(--editor-warning);
+  --status-error: var(--editor-danger);
+  --status-info: var(--editor-ink-muted);
+  --focus-ring: var(--editor-focus);
+  --surface-panel: var(--editor-surface-raised);
+  --mui-palette-primary-main: var(--studio-accent);
+  --mui-palette-primary-contrastText: var(--studio-on-accent);
+  --mui-palette-background-default: var(--studio-bg);
+  --mui-palette-background-paper: var(--studio-surface);
+  --mui-palette-text-primary: var(--studio-ink);
+  --mui-palette-text-secondary: var(--studio-ink-muted);
+  --mui-palette-divider: var(--studio-line);
+  --mui-palette-action-hover: var(--studio-surface-muted);
+  --mui-palette-action-selected: var(--studio-accent-soft);
+  --mui-palette-error-main: var(--studio-danger);
+}
+
+html:root:has(.app-shell) { color: var(--editor-ink); background: var(--editor-bg); }

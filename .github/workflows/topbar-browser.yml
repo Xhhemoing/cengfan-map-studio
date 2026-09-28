@@ -1,0 +1,52 @@
+name: Topbar browser regression
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/check-topbar-browser.mjs"
+      - ".github/workflows/topbar-browser.yml"
+      - "package*.json"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "scripts/check-topbar-browser.mjs"
+      - ".github/workflows/topbar-browser.yml"
+      - "package*.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: topbar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Install isolated browser-test tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/topbar-tools" --no-save --package-lock=false --ignore-scripts playwright@1.58.2
+          ln -s "$RUNNER_TEMP/topbar-tools/node_modules/playwright" node_modules/playwright
+      - run: node "$RUNNER_TEMP/topbar-tools/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Install Chinese UI font
+        run: sudo apt-get install -y fonts-noto-cjk
+      - name: Header component regression
+        run: npx vitest run src/components/StudioTopbar.test.tsx src/components/StudioTopbar.interactions.test.tsx src/components/StudioTopbar.ownership.test.ts
+      - name: Check actual application routes in Chromium
+        run: node scripts/check-topbar-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: topbar-browser-results
+          path: artifacts/topbar
+          retention-days: 7
