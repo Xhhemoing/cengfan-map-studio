@@ -2,8 +2,22 @@
   "name": "cengfan-map-studio",
   "version": "0.1.2",
   "private": true,
+  "description": "Local-first graduation destination map editor with spreadsheet import and PNG/SVG export.",
   "license": "AGPL-3.0-only",
   "type": "module",
+  "homepage": "https://xhhemoing.github.io/cengfan-map-studio/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Xhhemoing/cengfan-map-studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Xhhemoing/cengfan-map-studio/issues"
+  },
+  "keywords": ["graduation", "map-editor", "local-first", "react", "typescript"],
+  "engines": {
+    "node": ">=22.13.0 <23",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
@@ -12,6 +26,8 @@
     "start": "node scripts/start.mjs",
     "test": "node scripts/run-heavy.mjs vitest run",
     "test:watch": "vitest",
+    "test:release": "node --test scripts/release-metadata.test.mjs",
+    "release:prepare": "node scripts/prepare-release.mjs",
     "lint": "node scripts/run-heavy.mjs eslint .",
     "typecheck": "tsc -b --noEmit",
     "security:audit": "node scripts/run-heavy.mjs npm audit --registry=https://registry.npmjs.org",
@@ -20,7 +36,7 @@
     "data:sync:china-locations": "node scripts/sync-china-locations.mjs",
     "data:sync:china-universities": "node scripts/sync-china-universities.mjs",
     "preview": "npm run start",
-    "check": "npm run lint && npm run security:audit",
+    "check": "npm run test:release && npm run typecheck && npm run lint && npm test && npm run build",
     "data:sync:china-university-emblems": "node scripts/sync-china-university-emblems.mjs",
     "promo:check": "node scripts/宣发流程-素材检查.mjs",
     "promo:content": "node scripts/宣发流程-内容生成.mjs",
@@ -59,8 +75,6 @@
     "vitest": "^4.1.10"
   },
   "allowScripts": {
-    "esbuild": [
-      "postinstall"
-    ]
+    "esbuild": ["postinstall"]
   }
 }

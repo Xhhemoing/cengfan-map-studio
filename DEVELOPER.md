@@ -1,178 +1,60 @@
 # 蹭饭图开发者指南
 
-> 目标：让开发者快速上手、贡献代码、参与社区建设。
+## 环境与启动
 
----
-
-## 一、快速开始（5 分钟）
+基线为 Node 22.13+（22.x）、npm 10+；`.nvmrc` 与 CI 保持同一主版本。使用锁文件安装，不要为运行项目重新解析全部依赖。
 
 ```bash
-git clone https://github.com/Xhhemoing/cengfan-map-studio.git
-cd cengfan-map-studio
-npm install
-npm run dev          # 前端 5173 + API 8787
+npm ci
+npm run dev
 ```
 
-打开 http://localhost:5173 即可开始体验。公开演示站（无 Node API）见 [docs/deployment/public-demo.md](docs/deployment/public-demo.md)。
+前端默认 `http://localhost:5173`，API 默认 `http://localhost:8787`。基础编辑不依赖模型密钥。生产配置见 [部署指南](DEPLOY-SERVER.md)。
 
----
+## 模块地图
 
-## 二、技术栈
+| 目录/文件 | 职责 |
+| --- | --- |
+| `src/main.tsx` / `src/components/StudioRoutes.tsx` | 稳定入口、工作台/编辑器路由、存储健康 |
+| `src/App.tsx` / `src/components/` | 编辑器组合、画布、工作区、检查器 |
+| `src/lib/` | 名单解析、工程文档、布局、导出、浏览器存储与客户端 |
+| `src/data/` / `src/assets/` | 已检入的目录快照与地图数据 |
+| `server/` | Node HTTP API、认证、协作、AI 与运行时持久化 |
+| `scripts/` | 开发构建、串行任务保护、数据同步、回归与发布工具 |
 
-| 层级 | 技术 | 说明 |
-|------|------|------|
-| 前端 | React 19 + Vite + TypeScript + MUI | 编辑器画布、组件库 |
-| 地图 | d3-geo | 省/市边界投影 |
-| 后端 | Node.js 内嵌 API | 认证、协作、AI 助手 |
-| 存储 | IndexedDB（前端）+ 内存（后端） | 项目持久化、房间管理 |
-| 测试 | Vitest + jsdom | 单元测试 + 组件测试 |
-| 构建 | Vite + TypeScript | 生产构建 |
+技术栈为 React 19、Vite、TypeScript、MUI、d3-geo；测试使用仓库当前的 Vitest/jsdom 与测试辅助工具。不要为了过时文档中的建议额外引入测试框架。
 
----
-
-## 三、项目结构
-
-```
-src/
-├── main.tsx                # 稳定入口、错误边界与顶层路由选择
-├── App.tsx                 # 编辑器主体（按项目路由异步加载）
-├── components/
-│   ├── StudioRoutes.tsx    # 工作台 / 编辑器路由壳与存储健康提示
-│   ├── ProjectWorkbench.tsx# 项目工作台（按工作台路由异步加载）
-│   ├── canvas/             # 地图画布、图层、数据层
-│   ├── inspector/          # 右侧检查器面板
-│   ├── workspaces/         # 工作区（卡片样式、布局等）
-│   └── ...                 # 其他 UI 组件
-├── lib/                    # 纯函数工具（场景文档、ID 生成、布局算法）
-├── data/                   # 静态省/市数据
-└── styles.css              # 全局样式
-
-server/                     # Node API（认证、协作、AI），位于仓库根目录
-scripts/                    # 构建、开发、数据同步脚本
-docs/                       # 设计文档、宣发策略、案例模板
-public/                     # 静态资源（Logo、校徽）
-```
-
-**开发规范**：详见 [AGENTS.md](AGENTS.md)
-
----
-
-## 四、核心功能模块
-
-### 1. 地图编辑器（src/App.tsx + components/canvas/）
-- 点击省份选中 → 右侧面板编辑
-- 拖拽卡片 + 智能避让
-- 锚点连接线 + 交叉检测
-- 缩放、平移、标尺
-
-### 2. 项目工作台（src/components/ProjectWorkbench.tsx）
-- 多项目 CRUD
-- 导入/导出 .cengfan 项目包
-- 本地 IndexedDB 存储
-
-### 3. 素材库（src/components/AssetLibraryPanel.tsx）
-- 字体、贴图、校徽上传
-- 按省份绑定
-- 实时预览
-
-### 4. 协作（server/collaboration.ts）
-- 创建房间 + 邀请码
-- 实时同步（EventSource / SSE 下行，HTTP 事务上行）
-- 权限控制（编辑/查看）
-
-### 5. AI 助手（server/ai/）
-- OpenAI 兼容接口
-- 场景化指令白名单
-- 流式响应
-
----
-
-## 五、贡献流程
-
-完整约定见仓库根目录 [CONTRIBUTING.md](CONTRIBUTING.md)。国内镜像见 [docs/宣发/Gitee镜像清单.md](docs/宣发/Gitee镜像清单.md)。
-
-### 1. 认领 Issue
-- 查看 [GitHub Issues](https://github.com/Xhhemoing/cengfan-map-studio/issues)
-- 优先认领 `good first issue` 或 `help wanted`（候选：[docs/宣发/good-first-issues.md](docs/宣发/good-first-issues.md)）
-- 在 Issue 下留言「我来做」
-
-### 2. 开发规范
-- 遵循 [AGENTS.md](AGENTS.md) 的 TDD + 验证纪律
-- 新功能先写测试 → 最小实现 → 重跑测试
-- 提交前运行 `npm run lint && npm test`
-
-### 3. 提交 PR
-- Fork → 创建分支 → 开发 → 提交 PR
-- PR 描述需包含：功能说明、测试截图、回滚方案
-- 等待 Code Review 后合并
-
-### 4. 贡献类型
-- 🐛 Bug 修复
-- ✨ 新功能（需先开 Issue 讨论）
-- 📝 文档改进
-- 🎨 UI/UX 优化
-- 🧪 测试覆盖
-- 🌍 国际化
-
----
-
-## 六、常见开发任务
-
-### 添加新卡片模板
-1. 在 `src/lib/card-templates.ts` 添加模板定义
-2. 在 `src/components/workspaces/ReferenceCardStyleWorkspace.tsx` 注册
-3. 写测试（参考 `src/lib/card-templates.test.ts`）
-
-### 添加新省份数据
-1. 运行 `npm run data:sync:china-locations`
-2. 检查 `src/data/china-locations.ts` 是否正确更新
-3. 写测试验证边界数据
-
-### 扩展 AI 指令
-1. 在 `server/ai/tool-registry.ts` 的 `AGENT_TOOLS` 添加工具定义
-2. 实现对应的 handler
-3. 写集成测试
-
----
-
-## 七、测试策略
+## 常用命令
 
 ```bash
-npm test                    # 全量测试（串行）
-npx vitest run <file>       # 单文件测试
-npx vitest run -t "pattern" # 按名称过滤
+npm run dev:web         # 仅 Vite
+npm run dev:ai          # 仅 Node API
+npx vitest run <file>   # 有针对性的回归
+npm run test:release    # Node 原生发布工具测试，不依赖浏览器
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run check           # 上述质量检查串行执行
+npm run security:audit  # 独立联网审计
 ```
 
-**测试覆盖要求**：
-- 新功能 ≥ 80% 覆盖率
-- Bug 修复必须有回归测试
-- UI 交互需用 `@testing-library/react`
+`npm run preview` 是 `npm run start` 的别名，会启动完整 API；静态构建预览请使用 `npx vite preview`。`scripts/run-heavy.mjs` 防止重型任务重叠；全量校验不要并行启动。
 
----
+## 修改与验证
 
-## 八、发布流程
+遵循 [AGENTS.md](AGENTS.md) 的模块归属、文件大小棘轮和验证纪律。纯算法放入 `src/lib` 并增加单元回归；界面改动保留现有状态与可访问性。涉及名单时阅读仓库对应导入约定，不修改事实来掩盖展示告警。
 
-1. 更新 `CHANGELOG.md`
-2. 打 tag：`git tag v0.2.0`
-3. 推送到 GitHub：`git push --tags`
-4. GitHub Actions 自动构建并发布 Release
+代码变化用相关回归覆盖；界面变化再做真实浏览器检查。顶栏回归脚本为 `scripts/check-topbar-browser.mjs`，对应 CI 单独安装固定版本的 Playwright 和 Chromium，不写入应用依赖。未运行的浏览器/平台不得写成已覆盖。
 
----
+项目不在此承诺一个未实际测量的覆盖率百分比。CI 测试数量、跳过项和警告以对应 commit 的运行结果为准。
 
-## 九、社区与支持
+## 状态与隐私
 
-- **GitHub Issues**：用模板选 Bug / 功能建议 / 使用意见
-- **GitHub Discussions**：方向讨论（开启后把「征求意见」置顶）
-- **开发者群**：只聊意见与 PR，见 `docs/私域/开发者群运营手册.md`
-- **用户群**：导入出图，开发者不要把用户群当论坛
+项目默认保存在浏览器 IndexedDB。协作房间有运行态与文件快照恢复机制，依赖单实例持久目录、保存/关停行为及过期策略；不保证异常终止前所有事件都已持久化。工程包可能含完整源数据，分享前需审查。
 
----
+## 贡献、计划与发布
 
-## 十、License
+[CONTRIBUTING](CONTRIBUTING.md) 说明 PR 流程；[ROADMAP](docs/ROADMAP.md) 管理未来任务；[PROJECT_STATUS](docs/PROJECT_STATUS.md) 区分已合并和未完成。
 
-GNU AGPL v3 only — 详见 [LICENSE](LICENSE) 与 [docs/开源与收费边界.md](docs/开源与收费边界.md)
-
----
-
-**维护者**：蹭饭图团队  
-**更新**：2026-08-15
+发布不再依赖手工推 tag 的隐含假设。必须准备 CHANGELOG 与 `docs/releases/vX.Y.Z.md`，审查主干 SHA，然后按 [RELEASING](docs/RELEASING.md) 执行验证、版本同步与发布。CI 通过、已合并和已发布是三个不同状态。

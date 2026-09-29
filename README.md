@@ -1,128 +1,115 @@
-# 蹭饭图
+# 蹭饭图 · Cengfan Map Studio
 
+**把毕业班名单变成可编辑、可导出的去向地图。** 一个本地优先的开源编辑器：导入表格、调整地图与卡片、导出成品，不必先注册账号或部署服务器。
+
+[![CI](https://github.com/Xhhemoing/cengfan-map-studio/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Xhhemoing/cengfan-map-studio/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Xhhemoing/cengfan-map-studio)](https://github.com/Xhhemoing/cengfan-map-studio/releases/latest)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-React-3178C6.svg)](https://www.typescriptlang.org/)
 
-**把班级名单变成可编辑、可导出的去向地图。** 名单默认留在浏览器本地，不需要公网服务器。
-
-打开仓库即可看样例：下面这张图就是内置示例项目导出的成品（虚构姓名，已脱敏）。本机 `npm run dev` 后点开「示例：2026届毕业去向」，看到的是同一张图。
+**[在线体验](https://xhhemoing.github.io/cengfan-map-studio/) · [下载发布版](https://github.com/Xhhemoing/cengfan-map-studio/releases/latest) · [用户指南](USER_GUIDE.md) · [参与贡献](CONTRIBUTING.md) · [English introduction](#english-introduction)**
 
 <p align="center">
-  <img src="docs/宣发草稿/配图/07-成品图-导出.png" alt="示例成品：我们的毕业去向图" width="920">
+  <img src="docs/宣发草稿/配图/07-成品图-导出.png" alt="内置虚构示例的毕业去向地图成品" width="920">
 </p>
 
-<p align="center">
-  <a href="USER_GUIDE.md">用户指南</a>
-  ·
-  <a href="docs/README.md">文档导航</a>
-  ·
-  <a href="docs/示例数据/毕业名单-脱敏.csv">脱敏名单 CSV</a>
-  ·
-  <a href="docs/示例数据/示例项目.cengfan">示例工程包</a>
-  ·
-  <a href="https://github.com/Xhhemoing/cengfan-map-studio/issues/new/choose">提意见</a>
-  ·
-  <a href="CONTRIBUTING.md">参与贡献</a>
-</p>
+> 项目处于 **0.1.x 早期迭代阶段**。发布版与主干预览可能不同；稳定复现请使用 Release 对应 tag。项目不是学校信息管理系统，也不提供升学率或就业率统计。
 
----
+## 可以做什么
 
-## 样例展示
-
-截图来自仓库内置 12 人示例，姓名为虚构。对外只讲省份/城市分布，不宣称升学率。
-
-| 工作台（首次打开即有示例项目） | 导入名单 → 自动匹配省份 |
+| 能力 | 当前范围 |
 | --- | --- |
-| <img src="docs/宣发草稿/配图/01-工作台首页.png" alt="项目工作台，已放入示例：2026届毕业去向" width="440"> | <img src="docs/宣发草稿/配图/02-数据与素材-学生名单.png" alt="名单阶段：12 条示例名单" width="440"> |
+| 名单导入 | Excel、CSV、粘贴文本；识别姓名、院校、城市并辅助匹配省份 |
+| 差异更新 | 预览新旧名单差异，人工匹配后提交；过期预览会拒绝写入 |
+| 地图与排版 | 地图、卡片、连接线、模板、素材；支持手动微调与位置刷新 |
+| 成品交付 | PNG、SVG，以及可继续编辑的 JSON 工程包；兼容导入历史 `.cengfan` 文件 |
+| 本地项目 | IndexedDB 保存、多项目工作台、内置虚构示例 |
+| 可选服务端 | 单实例 Node API 提供协作、工作区接口和可配置的 AI 能力 |
 
-<p align="center">
-  <img src="docs/宣发草稿/配图/06-最终导出.png" alt="交付阶段：画布预览与 PNG / SVG / 工程包导出" width="920">
-</p>
+**隐私边界：** 基础导入、编辑和导出在浏览器完成。主动使用协作或远程 AI 时，相关数据会发送到配置的服务端；名单智能识别发送原文前有同意提示。工程包可能含完整姓名与去向，隐藏画布内容不等于删除源数据。请勿在公开 Issue、截图或演示中上传真实名单。
 
-<p align="center"><sub>从左到右：工作台 → 名单 → 画布微调 → 导出 PNG / SVG / <code>.cengfan</code> 工程包。</sub></p>
+## 不安装，先体验
 
-### 仓库里的示例文件
+打开 **[在线演示](https://xhhemoing.github.io/cengfan-map-studio/)**，在工作台选择「示例：2026届毕业去向」，按「名单 → 地图 → 版式 → 内容 → 交付」完成一次导出。示例姓名为虚构。
 
-| 文件 | 用途 |
-|------|------|
-| 首次打开自动生成的「示例：2026届毕业去向」 | 12 人成品，点开就能改、能导出 |
-| [docs/示例数据/毕业名单-脱敏.csv](docs/示例数据/毕业名单-脱敏.csv) | 更大名单（姓名已打码）。新建项目后在「名单」阶段导入 |
-| [docs/示例数据/示例项目.cengfan](docs/示例数据/示例项目.cengfan) | 完整工程包。工作台右上角「导入」即可 |
-| [docs/案例模板/](docs/案例模板/) | 班额与制作流程说明（虚构分布，不是真实班级档案） |
+演示站是静态构建，**不包含 Node API、在线协作和远程 AI 服务**。浏览器存储不是云备份；清理站点数据、换浏览器或换域名后，应使用事先导出的工程包恢复。
 
----
+| 工作台 | 名单导入 |
+| --- | --- |
+| <img src="docs/宣发草稿/配图/01-工作台首页.png" alt="带有内置示例的项目工作台" width="440"> | <img src="docs/宣发草稿/配图/02-数据与素材-学生名单.png" alt="虚构示例的名单导入界面" width="440"> |
 
-## 本机 3 分钟看效果
+更多文件：[脱敏 CSV](docs/示例数据/毕业名单-脱敏.csv)、[示例工程包](docs/示例数据/示例项目.cengfan)、[案例模板](docs/案例模板/)。
 
-不部署、不备案、不需要公网 IP。工程保存在当前浏览器。
+## 本地开发
+
+需要 **Node.js 22.13 或更新的 22.x 版本、npm 10+、Git**。`.nvmrc`、CI 与容器以 Node 22 为基线；其他主版本暂不作为本项目的已验证环境。
 
 ```bash
 git clone https://github.com/Xhhemoing/cengfan-map-studio.git
 cd cengfan-map-studio
-npm install
+# 安装 nvm 的用户可先执行 nvm use
+npm ci
 npm run dev
 ```
 
-浏览器打开 http://localhost:5173
+打开 `http://localhost:5173`；本地 API 默认在 `http://localhost:8787`。基础编辑不需要模型密钥。只有需要远程 AI 时才复制并配置 `.env.example`；不要将密钥放入任何 `VITE_*` 变量或提交到 Git。
 
-1. 工作台里点开 **示例：2026届毕业去向**
-2. 走一遍「名单 → 地图 → 版式 → 内容 → 交付」
-3. 导出 PNG 对照上面的成品图
+自己的表格建议包含 **学生姓名、录取院校、城市**，可选「去向类型」。具体表头、导入方式和导出说明见 [用户指南](USER_GUIDE.md)。
 
-用自己的名单：Excel / CSV 至少三列 **学生姓名、录取院校、城市**；可选第四列「去向类型」（中国去向 / 海外去向）。新建项目 → 导入表格 → 微调重叠卡片 → 导出。逐步说明见 [USER_GUIDE.md](USER_GUIDE.md)。
+## 选择部署方式
 
-国内克隆若 GitHub 不稳定，见 [Gitee 镜像清单](docs/宣发/Gitee镜像清单.md)。
+| 方式 | 适合谁 | 说明 |
+| --- | --- | --- |
+| 在线演示 | 先体验、使用虚构数据 | 无需安装；静态功能 |
+| Release 的 `*-web.zip` / `*-web.tar.gz` | 自行托管静态站点 | 解压到网站根路径 `/`；不包含 Node API，不要双击 HTML 以 `file://` 运行 |
+| 从源码静态构建 | 需要子路径或自定义构建 | 设置 `VITE_PUBLIC_DEMO=1`，按站点配置 `BASE_PATH` |
+| 单实例 Node / Docker | 需要协作或远程 AI | 需要生产密钥、持久目录、访问控制及 HTTPS 反向代理 |
 
----
+静态构建（以下环境变量写法用于 POSIX shell）：
 
-## 在线试用（给参观用）
+```bash
+npm ci
+VITE_PUBLIC_DEMO=1 BASE_PATH=/ npm run build
+npx vite preview
+```
 
-编辑器本身是静态网页：导入、排版、导出都在浏览器里完成，名单进 IndexedDB，**不必**先有一台常驻 Node。
+`dist/` 为静态产物。GitHub 项目站应使用 `BASE_PATH=/cengfan-map-studio/` 重新构建。**`npm run preview` 是完整 Node 服务的别名，不是上述静态预览命令。**
 
-- **推荐**：Cloudflare Pages 或 GitHub Pages（HTTPS、免费、进程不用常开）。
-- **不要**：把现在的 `server/` 原样丢进 Cloudflare Workers（它依赖 Node `http` 和本地文件）。
-- **完整 API**（协作房间、智能助手）：本机 `npm run dev`，或单实例容器 / VPS。
+完整服务请遵循 [自建部署](DEPLOY-SERVER.md) 与 [反向代理说明](docs/deployment/reverse-proxy.md)。不要默认开启 `AI_PUBLIC_ACCESS=1` 或 `TRUST_PROXY=1`，不要直接将应用端口暴露到公网。部署选项见 [公开演示与容器部署](docs/deployment/public-demo.md)。
 
-配置步骤、GitHub Pages 地址、Dockerfile 见 [docs/deployment/public-demo.md](docs/deployment/public-demo.md)。启用 Pages 后打开 https://xhhemoing.github.io/cengfan-map-studio/ 。
+## 开发与质量检查
 
----
+```bash
+npm run check           # 串行执行：发布工具测试、类型检查、Lint、全量测试、构建
+npm run security:audit  # 另行检查依赖公告，需要联网
+npx vitest run <file>   # 开发时只运行相关测试
+```
 
-## 功能
+重型检查不要并行启动。CI 保留测试结果；Release 另外执行生产依赖审计与 Chromium 回归。通过测试不代表没有缺陷，也不是完整的安全或无障碍认证。
 
-| 功能 | 做什么 |
-|------|--------|
-| Excel / CSV 导入 | 识别学生姓名、录取院校和城市，并自动匹配省份 |
-| 智能布局 | 卡片避让，仍可拖拽微调 |
-| 素材库 | 校徽、字体、贴图，主入口在「内容」阶段；省份贴图可在「地图」阶段点省份直达 |
-| 卡片模板 | 多种内置样式，可改颜色与字号 |
-| 高清导出 | PNG / SVG / `.cengfan` 工程包；A3 / A2 / 展板尺寸用厘米说话 |
-| 本机协作（可选） | `npm run dev` 会带上本地 API；房间运行态在内存，受控关停时写入 `.data/collaboration-rooms.json`，重启后恢复未过期房间 |
+```text
+src/       React 编辑器、组件、导入导出与浏览器存储
+server/    单实例 Node API、协作与 AI
+scripts/   开发、构建、数据同步、发布与回归检查
+docs/      使用、部署、计划、QA 和发布说明
+public/    静态资源
+```
 
----
+[开发指南](DEVELOPER.md) · [文档导航](docs/README.md) · [项目现状](docs/PROJECT_STATUS.md) · [路线图](docs/ROADMAP.md) · [更新日志](CHANGELOG.md)
 
-## 提意见
+## 参与与支持
 
-意见 48 小时内会有回复。请用模板，不要把真实姓名和去向贴进 Issue。
+欢迎使用反馈、文档、测试、缺陷修复和模板贡献。小修复可直接提 PR；较大的功能先开 Issue 讨论。维护者按影响与时间安排响应，不承诺固定回复时限。
 
-- 使用问题、劝退点、导入/布局/导出槽点：<https://github.com/Xhhemoing/cengfan-map-studio/issues/new/choose>
-- 改代码、文档、模板：[CONTRIBUTING.md](CONTRIBUTING.md)
-- 开发约定：[AGENTS.md](AGENTS.md) · [DEVELOPER.md](DEVELOPER.md) · [文档导航](docs/README.md)
+[贡献指南](CONTRIBUTING.md) · [问题与支持](SUPPORT.md) · [行为准则](CODE_OF_CONDUCT.md) · [安全报告](SECURITY.md) · [提交 Issue](https://github.com/Xhhemoing/cengfan-map-studio/issues/new/choose)
 
-Star 是结果，不是请求。更有用的是一条真实意见。
+发布流程只在明确选择版本和主干 SHA 后执行，详见 [RELEASING](docs/RELEASING.md)。`package.json` 的 `private: true` 是为了防止误发 npm 包，不代表 GitHub 仓库闭源。
 
----
+## 许可证与第三方资源
 
-## 技术栈
+本项目代码沿用 **[AGPL-3.0-only](LICENSE)**，没有变更许可证。具体权利义务以许可证全文为准。第三方依赖、地图数据、校徽和字体不因放入本仓库就自动转为同一许可证，来源与待核验事项见 [第三方资源说明](THIRD_PARTY_NOTICES.md)。
 
-React 19 + Vite + TypeScript + MUI + d3-geo。内嵌 Node API 只服务本机开发（认证、协作、可选 AI）。学生名单默认在 IndexedDB，不经过远程服务器。
+本仓库不包含支付、套餐或收费后台；产品边界见 [开源与收费边界](docs/开源与收费边界.md)。
 
----
+## English introduction
 
-## 许可证与合规
-
-- **[AGPL-3.0-only](LICENSE)**：自建、修改可以；把改过的版本作为网络服务提供给他人时，须向使用者提供对应源码。
-- **收费**：本仓库不含支付。以后若有社区模板手续费，由班级自愿支付；不做学校统付、不做印刷生意。见 [docs/开源与收费边界.md](docs/开源与收费边界.md)。
-- **隐私**：示例已脱敏。「智能识别名单」与「一键识别并导入」在发送粘贴原文（含姓名）给已配置的大模型前会先征得同意；拒绝则只用本地规则。
-- **内容**：禁止真实姓名 + 具体去向同框；禁止宣称升学率、就业率、录取率。
-
-维护宣发日历（不是使用者必读）：[docs/宣发/国内互联网宣发总流程.md](docs/宣发/国内互联网宣发总流程.md)。
+Cengfan Map Studio is a local-first editor for graduation destination maps. Import a spreadsheet, edit the map and cards, and export PNG, SVG, or an editable project file. The public demo is static; collaboration and remote AI require a separately configured Node service. Use Node 22.13+ within the 22.x line and npm 10+, then run `npm ci` and `npm run dev`. Code is licensed under AGPL-3.0-only; third-party assets retain their own rights. Never submit real student records in public issues.

@@ -1,129 +1,84 @@
-# 公开演示站：Cloudflare Pages / GitHub Pages / 可选容器
+# 静态演示与可选 Node 部署
 
-> 一句话：**给大家参观，优先用静态站（Cloudflare Pages 或 GitHub Pages）。** 不要把现有 Node API 原样丢进 Cloudflare Workers。名单默认在浏览器 IndexedDB，静态站已经能导入示例、改图、导出。
+**在线演示：[蹭饭图工作室](https://xhhemoing.github.io/cengfan-map-studio/)**。静态站可完成基础导入、编辑和导出；完整 API 是单独的部署选择。本文不承诺托管平台价格、免费额度或特定地区的网络可达性。
 
-现网 VPS（无 HTTPS）见 [DEPLOY-SERVER.md](../../DEPLOY-SERVER.md)。AI 单实例契约见 [ai-production.md](ai-production.md)。
+## 能力边界
 
----
+| 静态构建 | 需要单独运行 Node API |
+| --- | --- |
+| 工作台、内置虚构示例、Excel/CSV 导入 | 协作房间与服务端工作区 |
+| 地图与卡片编辑、PNG/SVG/JSON 工程包导出 | 配置模型后的远程 AI 能力 |
+| 当前浏览器 IndexedDB 保存 | 服务端持久目录、访问控制与运维 |
 
-## 能不能上 Cloudflare？
+`VITE_PUBLIC_DEMO=1` 标记静态演示模式，展示说明并限制需要后端的入口。名单仍需使用者自行备份；换域名、浏览器或清理站点数据不会自动迁移项目。API 缺失不应被伪装成返回 HTML 的成功响应。
 
-| 目标 | 行不行 | 原因 |
-|------|--------|------|
-| **Cloudflare Pages** 静态演示 | 行，推荐 | 编辑器是 Vite SPA，路由用 hash，工程在 IndexedDB |
-| **GitHub Pages** 静态演示 | 行，本仓库已接 workflow | 同上；项目站 base 为 `/cengfan-map-studio/` |
-| **Cloudflare Workers** 跑 `server/` | 不行 | API 用 Node `http`、本地文件快照、内存运行态和 SSE，不是 Worker 运行时 |
-| **Cloudflare Containers** | 能跑 Node，但不是「免费常驻」 | 按用量计费，不适合当对外主 Demo |
+## 1. 使用 Release 静态包
 
-微信/QQ 仍可能拦截 `github.io`、未备案域名。Pages 能解决「有 HTTPS、能打开」；要进微信会话，仍需备案域名（可把 Pages 接到已备案自定义域，或给现网 8787 加 Caddy）。
+下载同一 Release 的 `*-web.zip` 或 `*-web.tar.gz`、`BUILD_INFO.json` 和 `SHA256SUMS.txt`，按 [发布说明](../RELEASING.md) 核对完整性。包内站点使用根路径 `/`，解压后用 HTTP/HTTPS 静态服务器托管，不通过双击 HTML 的 `file://` 协议运行。
 
----
+该包不包含 Node API。需要项目子路径时应从对应 tag 源码重建，并设置正确的 `BASE_PATH`。
 
-## 静态演示里有什么
+## 2. 从源码构建
 
-| 有 | 没有（需要本机 `npm run dev` 或自建 Node） |
-|----|------------------------------------------|
-| 工作台、示例项目、导入 Excel/CSV | 协作房间（需 Node；运行态在内存，受控关停时写入快照，默认约 30 分钟无活动后过期） |
-| 地图排版、素材、导出 PNG/SVG/工程包 | 智能助手 / 名单智能识别（要配置模型 key） |
-| 工程只留在访问者自己的浏览器 | 服务端工作区 `/api/workspace` |
+Node 22.13+（22.x）、npm 10+；以下命令用于 POSIX shell：
 
-构建时设置 `VITE_PUBLIC_DEMO=1` 会在工作台显示说明，并链到源码（AGPL：作为网页提供给他人时须能拿到对应源码）。
-
----
-
-## 1. GitHub Pages（仓库已接好）
-
-1. GitHub 仓库 **Settings → Pages → Source** 选 **GitHub Actions**。
-2. 把本分支合入 `main`（或手动跑 workflow `pages`）。
-3. 打开：https://xhhemoing.github.io/cengfan-map-studio/
-
-workflow：`.github/workflows/pages.yml`。构建环境变量：
-
+```bash
+npm ci
+VITE_PUBLIC_DEMO=1 BASE_PATH=/ npm run build
+npx vite preview
 ```
+
+输出目录为 `dist/`。`npm run preview` 实际启动完整 Node 服务，不能替代这里的 `npx vite preview`。应用服务器代码依赖 Node HTTP 和本地文件，不能直接当作 Workers 脚本上传。
+
+## 3. GitHub Pages
+
+仓库工作流为 `.github/workflows/pages.yml`。仓库 Settings → Pages 的发布来源应选 GitHub Actions。
+
+`main` 的 push 产生开发预览；手动执行 `pages` 时可用 `source_ref` 选择明确的 tag 或 commit。Release 工作流发布成功后会显式请求从该版本 tag 部署，部署结果需要另行核对。
+
+项目站构建变量：
+
+```text
 BASE_PATH=/cengfan-map-studio/
 VITE_PUBLIC_DEMO=1
 ```
 
-**回滚**：Settings → Pages 关掉，或删掉 `pages` workflow。静态站不保存用户名单，没有数据迁移。
+回滚时重新运行 `pages`，将 `source_ref` 设置为已知可用的旧 tag，而不是删除工作流。回滚静态程序不代表恢复或迁移访问者的本地数据。
 
----
+## 4. 其他静态托管（如 Cloudflare Pages）
 
-## 2. Cloudflare Pages（推荐给国内打开）
+选择 Node 22 构建环境，构建命令 `npm ci && npm run build`，输出目录 `dist`，环境变量 `VITE_PUBLIC_DEMO=1` 和 `BASE_PATH=/`。自定义子路径时相应调整 BASE_PATH。
 
-1. [Cloudflare Dashboard](https://dash.cloudflare.com/) → Workers & Pages → Create → Pages → Connect GitHub → 本仓库。
-2. 构建设置：
+仓库内的 `public/_headers`、`public/_redirects` 供兼容的静态托管平台使用，Vite 会复制 public 资源；`wrangler.toml` 是仓库根的部署配置，并不会被当成 public 文件自动复制。托管平台的具体账户、域名和访问策略需另行配置，本仓库不内置这些凭证。
 
-| 项 | 值 |
-|----|----|
-| Framework preset | None |
-| Build command | `npm ci && npm run build` |
-| Build output directory | `dist` |
-| Root directory | `/` |
-| Environment variable | `VITE_PUBLIC_DEMO=1` |
+不要配置把所有 `/api/*` 请求改写为 200 HTML 的兜底规则。HTTPS、应用访问控制和某个客户端是否允许访问是不同事项；上线前按实际目标网络验证。
 
-3. `BASE_PATH` **不要** 填（Pages 子域挂在根路径 `/`）。
-4. 仓库里的 `wrangler.toml`、`public/_redirects`、`public/_headers` 会进 `dist`。不要加 `/* → /index.html` 的万能回退，否则 `/api/*` 会变成 200 HTML。
+## 5. 完整 Node / Docker
 
-本地预览静态产物：
-
-```bash
-VITE_PUBLIC_DEMO=1 npm run build
-npx vite preview
-```
-
-用 Wrangler 上传（需本机已登录 Cloudflare，本仓库 CI **没有** 写入 Token）：
-
-```bash
-VITE_PUBLIC_DEMO=1 npm run build
-npx wrangler pages deploy dist --project-name cengfan-map-studio
-```
-
-**回滚**：Pages 项目里回退到上一部署，或断开 Git 集成。
-
----
-
-## 3. 「免费常驻容器」行不行
-
-完整能力 = 静态前端 + Node API（`npm run build && npm run start`）。容器必须：
-
-- 能跑 Node 20+，读本地文件（`DATA_DIR`）
-- **单实例**（`ai-runtime-state.json` 不能多副本同写）
-- 协作房间在**进程内存**里，休眠/重启即丢
-
-因此：
-
-| 平台 | 适合公开参观？ | 注意 |
-|------|----------------|------|
-| **Render / Railway 免费实例** | 勉强当内测 | 闲置会睡；醒来后房间清空；不适合当宣发主入口 |
-| **Fly.io** 小机器 | 可以挂 Dockerfile | 免费额会变；仍须单实例；生产要 `AI_BUDGET_RECEIPT_SECRET`（≥32 字符） |
-| **本仓库 hermes VPS** | 已在跑 8787 | 无 HTTPS，不能当班主任主入口 |
-
-仓库根目录 `Dockerfile` 用法：
+先读 [自建部署](../../DEPLOY-SERVER.md)、[AI 生产契约](ai-production.md) 和 [反向代理](reverse-proxy.md)。完整服务需要生产密钥，即使没有启用远程模型也不能省略。复制 `.env.example` 为 `.env` 并填写至少 32 字符的 `AI_BUDGET_RECEIPT_SECRET`；使用远程模型时还要配置 `WORKSPACE_API_TOKEN`。不要将 `.env` 放进镜像或 Git。
 
 ```bash
 docker build -t cengfan-map-studio .
-docker run --rm -p 8787:8787 \
+docker run --rm --name cengfan-map-studio \
+  -p 127.0.0.1:8787:8787 \
+  --env-file .env \
   -e NODE_ENV=production \
-  -e AI_BUDGET_RECEIPT_SECRET="$(openssl rand -hex 24)" \
-  -e AI_PUBLIC_ACCESS=1 \
-  -e TRUST_PROXY=1 \
+  -e HOST=0.0.0.0 \
+  -e AI_PUBLIC_ACCESS=0 \
+  -e TRUST_PROXY=0 \
+  -v cengfan-data:/app/.data \
   cengfan-map-studio
 ```
 
-探针：`GET /api/live`、`GET /api/ready`。反向代理后设 `TRUST_PROXY=1`。不要水平扩容。
+容器内部监听 `0.0.0.0` 使端口映射可达，宿主机只在 `127.0.0.1:8787` 发布端口；由同机反向代理对外提供 HTTPS。在确认可信代理链后才决定是否启用 TRUST_PROXY，不应默认开启。改变 PORT 或数据路径时需同步修改映射、探针或挂载。
 
-公开参观 **不必** 开远程模型。没有 key 时助手走本地规则；公网若打开了 AI，须设 `AI_PUBLIC_ACCESS=1` 或 `WORKSPACE_API_TOKEN`（见 ai-production.md）。
+使用单实例与持久卷。协作房间有运行态、快照恢复和过期规则；AI 状态使用文件持久化。休眠、异常退出和过期都可能影响恢复，不承诺每次事件已落盘，也不要水平扩容到多个写实例。
 
----
+## 上线验收
 
-## 验收
-
-- [ ] 静态站 HTTPS 打开即见工作台和「示例：2026届毕业去向」
-- [ ] 演示说明可见，点「源码」到 GitHub
-- [ ] 改一张图能导出 PNG；刷新后项目仍在（同一浏览器）
-- [ ] 点协作「创建房间」得到「没有后端接口」类提示，而不是白屏
-- [ ] 若用容器：`/api/live` 200，且只有一个副本
-
-## 破坏性变更
-
-无。不改工程包格式、不改 API 形状。静态站本来就不调用 `/api/workspace`。
+- [ ] HTTPS 下可打开工作台，演示模式说明和源码入口正确。
+- [ ] 用虚构名单完成导入、编辑和 PNG 导出；同一浏览器刷新后项目仍在。
+- [ ] 静态模式下需要后端的入口正确降级，没有将 HTML 当作 API JSON。
+- [ ] 路径前缀、资源加载和未知页面行为符合所选托管方式。
+- [ ] Node 部署的 `/api/live`、`/api/ready` 正常，应用端口不直接暴露公网，只有一个写实例。
+- [ ] 已验证备份与受控重启；未把虚构示例、隐藏姓名或浏览器保存误当成匿名分享或云备份。

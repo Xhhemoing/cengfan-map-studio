@@ -1,12 +1,16 @@
-# GitHub Pages 静态演示。合并到 main 后：Settings → Pages → Source = GitHub Actions。
-# 地址：https://xhhemoing.github.io/cengfan-map-studio/
-# 协作/AI 不在此构建内。说明见 docs/deployment/public-demo.md
+# main previews on push; releases explicitly deploy their immutable tag snapshot.
 name: pages
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Tag or commit to deploy (main for a development preview)
+        required: true
+        default: main
+        type: string
 
 permissions:
   contents: read
@@ -20,24 +24,28 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
           cache: npm
       - run: npm ci
       - run: npm run build
         env:
           BASE_PATH: /cengfan-map-studio/
-          VITE_PUBLIC_DEMO: "1"
+          VITE_PUBLIC_DEMO: '1'
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
-
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
