@@ -2,7 +2,7 @@
 
 ## 发布模型
 
-正式版本来自 `main` 的明确 SHA。维护者审查并合入功能、文档和发布说明后，手动运行 **Release** 工作流；仅推一个 tag 不会自动发布。工作流不要求额外 PAT，不修改仓库权限，也不绕过分支保护。
+正式版本来自 `main` 的明确 SHA。维护者审查并合入功能、文档和发布说明后，可手动运行 **Release** 工作流，或提交下述严格限定的发布请求。普通功能合并和仅推 tag 都不会自动发布。工作流不要求额外 PAT，不修改仓库权限，也不绕过分支保护。
 
 `package.json`、`package-lock.json` 两处版本和客户端 `APP_VERSION` 必须一致。`scripts/prepare-release.mjs` 只同步这些版本及 lockfile 根包的 engines，不重新解析依赖。最终版本提交在 runner 中生成，并在全量检查通过后才推送。
 
@@ -10,7 +10,7 @@
 
 1. 在 PR 中更新 `CHANGELOG.md` 的 `## [X.Y.Z] - YYYY-MM-DD` 条目，并新增 `docs/releases/vX.Y.Z.md`（首行以 `# vX.Y.Z ` 开始）。写清变化、未完成、升级和回滚边界。使用正式 x.y.z 版本，不带 v 前缀或预发布后缀。
 2. 等待最终 PR commit 的 CI，通过后合入 `main`，记录完整 40 位主干 SHA。不要把本地测试通过或历史 CI 当成该提交的证据。
-3. 在 Actions → Release → Run workflow 选择 `main`，填写 `version` 和 `expected_sha`。`cleanup_merged` 默认关闭；维护者明确需要清理时才开启。
+3. 在 Actions → Release → Run workflow 选择 `main`，填写 `version` 和 `expected_sha`。`cleanup_merged` 默认关闭；维护者明确需要清理时才开启。也可使用下一节的单文件发布请求。
 4. 核对工作流结果、Release 页面、tag/commit 以及附件。工作流会独立触发 Pages，从发布 tag 构建；Pages 的成功状态需另行核对。
 
 使用 GitHub CLI 的等价调用（先替换占位值）：
@@ -29,6 +29,22 @@ npm run test:release
 npm run release:prepare -- X.Y.Z
 git diff -- package.json package-lock.json src/lib/feedback-links.ts
 ```
+
+## 单文件发布请求
+
+当使用的维护工具支持提交文件但不支持 workflow_dispatch 时，可以在完成 PR 审查、合并和 CI 核验之后，仅新增或更新 `.github/release-request.json`，通过一个独立的 main 提交发起同样的发布流程：
+
+```json
+{
+  "version": "0.1.3",
+  "reviewed_base_sha": "REPLACE_WITH_THE_40_CHARACTER_MAIN_SHA",
+  "cleanup_merged": false
+}
+```
+
+示例 SHA 必须替换，版本也必须对应已经审查的日志与说明。`reviewed_base_sha` 必须严格等于本次 push 前的主干 SHA；这次 push 的累计差异只能包含请求文件，不能夹带代码或文档变化。发布目标为该请求提交的 SHA，版本同步仍在 runner 中进行。布尔值不接受字符串，非法版本、主干移动或无关文件变化都会停止流程。
+
+仓库的分支保护继续适用；若保护要求 PR，则通过只修改请求文件的 PR 提交，并在合并前确认主干基线没有变化。不得为触发发布关闭保护。普通源代码 PR 不应更新此文件；重复请求同一已存在 tag 会失败，不会覆盖已有发布。
 
 ## 发布闸门与产物
 

@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    branches: [main]
+    paths: ['.github/release-request.json']
   workflow_dispatch:
     inputs:
       version:
@@ -46,6 +49,37 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Resolve explicit release request
+        env:
+          MANUAL_CLEANUP: ${{ inputs.cleanup_merged }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from "node:fs";
+          import { execFileSync } from "node:child_process";
+          import { validateVersion } from "./scripts/release-metadata.mjs";
+          const { GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_SHA, GITHUB_ENV } = process.env;
+          let version = process.env.VERSION;
+          let expected = process.env.EXPECTED_SHA;
+          let cleanup = process.env.MANUAL_CLEANUP === "true";
+          if (GITHUB_EVENT_NAME === "push") {
+            const event = JSON.parse(readFileSync(GITHUB_EVENT_PATH, "utf8"));
+            const request = JSON.parse(readFileSync(".github/release-request.json", "utf8"));
+            if (!/^[a-f0-9]{40}$/.test(request.reviewed_base_sha) || request.reviewed_base_sha !== event.before) {
+              throw new Error("Release request must name the exact previous main commit");
+            }
+            const changed = execFileSync("git", ["diff", "--name-only", event.before, GITHUB_SHA], { encoding: "utf8" }).trim();
+            if (changed !== ".github/release-request.json") throw new Error("Request push may only change .github/release-request.json");
+            if (typeof request.cleanup_merged !== "boolean") throw new Error("cleanup_merged must be a boolean");
+            version = request.version;
+            expected = GITHUB_SHA;
+            cleanup = request.cleanup_merged;
+          } else if (GITHUB_EVENT_NAME !== "workflow_dispatch") {
+            throw new Error("Unsupported release event");
+          }
+          validateVersion(version);
+          if (!/^[a-f0-9]{40}$/.test(expected)) throw new Error("Expected a full commit SHA");
+          appendFileSync(GITHUB_ENV, `VERSION=${version}\nEXPECTED_SHA=${expected}\nCLEANUP_MERGED=${cleanup}\n`);
+          NODE
       - name: Validate reviewed main and unused tag
         run: |
           set -euo pipefail
@@ -112,7 +146,7 @@ jobs:
           gh release edit "v$VERSION" --draft=false --latest
           echo "Published v$VERSION at $RELEASE_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Clean only unchanged merged branches
-        if: inputs.cleanup_merged
+        if: env.CLEANUP_MERGED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
