@@ -49,7 +49,7 @@
     "@mui/material": "^9.3.1",
     "@vitejs/plugin-react": "^6.0.4",
     "d3-geo": "^3.1.1",
-    "lucide-react": "^1.26.0",
+    "lucide-react": "^1.48.0",
     "pinyin-pro": "^3.28.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
