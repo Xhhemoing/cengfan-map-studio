@@ -14,6 +14,14 @@
 - `npm test` 全量 Vitest;`npm run lint` ESLint。重操作经 `scripts/run-heavy.mjs`,勿并行跑全套校验。
 - 开发时可只跑目标测试:`npx vitest run <file>` 或 `npx vitest run -t "<pattern>"`。
 
+## AI 能力与复杂任务
+
+- 先读 [AI 底座计划与验收边界](docs/ai/FOUNDATION_PLAN.md)。使用 `npx tsx scripts/ai-capabilities.ts` 查询机器可读能力，追加 `--human` 供人类阅读；不要凭工具名猜测能力。
+- `tool-registry.ts` 声明工具，`capability-catalog.ts` 提供发现与计划参数校验，`task-plan.ts` 校验依赖和回执；正式浏览器执行与确认仍归 `src/lib/agent-session.ts`。
+- 新复杂规划默认关闭。Jev 只选择已就绪步骤，不得授予权限、改事实或调用目录外动作；密钥仅限服务端。所有生产调用经过 `createAgentLoopBackend`，不要直接调用旧的本地关键词函数。
+- 工具返回成功、任务验证成功、预览已应用、工程已保存、文件已导出是不同状态；不得混用。失败、取消、预算耗尽和检查点失效不能描述为完整成功。
+- 内存检查点绑定任务 ID，但还不是持久恢复或工程版本绑定。跨重启恢复、完整任务面板和自动重规划仍在后续阶段；不得把它们写成已完成。
+
 ## 编码与 UI 风格
 
 - TypeScript + React。组件 `PascalCase`,变量/函数 `camelCase`,文件名 `kebab-case`。
