@@ -10,6 +10,9 @@ import {
 } from "./agent-loop";
 import type { AiRoute } from "./agent-types";
 import { AiCallError } from "./ai-errors";
+import { createPlannedAgent } from "./planned-agent";
+import { resolveJevConfig, type JevConfig } from "./jev-decision";
+import { localHistorySummary } from "./local-agent-evidence";
 
 export const DEFAULT_AGENT_MODEL = "deepseek-v4-flash";
 export const FALLBACK_AGENT_MODEL = "gpt-5.6-luna";
@@ -39,6 +42,9 @@ export interface AgentRuntimeConfig {
   tokenBudget: number;
   retryMaxAttempts: number;
   retryBaseDelayMs: number;
+  /** Experimental; disabled unless explicitly configured. */
+  planning?: boolean;
+  decision?: JevConfig;
 }
 
 export function resolveAgentConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
@@ -66,6 +72,7 @@ export function resolveAgentRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
   return {
     primary,
     fallback,
+    ...(env.AI_AGENT_PLANNING === "1" ? { planning: true, decision: resolveJevConfig(env) } : {}),
     maxRounds: clampInteger(numeric(env, "AI_AGENT_MAX_ROUNDS", DEFAULT_MAX_ROUNDS), 1, 20),
     tokenBudget: numeric(env, "AI_AGENT_TOKEN_BUDGET", DEFAULT_TOKEN_BUDGET) <= 0
       ? DEFAULT_TOKEN_BUDGET
@@ -143,6 +150,12 @@ function isRuntimeConfig(value: AgentRuntimeConfig | AiConfig): value is AgentRu
   return "primary" in value && "maxRounds" in value;
 }
 
+/** Route-level guard also covers legacy remote-to-local fallback without replaying keyword writes. */
+function safeLocalTurn(request: AgentLoopRequest): AgentLoopOutcome {
+  const summary = localHistorySummary(request.messages);
+  return summary ? { kind: "finish", summary, budget: request.budget } : runLocalAgentTurn(request);
+}
+
 export function createAgentLoopBackend(config: AgentRuntimeConfig | AiConfig): AgentLoopBackend {
   const runtime: AgentRuntimeConfig = normalizeAgentRuntimeConfig(isRuntimeConfig(config)
     ? config
@@ -154,19 +167,26 @@ export function createAgentLoopBackend(config: AgentRuntimeConfig | AiConfig): A
       retryMaxAttempts: DEFAULT_RETRY_ATTEMPTS,
       retryBaseDelayMs: DEFAULT_RETRY_DELAY,
     });
+  const planned = runtime.planning && runtime.primary
+    ? createPlannedAgent({ primary: runtime.primary, fallback: runtime.fallback, decision: runtime.decision })
+    : undefined;
   return {
     provider: runtime.primary?.model ?? "local-fallback",
     isConfigured: Boolean(runtime.primary),
     async runTurn(request) {
       const boundedRequest = applyRuntimeBudget(request, runtime);
       if (boundedRequest.signal?.aborted) throw new AiCallError("AI_ABORTED", "AI 调用已取消");
+      // Never route a failed/partially executed plan into a second, keyword-based writer.
+      if (runtime.planning) return planned
+        ? planned(boundedRequest)
+        : { kind: "failed", code: "AI_PLAN_NOT_CONFIGURED", error: "规划模式需要配置主模型；未执行本地关键词修改。" };
       const budget = boundedRequest.budget!;
       if (!runtime.primary || budget.rounds >= budget.maxRounds || budget.usedTokens >= budget.maxTokens || budget.usedTokens + AGENT_MAX_TOKENS > budget.maxTokens) {
         return withRoute(
           budget.rounds >= budget.maxRounds || budget.usedTokens >= budget.maxTokens || budget.usedTokens + AGENT_MAX_TOKENS > budget.maxTokens
             ? { kind: "finish", summary: "已达到 AI 任务预算，保留当前预览结果。", budget }
-            : runLocalAgentTurn(boundedRequest),
-          runtime.primary ? "local" : "local",
+            : safeLocalTurn(boundedRequest),
+          "local",
           runtime.primary && budget.usedTokens + AGENT_MAX_TOKENS > budget.maxTokens ? "AI_BUDGET_EXCEEDED" : undefined,
           request.requestId,
           runtime.primary,
@@ -190,7 +210,7 @@ export function createAgentLoopBackend(config: AgentRuntimeConfig | AiConfig): A
         }
         if (fallback.kind !== "failed") return withRoute(fallback, "fallback", primary.error, request.requestId, runtime.fallback);
       }
-      return withRoute(runLocalAgentTurn(boundedRequest), "local", primary.error, request.requestId);
+      return withRoute(safeLocalTurn(boundedRequest), "local", primary.error, request.requestId);
     },
   };
 }

@@ -1,0 +1,7 @@
+.agent-task-panel { border: 1px solid var(--border-color, #ccd3dd); border-radius: 8px; padding: 12px; margin-block: 10px; overflow-wrap: anywhere; }
+.agent-task-panel ol, .agent-task-panel ul { padding-inline-start: 22px; }
+.agent-task-panel li { margin-block: 8px; }
+.agent-task-panel small { display: block; opacity: .8; }
+.agent-task-panel summary { cursor: pointer; }
+.agent-task-panel summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.agent-task-panel .panel-note { font-size: .85em; line-height: 1.5; }

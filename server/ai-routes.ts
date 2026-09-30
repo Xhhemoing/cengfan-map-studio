@@ -82,6 +82,7 @@ export function createAiRoutes(deps: AiRoutesDeps) {
         sendAi(400, { error: { code: "AI_VALIDATION_ERROR", message: "会话预算回执无效、已过期或已被使用" } });
         return true;
       }
+      parsed.value.taskId = taskId; // Bind the initial checkpoint to the same task as its signed budget receipt.
       parsed.value.budget = receipt
         ? { usedTokens: receipt.usedTokens, maxTokens: receipt.maxTokens, rounds: receipt.rounds, maxRounds: receipt.maxRounds }
         : { usedTokens: 0, maxTokens: agentRuntime.tokenBudget, rounds: 0, maxRounds: agentRuntime.maxRounds };
@@ -190,7 +191,7 @@ export function createAiRoutes(deps: AiRoutesDeps) {
       response.once("close", abortResponse);
       try {
         const result = await ai.proposeEdits(parsed.value, { requestId, signal: requestController.signal });
-        if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: "local", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
+        if (result.provider === "local-fallback") aiLogger.log("ai.route.fallback", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider, model: "local-rules", fallbackReason: "remote_failure" });
         aiLogger.log("ai.request.completed", { requestId, route: result.provider === "local-fallback" ? "local" : "primary", provider: result.provider });
         sendAi(200, result);
       } catch (error) {

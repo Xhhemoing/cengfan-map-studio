@@ -5,12 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import { createProjectDocument } from "./lib/project-document";
 import { sampleStudents } from "./lib/project-data";
 import { createProjectPackage } from "./lib/project-package";
-import { installAppTestHarness, renderApp, click, openRailAdvancedTab, openPeopleData, leaveFocusedWorkspace, changeInput } from "./app-test-harness";
+import { installAppTestHarness, renderApp, click, openRailAdvancedTab, openPeopleData, leaveFocusedWorkspace, changeInput, ScriptedEventSource } from "./app-test-harness";
 
 installAppTestHarness();
 
 describe("App student editing", () => {
   it("keeps edit actions disabled by viewer role through the shared commit boundary", async () => {
+    const originalEventSource = globalThis.EventSource;
+    ScriptedEventSource.instances = [];
+    // The join test needs a healthy stream, not an undefined jsdom EventSource racing its status.
+    vi.stubGlobal("EventSource", ScriptedEventSource);
     const container = renderApp();
     const roomToken = "viewer-room-token";
     const roomId = "VIEW01";
@@ -38,8 +42,11 @@ describe("App student editing", () => {
         expect(container.textContent).toContain("已加入房间");
         expect(window.localStorage.getItem(`cengfan-map-studio:room-access:${roomId}`)).toBe(roomToken);
       });
+      await vi.waitFor(() => expect(ScriptedEventSource.instances).toHaveLength(1));
     } finally {
       globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
+      globalThis.EventSource = originalEventSource;
     }
   });
 
