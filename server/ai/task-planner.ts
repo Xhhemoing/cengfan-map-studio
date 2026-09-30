@@ -1,5 +1,5 @@
 import { chatWithTools, type AiConfig } from "./llm-client";
-import type { AiCallMeta, ChatMessage, ToolDefinition } from "./agent-types";
+import { isRecord, type AiCallMeta, type ChatMessage, type ToolDefinition } from "./agent-types";
 import { AiCallError } from "./ai-errors";
 import { buildCapabilityCatalog } from "./capability-catalog";
 import { MAX_PLAN_STEPS, validateTaskPlan, type TaskPlan } from "./task-plan";
@@ -36,7 +36,7 @@ export async function generateTaskPlan(config: TaskPlannerConfig, request: TaskP
     { role: "user", content: JSON.stringify({ request: request.userMessage, untrustedProjectDigest: request.digest }) },
   ];
   // Conservative reservation when a provider omits usage or fails after receiving the request.
-  // This bounds our application accounting; it is not a currency or provider billing guarantee.
+  // This bounds application accounting, not currency or provider billing.
   const reserve = Buffer.byteLength(JSON.stringify({ messages, tools: [PLAN_TOOL] }), "utf8") + PLAN_TOKENS + 512;
   let chargedTokens = 0;
   for (const [index, model] of [config.primary, config.fallback].entries()) {
@@ -45,7 +45,8 @@ export async function generateTaskPlan(config: TaskPlannerConfig, request: TaskP
     if (chargedTokens + reserve > request.remainingTokens) return { ok: false, error: "规划上下文超过剩余预算；请缩小任务或工程摘要。", chargedTokens };
     let reply: Awaited<ReturnType<typeof chatWithTools>>;
     try {
-      reply = await chatWithTools(model, messages, [PLAN_TOOL], PLAN_TOKENS, { requestId: request.requestId, signal: request.signal, route: index === 0 ? "primary" : "fallback" });
+      // One attempt per provider: every fallback is accounted for here, not hidden in transport retries.
+      reply = await chatWithTools({ ...model, retryMaxAttempts: 1 }, messages, [PLAN_TOOL], PLAN_TOKENS, { requestId: request.requestId, signal: request.signal, route: index === 0 ? "primary" : "fallback" });
     } catch (error) {
       checkCancellation(request.signal);
       if (error instanceof AiCallError && error.code === "AI_ABORTED") throw error;
@@ -53,13 +54,15 @@ export async function generateTaskPlan(config: TaskPlannerConfig, request: TaskP
       continue;
     }
     checkCancellation(request.signal);
-    const reported = reply.meta?.usage?.totalTokens;
+    const reported = reply?.meta?.usage?.totalTokens;
     chargedTokens += typeof reported === "number" && Number.isFinite(reported) && reported >= 0 ? Math.ceil(reported) : reserve;
-    if (chargedTokens > request.remainingTokens) return { ok: false, error: "模型返回的用量超过剩余预算；未开始执行计划。", chargedTokens, meta: reply.meta };
-    const raw = reply.tool_calls;
-    if (raw?.length !== 1 || raw[0]?.function.name !== "submit_task_plan" || Buffer.byteLength(raw[0].function.arguments, "utf8") > 16 * 1024) return { ok: false, error: "模型未提交唯一且有界的结构化计划。", chargedTokens, meta: reply.meta };
+    if (chargedTokens > request.remainingTokens) return { ok: false, error: "模型返回的用量超过剩余预算；未开始执行计划。", chargedTokens, meta: reply?.meta };
+    // Provider output is untrusted at runtime even when a TypeScript client has annotated it.
+    const raw: unknown = reply?.tool_calls;
+    const call: unknown = Array.isArray(raw) && raw.length === 1 ? raw[0] : undefined;
+    if (!isRecord(call) || !isRecord(call.function) || call.function.name !== "submit_task_plan" || typeof call.function.arguments !== "string" || Buffer.byteLength(call.function.arguments, "utf8") > 16 * 1024) return { ok: false, error: "模型未提交唯一且有界的结构化计划。", chargedTokens, meta: reply?.meta };
     try {
-      const result = validateTaskPlan(JSON.parse(raw[0].function.arguments) as unknown);
+      const result = validateTaskPlan(JSON.parse(call.function.arguments) as unknown);
       return result.ok ? { ok: true, plan: result.plan, chargedTokens, meta: reply.meta } : { ok: false, error: `计划被拒绝：${result.error}`, chargedTokens, meta: reply.meta };
     } catch { return { ok: false, error: "模型计划不是合法 JSON。", chargedTokens, meta: reply.meta }; }
   }

@@ -10,8 +10,10 @@ const MARKER = "CENGFAN_PLAN_V1:";
 const CHECKPOINT_TTL_MS = 15 * 60_000;
 const MAX_CHECKPOINTS = 512;
 type PlannedOutcome = AgentLoopOutcome & { budget?: AgentBudgetState; meta?: AiCallMeta };
+export type PlannedRequest = AgentLoopRequest & { taskId?: string };
 interface Checkpoint {
   goal: string;
+  taskId?: string;
   plan?: TaskPlan;
   completed: string[];
   pending: PendingCall[];
@@ -31,7 +33,7 @@ export function createPlannedAgent(config: PlannedAgentConfig, now: () => number
     checkpoints.set(key, state);
     return key;
   }
-  return async function run(request: AgentLoopRequest): Promise<PlannedOutcome> {
+  return async function run(request: PlannedRequest): Promise<PlannedOutcome> {
     checkCancellation(request.signal);
     const previous = request.budget ?? { rounds: 0, maxRounds: 20, usedTokens: 0, maxTokens: 60_000 };
     const budget = { ...previous, rounds: previous.rounds + 1 };
@@ -56,13 +58,13 @@ export function createPlannedAgent(config: PlannedAgentConfig, now: () => number
     const lastAssistant = request.messages.findLast((message) => message.role === "assistant");
     if (!lastAssistant) {
       if (request.messages.some((message) => message.role === "tool")) return failed("工具历史没有可验证的计划上下文，请重新开始任务。");
-      return emit({ goal: request.userMessage, completed: [], phase: "preflight", pending: [
+      return emit({ goal: request.userMessage, taskId: request.taskId, completed: [], phase: "preflight", pending: [
         makeCall("inspect_project", { path: "canvas" }), makeCall("inspect_project", { path: "map" }), makeCall("inspect_project", { path: "cards" }),
       ] }, "正在读取画布、地图和卡片的真实状态；尚未修改工程。");
     }
     const key = lastAssistant.content?.match(/^CENGFAN_PLAN_V1:([a-f0-9-]{36})\n/)?.[1];
     const state = key ? checkpoints.get(key) : undefined;
-    if (!state || now() - state.createdAt >= CHECKPOINT_TTL_MS || state.goal !== request.userMessage) return failed("计划检查点已失效或需求已改变；请保留当前预览并新建任务，不会自动重放修改。");
+    if (!state || now() - state.createdAt >= CHECKPOINT_TTL_MS || state.goal !== request.userMessage || state.taskId !== request.taskId) return failed("计划检查点已失效、任务不匹配或需求已改变；请保留当前预览并新建任务，不会自动重放修改。");
     const receipts = readSuccessfulReceipts(request.messages, state.pending);
     if (!receipts) return failed("缺少匹配的成功工具回执，或某一步执行失败；已停止后续修改。");
     if (state.phase === "health") {
@@ -94,6 +96,6 @@ export function createPlannedAgent(config: PlannedAgentConfig, now: () => number
     charge(decision.chargedTokens);
     const next = ready.find((step) => step.id === decision.stepId)!;
     const summary = `计划进度 ${completed.size}/${plan.steps.length}；本步：${next.title}。调度：${decision.source}（${decision.reason}）。\n${plan.steps.map((step) => `${completed.has(step.id) ? "[完成]" : "[待执行]"} ${step.title}`).join("\n")}${plan.unsupported.length ? `\n未支持：${plan.unsupported.join("；")}` : ""}`;
-    return emit({ goal: state.goal, plan, completed: [...completed], phase: "step", stepId: next.id, pending: [makeCall(next.tool, next.arguments)], createdAt: state.createdAt }, summary);
+    return emit({ goal: state.goal, taskId: state.taskId, plan, completed: [...completed], phase: "step", stepId: next.id, pending: [makeCall(next.tool, next.arguments)], createdAt: state.createdAt }, summary);
   };
 }

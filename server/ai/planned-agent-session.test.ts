@@ -1,4 +1,6 @@
+/// <reference lib="dom" />
 // @vitest-environment jsdom
+// This cross-boundary test imports browser font/canvas types; production Node modules do not.
 import { afterEach, expect, it, vi } from "vitest";
 import * as llm from "./llm-client";
 import { createPlannedAgent } from "./planned-agent";
