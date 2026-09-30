@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentLoopOutcome, AgentLoopRequest } from "./agent-loop";
 import type { AgentBudgetState, AiCallMeta, ChatMessage } from "./agent-types";
+import type { AgentTaskProgress } from "../../src/lib/agent-task-progress";
 import { READ_ONLY_TOOLS } from "./tool-registry";
 import { chooseReadyStep, checkCancellation, JEV_TOKEN_RESERVE, type JevConfig } from "./jev-decision";
 import { generateTaskPlan, type TaskPlannerConfig } from "./task-planner";
@@ -9,7 +10,7 @@ import { isCleanHealthReceipt, readSuccessfulReceipts, readySteps, type PendingC
 const MARKER = "CENGFAN_PLAN_V1:";
 const CHECKPOINT_TTL_MS = 15 * 60_000;
 const MAX_CHECKPOINTS = 512;
-type PlannedOutcome = AgentLoopOutcome & { budget?: AgentBudgetState; meta?: AiCallMeta };
+type PlannedOutcome = AgentLoopOutcome & { budget?: AgentBudgetState; meta?: AiCallMeta; task?: AgentTaskProgress };
 export type PlannedRequest = AgentLoopRequest & { taskId?: string };
 interface Checkpoint {
   goal: string;
@@ -22,6 +23,17 @@ interface Checkpoint {
   createdAt: number;
 }
 export interface PlannedAgentConfig extends TaskPlannerConfig { decision?: JevConfig; }
+
+/** Only labels and dependency/status data go to the task panel, never call arguments or handles. */
+function projectProgress(state: Pick<Checkpoint, "plan" | "completed" | "stepId" | "phase">, phase?: AgentTaskProgress["phase"]): AgentTaskProgress {
+  return {
+    version: 1,
+    phase: phase ?? (state.phase === "preflight" ? "planning" : state.phase === "health" ? "validating" : "executing"),
+    steps: state.plan?.steps.map((step) => ({ id: step.id, title: step.title, tool: step.tool, dependsOn: [...step.dependsOn],
+      status: state.completed.includes(step.id) ? "succeeded" : state.stepId === step.id ? "running" : "pending" })) ?? [],
+    unsupported: [...(state.plan?.unsupported ?? [])],
+  };
+}
 
 /** In-memory, immutable checkpoints. Expiry/restart fails closed instead of replaying writes. */
 export function createPlannedAgent(config: PlannedAgentConfig, now: () => number = Date.now) {
@@ -38,7 +50,9 @@ export function createPlannedAgent(config: PlannedAgentConfig, now: () => number
     const previous = request.budget ?? { rounds: 0, maxRounds: 20, usedTokens: 0, maxTokens: 60_000 };
     const budget = { ...previous, rounds: previous.rounds + 1 };
     let meta: AiCallMeta | undefined;
-    const failed = (error: string): PlannedOutcome => ({ kind: "failed", code: "AI_PLAN_BLOCKED", error, budget, meta });
+    let task: AgentTaskProgress | undefined;
+    const failed = (error: string): PlannedOutcome => ({ kind: "failed", code: "AI_PLAN_BLOCKED", error, budget, meta,
+      ...(task ? { task: { ...task, phase: "blocked" } } : {}) });
     if (previous.rounds >= previous.maxRounds || previous.usedTokens >= previous.maxTokens) {
       budget.rounds = previous.rounds;
       return failed("已达到任务预算，未完成步骤不会标记为成功；已有预览仍需人工检查。");
@@ -52,7 +66,7 @@ export function createPlannedAgent(config: PlannedAgentConfig, now: () => number
         role: "assistant", content: `${MARKER}${key}\n${summary}`,
         tool_calls: stored.pending.map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: JSON.stringify(call.arguments) } })),
       };
-      return { kind: "tool-call", calls: stored.pending, assistantMessage, budget, meta };
+      return { kind: "tool-call", calls: stored.pending, assistantMessage, budget, meta, task: projectProgress(stored) };
     };
     const makeCall = (name: string, args: Record<string, unknown>): PendingCall => ({ id: `plan-${randomUUID()}`, name, arguments: args });
     const lastAssistant = request.messages.findLast((message) => message.role === "assistant");
@@ -65,12 +79,13 @@ export function createPlannedAgent(config: PlannedAgentConfig, now: () => number
     const key = lastAssistant.content?.match(/^CENGFAN_PLAN_V1:([a-f0-9-]{36})\n/)?.[1];
     const state = key ? checkpoints.get(key) : undefined;
     if (!state || now() - state.createdAt >= CHECKPOINT_TTL_MS || state.goal !== request.userMessage || state.taskId !== request.taskId) return failed("计划检查点已失效、任务不匹配或需求已改变；请保留当前预览并新建任务，不会自动重放修改。");
+    task = projectProgress(state);
     const receipts = readSuccessfulReceipts(request.messages, state.pending);
     if (!receipts) return failed("缺少匹配的成功工具回执，或某一步执行失败；已停止后续修改。");
     if (state.phase === "health") {
       if (!isCleanHealthReceipt(receipts[0]!)) return failed("布局检查仍有问题，不能宣称全部完成。请检查已有预览并局部修复。");
       const unsupported = state.plan!.unsupported;
-      return { kind: "finish", summary: `已在影子预览中完成 ${state.completed.length} 个计划步骤，并通过最终布局检查。尚未保存、导出或发布，请按现有界面确认应用。${unsupported.length ? ` 未执行：${unsupported.join("；")}` : ""}`, budget };
+      return { kind: "finish", summary: `已在影子预览中完成 ${state.completed.length} 个计划步骤，并通过最终布局检查。尚未保存、导出或发布，请按现有界面确认应用。${unsupported.length ? ` 未执行：${unsupported.join("；")}` : ""}`, budget, task: projectProgress(state, "ready") };
     }
     let plan = state.plan;
     const completed = new Set(state.completed);
@@ -81,13 +96,15 @@ export function createPlannedAgent(config: PlannedAgentConfig, now: () => number
       meta = planned.meta;
       if (!planned.ok) return failed(planned.error);
       plan = planned.plan;
+      task = projectProgress({ ...state, plan });
       const hasWrites = plan.steps.some((step) => !READ_ONLY_TOOLS.has(step.tool));
       if (plan.steps.length + (hasWrites ? 2 : 1) > previous.maxRounds - previous.rounds) return failed("剩余轮次不足以执行并验证整个计划；未开始写入，请拆小任务。");
     } else if (state.stepId) completed.add(state.stepId);
     if (!plan) return failed("计划状态不完整，请重新开始任务。");
+    task = projectProgress({ ...state, plan, completed: [...completed] });
     if (completed.size === plan.steps.length) {
       if (plan.steps.some((step) => !READ_ONLY_TOOLS.has(step.tool))) return emit({ ...state, plan, completed: [...completed], phase: "health", pending: [makeCall("check_health", {})], stepId: undefined }, "计划步骤已返回成功，正在验证当前影子画布；尚未确认应用。");
-      return { kind: "finish", summary: `已完成 ${completed.size} 个只读步骤，没有修改工程。${plan.unsupported.length ? ` 未执行：${plan.unsupported.join("；")}` : ""}`, budget, meta };
+      return { kind: "finish", summary: `已完成 ${completed.size} 个只读步骤，没有修改工程。${plan.unsupported.length ? ` 未执行：${plan.unsupported.join("；")}` : ""}`, budget, meta, task: { ...task, phase: "ready" } };
     }
     if (budget.usedTokens >= budget.maxTokens) return failed("已达到任务预算，停止后续修改；已有预览不等于任务完成。");
     const ready = readySteps(plan, completed);

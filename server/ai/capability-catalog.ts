@@ -1,6 +1,6 @@
 import { isRecord } from "./agent-types";
 import { AGENT_TOOLS, READ_ONLY_TOOLS } from "./tool-registry";
-import { isSceneDomain, SCENE_DOMAIN_PROPS, PROTECTED_SCENE_FIELDS, validateScenePatch } from "./patch-validator";
+import { isSceneDomain, SCENE_DOMAIN_PROPS, SCENE_SCHEMAS, PROTECTED_SCENE_FIELDS, validateScenePatch } from "./patch-validator";
 
 /** Discovery, not authorization. Actual edits still pass the browser's shadow/landing guards. */
 export function buildCapabilityCatalog() {
@@ -10,6 +10,7 @@ export function buildCapabilityCatalog() {
     approval: "existing-agent-risk-and-landing-policy",
     unsupported: ["export_file", "publish", "send_message", "run_code", "import_file"],
     scene: SCENE_DOMAIN_PROPS,
+    sceneSchemas: SCENE_SCHEMAS,
     protectedFields: PROTECTED_SCENE_FIELDS,
     tools: AGENT_TOOLS.filter((tool) => tool.function.name !== "finish").map(({ function: fn }) => ({
       name: fn.name,
@@ -66,7 +67,7 @@ export function validatePlannedArguments(name: string, args: unknown): string | 
       if (!isRecord(patch) || !Object.keys(patch).length) return "补丁必须是非空对象";
       if (args.patch !== undefined && !["update_text", "update_asset", "update_province"].includes(name) && Object.keys(args).some((key) => key !== "patch")) return "补丁包装包含未知字段";
       const checked = validateScenePatch(domain, patch);
-      if (!checked.ok) return `补丁包含未知或受保护字段：${[...checked.error.unknownProps, ...checked.error.protectedProps].join(",")}`;
+      if (!checked.ok) return `补丁字段或值无效：${[...checked.error.unknownProps, ...checked.error.protectedProps, ...checked.error.invalidValues].join(",")}`;
     }
   }
   if (name === "manage_students") {

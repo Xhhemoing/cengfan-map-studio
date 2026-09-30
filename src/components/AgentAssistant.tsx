@@ -1,3 +1,5 @@
+import { AgentTaskPanel } from "./AgentTaskPanel";
+import { stepLabel, riskLabel } from "./agent-step-labels";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { AlertTriangle, Check, LoaderCircle, Minus, Plus, ShieldCheck, Sparkles, X } from "lucide-react";
 import { AgentSession, type AgentReplayFailure, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
@@ -102,23 +104,6 @@ function persistedConversation(conversation: AssistantConversation): AssistantCo
     projectDigest: conversation.projectDigest,
     snapshot,
   };
-}
-
-function stepLabel(step: AgentStep): string {
-  const patch = step.arguments.patch;
-  if (patch && typeof patch === "object" && !Array.isArray(patch)) {
-    const fields = Object.keys(patch as Record<string, unknown>);
-    if (fields.length > 0) return `${step.name}：${fields.join("、")}`;
-  }
-  if (step.name === "set_data_view") return `切换数据视图：${String(step.arguments.view ?? "")}`;
-  if (step.name === "auto_layout") return `自动排版：${String(step.arguments.mode ?? "quadrant")}`;
-  return step.name;
-}
-
-function riskLabel(risk: AgentStep["risk"]): string {
-  if (risk === "high") return "高风险";
-  if (risk === "medium") return "中风险";
-  return "低风险";
 }
 
 function replayFailureReason(content: string): string {
@@ -519,7 +504,7 @@ export function AgentAssistant({
       const selectedStepIds = [...new Set([...active.selectedStepIds, ...validWrites.map((step) => step.id)])];
       const completed = outcome.kind === "finish";
       const allLowRisk = validWrites.length > 0 && validWrites.every((step) => step.risk === "low");
-      const smartApply = active.mode === "smart" && !active.restored && completed && allLowRisk;
+      const smartApply = !sessionWithProgress.requiresWholePlan && active.mode === "smart" && !active.restored && completed && allLowRisk;
       updateConversation(active.id, (conversation) => ({
         ...conversation,
         status: smartApply ? "applied" : "completed",
@@ -551,6 +536,7 @@ export function AgentAssistant({
   const cancel = () => activeRunRef.current?.cancel();
 
   const toggleStep = (stepId: string, checked: boolean) => {
+    if (active?.session.requiresWholePlan) return;
     if (!active || !projectIsCurrent || active.status === "running" || active.status === "applied") return;
     const next = checked ? [...new Set([...active.selectedStepIds, stepId])] : active.selectedStepIds.filter((id) => id !== stepId);
     updateConversation(active.id, (conversation) => ({ ...conversation, selectedStepIds: next }));
@@ -620,10 +606,11 @@ export function AgentAssistant({
             <button className="wide-button" type="button" data-agent-action={action.kind} aria-label={action.label} onClick={() => void run(action.kind === "resume" ? conversation.request : undefined)} disabled={action.disabled}><Sparkles size={16} aria-hidden /> {action.label}</button>
           );
         })()}
+        <AgentTaskPanel task={conversation.session.taskProgress} status={conversation.status} wholePlan={conversation.session.requiresWholePlan} />
         {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
         {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
         {conversation.landingError && <p className="panel-note agent-error" role="alert">{conversation.landingError}</p>}
-        {conversation.route === "local" && <p className="panel-note" role="status">已使用本地规则完成可识别的修改。</p>}
+        {conversation.route === "local" && <p className="panel-note" role="status">当前使用本地规则；执行结果以下方摘要与预览为准。</p>}
         {conversation.route === "fallback" && <p className="panel-note" role="status">已切换备选模型：{conversation.provider || "备选模型"}。</p>}
         {conversation.summary && <p className="panel-note agent-summary">{conversation.summary}</p>}
         {conversation.status === "applied" && <p className="panel-note agent-summary" role="status">已应用</p>}
@@ -633,7 +620,7 @@ export function AgentAssistant({
             <div className="review-list">
               {activeWriteSteps.filter((step) => step.result.ok).map((step) => (
                 <label key={step.id} className="review-row agent-review-row">
-                  <input type="checkbox" checked={selectedIds.has(step.id)} onChange={(event) => toggleStep(step.id, event.target.checked)} aria-label={`选择 ${stepLabel(step)}`} />
+                  <input type="checkbox" disabled={conversation.session.requiresWholePlan} checked={selectedIds.has(step.id)} onChange={(event) => toggleStep(step.id, event.target.checked)} aria-label={`选择 ${stepLabel(step)}`} />
                   <span className="agent-review-icon" aria-hidden>{step.risk === "high" ? <AlertTriangle size={16} /> : step.result.ok ? <Check size={16} /> : <ShieldCheck size={16} />}</span>
                   <span><strong>{stepLabel(step)}</strong><small>{riskLabel(step.risk)} · 影子画布已执行{step.lostManualLayout ? " · 将丢弃手工位置" : ""}</small></span>
                 </label>

@@ -1,3 +1,5 @@
+import { parseTaskProgress, type AgentTaskProgress } from "./agent-task-progress";
+import { SCENE_DOMAIN_PROPS, validateScenePatch, type SceneDomain } from "./agent-scene-contract";
 import { applyDataViewChange } from "./catalog-usage";
 import { solveCardLayout, type CardLayoutInput, type CardLayoutMode } from "./card-layout";
 import { checkLayoutHealth, type LayoutHealthInput, type LayoutHealthObject } from "./layout-health";
@@ -89,33 +91,6 @@ export function compactAgentToolResult(callName: string, content: string): strin
   }
   return best;
 }
-type SceneDomain = "canvas" | "map" | "province" | "cards" | "guests" | "text" | "asset";
-
-const SCENE_DOMAIN_PROPS: Record<SceneDomain, readonly string[]> = {
-  canvas: ["width", "height", "safeMargin", "backgroundColor", "backgroundImageSrc", "backgroundFit", "backgroundOpacity", "lineHeight"],
-  map: ["x", "y", "width", "height", "scale", "zIndex", "opacity", "landColor", "activeColor", "edgeColor", "edgeStyle", "edgeWidth", "showProvinceLabels", "provinceLabelFontId", "provinceLabelTypography", "collapseSouthChinaSea", "fillMode", "heatScale", "emptyProvinceFill", "renderSource", "provinceStyles", "provinceTextureUniformSize", "mapBoundaryMargin"],
-  province: ["fill", "textureSrc", "visible", "labelFontId", "appearance"],
-  cards: ["preset", "displayFrame", "compactLayout", "x", "y", "maxWidth", "padding", "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity", "textColor", "fontSize", "fieldFonts", "fieldTypography", "connectorStyle", "connectorColor", "connectorWidth", "connectorDash", "visibleFields", "noWrapFields", "citySubgroups", "expressionTemplates", "nameFormat", "layoutMode", "autoBalance", "allowMapOverlap", "showProvinceTexture", "showCount", "zIndex"],
-  guests: ["title", "x", "y", "width", "padding", "background", "opacity", "textColor", "fontSize", "titleFontId", "peopleFontId", "titleTypography", "peopleTypography", "displayMode", "customText", "visibility", "people"],
-  text: ["role", "content", "x", "y", "fontSize", "color", "fontWeight", "fontId", "textAlign", "maxWidth", "visibility"],
-  asset: ["assetId", "label", "kind", "province", "x", "y", "width", "height", "rotation", "opacity", "zIndex", "visibility"],
-};
-
-const PROTECTED_SCENE_FIELDS: Record<SceneDomain, readonly string[]> = {
-  canvas: [], map: [], province: [], cards: ["positions"], guests: [], text: ["id"], asset: ["id", "src"],
-};
-
-function validateScenePatch(domain: SceneDomain, patch: Record<string, unknown>): { ok: true } | { ok: false; error: { domain: SceneDomain; unknownProps: string[]; protectedProps: string[]; availableProps: string[] } } {
-  const writable = SCENE_DOMAIN_PROPS[domain];
-  const protectedFields = PROTECTED_SCENE_FIELDS[domain];
-  const keys = Object.keys(patch);
-  const unknownProps = keys.filter((key) => !writable.includes(key) && !protectedFields.includes(key));
-  const protectedProps = keys.filter((key) => protectedFields.includes(key));
-  return unknownProps.length === 0 && protectedProps.length === 0
-    ? { ok: true }
-    : { ok: false, error: { domain, unknownProps, protectedProps, availableProps: [...writable] } };
-}
-
 const MAX_ROUNDS = 20;
 const READ_ONLY_TOOLS = new Set(["inspect_project", "describe_capability", "check_health", "find_assets"]);
 
@@ -168,6 +143,7 @@ export class AgentReplayError extends Error {
 
 export interface AgentSessionSnapshot {
   schemaVersion: 2;
+  applicationPolicy?: "whole-plan";
   conversation: Array<{ role: "user" | "assistant"; content: string }>;
   steps: AgentSessionReplayStep[];
   metrics: AgentSessionMetrics;
@@ -202,6 +178,7 @@ type RoundResponse =
   | { kind: "transport-failure"; reason: AgentTransportFailure };
 
 interface AgentApiOutcome {
+  task?: unknown;
   kind: "tool-call" | "tool-rejected" | "finish" | "failed";
   calls?: AgentToolCall[];
   assistantMessage?: Record<string, unknown>;
@@ -265,7 +242,7 @@ export function validateAgentSessionSnapshot(value: unknown): asserts value is A
     value.conversation.length > MAX_CONVERSATION_MESSAGES || !value.conversation.every((message) => isRecord(message) &&
       (message.role === "user" || message.role === "assistant") && typeof message.content === "string" && isSafeJson(message)) ||
     !Array.isArray(value.steps) || value.steps.length > MAX_SNAPSHOT_STEPS || !value.steps.every(isPersistedStep) ||
-    !isRecord(value.metrics) || typeof value.completed !== "boolean") {
+    !isRecord(value.metrics) || typeof value.completed !== "boolean" || (value.applicationPolicy !== undefined && value.applicationPolicy !== "whole-plan")) {
     throw new Error("Agent 会话快照格式无效");
   }
   if (typeof value.metrics.rounds !== "number" || typeof value.metrics.usedTokens !== "number" ||
@@ -306,7 +283,7 @@ function patchForTool(name: string, args: Record<string, unknown>): { domain: Sc
   const patch = name.startsWith("update_") && ["update_province", "update_text", "update_asset"].includes(name)
     ? (args.patch ?? {})
     : args.patch ?? args;
-  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { domain: target.type, patch: {} };
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { domain: target.type, patch: { __invalidPatch: true } };
   return { domain: target.type, patch: patch as Record<string, unknown> };
 }
 
@@ -383,6 +360,8 @@ export class AgentSession {
   private activeController: AbortController | null = null;
   private activeRun: Promise<AgentRunOutcome> | null = null;
   private completed = false;
+  private wholePlan = false;
+  private _taskProgress: AgentTaskProgress | undefined;
   private retriableFailure = false;
   private budget = { usedTokens: 0, maxTokens: 60_000, rounds: 0, maxRounds: 20 };
   private taskId: string | undefined;
@@ -406,6 +385,7 @@ export class AgentSession {
     }
     session._metrics = structuredClone(snapshot.metrics);
     session.completed = snapshot.completed;
+    session.wholePlan = snapshot.applicationPolicy === "whole-plan";
     return session;
   }
 
@@ -421,6 +401,7 @@ export class AgentSession {
   exportSnapshot(): AgentSessionSnapshot {
     const snapshot: AgentSessionSnapshot = {
       schemaVersion: 2,
+      ...(this.wholePlan ? { applicationPolicy: "whole-plan" as const } : {}),
       conversation: textOnlyConversation(this.conversation),
       steps: this._steps
         .filter((step) => !READ_ONLY_TOOLS.has(step.name) && step.result.ok)
@@ -435,6 +416,12 @@ export class AgentSession {
   get shadowProject(): ProjectDocument {
     return this.shadow;
   }
+
+  get taskProgress(): AgentTaskProgress | undefined {
+    return this._taskProgress ? structuredClone(this._taskProgress) : undefined;
+  }
+
+  get requiresWholePlan(): boolean { return this.wholePlan; }
 
   get steps(): AgentStep[] {
     return [...this._steps];
@@ -663,6 +650,7 @@ export class AgentSession {
     if (this.activeRun) throw new Error("Agent 会话正在进行中");
     if (options.signal?.aborted) return { kind: "cancelled" };
     this.retriableFailure = false;
+    if (this.wholePlan) this.completed = false;
     if (!options.continue) {
       this.conversation.length = 0;
       this.completed = false;
@@ -688,6 +676,10 @@ export class AgentSession {
           }
           if (roundResponse.kind === "http-error") return { kind: "failed" as const, error: roundResponse.error };
           const outcome = roundResponse.outcome;
+          const task = parseTaskProgress(outcome.task);
+          if (outcome.task !== undefined && !task) return { kind: "failed" as const, error: "AI task progress is invalid" };
+          this._taskProgress = task ?? this._taskProgress;
+          this.wholePlan ||= Boolean(task);
           this.taskId = outcome.taskId ?? this.taskId;
           this.budgetReceipt = outcome.budgetReceipt ?? this.budgetReceipt;
           if (outcome.meta) {
@@ -695,6 +687,7 @@ export class AgentSession {
           }
           if (outcome.budget) this.budget = outcome.budget;
           if (outcome.kind === "failed") return { kind: "failed" as const, error: outcome.error ?? "Agent 失败" };
+          if (outcome.kind === "finish" && this.wholePlan && (task?.phase !== "ready" || task.steps.some((step) => step.status !== "succeeded") || this._steps.some((step) => !step.result.ok))) return { kind: "failed" as const, error: "计划缺少最终验证或有失败步骤，未应用。" };
           if (outcome.kind === "finish") { this.completed = true; return { kind: "finish" as const, summary: outcome.summary ?? "已完成。" }; }
           if (outcome.kind === "tool-rejected") {
             const assistantToolCalls = Array.isArray(outcome.assistantMessage?.tool_calls) ? outcome.assistantMessage.tool_calls as Array<{ id?: unknown }> : [];
@@ -722,6 +715,7 @@ export class AgentSession {
             this.conversation.push({ role: "tool", tool_call_id: call.id, content: toolResult.content });
           }
         }
+        if (this.wholePlan) return { kind: "failed" as const, error: "计划达到轮次上限，未应用。" };
         this.completed = true;
         return { kind: "finish" as const, summary: "已达到 20 轮上限，已交付当前完成的修改。" };
       } catch (cause) {
@@ -744,7 +738,7 @@ export class AgentSession {
   landingPreview(): { steps: AgentStep[]; needsConfirmation: boolean; highestRisk: RiskLevel } {
     const steps = this._steps.filter((step) => !READ_ONLY_TOOLS.has(step.name));
     const level = highestRisk(steps.map((step) => ({ level: step.risk, reason: "" })));
-    return { steps, needsConfirmation: this.options.mode === "conservative" || level === "high", highestRisk: level };
+    return { steps, needsConfirmation: this.wholePlan || this.options.mode === "conservative" || level === "high", highestRisk: level };
   }
 
   transactionForSteps(stepIds: ReadonlySet<string>): ProjectTransaction | null {
@@ -752,6 +746,7 @@ export class AgentSession {
       stepIds.has(step.id) && !READ_ONLY_TOOLS.has(step.name) && step.result.ok,
     );
     if (selectedSteps.length === 0) return null;
+    if (this.wholePlan && (!this.completed || selectedSteps.length !== this._steps.filter((step) => !READ_ONLY_TOOLS.has(step.name) && step.result.ok).length)) return null;
 
     return {
       id: createId("tx-ai-agent"),
