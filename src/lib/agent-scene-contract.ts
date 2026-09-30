@@ -2,7 +2,16 @@ import { SCENE_SCHEMAS } from './agent-scene-schemas';
 import { object, validateValue } from './agent-value-schema';
 export { SCENE_SCHEMAS } from './agent-scene-schemas';
 export type SceneDomain = keyof typeof SCENE_SCHEMAS;
-export const SCENE_DOMAIN_PROPS = Object.fromEntries(Object.entries(SCENE_SCHEMAS).map(([domain, props]) => [domain, Object.keys(props)])) as Record<SceneDomain, readonly string[]>;
+// Keep domain keys explicit so both TypeScript projects can verify completeness.
+export const SCENE_DOMAIN_PROPS: Record<SceneDomain, readonly string[]> = {
+  canvas: Object.keys(SCENE_SCHEMAS.canvas),
+  map: Object.keys(SCENE_SCHEMAS.map),
+  province: Object.keys(SCENE_SCHEMAS.province),
+  cards: Object.keys(SCENE_SCHEMAS.cards),
+  guests: Object.keys(SCENE_SCHEMAS.guests),
+  text: Object.keys(SCENE_SCHEMAS.text),
+  asset: Object.keys(SCENE_SCHEMAS.asset),
+};
 export const PROTECTED_SCENE_FIELDS: Record<SceneDomain, readonly string[]> = {
   canvas: [], map: [], province: [], cards: ['positions'], guests: [], text: ['id'], asset: ['id', 'src'],
 };
