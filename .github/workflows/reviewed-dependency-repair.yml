@@ -21,10 +21,12 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      # npm/cli#9787: npm 10 Arborist crashes in optional peer-set resolution.
+      # Pin the repair tool only; normal npm ci still validates the final lockfile.
       - name: Generate reviewed dependency-chain repair without lifecycle scripts
         run: |
-          npm install --package-lock-only --ignore-scripts --save-dev vitest@4.1.11 --registry=https://registry.npmjs.org
-          npm update --package-lock-only --ignore-scripts undici brace-expansion --registry=https://registry.npmjs.org
+          npx --yes npm@11.19.0 install --package-lock-only --ignore-scripts --save-dev vitest@4.1.11 --registry=https://registry.npmjs.org
+          npx --yes npm@11.19.0 update --package-lock-only --ignore-scripts undici brace-expansion --registry=https://registry.npmjs.org
           npm audit --package-lock-only --registry=https://registry.npmjs.org
       - name: Commit only dependency manifests to the named maintenance branch
         run: |
