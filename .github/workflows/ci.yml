@@ -19,15 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Maintenance script regression
+        run: npm run test:maintenance
+      - name: Repository contracts
+        run: npm run check:repository
       - name: Install dependencies
         run: npm ci
+      - name: Contributor environment
+        run: npm run doctor
       # Serial by design: scripts/run-heavy.mjs refuses overlapping heavy tasks.
       - name: Release metadata regression
         run: npm run test:release
@@ -41,7 +47,7 @@ jobs:
         run: npm run build
       - name: Retain structured test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-results
           path: artifacts/tests/results.json

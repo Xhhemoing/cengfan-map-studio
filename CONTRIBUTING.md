@@ -12,12 +12,13 @@ Node 22.13+（22.x）、npm 10+。Fork 仓库，从最新 `main` 建立 `fix/简
 
 ```bash
 npm ci
+npm run doctor
 npm run dev
 npx vitest run <相关测试文件>
 npm run check
 ```
 
-`check` 串行运行发布工具测试、类型检查、Lint、全量测试和生产构建。依赖变更还应运行 `npm run security:audit`。不要并行启动多个重型检查；失败时记录「复现 → 原因 → 最小修复 → 同项复测」，不能靠重试掩盖不稳定测试。
+`check` 串行运行维护工具测试、仓库检查、发布工具测试、类型检查、Lint、全量测试和生产构建。依赖变更还应运行 `npm run security:report`，保留全量与生产依赖的审计结果。不要并行启动多个重型检查；失败时记录「复现 → 原因 → 最小修复 → 同项复测」，不能靠重试掩盖不稳定测试。
 
 ## PR 应包含什么
 
@@ -36,3 +37,11 @@ npm run check
 维护者参考测试、可维护性、隐私边界和产品范围评审。CI 通过并不代替评审，也不代表发布；合并后清理已合入分支，但不得删除仍含独有提交的分支。版本与 Release 由 [发布流程](docs/RELEASING.md) 管理。
 
 社区遵循 [行为准则](CODE_OF_CONDUCT.md)。维护者按可用时间响应，不承诺固定服务时限。
+
+## 维护与贡献者自检
+
+[项目治理](GOVERNANCE.md) · [架构导航](docs/ARCHITECTURE.md) · [维护手册](docs/MAINTAINERS.md)
+
+`npm run doctor` 检查开发环境；`npm run check:repository` 检查维护文档本地链接、锁文件一致性和 Action 固定引用；`npm run security:report` 保存全量与生产依赖审计证据。本地基础功能不需要 AI 密钥。
+
+AI 辅助贡献仍由提交者负责，需说明实际验证结果及未测试项；不得把模拟模型测试说成真实模型验收。仓库检查不代表独立安全认证，也不代替人工评审或分支保护设置。
