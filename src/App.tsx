@@ -9,7 +9,6 @@ import {
 import { loadInitialProject, loadBrowserState } from "./lib/app-initialization";
 import {
   provinceNames,
-  dataViews,
   type ActivePanel,
 } from "./lib/app-constants";
 import { buildProvinceSummary } from "./lib/project-data";
@@ -52,14 +51,12 @@ import { StageLayoutScreen } from "./components/editor/StageLayoutScreen";
 import { ToolbarGroup } from "./components/StudioUi";
 import {
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
-  deriveWorkflowStageProgress,
   type WorkflowStageId,
 } from "./lib/workflow-stages";
-import { deriveStageOverviewModel } from "./lib/stage-overview";
+import { useEditorStageOverview } from "./lib/use-editor-stage-overview";
 import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, workspaceSessionStorageKey } from "./lib/workspace-session";
 import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
-import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
-import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
+import type { WorkflowStepId } from "./lib/workflow-progress";
 import { describeHistoryActions, matchEditorHistoryShortcut } from "./lib/editor-history";
 import {
   previewEditorCommands,
@@ -100,9 +97,9 @@ import {
   type EditorPanelLayout,
   type PanelSide,
 } from "./lib/editor-layout";
-import { checkLayoutHealth } from "./lib/layout-health";
-import { buildProjectLayoutHealthInput } from "./lib/layout-health-input";
-import { listResourceHealthIssues } from "./lib/resource-health";
+import { useProjectDiagnostics } from "./lib/use-project-diagnostics";
+import { useCardLayoutOptimization } from "./lib/use-card-layout-optimization";
+import { EditorLayoutOptimization } from "./components/editor/EditorLayoutOptimization";
 
 import {
   DEFAULT_GRID_SIZE,
@@ -207,14 +204,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
     setPrefersDark,
     setPanelLayout,
   });
-  const workflowProgress = useMemo(() => computeWorkflowProgress(project), [project]);
-  const dataHealth = useMemo(() => buildDataHealthSummary(project), [project]);
-  const dataIssues = useMemo(() => listDataIssues(project), [project]);
-  const exportWarnings = useMemo(() => listStudentWarnings(project), [project]);
-  const resourceHealthIssues = useMemo(
-    () => listResourceHealthIssues(project, userAssets, userFonts),
-    [project, userAssets, userFonts],
-  );
+  const { workflowProgress, dataHealth, dataIssues, exportWarnings, resourceHealthIssues, contentLayoutIssues, scene, captureScene } = useProjectDiagnostics(project, userAssets, userFonts);
+  const layoutOptimization = useCardLayoutOptimization(project, selection, scene, userFonts);
   const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
   const sidebarBounds = getPanelWidthBounds("sidebar", viewportWidth, panelLayout.inspectorWidth);
   const inspectorBounds = getPanelWidthBounds("inspector", viewportWidth, panelLayout.sidebarWidth);
@@ -232,13 +223,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
 
   const renderProject = useMemo(() => {
     if (agentPreview) return agentPreview;
+    if (layoutOptimization.previewProject) return layoutOptimization.previewProject;
     if (previewCommands.length === 0) return project;
     try {
       return previewEditorCommands(project, previewCommands);
     } catch {
       return project;
     }
-  }, [agentPreview, project, previewCommands]);
+  }, [agentPreview, layoutOptimization.previewProject, project, previewCommands]);
 
   const template = renderProject.templateId;
   const dataView = renderProject.dataView;
@@ -495,7 +487,6 @@ function StudioApp({ projectId }: { projectId?: string }) {
     selectStyleLayer,
   } = navigationActions;
 
-  const contentLayoutIssues = useMemo(() => checkLayoutHealth(buildProjectLayoutHealthInput(project)), [project]);
 
   const templateActions = createEditorTemplateActions({
     project,
@@ -591,27 +582,21 @@ function StudioApp({ projectId }: { projectId?: string }) {
     />
     </ToolbarGroup>
   );
-  const stageOverview = useMemo(
-    () => deriveStageOverviewModel({
-      stage: activeStage,
-      project,
-      stageProgress: deriveWorkflowStageProgress(project, workflowProgress),
-      dataHealth,
-      dataIssues,
-      layoutIssues: contentLayoutIssues,
-      resourceIssues: resourceHealthIssues.filter((issue) => issue.kind === "resource"),
-      fontIssues: resourceHealthIssues.filter((issue) => issue.kind === "font"),
-      dataViewLabel: dataViews.find((view) => view.id === dataView)?.name ?? dataView,
-      exportState: posterExport.exportState,
-      exportIsStale: posterExport.exportIsStale,
-    }),
-    [activeStage, project, workflowProgress, dataHealth, dataIssues, contentLayoutIssues, resourceHealthIssues, dataView, posterExport.exportState, posterExport.exportIsStale],
-  );
+  const stageOverview = useEditorStageOverview({
+    stage: activeStage, project, workflowProgress, dataHealth, dataIssues,
+    contentLayoutIssues, resourceHealthIssues, dataView,
+    exportState: posterExport.exportState, exportIsStale: posterExport.exportIsStale,
+  });
 
   const studioAssistantRail = (
     <StudioAssistantRail
       project={project}
       assets={userAssets}
+      userFonts={userFonts}
+      scene={scene}
+      contextStage={activeStage}
+      onLocalLayout={() => { changeWorkflowStage("frame"); layoutOptimization.setOpen(true); }}
+      onLocalDiagnose={() => changeWorkflowStage("export")}
       syncStatus={syncState.status}
       collaboration={{ roomId: collaboration.roomId, status: collaboration.collaborationStatus, participantCount: collaboration.roomParticipants.length }}
       dataIssueCount={dataIssues.length}
@@ -738,6 +723,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
         onChangeDataView={dataWorkspaceProps.onChangeDataView}
         onAddUserAsset={addUserAsset}
         onCardPositionsResolved={captureCardPositions}
+        onSceneResolved={captureScene}
+        optimizationPanel={<EditorLayoutOptimization
+          controller={layoutOptimization}
+          canEdit={collaboration.canEdit}
+          onCommit={commitProjectTransaction}
+          onPreviewStart={() => setAgentPreview(null)}
+          reportStatus={setStatusMessage}
+        />}
         onMoveProvinceTexture={moveProvinceTexture}
         onResizeMapImage={resizeMapImage}
         onMoveText={moveText}
@@ -854,6 +847,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           onSelect={selectLegacyScene}
           onSelectStudent={setSelectedStudentId}
           onCardPositionsResolved={captureCardPositions}
+          onSceneResolved={captureScene}
         />
 
         <LegacyEditorInspector

@@ -37,6 +37,7 @@ import {
   destinationCardTitleX,
 } from "../../lib/destination-card-metrics";
 import { resolveFontFamily, type UserFont } from "../../lib/fonts";
+import { DEFAULT_CARD_FONT_FAMILY } from "../../lib/styled-card-text";
 import type { LayoutGroup } from "../../lib/layout";
 import type { PreparedCardRow } from "../../lib/prepared-card-content";
 import type { CardFontField, ProvinceAppearance, TextStyleOverride } from "../../lib/scene-document";
@@ -91,6 +92,7 @@ export interface DestinationCardProps {
   rows: PreparedCardRow[];
   titleLines: CardTextLine<CardFontField>[];
   headerExtra: number;
+  topInset?: number;
   width: number;
   height: number;
   provinceTexture: CardProvinceTexture | null;
@@ -150,6 +152,7 @@ export const DestinationCard = memo(function DestinationCard({
   rows,
   titleLines,
   headerExtra,
+  topInset = 0,
   width,
   height,
   provinceTexture,
@@ -179,7 +182,7 @@ export const DestinationCard = memo(function DestinationCard({
     borderColor: frameStyle.borderColor ?? style.edgeColor,
   });
   const chrome = destinationCardSurfaceChrome(preset, surface);
-  const dividerY = destinationCardDividerY(headerExtra);
+  const dividerY = destinationCardDividerY(headerExtra) + topInset;
   const ticketOrnaments = preset === "ticket" ? destinationCardTicketOrnaments(width, height) : null;
   const avatar = preset === "photo" ? destinationCardAvatar(horizontalPadding) : null;
 
@@ -258,9 +261,9 @@ export const DestinationCard = memo(function DestinationCard({
         {line.map((fragment, fragmentIndex) => (
           <tspan
             key={fragmentIndex}
-            fontFamily={resolveFontFamily(fragment.field ? style.fieldFonts?.[fragment.field] : undefined, userFonts)}
-            fontSize={fragment.field ? style.fieldTypography?.[fragment.field]?.fontSize : undefined}
-            fill={fragment.field ? style.fieldTypography?.[fragment.field]?.color : undefined}
+            fontFamily={resolveFontFamily(fragment.field ? style.fieldFonts?.[fragment.field] : undefined, userFonts) ?? DEFAULT_CARD_FONT_FAMILY}
+            fontSize={(fragment.field ? style.fieldTypography?.[fragment.field]?.fontSize : undefined) ?? (row.cityHeading ? paint.fontSize : style.fontSize)}
+            fill={(fragment.field ? style.fieldTypography?.[fragment.field]?.color : undefined) ?? (row.cityHeading ? paint.fill : style.textColor)}
           >{fragment.text}</tspan>
         ))}
       </text>
@@ -313,11 +316,12 @@ export const DestinationCard = memo(function DestinationCard({
           // over a frame item that disagrees with it.
           fontSize={flowTitleFontSize}
           fill={titlePaint.fill}
-          fontFamily={resolveFontFamily(titlePaint.fontId, userFonts)}
+          fontFamily={resolveFontFamily(titlePaint.fontId, userFonts) ?? DEFAULT_CARD_FONT_FAMILY}
+          style={{ fontFamily: resolveFontFamily(titlePaint.fontId, userFonts) ?? DEFAULT_CARD_FONT_FAMILY }}
           opacity={titlePaint.opacity}
         >{line.map((fragment) => fragment.text).join("")}</text>
       ))}
-      {style.showCount && <text x={width - horizontalPadding} y={DESTINATION_CARD_COUNT_BASELINE} fill={style.activeColor} textAnchor="end" fontWeight={700} fontSize={style.fontSize} fontFamily={resolveFontFamily(style.fieldFonts?.title, userFonts)}>{group.count} 人</text>}
+      {style.showCount && <text x={width - horizontalPadding} y={DESTINATION_CARD_COUNT_BASELINE + topInset} fill={style.activeColor} textAnchor="end" fontWeight={700} fontSize={style.fontSize} fontFamily={resolveFontFamily(style.fieldFonts?.title, userFonts)}>{group.count} 人</text>}
       {chrome.showDivider && <line x1={horizontalPadding} x2={width - horizontalPadding} y1={dividerY} y2={dividerY} stroke={style.edgeColor} />}
       {bodyLines}
     </>

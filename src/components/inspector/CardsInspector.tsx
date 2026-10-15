@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { ArrowDown, ArrowUp, ChevronsDown, ChevronsUp, RotateCcw } from "lucide-react";
 import type { CardFontField, CardSettings } from "../../lib/scene-document";
 import { CANVAS_LAYER_Z, CANVAS_LAYER_Z_RANGE } from "../../lib/scene-document";
 import { EDGE_STYLE_OPTIONS, type EdgeStyle } from "../../lib/edge-styles";
 import { DEFAULT_FONT_ID, type UserFont } from "../../lib/fonts";
 import { applyCardTemplate, getCardTemplateById, getLegacyPresetTemplateId, listCardTemplates } from "../../lib/card-templates";
+import { cardFieldFontSize } from "../../lib/prepared-card-content";
 import { DeferredInput } from "../DeferredInput";
 import { FontEditor } from "../FontEditor";
 import { ActionGroup, IconButton, InspectorHeader } from "../StudioUi";
@@ -25,18 +27,20 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
   userFonts?: UserFont[];
   onPatch: (patch: Partial<CardSettings>) => void;
   onReset: () => void;
-  mode?: "all" | "global" | "placement";
+  mode?: "all" | "global" | "placement" | "scoped";
   /** 折叠低频设置（内容表达、留白细节、字段字体、线条纹理、显示字段）。 */
   collapsible?: boolean;
 }) {
+  const scoped = mode === "scoped";
+  const [includeTemplateLayout, setIncludeTemplateLayout] = useState(false);
   const templates = listCardTemplates();
   const currentTemplateId = cards.templateId
     ?? (getCardTemplateById(cards.preset)?.id || getLegacyPresetTemplateId(cards.preset) || "standard");
   const handleTemplateChange = (templateId: string) => {
-    onPatch(applyCardTemplate(templateId, cards));
+    onPatch(applyCardTemplate(templateId, cards, !scoped && includeTemplateLayout ? "visual-and-layout" : "visual"));
   };
 
-  const number = (key: "x" | "y" | "maxWidth" | "padding" | "horizontalPadding" | "bottomPadding" | "gap" | "fontSize", value: number, min: number, max: number, label: string) => {
+  const number = (key: "x" | "y" | "maxWidth" | "padding" | "horizontalPadding" | "bottomPadding" | "gap" | "fontSize" | "minWidth" | "minFontSize", value: number, min: number, max: number, label: string) => {
     const id = key === "fontSize" ? "font-size" : key === "horizontalPadding" ? "horizontal-padding" : key === "bottomPadding" ? "bottom-padding" : key;
     return (
     <label htmlFor={`cards-${id}`}>{label}
@@ -51,7 +55,7 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     const next = { ...(cards.fieldFonts ?? {}) };
     if (!fontId) delete next[field];
     else next[field] = fontId;
-    onPatch({ fieldFonts: next });
+    onPatch({ fieldFonts: scoped ? { [field]: fontId } : next });
   };
   const setUnifiedFont = (fontId: string) => {
     if (!fontId) {
@@ -78,14 +82,27 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
       {number("x", cards.x, 0, 6000, "X")}
       {number("y", cards.y, 0, 6000, "Y")}
     </div>
-    {number("maxWidth", cards.maxWidth, 80, 6000, "卡片宽度（画布像素）")}
   </>;
+  const contentWidth = cards.widthMode === "content";
+  const cardSizeControls = <>
+    <label htmlFor="cards-width-mode">宽度策略<select id="cards-width-mode" value={cards.widthMode ?? "fixed"}
+      onChange={(event) => onPatch({ widthMode: event.target.value as CardSettings["widthMode"] })}>
+      <option value="fixed">固定宽度</option><option value="content">按内容自动适配</option>
+    </select></label>
+    {contentWidth && number("minWidth", cards.minWidth ?? 80, 80, cards.maxWidth, "最小宽度（画布像素）")}
+    {number("maxWidth", cards.maxWidth, contentWidth ? cards.minWidth ?? 80 : 80, 6000, contentWidth ? "最大宽度（画布像素）" : "卡片宽度（画布像素）")}
+    <p className="property-panel__hint">高度随内容撑开。{contentWidth ? "宽度在设定范围内根据文字选择；长内容换行后重新计算高度。" : "保持设定宽度，内容换行后重新计算高度。"}</p>
+  </>;
+  const smallestFont = Math.min(cards.fieldTypography?.title?.fontSize ?? cards.fontSize,
+    ...cards.visibleFields.map((field) => cards.fieldTypography?.[field]?.fontSize ?? cards.fontSize),
+    ...(cards.grouping === "province" && cards.citySubgroups !== false && cards.visibleFields.includes("city")
+      ? [cardFieldFontSize("city", cards.fontSize, cards.fieldTypography)] : []));
   const fieldFontControls = (
     <fieldset className="cards-field-fonts">
       <legend>字段字体</legend>
       {fontFields.map(({ id, label }) => (
+        <div key={id}>
         <FontEditor
-          key={id}
           id={`cards-font-${id}`}
           label={label}
           fontId={cards.fieldFonts?.[id] ?? DEFAULT_FONT_ID}
@@ -95,8 +112,17 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
           min={8}
           max={48}
           onFontChange={(fontId) => setFieldFont(id, fontId)}
-          onSizeChange={(fontSize) => onPatch({ fieldTypography: { ...cards.fieldTypography, [id]: { ...cards.fieldTypography?.[id], fontSize } } })}
+          onSizeChange={(fontSize) => onPatch({ fieldTypography: scoped
+            ? { [id]: { fontSize } }
+            : { ...cards.fieldTypography, [id]: { ...cards.fieldTypography?.[id], fontSize } } })}
         />
+        <label htmlFor={`cards-font-${id}-color`}>{label}颜色
+          <DeferredInput id={`cards-font-${id}-color`} type="color" value={cards.fieldTypography?.[id]?.color ?? cards.textColor}
+            onCommit={(color) => onPatch({ fieldTypography: scoped
+              ? { [id]: { color } }
+              : { ...cards.fieldTypography, [id]: { ...cards.fieldTypography?.[id], color } } })} />
+        </label>
+        </div>
       ))}
     </fieldset>
   );
@@ -118,25 +144,25 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
     </>
   );
 
-  if (mode === "placement") return <section className="property-panel"><InspectorHeader title="数据框位置与尺寸" />{cardPlacementControls}{layerControl()}</section>;
+  if (mode === "placement") return <section className="property-panel"><InspectorHeader title="数据框位置与尺寸" />{cardPlacementControls}{cardSizeControls}{layerControl()}</section>;
 
   const advancedControls = (
     <>
-      {number("padding", cards.padding, 0, 120, "顶部留白")}{number("horizontalPadding", cards.horizontalPadding ?? cards.padding, 0, 240, "左右留白")}{number("bottomPadding", cards.bottomPadding ?? cards.padding, 0, 240, "底部留白")}{number("gap", cards.gap, 0, 120, "间距")}
-      <label htmlFor="cards-connector-dash">线条纹理
+      {number("padding", cards.padding, 0, 120, "顶部留白")}{number("horizontalPadding", cards.horizontalPadding ?? cards.padding, 0, 240, "左右留白")}{number("bottomPadding", cards.bottomPadding ?? cards.padding, 0, 240, "底部留白")}{!scoped && number("gap", cards.gap, 0, 120, "间距")}
+      {!scoped && <label htmlFor="cards-connector-dash">线条纹理
         <select id="cards-connector-dash" value={cards.connectorDash} onChange={(event) => onPatch({ connectorDash: event.target.value as EdgeStyle })}>
           {EDGE_STYLE_OPTIONS.map((option) => (
             <option key={option.id} value={option.id}>{option.label}</option>
           ))}
         </select>
-      </label>
+      </label>}
       <fieldset><legend>显示字段</legend>{fields.map((field) => <label key={field.id} htmlFor={`cards-visible-${field.id}`} className="boolean-control checkbox-row"><input id={`cards-visible-${field.id}`} type="checkbox" checked={cards.visibleFields.includes(field.id)} onChange={() => onPatch({ visibleFields: cards.visibleFields.includes(field.id) ? cards.visibleFields.filter((item) => item !== field.id) : [...cards.visibleFields, field.id] })} />{field.label}</label>)}</fieldset>
       <fieldset><legend>不分行字段</legend>{fields.map((field) => <label key={field.id} htmlFor={`cards-nowrap-${field.id}`} className="boolean-control checkbox-row"><input id={`cards-nowrap-${field.id}`} type="checkbox" checked={(cards.noWrapFields ?? []).includes(field.id)} disabled={!cards.visibleFields.includes(field.id)} onChange={() => onPatch({ noWrapFields: (cards.noWrapFields ?? []).includes(field.id) ? (cards.noWrapFields ?? []).filter((item) => item !== field.id) : [...(cards.noWrapFields ?? []), field.id] })} />{field.label}</label>)}
         <p className="property-panel__hint">勾选后该字段内容在卡片内保持完整，不会被拆到两行。</p></fieldset>
     </>
   );
 
-  return <section className="property-panel"><InspectorHeader title="卡片属性" actions={<IconButton label="重置卡片" icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} />} />
+  return <section className="property-panel"><InspectorHeader title={scoped ? "所选展示框样式" : "卡片属性"} actions={<IconButton label={scoped ? "恢复所选框继承样式" : "重置卡片"} icon={<RotateCcw size={15} />} variant="ghost" onClick={onReset} />} />
     <label htmlFor="cards-template">视觉样式
       <select id="cards-template" value={currentTemplateId} onChange={(event) => handleTemplateChange(event.target.value)}>
         {templates.map((tpl) => (
@@ -145,17 +171,25 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
       </select>
       <span className="property-panel__hint">四类参考海报样式直接使用真实名单、地图锚点和导出渲染。</span>
     </label>
+    {!scoped && <label htmlFor="cards-template-layout" className="boolean-control checkbox-row">
+      <input id="cards-template-layout" type="checkbox" checked={includeTemplateLayout} onChange={(event) => setIncludeTemplateLayout(event.target.checked)} />
+      换样式时同时采用分组、内容与空间建议
+    </label>}
+    <p className="property-panel__hint">{scoped ? "仅应用所选框的外观；分组和全图排布保持当前设置。" : "默认仅切换外观。勾选建议后，下次换样式会同时采用该模板的分组和空间设置。"}</p>
     <label htmlFor="cards-compact-layout" className="boolean-control checkbox-row"><input id="cards-compact-layout" type="checkbox" checked={cards.compactLayout === true || cards.preset === "compact"} onChange={(event) => onPatch({ compactLayout: event.target.checked })} />紧凑排版</label>
     <label htmlFor="cards-show-count" className="boolean-control checkbox-row"><input id="cards-show-count" type="checkbox" checked={cards.showCount !== false} onChange={(event) => onPatch({ showCount: event.target.checked })} />显示人数</label>
+    {!scoped && <>
     <label htmlFor="cards-grouping">分组<select id="cards-grouping" value={cards.grouping} onChange={(event) => onPatch({ grouping: event.target.value as CardSettings["grouping"] })}><option value="province">省份</option><option value="city">城市</option><option value="university">院校</option></select></label>
     <label htmlFor="cards-city-subgroups" className="boolean-control checkbox-row"><input id="cards-city-subgroups" type="checkbox" checked={cards.citySubgroups !== false} disabled={cards.grouping !== "province"} onChange={(event) => onPatch({ citySubgroups: event.target.checked })} />省份卡片内按城市分类</label>
     <label htmlFor="cards-layout-mode">排布方式<select id="cards-layout-mode" value={cards.layoutMode ?? "quadrant"} onChange={(event) => onPatch({ layoutMode: event.target.value as CardSettings["layoutMode"] })}><option value="quadrant">四象限（默认）</option><option value="radial">极角环绕</option><option value="right-stack">右侧单列</option><option value="grid">边缘网格</option></select></label>
     <label htmlFor="cards-auto-balance" className="boolean-control checkbox-row"><input id="cards-auto-balance" type="checkbox" checked={cards.autoBalance !== false} disabled={(cards.layoutMode ?? "quadrant") !== "quadrant"} onChange={() => onPatch({ autoBalance: cards.autoBalance === false })} />自动平衡左右</label>
     <label htmlFor="cards-allow-map-overlap" className="boolean-control checkbox-row"><input id="cards-allow-map-overlap" type="checkbox" checked={cards.allowMapOverlap === true} onChange={(event) => onPatch({ allowMapOverlap: event.target.checked })} />允许卡片覆盖地图</label>
     <label htmlFor="cards-show-province-texture" className="boolean-control checkbox-row"><input id="cards-show-province-texture" type="checkbox" checked={cards.showProvinceTexture === true} onChange={(event) => onPatch({ showProvinceTexture: event.target.checked })} />数据框显示省份贴图</label>
-    {mode !== "global" && cardPlacementControls}
-    {mode !== "global" && layerControl()}
-    <label htmlFor="cards-columns">列数<select id="cards-columns" value={cards.columns} onChange={(event) => onPatch({ columns: event.target.value === "auto" ? "auto" : Number(event.target.value) })}><option value="auto">自动</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+    </>}
+    {cardSizeControls}
+    {mode !== "global" && !scoped && cardPlacementControls}
+    {mode !== "global" && !scoped && layerControl()}
+    {!scoped && <label htmlFor="cards-columns">列数<select id="cards-columns" value={cards.columns} onChange={(event) => onPatch({ columns: event.target.value === "auto" ? "auto" : Number(event.target.value) })}><option value="auto">自动</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>}
     <label htmlFor="cards-background">背景色<DeferredInput id="cards-background" type="color" value={cards.background} onCommit={(background) => onPatch({ background })} /></label>
     <label htmlFor="cards-opacity">背景透明度<DeferredInput id="cards-opacity" type="range" min="0" max="1" step="0.05" value={cards.opacity} onCommit={(opacity) => onPatch({ opacity: Number(opacity) })} /></label>
     <label htmlFor="cards-text-color">文字色<DeferredInput id="cards-text-color" type="color" value={cards.textColor} onCommit={(textColor) => onPatch({ textColor })} /></label>
@@ -173,9 +207,15 @@ export function CardsInspector({ cards, userFonts = [], onPatch, onReset, mode =
       onSizeChange={(fontSize) => onPatch({ fontSize })}
     />
     {fieldFontControls}
+    {number("minFontSize", cards.minFontSize ?? 8, 8, 48, "目标最小字号（画布像素）")}
+    <p className="property-panel__hint" role={smallestFont < (cards.minFontSize ?? 8) ? "status" : undefined}>
+      当前字段最小字号 {smallestFont}px。{smallestFont < (cards.minFontSize ?? 8) ? "低于目标，请增大相应字号；排布建议会报告此冲突。" : "目标下限用于体检与方案验收，不会自动缩小或增大文字。"}
+    </p>
+    {!scoped && <>
     <label htmlFor="cards-connector-style">连接线<select id="cards-connector-style" value={cards.connectorStyle} onChange={(event) => onPatch({ connectorStyle: event.target.value as CardSettings["connectorStyle"] })}><option value="straight">直线</option><option value="elbow">折线</option><option value="curve">曲线</option></select></label>
     <label htmlFor="cards-connector-color">线条颜色<DeferredInput id="cards-connector-color" type="color" value={cards.connectorColor} onCommit={(connectorColor) => onPatch({ connectorColor })} /></label>
     <label htmlFor="cards-connector-width">线条粗细<DeferredInput id="cards-connector-width" type="number" min="0.5" max="8" step="0.5" value={cards.connectorWidth} onCommit={(connectorWidth) => onPatch({ connectorWidth: Number(connectorWidth) })} /></label>
+    </>}
     {collapsible
       ? <details className="property-panel__advanced"><summary>高级设置：留白、间距、连接线、显示字段</summary><div className="property-panel__advanced-title">高级设置<small>留白 · 间距 · 连接线纹理 · 显示字段 · 不分行字段</small></div>{advancedControls}</details>
       : advancedControls}

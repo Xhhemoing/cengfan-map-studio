@@ -2,6 +2,8 @@ import { AgentSession, validateAgentSessionSnapshot, type AgentSessionReplayStep
 import { fingerprintProject } from "./project-digest";
 import type { ProjectDocument } from "./project-document";
 import { CARD_LAYOUT_MODES } from "./scene-document";
+import { parseTaskBrief, redactTaskBrief, type AgentTaskBrief } from "./agent-task-brief";
+import { getCardTemplateById } from "./card-templates";
 
 export const ASSISTANT_CONVERSATION_STORAGE_KEY = "cengfan-map-studio:ai-conversations:v1";
 const SCHEMA_VERSION = 1;
@@ -12,21 +14,26 @@ const GENERIC_REQUEST = "已保存的 AI 对话";
 const GENERIC_TITLE = "AI 对话";
 const GENERIC_SUMMARY = "已保存对话";
 const GENERIC_ERROR = "会话无法恢复，预览未应用";
-const PERSISTABLE_WRITE_TOOLS = new Set(["update_canvas", "update_map", "update_cards", "set_data_view", "auto_layout"]);
+const PERSISTABLE_WRITE_TOOLS = new Set(["update_canvas", "update_map", "update_cards", "set_data_view", "auto_layout", "apply_card_style"]);
 const SAFE_PATCH_KEYS: Record<string, ReadonlySet<string>> = {
   update_canvas: new Set(["width", "height", "safeMargin", "backgroundColor", "backgroundFit", "backgroundOpacity", "lineHeight"]),
   update_map: new Set(["x", "y", "width", "height", "scale", "zIndex", "opacity", "landColor", "activeColor", "edgeColor", "edgeStyle", "edgeWidth", "showProvinceLabels", "collapseSouthChinaSea", "fillMode", "emptyProvinceFill"]),
-  update_cards: new Set(["preset", "compactLayout", "x", "y", "maxWidth", "padding", "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity", "textColor", "fontSize", "connectorStyle", "connectorColor", "connectorWidth", "connectorDash", "layoutMode", "autoBalance", "allowMapOverlap", "showProvinceTexture", "showCount", "zIndex"]),
+  update_cards: new Set(["preset", "presentation", "compactLayout", "x", "y", "maxWidth", "widthMode", "minWidth", "minFontSize", "padding", "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity", "textColor", "fontSize", "fieldFonts", "fieldTypography", "visibleFields", "noWrapFields", "citySubgroups", "expressionTemplates", "nameFormat", "connectorStyle", "connectorColor", "connectorWidth", "connectorDash", "layoutMode", "autoBalance", "allowMapOverlap", "showProvinceTexture", "showCount", "zIndex"]),
 };
-const SAFE_STYLE_KEYS = new Set(["backgroundColor", "landColor", "activeColor", "edgeColor", "background", "textColor", "connectorColor"]);
+const SAFE_STYLE_KEYS = new Set(["backgroundColor", "landColor", "activeColor", "edgeColor", "background", "textColor", "connectorColor", "color"]);
+const SAFE_FREE_TEXT_KEYS = new Set(["fieldFonts", "name", "university", "city", "title", "row", "expressionTemplates", "nameFormat"]);
 const SAFE_ENUMS: Record<string, ReadonlySet<string>> = {
   backgroundFit: new Set(["cover", "contain", "stretch"]),
-  edgeStyle: new Set(["solid", "dashed", "dotted"]),
+  edgeStyle: new Set(["solid", "dashed", "dotted", "double", "soft-glow", "stitch", "rail", "wave", "ornament", "ink"]),
   fillMode: new Set(["heat", "manual"]),
   emptyProvinceFill: new Set(["land-color", "transparent"]),
-  preset: new Set(["standard", "compact"]),
+  preset: new Set(["standard", "compact", "ticket", "photo", "borderless"]),
+  presentation: new Set(["standard", "color-pill", "emblem-list", "city-label", "glass-stat"]),
+  widthMode: new Set(["fixed", "content"]),
+  visibleFields: new Set(["name", "university", "city"]),
+  noWrapFields: new Set(["name", "university", "city"]),
   connectorStyle: new Set(["straight", "elbow", "curve"]),
-  connectorDash: new Set(["solid", "dashed", "dotted"]),
+  connectorDash: new Set(["solid", "dashed", "dotted", "double", "soft-glow", "stitch", "rail", "wave", "ornament", "ink"]),
   layoutMode: new Set(CARD_LAYOUT_MODES),
 };
 
@@ -50,6 +57,7 @@ export interface AssistantConversationRecord {
   restored?: boolean;
   projectDigest?: string;
   snapshot: AgentSessionSnapshot | null;
+  taskBrief?: AgentTaskBrief;
 }
 
 export interface AssistantConversationState {
@@ -110,6 +118,7 @@ function isSafeReplayValue(value: unknown, key: string): boolean {
   if (typeof value === "string") {
     if (value.length > 128 || /^(?:data:|blob:|https?:)/i.test(value)) return false;
     if (SAFE_ENUMS[key]?.has(value)) return true;
+    if (SAFE_FREE_TEXT_KEYS.has(key)) return true;
     return SAFE_STYLE_KEYS.has(key) && /^(?:#[0-9a-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([^)]{1,100}\))$/i.test(value);
   }
   if (Array.isArray(value)) return value.every((item) => isSafeReplayValue(item, key));
@@ -131,7 +140,17 @@ function sanitizedUpdateArguments(name: string, args: Record<string, unknown>, f
     if (!safeEntries.every(([key, value]) => isSafeReplayValue(value, key))) return null;
     sanitized = Object.fromEntries(safeEntries);
   }
+  // A scoped edit must never become a global edit when replayed after refresh.
+  if ("scopeIds" in args) {
+    if (name !== "update_cards" || !safeScopeIds(args.scopeIds, facts)) return null;
+    sanitized.scopeIds = [...args.scopeIds];
+  }
+  if (["scope", "selection", "targetIds", "cardIds"].some((key) => key in args)) return null;
   return containsStudentData(sanitized, facts) ? null : sanitized;
+}
+
+function safeScopeIds(value: unknown, facts: readonly string[]): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= 200 && value.every((id) => typeof id === "string" && /^[^\s]{1,256}$/u.test(id) && !/^(?:data:|blob:|https?:)/i.test(id)) && !containsStudentData(value, facts);
 }
 
 function sanitizedReplayStep(step: AgentSessionReplayStep, facts: readonly string[]): AgentSessionReplayStep | null {
@@ -142,10 +161,20 @@ function sanitizedReplayStep(step: AgentSessionReplayStep, facts: readonly strin
       : null;
   }
   if (step.name === "auto_layout") {
-    if (Object.keys(step.arguments).length === 0) return { ...structuredClone(step), arguments: { mode: "quadrant" } };
-    return Object.keys(step.arguments).length === 1 && typeof step.arguments.mode === "string" && ["quadrant", "radial", "right-stack", "grid"].includes(step.arguments.mode)
-      ? { ...structuredClone(step), arguments: { mode: step.arguments.mode } }
-      : null;
+    const args = step.arguments;
+    if (Object.keys(args).some((key) => !["mode", "scopeIds", "goal", "preservePositions"].includes(key)) ||
+      (args.mode !== undefined && (typeof args.mode !== "string" || !["quadrant", "radial", "right-stack", "grid"].includes(args.mode))) ||
+      (args.goal !== undefined && !["balanced", "readable", "map-clear"].includes(String(args.goal))) ||
+      (args.preservePositions !== undefined && typeof args.preservePositions !== "boolean") ||
+      ("scopeIds" in args && !safeScopeIds(args.scopeIds, facts))) return null;
+    return { ...structuredClone(step), arguments: { mode: args.mode ?? "quadrant", ...(args.goal !== undefined ? { goal: args.goal } : {}), ...(args.preservePositions !== undefined ? { preservePositions: args.preservePositions } : {}), ...(Array.isArray(args.scopeIds) ? { scopeIds: [...args.scopeIds] } : {}) } };
+  }
+  if (step.name === "apply_card_style") {
+    const args = step.arguments;
+    if (Object.keys(args).some((key) => !["templateId", "scopeIds", "mode"].includes(key)) || typeof args.templateId !== "string" || !getCardTemplateById(args.templateId) ||
+      (args.mode !== undefined && args.mode !== "visual" && args.mode !== "visual-and-layout") ||
+      ("scopeIds" in args && !safeScopeIds(args.scopeIds, facts))) return null;
+    return { ...structuredClone(step), arguments: { templateId: args.templateId, ...(args.mode !== undefined ? { mode: args.mode } : {}), ...(Array.isArray(args.scopeIds) ? { scopeIds: [...args.scopeIds] } : {}) } };
   }
   const argumentsSafe = sanitizedUpdateArguments(step.name, step.arguments, facts);
   return argumentsSafe ? { ...structuredClone(step), arguments: argumentsSafe } : null;
@@ -193,6 +222,7 @@ function genericRecord(record: AssistantConversationRecord, project: ProjectDocu
     steps: nonRestorable || record.status === "running" ? [] : steps,
     selectedStepIds: nonRestorable || record.status === "running" ? [] : record.selectedStepIds.filter((id) => steps.some((step) => step.id === id)),
     snapshot,
+    taskBrief: redactTaskBrief(record.taskBrief, facts),
   };
 }
 
@@ -206,7 +236,8 @@ function parseRecord(value: unknown): AssistantConversationRecord | null {
     (value.restored !== undefined && typeof value.restored !== "boolean") ||
     (value.projectDigest !== undefined && !isString(value.projectDigest, 64 * 1024)) ||
     (value.route !== undefined && value.route !== "primary" && value.route !== "fallback" && value.route !== "local") ||
-    (value.snapshot !== null && value.snapshot !== undefined && !isSafeJson(value.snapshot))) return null;
+    (value.snapshot !== null && value.snapshot !== undefined && !isSafeJson(value.snapshot)) ||
+    (value.taskBrief !== undefined && parseTaskBrief(value.taskBrief) === null)) return null;
   if (value.snapshot !== null && value.snapshot !== undefined) {
     try { validateAgentSessionSnapshot(value.snapshot); } catch { return null; }
   }
@@ -225,6 +256,7 @@ function parseRecord(value: unknown): AssistantConversationRecord | null {
     ...(value.restored === true ? { restored: true } : {}),
     ...(typeof value.projectDigest === "string" ? { projectDigest: value.projectDigest } : {}),
     snapshot: value.snapshot === null || value.snapshot === undefined ? null : structuredClone(value.snapshot) as AgentSessionSnapshot,
+    ...(value.taskBrief !== undefined ? { taskBrief: parseTaskBrief(value.taskBrief)! } : {}),
   };
 }
 

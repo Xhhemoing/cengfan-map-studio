@@ -1,13 +1,29 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, type PointerEvent } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, type ComponentProps, type PointerEvent, type MouseEvent, type KeyboardEvent } from "react";
 import { clampDestinationCardPosition, type CardLayoutBounds, type CardPlacement } from "../../lib/card-layout";
 import { buildConnectorGeometry, type ConnectorStyle } from "../../lib/connector-geometry";
 import { scopeEdgeStyleFilters, type EdgeStyle, type ResolvedEdgeStyle } from "../../lib/edge-styles";
 import type { PreparedCard } from "../../lib/prepared-card-content";
 import type { CardPresentation, ProvinceStyle } from "../../lib/scene-document";
 import type { CardPreset } from "../../lib/template-document";
+import { getCardPositionPolicy } from "../../lib/card-settings-scope";
+import { resolveDestinationCardStyle } from "./destination-card-effective-style";
+import { DestinationConnectorFilters } from "./DestinationConnectorFilters";
 import { DestinationCard, type DestinationCardStyle } from "./DestinationCard";
 import { ReferenceCardVisual, referenceCardColor, type ReferenceCardPresentation } from "./ReferenceCardVisual";
 import { clearCanvasPreview, createCanvasPreviewScheduler, scheduleCanvasPreview } from "./CanvasDragPreview";
+
+function sameDestinationCardProps(previous: ComponentProps<typeof DestinationCard>, next: ComponentProps<typeof DestinationCard>): boolean {
+  return previous.group === next.group
+    && previous.rows === next.rows
+    && previous.titleLines === next.titleLines
+    && previous.province === next.province
+    && previous.width === next.width
+    && previous.height === next.height
+    && previous.headerExtra === next.headerExtra
+    && previous.provinceTexture === next.provinceTexture
+    && JSON.stringify(previous.style) === JSON.stringify(next.style);
+}
+const MemoizedDestinationCard = memo(DestinationCard, sameDestinationCardProps);
 
 /** A prepared card with the placement auto-layout (or a manual drag) resolved for it. */
 export interface PlacedDestinationCard extends PreparedCard {
@@ -49,7 +65,8 @@ export interface DestinationCardsLayerProps {
   renderIntervalMs: number;
   /** Converts a pointer event into canvas user-space coordinates. */
   canvasPoint: (event: PointerEvent<SVGGElement>) => { x: number; y: number } | null;
-  onSelectCards?: () => void;
+  selectedCardIds?: readonly string[];
+  onSelectCards?: (id?: string, additive?: boolean) => void;
   onMoveCard?: (id: string, x: number, y: number) => void;
 }
 
@@ -70,8 +87,9 @@ function connectorPathToCenter(
 
 function DestinationCardsLayerView({
   cards,
-  style,
-  appearance,
+  style: baseStyle,
+  appearance: baseAppearance,
+  selectedCardIds = [],
   connectorEdge: incomingConnectorEdge,
   dragBounds,
   exportMode,
@@ -80,6 +98,7 @@ function DestinationCardsLayerView({
   onSelectCards,
   onMoveCard,
 }: DestinationCardsLayerProps) {
+  const appearance = baseAppearance;
   const cardDrag = useRef<{
     id: string;
     offsetX: number;
@@ -149,7 +168,7 @@ function DestinationCardsLayerView({
 
   const handleCardPointerDown = useCallback((event: PointerEvent<SVGGElement>) => {
     const card = cardsByKey.get(event.currentTarget.getAttribute("data-destination-card") ?? "");
-    if (!card) return;
+    if (!card || (card.resolvedSettings && getCardPositionPolicy(card.resolvedSettings, card.group.key) === "locked")) return;
     const point = canvasPoint(event);
     if (!point) return;
     event.stopPropagation();
@@ -157,7 +176,8 @@ function DestinationCardsLayerView({
     const connectorGroup = event.currentTarget.parentElement;
     if (!connectorGroup) return;
     const placement = card.placement;
-    const borderless = appearance.preset === "borderless";
+    const localAppearance = resolveDestinationCardStyle(baseStyle, baseAppearance, card.resolvedSettings).appearance;
+    const borderless = localAppearance.preset === "borderless";
     cardDrag.current = {
       id: card.group.key,
       offsetX: point.x - placement.x,
@@ -175,9 +195,9 @@ function DestinationCardsLayerView({
       side: placement.side,
       connectorStyle: appearance.connectorStyle,
       borderless,
-      connectorHidden: !card.isInternational && borderless && (appearance.opacity ?? 1) < 0.9,
+      connectorHidden: !card.isInternational && borderless && (localAppearance.opacity ?? 1) < 0.9,
     };
-  }, [appearance.connectorStyle, appearance.opacity, appearance.preset, canvasPoint, cardsByKey]);
+  }, [appearance.connectorStyle, baseAppearance, baseStyle, canvasPoint, cardsByKey]);
 
   const handleCardPointerMove = useCallback((event: PointerEvent<SVGGElement>) => {
     if (!event.currentTarget.hasPointerCapture(event.pointerId) || !cardDrag.current) return;
@@ -210,42 +230,33 @@ function DestinationCardsLayerView({
     cardDrag.current = null;
   }, [clearCardPreview, updateCardPreview]);
 
-  const handleSelect = useCallback(() => onSelectCards?.(), [onSelectCards]);
+  const handleSelect = useCallback((event: MouseEvent<SVGGElement>) => {
+    event.stopPropagation();
+    onSelectCards?.(event.currentTarget.getAttribute("data-destination-card") ?? undefined, event.shiftKey);
+  }, [onSelectCards]);
+  const handleCardKeyDown = useCallback((event: KeyboardEvent<SVGGElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault(); event.stopPropagation();
+    onSelectCards?.(event.currentTarget.getAttribute("data-destination-card") ?? undefined, event.shiftKey);
+  }, [onSelectCards]);
 
   if (cards.length === 0) return null;
 
   const cardDragEnabled = !exportMode && Boolean(onMoveCard);
-  const borderlessCards = appearance.preset === "borderless";
 
   return (
     <g
       data-cards-layer
       onClick={!exportMode ? handleSelect : undefined}
-      role={!exportMode && onSelectCards ? "button" : undefined}
+      role={!exportMode && onSelectCards ? "group" : undefined}
+      aria-label={!exportMode && onSelectCards ? "展示框" : undefined}
     >
-      {connectorEdge.filters.length > 0 && (
-        <defs data-connector-edge-filters>
-          {connectorEdge.filters.map((filter) => (
-            filter.markupKey === "soft-glow" ? (
-              <filter key={filter.id} id={filter.id} x="-40%" y="-40%" width="180%" height="180%">
-                <feGaussianBlur stdDeviation={Math.max(1.2, appearance.connectorWidth)} result="blur" />
-                <feMerge>
-                  <feMergeNode in="blur" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            ) : filter.markupKey === "ink" ? (
-              <filter key={filter.id} id={filter.id} x="-20%" y="-20%" width="140%" height="140%">
-                {/* Fixed seed: an unseeded turbulence is renderer-defined, so exports would
-                    not match the editor preview pixel for pixel. */}
-                <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="1" seed="1" result="noise" />
-                <feDisplacementMap in="SourceGraphic" in2="noise" scale={Math.max(0.6, appearance.connectorWidth * 0.35)} />
-              </filter>
-            ) : null
-          ))}
-        </defs>
-      )}
-      {cards.map(({ group, province, isInternational, rows, titleLines, headerExtra, anchorX, anchorY, placement }) => {
+      <DestinationConnectorFilters connectorEdge={connectorEdge} connectorWidth={appearance.connectorWidth} />
+      {cards.map(({ group, province, isInternational, rows, titleLines, headerExtra, anchorX, anchorY, placement, referenceMetrics, resolvedSettings, topInset }) => {
+        const { style, appearance } = resolveDestinationCardStyle(baseStyle, baseAppearance, resolvedSettings);
+        const borderlessCards = appearance.preset === "borderless";
+        const locked = resolvedSettings && getCardPositionPolicy(resolvedSettings, group.key) === "locked";
+        const selected = selectedCardIds.includes(group.key);
         const displayPlacement = placement;
         const provinceAppearance = appearance.provinceStyles?.[province]?.appearance;
         const provinceTexture = appearance.showProvinceTexture
@@ -314,7 +325,15 @@ function DestinationCardsLayerView({
               data-card-preset={appearance.preset}
               data-card-presentation={appearance.presentation}
               className="destination-card"
-              onPointerDown={cardDragEnabled ? handleCardPointerDown : undefined}
+              data-card-selected={selected ? "true" : undefined}
+              data-card-position-locked={locked ? "true" : undefined}
+              role={!exportMode && onSelectCards ? "button" : undefined}
+              tabIndex={!exportMode && onSelectCards ? 0 : undefined}
+              aria-label={!exportMode ? `展示框：${group.title}${locked ? "，位置已锁定" : ""}` : undefined}
+              aria-pressed={!exportMode && onSelectCards ? selected : undefined}
+              onClick={!exportMode ? handleSelect : undefined}
+              onKeyDown={!exportMode ? handleCardKeyDown : undefined}
+              onPointerDown={cardDragEnabled && !locked ? handleCardPointerDown : undefined}
               onPointerMove={cardDragEnabled ? handleCardPointerMove : undefined}
               onPointerUp={cardDragEnabled ? handleCardPointerUp : undefined}
               onPointerCancel={cardDragEnabled ? handleCardPointerCancel : undefined}
@@ -324,6 +343,14 @@ function DestinationCardsLayerView({
                   presentation={appearance.presentation as ReferenceCardPresentation}
                   group={group}
                   rows={rows}
+                  titleLines={titleLines}
+                  referenceMetrics={referenceMetrics}
+                  fieldTypography={style.fieldTypography}
+                  fieldFonts={style.fieldFonts}
+                  userFonts={style.userFonts}
+                  showCount={style.showCount}
+                  horizontalPadding={style.horizontalPadding}
+                  topPadding={style.frameStyle?.padding ?? 0}
                   width={placement.width}
                   height={placement.height}
                   accent={appearance.provinceStyles?.[province]?.appearance?.kind === "manual-color"
@@ -338,7 +365,7 @@ function DestinationCardsLayerView({
                   lineHeightMultiplier={appearance.lineHeightMultiplier}
                 />
               ) : (
-                <DestinationCard
+                <MemoizedDestinationCard
                   style={style}
                   group={group}
                   province={province}
@@ -348,8 +375,10 @@ function DestinationCardsLayerView({
                   width={placement.width}
                   height={placement.height}
                   provinceTexture={provinceTexture}
+                  topInset={topInset}
                 />
               )}
+              {!exportMode && selected && <rect data-card-selection-outline width={placement.width} height={placement.height} rx={8} fill="none" stroke="#2563eb" strokeWidth={2} strokeDasharray="5 3" pointerEvents="none" />}
             </g>
           </g>
         );

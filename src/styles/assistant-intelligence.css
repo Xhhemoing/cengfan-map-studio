@@ -1,0 +1,12 @@
+.assistant-capability, .assistant-task-brief { border: 1px solid var(--studio-line, #d8dee7); border-radius: 10px; padding: 10px; margin-bottom: 10px; font-size: 12px; }
+.assistant-capability p { margin: 0 0 8px; line-height: 1.6; }
+.assistant-capability button, .assistant-task-brief button { min-height: 32px; border: 1px solid var(--studio-line, #d8dee7); background: transparent; border-radius: 6px; padding: 5px 8px; color: inherit; cursor: pointer; }
+.assistant-local-actions, .assistant-task-preserves { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.assistant-task-brief summary { cursor: pointer; line-height: 1.6; }
+.assistant-task-brief label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.assistant-task-brief select { max-width: 170px; min-width: 0; min-height: 32px; font: inherit; color: inherit; background: var(--studio-surface, #fff); border: 1px solid var(--studio-line, #d8dee7); border-radius: 6px; }
+.assistant-task-preserves button[aria-pressed="true"] { border-color: var(--studio-accent, #2563eb); background: color-mix(in srgb, var(--studio-accent, #2563eb) 12%, transparent); }
+.assistant-task-brief p { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.assistant-step-detail { display: block; line-height: 1.5; overflow-wrap: anywhere; margin-top: 3px; }
+.assistant-stale { border-left: 3px solid #ca8a04; padding-left: 8px; }
+@media (pointer: coarse), (max-width: 700px) { .assistant-capability button, .assistant-task-brief button, .assistant-task-brief select { min-height: 44px; } }

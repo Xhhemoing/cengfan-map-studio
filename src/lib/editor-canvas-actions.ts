@@ -1,3 +1,4 @@
+import { getCardPositionPolicy, getCardPositionSource, getCardScopeKey } from "./card-settings-scope";
 import type { StudioAsset } from "./assets";
 import {
   createDecorationElement,
@@ -61,10 +62,37 @@ export function createEditorCanvasActions(deps: EditorCanvasActionDeps) {
   const freezeCardPositionsForMapChange = (current: ProjectDocument) => {
     const positions = deps.readCardPositions();
     if (!positions || Object.keys(positions).length === 0) return current.cards;
-    return { ...current.cards, positions: { ...positions, ...current.cards.positions } };
+    const positionSources = { ...current.cards.positionSources };
+    const positionPolicies = { ...current.cards.positionPolicies };
+    for (const id of Object.keys(positions)) {
+      if (!current.cards.positions?.[id] || getCardPositionSource(current.cards, id) === "auto") {
+        const key = getCardScopeKey(current.cards, id);
+        positionSources[key] = "frozen";
+        positionPolicies[key] = "preserve";
+      }
+    }
+    return { ...current.cards, positions: { ...positions, ...current.cards.positions }, positionSources, positionPolicies };
   };
 
   const patchScene = (target: SceneSelection, patch: Record<string, unknown>) => {
+    if (target.type === "cards" && target.ids?.length && target.scopeGrouping && target.scopeGrouping !== project.cards.grouping) return;
+    if (target.type === "cards" && target.ids?.length && (patch.positionPolicy === "locked" || patch.positionPolicy === "preserve")) {
+      const resolved = deps.readCardPositions() ?? {};
+      const transaction = createSceneTransaction(target, patch);
+      commitTransaction({ ...transaction, apply: (current) => {
+        if (target.scopeGrouping && target.scopeGrouping !== current.cards.grouping) return current;
+        const positions = { ...current.cards.positions };
+        const positionSources = { ...current.cards.positionSources };
+        for (const id of target.ids ?? []) {
+          if (!positions[id] && resolved[id]) {
+            positions[id] = resolved[id];
+            positionSources[getCardScopeKey(current.cards, id)] = "frozen";
+          }
+        }
+        return transaction.apply({ ...current, cards: { ...current.cards, positions, positionSources } });
+      } });
+      return;
+    }
     if (target.type !== "map" && target.type !== "province") {
       commitTransaction(createSceneTransaction(target, patch));
       return;
@@ -80,7 +108,9 @@ export function createEditorCanvasActions(deps: EditorCanvasActionDeps) {
   };
 
   const resetSceneTarget = (target: Extract<SceneSelection, { type: "canvas" | "map" | "cards" }>) => {
-    patchScene(target, sceneResetPatch(project.templateId, target.type));
+    patchScene(target, target.type === "cards" && target.ids?.length
+      ? { resetStyleOverrides: true }
+      : sceneResetPatch(project.templateId, target.type));
   };
 
   return {
@@ -94,7 +124,7 @@ export function createEditorCanvasActions(deps: EditorCanvasActionDeps) {
     /** 手动摆过卡片的工程要先问一句:刷新会把手摆的位置一起算掉。 */
     refreshDisplayFramePositions: () => {
       if (typeof window !== "undefined" && Object.keys(project.cards.positions ?? {}).length > 0
-        && !window.confirm("刷新展示框位置会重新按当前地图计算数据框位置，是否继续？")) return;
+        && !window.confirm("刷新会重新计算未锁定的数据框位置；已锁定的框保持原位。是否继续？")) return;
       deps.clearCardPositions();
       commitTransaction(refreshDisplayFramePositionsTransaction());
       setStatusMessage("已刷新展示框位置");
@@ -179,7 +209,11 @@ export function createEditorCanvasActions(deps: EditorCanvasActionDeps) {
     },
 
     moveCard: (id: string, x: number, y: number) => {
-      commitProject(applyTransaction(project, moveCardTransaction(id, snap(x, y))));
+      if (getCardPositionPolicy(project.cards, id) === "locked") return;
+      const point = snap(x, y);
+      const previous = project.cards.positions?.[id];
+      if (previous?.x === point.x && previous?.y === point.y) return;
+      commitProject(applyTransaction(project, moveCardTransaction(id, point)));
     },
 
     moveText: (id: string, x: number, y: number) => {

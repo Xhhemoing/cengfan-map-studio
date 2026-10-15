@@ -1,3 +1,5 @@
+import { getSelectedCardIds } from "../../lib/card-settings-scope";
+import type { ResolvedProjectScene } from "../../lib/resolved-scene";
 import type { ComponentProps } from "react";
 import type { UserAsset } from "../../lib/assets";
 import type { UserFont } from "../../lib/fonts";
@@ -16,6 +18,7 @@ import {
 
 export type ContentAssetPanelProps = ComponentProps<typeof AssetPanel>;
 export interface ContentLayoutWorkspaceProps {
+  onSceneResolved?: (scene: ResolvedProjectScene) => void;
   project: ProjectDocument;
   selection: SceneSelection;
   userAssets?: UserAsset[];
@@ -181,6 +184,7 @@ export function ContentLayoutRail({
  * live in the topbar's stage-actions slot.
  */
 export function ContentLayoutWorkspace({
+  onSceneResolved,
   project,
   selection,
   userFonts = [],
@@ -203,6 +207,8 @@ export function ContentLayoutWorkspace({
           <div className="content-layout-workspace__preview-heading"><strong>实时画布</strong><span>{project.canvas.width} × {project.canvas.height}</span></div>
           <div className="content-layout-workspace__canvas">
             <PosterCanvas
+              selectedCardIds={getSelectedCardIds(selection, project.cards, project)}
+              onSceneResolved={onSceneResolved}
               project={project}
               selectedTextId={selection.type === "text" ? selection.id : null}
               selectedAssetId={selection.type === "asset" ? selection.id : null}

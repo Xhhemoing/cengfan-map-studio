@@ -72,9 +72,7 @@ describe("reference card multiline rows", () => {
 
     const visual = container.querySelector('[data-card-visual="color-pill"]');
     expect(visual).not.toBeNull();
-    const directTextNodes = Array.from(visual?.children ?? [])
-      .filter((node): node is SVGTextElement => node.tagName.toLowerCase() === "text");
-    const bodyTextNodes = directTextNodes.slice(1);
+    const bodyTextNodes = Array.from(visual?.querySelectorAll('[data-card-row-line="long-row-0"]') ?? []);
 
     expect(bodyTextNodes).toHaveLength(expectedLines.length);
     expect(bodyTextNodes.map((node) => node.textContent)).toEqual(expectedLines);

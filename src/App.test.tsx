@@ -81,6 +81,8 @@ describe("App student editing", () => {
     });
     const container = renderApp();
     click(container.querySelector<HTMLButtonElement>('.workflow-stage-stepper button[aria-label="交付"]')!);
+    container.querySelector<SVGSVGElement>("svg.poster")?.setAttribute("data-measurement-status", "measured");
+    container.querySelector<SVGSVGElement>("svg.poster")?.setAttribute("data-layout-pending", "false");
     const scale = container.querySelector<HTMLSelectElement>('select[aria-label="PNG 导出倍率"]')!;
     changeSelect(scale, "3");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="导出 SVG"]')!);

@@ -23,9 +23,11 @@ vi.mock("./ReferenceCardVisual", () => ({
 import { DestinationCardsLayer, type DestinationCardsAppearance, type DestinationCardsLayerProps, type PlacedDestinationCard } from "./DestinationCardsLayer";
 import type { CardLayoutBounds } from "../../lib/card-layout";
 import type { DestinationCardStyle } from "./DestinationCard";
+import { createDefaultDisplayFrame } from "../../lib/display-frame";
+import { createDefaultScene } from "../../lib/scene-document";
 import { resolveEdgeStyle } from "../../lib/edge-styles";
 
-const CARD_STYLE = {} as DestinationCardStyle;
+const CARD_STYLE = { frameStyle: createDefaultDisplayFrame().style } as DestinationCardStyle;
 
 function appearance(overrides: Partial<DestinationCardsAppearance> = {}): DestinationCardsAppearance {
   return {
@@ -253,7 +255,7 @@ describe("DestinationCardsLayer", () => {
     const { container } = render({ onSelectCards });
     const layer = container.querySelector("[data-cards-layer]")!;
 
-    expect(layer.getAttribute("role")).toBe("button");
+    expect(layer.getAttribute("role")).toBe("group");
     flushSync(() => layer.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onSelectCards).toHaveBeenCalledTimes(1);
   });
@@ -281,5 +283,37 @@ describe("DestinationCardsLayer", () => {
     paint();
 
     expect(renderCounts.card).toBe(1);
+  });
+});
+
+
+describe("per-card scope selection", () => {
+  it("selects the clicked card with Shift additive semantics and keyboard parity", () => {
+    const onSelectCards = vi.fn();
+    const { container } = render({ onSelectCards, selectedCardIds: ["北京市"] });
+    const node = draggable(container);
+    expect(node.getAttribute("aria-pressed")).toBe("true");
+    expect(node.getAttribute("tabindex")).toBe("0");
+    flushSync(() => node.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true })));
+    expect(onSelectCards).toHaveBeenLastCalledWith("北京市", true);
+    expect(onSelectCards).toHaveBeenCalledTimes(1);
+    flushSync(() => node.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: " ", shiftKey: false })));
+    expect(onSelectCards).toHaveBeenLastCalledWith("北京市", false);
+    expect(onSelectCards).toHaveBeenCalledTimes(2);
+  });
+  it("keeps locked cards selectable while disabling pointer capture and movement", () => {
+    const onMoveCard = vi.fn();
+    const onSelectCards = vi.fn();
+    const settings = createDefaultScene("original").cards;
+    const { container } = render({ onMoveCard, onSelectCards,
+      cards: [card({ resolvedSettings: { ...settings, positionPolicies: { "province:北京市": "locked" } } })],
+    });
+    const node = draggable(container);
+    expect(node.getAttribute("data-card-position-locked")).toBe("true");
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 110, clientY: 210 })));
+    flushSync(() => node.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 })));
+    expect(onMoveCard).not.toHaveBeenCalled();
+    flushSync(() => node.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })));
+    expect(onSelectCards).toHaveBeenCalledWith("北京市", false);
   });
 });

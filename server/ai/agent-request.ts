@@ -135,6 +135,7 @@ export type AgentToolBatchResult = { ok: true } | { ok: false; error: string };
 
 function domainFor(name: string, args: Record<string, unknown>): string {
   if (name === "update_text" || name === "update_asset" || name === "update_province") return `${name}:${String(args.id ?? args.province ?? "")}`;
+  if (name === "apply_card_style") return "update_cards";
   if (name.startsWith("update_")) return name;
   if (name === "auto_layout") return "cards:layout";
   return "";
@@ -149,7 +150,7 @@ export function validateAgentToolBatch(calls: AgentToolBatchCall[]): AgentToolBa
     if (READ_ONLY_TOOLS.has(call.name) || call.name === "finish") continue;
     const domain = domainFor(call.name, call.arguments);
     if (call.name === "update_text" && domain.endsWith(":")) continue;
-    if (call.name === "auto_layout" && calls.some((other) => other.name === "update_cards")) return { ok: false, error: "auto_layout 与 update_cards 存在冲突" };
+    if (call.name === "auto_layout" && calls.some((other) => ["update_cards", "apply_card_style", "set_data_view"].includes(other.name))) return { ok: false, error: "auto_layout 与 update_cards 存在冲突" };
     if (domain && domains.has(domain)) return { ok: false, error: `工具批次写入冲突：${domain}` };
     if (domain) domains.add(domain);
   }

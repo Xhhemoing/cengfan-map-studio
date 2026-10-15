@@ -1,9 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertRasterSize, capturePngExport, waitForExportFonts } from "./export-job";
+import { assertManagedPosterReady, assertRasterSize, capturePngExport, readManagedPosterState, waitForExportFonts } from "./export-job";
+import { createProjectDocument } from "./project-document";
+import { getSceneTextMeasurer } from "./scene-text-measurement";
+import { fingerprintProject } from "./project-digest";
 
 afterEach(() => vi.useRealTimers());
 
 describe("export job guardrails", () => {
+  it("keeps old SVG callers compatible while validating managed scene attributes", () => {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    expect(readManagedPosterState(svg)).toBeNull();
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    svg.setAttribute("data-scene-revision", "wrong");
+    svg.setAttribute("data-font-revision", "0");
+    svg.setAttribute("data-layout-pending", "true");
+    expect(() => assertManagedPosterReady(svg, project, getSceneTextMeasurer().getVersion())).toThrow(/排布仍在计算/u);
+    svg.setAttribute("data-layout-pending", "false");
+    expect(() => assertManagedPosterReady(svg, project, getSceneTextMeasurer().getVersion())).toThrow(/预览已更新/u);
+    svg.setAttribute("data-scene-revision", fingerprintProject(project));
+    svg.setAttribute("data-measurement-status", "estimated");
+    expect(readManagedPosterState(svg)?.measurementStatus).toBe("estimated");
+  });
+
   it.each([[0, 10], [-1, 10], [NaN, 10], [Infinity, 10], [1, 17000], [10000, 10000]])("rejects unsupported size %s x %s before rendering", (width, height) => {
     expect(() => assertRasterSize(width, height)).toThrow(expect.objectContaining({ code: "budget" }));
   });

@@ -2,6 +2,7 @@ import { createId } from "./ids";
 import type { MapTemplateId, Student } from "./project-data";
 import type { ProjectDocument } from "./project-document";
 import { normalizeScene, type SceneDocument } from "./scene-document";
+import { applySavedTemplate } from "./template-application";
 import {
   createSystemTemplate,
   mergeTemplateDocuments,
@@ -282,75 +283,5 @@ export function applyCustomTemplateToProject(
   project: ProjectDocument,
   template: CustomTemplateRecord,
 ): ProjectDocument {
-  if (template.scene) {
-    return {
-      ...project,
-      templateId: template.baseTemplateId,
-      canvas: structuredClone(template.scene.canvas),
-      map: structuredClone(template.scene.map),
-      cards: structuredClone(template.scene.cards),
-      guests: structuredClone(template.scene.guests ?? project.guests),
-      textElements: structuredClone(template.scene.textElements),
-      assetElements: structuredClone(template.scene.assetElements),
-      style: {
-        ...project.style,
-        cardPreset: template.scene.cards.preset,
-        mapScale: template.scene.map.scale,
-        backgroundColor: template.scene.canvas.backgroundColor,
-        backgroundImageSrc: template.scene.canvas.backgroundImageSrc,
-        visibleFields: [...template.scene.cards.visibleFields],
-      },
-      dataView: template.scene.cards.grouping === "city"
-        || template.scene.cards.grouping === "university"
-        ? template.scene.cards.grouping
-        : project.dataView,
-    };
-  }
-
-  return {
-    ...project,
-    templateId: template.baseTemplateId,
-    canvas: {
-      ...project.canvas,
-      backgroundColor: template.document.background.color,
-      backgroundImageSrc: template.document.background.imageSrc,
-      backgroundOpacity: template.document.background.opacity,
-    },
-    map: {
-      ...project.map,
-      x: template.document.map.offsetX,
-      y: template.document.map.offsetY,
-      scale: template.document.map.scale,
-      landColor: template.document.map.landColor,
-      activeColor: template.document.map.activeColor,
-      edgeColor: template.document.map.edgeColor,
-      edgeStyle: template.document.map.edgeStyle,
-      edgeWidth: template.document.map.edgeWidth,
-      showProvinceLabels: template.document.map.showProvinceLabels,
-      provinceStyles: { ...template.document.map.provinceStyles },
-    },
-    cards: {
-      ...project.cards,
-      preset: template.document.cards.preset,
-      grouping: template.document.cards.grouping,
-      maxWidth: template.document.cards.maxWidth,
-      padding: template.document.cards.padding,
-      background: template.document.cards.background,
-      textColor: template.document.cards.textColor,
-      visibleFields: [...template.document.visibleFields],
-    },
-    style: {
-      ...project.style,
-      cardPreset: template.document.cards.preset,
-      mapScale: template.document.map.scale,
-      backgroundColor: template.document.background.color,
-      backgroundImageSrc: template.document.background.imageSrc,
-      visibleFields: [...template.document.visibleFields],
-      regionalAssets: structuredClone(template.document.regionalAssets),
-    },
-    dataView: template.document.cards.grouping === "city"
-      || template.document.cards.grouping === "university"
-      ? template.document.cards.grouping
-      : project.dataView,
-  };
+  return applySavedTemplate(project, template);
 }

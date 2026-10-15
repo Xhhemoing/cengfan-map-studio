@@ -278,6 +278,10 @@ describe("Five-stage status strip", () => {
     const alert = container.querySelector('.editor-status-strip [role="alert"]')!;
 
     click(workflowStage(container, "交付"));
+    // The jsdom fixture has no real FontFaceSet; mark the managed scene as ready
+    // so this test exercises the download failure channel itself.
+    container.querySelector<SVGSVGElement>("svg.poster")?.setAttribute("data-measurement-status", "measured");
+    container.querySelector<SVGSVGElement>("svg.poster")?.setAttribute("data-layout-pending", "false");
     click(container.querySelector<HTMLButtonElement>('button[aria-label="导出 SVG"]')!);
 
     // 同一个节点被复用（区域先于消息存在），读屏才会播报后来的这条失败。

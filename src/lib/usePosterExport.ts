@@ -10,7 +10,7 @@
  * `svgToPngDataUrl` + `downloadDataUrl` 并删掉 generation 判断。
  */
 import { useRef, useState, type RefObject } from "react";
-import { capturePngExport, waitForExportFonts } from "./export-job";
+import { assertManagedPosterReady, capturePngExport, readManagedPosterState, waitForExportFonts } from "./export-job";
 import { buildExportFileName } from "./export-filename";
 import { downloadBlob, downloadText, serializePosterSvg, svgToPngBlob } from "./export-poster";
 import { ensureUserFontsLoaded, type UserFont } from "./fonts";
@@ -21,6 +21,8 @@ import type { ProjectDocument } from "./project-document";
 import type { RenderSettings } from "./render-settings";
 import type { DeliveryExportState } from "../components/workspaces/DeliveryWorkspace";
 import { fingerprintProject, fingerprintWorkspaceData } from "./project-digest";
+import { getSceneTextMeasurer } from "./scene-text-measurement";
+import { renderFrozenPoster } from "./frozen-export-renderer";
 
 export interface UsePosterExportOptions {
   posterRef: RefObject<SVGSVGElement | null>;
@@ -125,6 +127,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
+      const managed = assertManagedPosterReady(svg, renderProject, getSceneTextMeasurer().getVersion());
+      if (managed?.measurementStatus === "estimated") throw new Error("字体测量仍在估算，请等待字体就绪后重试");
       const source = serializePosterSvg(svg, { transparentBackground: transparentExport });
       const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "svg" });
       downloadText(source, fileName, "image/svg+xml;charset=utf-8");
@@ -226,11 +230,24 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     try {
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
+      // Freeze every input before waiting. A later edit or a changed name cannot leak into
+      // this click's artifact while the font loader is pending.
+      const frozenProject = structuredClone(renderProject);
+      const frozenFonts = structuredClone(userFonts);
+      const frozenName = getProjectName?.();
+      const managed = readManagedPosterState(svg);
+      const frozenSvg = managed ? undefined : svg.cloneNode(true) as SVGSVGElement;
+      await waitForExportFonts(ensureUserFontsLoaded(frozenFonts));
+      // FontFace.load + fonts.add does not reliably emit loadingdone in every browser.
+      // Advance the shared measurement revision explicitly before the detached solve.
+      if (managed) getSceneTextMeasurer().invalidate();
+      const rendered = managed
+        ? await renderFrozenPoster({ project: frozenProject, userFonts: frozenFonts })
+        : undefined;
       const job = capturePngExport({
-        svg, width: renderProject.canvas.width, height: renderProject.canvas.height,
-        scale: pngScale, transparentBackground: transparentExport, projectName: getProjectName?.(),
+        svg: rendered?.svg ?? frozenSvg!, width: rendered?.width ?? frozenProject.canvas.width, height: rendered?.height ?? frozenProject.canvas.height,
+        scale: pngScale, transparentBackground: transparentExport, projectName: frozenName,
       });
-      await waitForExportFonts(ensureUserFontsLoaded(userFonts.map((font) => ({ ...font }))));
       if (!isLatestPng()) return;
       const blob = await svgToPngBlob(job.source, job);
       const fileName = job.fileName;

@@ -1,5 +1,6 @@
+import { getSelectedCardIds } from "../../lib/card-settings-scope";
 import { MapPinned, RefreshCw } from "lucide-react";
-import type { ComponentProps, ReactNode, RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { UserAsset } from "../../lib/assets";
 import type { DataHealthSummary, DataIssue } from "../../lib/data-health";
 import type { UserFont } from "../../lib/fonts";
@@ -11,7 +12,6 @@ import { STAGE_METADATA } from "../../lib/stage-metadata";
 import { templatePickerProps, type EditorTemplateActions } from "../../lib/editor-template-actions";
 import type { UsePosterExportResult } from "../../lib/usePosterExport";
 import type { WorkflowStageId } from "../../lib/workflow-stages";
-import { CardsInspector } from "../inspector/CardsInspector";
 import { StatusStrip } from "../StatusStrip";
 import { StudioLayoutTemplate, type StageSlots } from "../StudioLayoutTemplate";
 import { ToolbarButton } from "../StudioUi";
@@ -20,9 +20,9 @@ import { ContentLayoutRail, ContentLayoutWorkspace, type ContentAssetPanelProps,
 import { DataUploadRail, DataUploadWorkspace, type DataUploadWorkspaceProps } from "../workspaces/DataUploadWorkspace";
 import { DeliveryRail, DeliveryWorkspace, type DeliveryIssue } from "../workspaces/DeliveryWorkspace";
 import { MapStyleRail, MapStyleWorkspace, type MapStyleWorkspaceProps } from "../workspaces/MapStyleWorkspace";
-import { ReferenceCardStyleRail, ReferenceCardStyleWorkspace } from "../workspaces/ReferenceCardStyleWorkspace";
+import { createFrameStageSlots } from "./frame-stage-slots";
+import type { ResolvedProjectScene } from "../../lib/resolved-scene";
 
-type CardsInspectorProps = ComponentProps<typeof CardsInspector>;
 
 
 export interface StageLayoutScreenProps {
@@ -64,6 +64,8 @@ export interface StageLayoutScreenProps {
   onChangeDataView: MapStyleWorkspaceProps["onChangeDataView"];
   onAddUserAsset: NonNullable<MapStyleWorkspaceProps["onAddUserAsset"]>;
   onCardPositionsResolved: NonNullable<MapStyleWorkspaceProps["onCardPositionsResolved"]>;
+  onSceneResolved?: (scene: ResolvedProjectScene) => void;
+  optimizationPanel?: ReactNode;
   onMoveProvinceTexture: NonNullable<MapStyleWorkspaceProps["onMoveProvinceTexture"]>;
   onResizeMapImage: NonNullable<MapStyleWorkspaceProps["onResizeMapImage"]>;
   onMoveText: NonNullable<ContentLayoutWorkspaceProps["onMoveText"]>;
@@ -179,8 +181,6 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
   const selectedProvince = selection.type === "province" ? selection.province : null;
   const resourceIssues = resourceHealthIssues.filter((issue) => issue.kind === "resource");
   const fontIssues = resourceHealthIssues.filter((issue) => issue.kind === "font");
-  const patchCards: CardsInspectorProps["onPatch"] = (patch) => onPatch({ type: "cards" }, patch);
-  const resetCards = () => onReset({ type: "cards" });
 
   switch (stage) {
     case "data":
@@ -226,6 +226,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
         ),
         workspace: (
           <MapStyleWorkspace
+            selectedCardIds={getSelectedCardIds(selection, renderProject.cards, renderProject)}
             project={project}
             selectedProvince={selectedProvince}
             userFonts={userFonts}
@@ -238,6 +239,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             onResetMap={() => onReset({ type: "map" })}
             onPatchProvince={(province, patch) => onPatch({ type: "province", province }, patch as Record<string, unknown>)}
             onCardPositionsResolved={onCardPositionsResolved}
+            onSceneResolved={props.onSceneResolved}
             onSelect={onSelect}
             onMoveProvinceTexture={onMoveProvinceTexture}
             onResizeMapImage={onResizeMapImage}
@@ -247,41 +249,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
           />
         ),
       };
-    case "frame": {
-      const framePicker = templatePickerProps(templateActions);
-      return {
-        stageActions: (
-          <>
-            <ToolbarButton label="刷新展示框位置" icon={<RefreshCw size={18} />} onClick={onRefreshPositions} />
-          </>
-        ),
-        rightRail: (
-          <ReferenceCardStyleRail
-            cards={project.cards}
-            userFonts={userFonts}
-            onPatch={patchCards}
-            onResetCards={resetCards}
-            templates={framePicker.templates}
-            currentTemplateId={framePicker.currentTemplateId}
-            customTemplates={framePicker.customTemplates}
-            onApplyTemplate={framePicker.onApplyTemplate}
-            onApplyCustomTemplate={framePicker.onApplyCustomTemplate}
-            onSaveTemplate={framePicker.onSaveTemplate}
-          />
-        ),
-        workspace: (
-          <ReferenceCardStyleWorkspace
-            project={renderProject}
-            selection={selection}
-            userFonts={userFonts}
-            onSelect={onSelect}
-            onMoveCard={onMoveCard}
-            onMoveGuests={onMoveGuests}
-            onCardPositionsResolved={onCardPositionsResolved}
-          />
-        ),
-      };
-    }
+    case "frame": return createFrameStageSlots(props);
     case "export":
       return {
         rightRail: (
@@ -313,6 +281,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
           <DeliveryWorkspace
             project={renderProject}
             posterRef={posterRef}
+            onSceneResolved={props.onSceneResolved}
             userFonts={userFonts}
             dataIssues={dataIssues}
             layoutIssues={layoutIssues}
@@ -389,6 +358,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             onMoveProvinceTexture={onMoveProvinceTexture}
             onResizeMapImage={onResizeMapImage}
             onCardPositionsResolved={onCardPositionsResolved}
+            onSceneResolved={props.onSceneResolved}
             onMoveCard={onMoveCard}
             onMoveGuests={onMoveGuests}
           />

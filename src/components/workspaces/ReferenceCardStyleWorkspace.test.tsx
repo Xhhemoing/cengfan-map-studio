@@ -82,7 +82,6 @@ describe("ReferenceCardStyleWorkspace", () => {
     expect(onPatch).toHaveBeenCalledWith(expect.objectContaining({
       templateId: "emblem-list",
       presentation: "emblem-list",
-      grouping: "province",
       displayFrame: undefined,
     }));
   });

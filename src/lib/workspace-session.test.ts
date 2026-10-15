@@ -34,7 +34,7 @@ describe("workspace session", () => {
 
   it.each<SceneSelection>([
     { type: "canvas" }, { type: "map" }, { type: "province", province: "浙江省" },
-    { type: "cards" }, { type: "guests" }, { type: "text", id: "text-title" },
+    { type: "cards" }, { type: "cards", ids: ["北京市", "上海市"], scopeGrouping: "province" }, { type: "guests" }, { type: "text", id: "text-title" },
     { type: "asset", id: "asset-1" },
   ])("round-trips the complete $type selection", (selection) => {
     const session: WorkspaceSession = { stage: "content", selection, savedAt: "now" };

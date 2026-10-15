@@ -1,3 +1,5 @@
+import { getSelectedCardIds } from "../../lib/card-settings-scope";
+import type { ResolvedProjectScene } from "../../lib/resolved-scene";
 import type { RefObject } from "react";
 import type { CardPositions, createEditorCanvasActions } from "../../lib/editor-canvas-actions";
 import type { UserFont } from "../../lib/fonts";
@@ -8,6 +10,7 @@ import { PosterCanvas } from "../canvas/PosterCanvas";
 type EditorCanvasActions = ReturnType<typeof createEditorCanvasActions>;
 
 export interface LegacyEditorStageProps {
+  onSceneResolved?: (scene: ResolvedProjectScene) => void;
   /** 窄屏自适应缩放的 effect 从这个容器读可用尺寸,ref 的持有者仍是 App。 */
   stageRef: RefObject<HTMLDivElement | null>;
   /** 缩放外壳按已提交的画布尺寸布局,海报本身渲染可能带预览的 renderProject。 */
@@ -41,6 +44,7 @@ export interface LegacyEditorStageProps {
  * 缩放数学(外壳按百分比取整、内层按原始尺寸 scale)与 DOM 结构和 App 内联时逐字一致。
  */
 export function LegacyEditorStage({
+  onSceneResolved,
   stageRef,
   project,
   renderProject,
@@ -77,6 +81,8 @@ export function LegacyEditorStage({
             }}
           >
             <PosterCanvas
+              selectedCardIds={getSelectedCardIds(selection, renderProject.cards, renderProject)}
+              onSceneResolved={onSceneResolved}
               project={renderProject}
               posterRef={posterRef}
               selectedTextId={selection.type === "text" ? selection.id : null}

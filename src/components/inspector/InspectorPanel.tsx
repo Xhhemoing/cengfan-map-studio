@@ -1,10 +1,11 @@
+import { getSelectedCardIds } from "../../lib/card-settings-scope";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { GuestPanelSettings, SceneSelection } from "../../lib/scene-document";
 import type { UserAsset } from "../../lib/assets";
 import type { UserFont } from "../../lib/fonts";
 import type { TypographyTarget } from "../../lib/typography";
 import { CanvasInspector } from "./CanvasInspector";
-import { CardsInspector } from "./CardsInspector";
+import { CardScopeInspector } from "./CardScopeInspector";
 import { GuestsInspector } from "./GuestsInspector";
 import { MapInspector } from "./MapInspector";
 import { TextInspector } from "./TextInspector";
@@ -68,11 +69,15 @@ export function InspectorPanel({ project, selection, userFonts = [], provinces =
 
     />;
   } else if (selection.type === "cards") {
-    panel = <CardsInspector
+    const selectedIds = getSelectedCardIds(selection, project.cards, project);
+    panel = <CardScopeInspector
+      key={(selection.ids ?? []).join("|")}
       cards={project.cards}
+      ids={selectedIds}
+      unavailableSelection={Boolean(selection.ids?.length && selectedIds.length === 0)}
       userFonts={userFonts}
-      onPatch={(patch) => onPatch(selection, patch)}
-      onReset={() => onReset(selection)}
+      onPatch={onPatch}
+      onReset={onReset}
     />;
   } else if (selection.type === "guests") {
     panel = <GuestsInspector guests={guests} onPatch={(patch) => onPatch(selection, patch)} />;

@@ -6,7 +6,6 @@ import { createEditorCanvasActions, type CardPositions, type EditorCanvasActionD
 import { applyTransaction, createProjectDocument, type ProjectDocument, type ProjectTransaction } from "./project-document";
 import type { SceneSelection } from "./scene-document";
 import { captureCustomTemplate } from "./template-capture";
-
 interface Harness {
   actions: ReturnType<typeof createEditorCanvasActions>;
   committed: ProjectDocument[];
@@ -16,7 +15,6 @@ interface Harness {
   cardPositionsRef: { current: CardPositions | null };
   project: ProjectDocument;
 }
-
 function harness(overrides: Partial<EditorCanvasActionDeps> = {}): Harness {
   const project = overrides.project ?? createProjectDocument({
     students: [],
@@ -42,17 +40,13 @@ function harness(overrides: Partial<EditorCanvasActionDeps> = {}): Harness {
   });
   return { actions, committed, transactions, selections, messages, cardPositionsRef, project };
 }
-
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
 describe("element authoring", () => {
   it("adds a text box as one undoable step and selects it", () => {
     const { actions, committed, selections, project } = harness();
-
     actions.addText();
-
     const next = committed[0]!;
     expect(next.textElements.length).toBe(project.textElements.length + 1);
     const added = next.textElements.at(-1)!;
@@ -60,27 +54,20 @@ describe("element authoring", () => {
     expect(next.history.past.at(-1)?.label).toBe("添加文本框");
     expect(selections).toEqual([{ type: "text", id: added.id }]);
   });
-
   it("adds a note under its own history label", () => {
     const { actions, committed } = harness();
-
     actions.addNote();
-
     expect(committed[0]!.textElements.at(-1)?.content).toBe("山高水长，来日再聚");
     expect(committed[0]!.history.past.at(-1)?.label).toBe("添加特别备注");
   });
-
   it("drops a deleted element back to the canvas selection", () => {
     const { actions, committed, selections, project } = harness();
     const target = project.textElements[0]!.id;
-
     actions.removeText(target);
-
     expect(committed[0]!.textElements.some((element) => element.id === target)).toBe(false);
     expect(committed[0]!.history.past.at(-1)?.label).toBe("删除文本");
     expect(selections).toEqual([{ type: "canvas" }]);
   });
-
   it("ignores duplicate and layer requests for elements that are not there", () => {
     const { actions, committed, transactions } = harness();
 
@@ -384,5 +371,30 @@ describe("dragging on the canvas", () => {
     actions.resizeMapImage({ x: 1, y: 2, width: 3, height: 4, rotation: 5 });
 
     expect(transactions).toEqual([]);
+  });
+});
+
+
+describe("card scope position capture", () => {
+  it("captures computed coordinates before locking a card without a manual position", () => {
+    const { actions, cardPositionsRef, transactions, project } = harness();
+    cardPositionsRef.current = { A: { x: 42, y: 66 }, B: { x: 77, y: 88 } };
+    actions.patchScene({ type: "cards", ids: ["A"] }, { positionPolicy: "locked" });
+    const next = transactions[0]!.apply(project);
+    expect(next.cards.positions).toEqual({ A: { x: 42, y: 66 } });
+    expect(next.cards.positionPolicies?.["province:A"]).toBe("locked");
+    expect(next.cards.positionSources?.["province:A"]).toBe("frozen");
+  });
+  it("distinguishes automatic proposal positions from map-change freezes", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.cards.positions = { A: { x: 20, y: 30 } };
+    project.cards.positionPolicies = { "province:A": "auto" };
+    project.cards.positionSources = { "province:A": "auto" };
+    const { actions, cardPositionsRef, transactions } = harness({ project });
+    cardPositionsRef.current = { A: { x: 20, y: 30 } };
+    actions.patchScene({ type: "map" }, { x: 100 });
+    const next = transactions[0]!.apply(project);
+    expect(next.cards.positionPolicies?.["province:A"]).toBe("preserve");
+    expect(next.cards.positionSources?.["province:A"]).toBe("frozen");
   });
 });

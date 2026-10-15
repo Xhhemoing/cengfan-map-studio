@@ -33,9 +33,16 @@ function parseSelection(value: unknown): SceneSelection | undefined {
   switch (selection.type) {
     case "canvas":
     case "map":
-    case "cards":
     case "guests":
       return { type: selection.type };
+    case "cards": {
+      const ids = Array.isArray(selection.ids)
+        ? [...new Set(selection.ids.filter((id): id is string => typeof id === "string" && Boolean(id.trim())))].slice(0, 1000)
+        : [];
+      const scopeGrouping = selection.scopeGrouping === "province" || selection.scopeGrouping === "city" || selection.scopeGrouping === "university"
+        ? selection.scopeGrouping : undefined;
+      return ids.length ? { type: "cards", ids, ...(scopeGrouping ? { scopeGrouping } : {}) } : { type: "cards" };
+    }
     case "province":
       return typeof selection.province === "string" && selection.province.trim()
         ? { type: "province", province: selection.province }

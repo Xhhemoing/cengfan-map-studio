@@ -3,9 +3,14 @@ export type LayoutHealthIssueKind =
   | "out-of-bounds"
   | "occlusion"
   | "unreadable-text"
-  | "connector-conflict";
+  | "connector-conflict"
+  | "text-overflow"
+  | "layout-unresolved"
+  | "layout-pending";
 
 export type LayoutHealthSeverity = "warning" | "error";
+/** Whether a text width/color check uses a browser measurement or a fallback estimate. */
+export type LayoutHealthMeasurementSource = "estimated" | "measured";
 
 export interface LayoutHealthPoint {
   x: number;
@@ -29,10 +34,13 @@ export interface LayoutHealthObject {
   content?: string;
   textColor?: string;
   backgroundColor?: string;
+  /** Effective surface opacity. A translucent card has an unknown map backdrop. */
+  opacity?: number;
 }
 
 export interface LayoutHealthConnector {
   id: string;
+  ownerId?: string;
   segments: Array<{ start: LayoutHealthPoint; end: LayoutHealthPoint }>;
   visible?: boolean;
 }
@@ -49,6 +57,8 @@ export interface LayoutHealthIssue {
   kind: LayoutHealthIssueKind;
   severity: LayoutHealthSeverity;
   detail: string;
+  /** Present on typography diagnostics when the measured text width is known. */
+  source?: LayoutHealthMeasurementSource;
 }
 
 const EPSILON = 0.000001;
@@ -99,7 +109,12 @@ function luminance(color: [number, number, number]): number {
 }
 
 function hasLowContrast(object: LayoutHealthObject): boolean {
-  if (object.kind !== "text" || !object.content?.trim()) return false;
+  if ((object.kind !== "text" && object.kind !== "card") || !object.content?.trim()) return false;
+  // A translucent card is composited with whatever is below it (usually the
+  // map), whose effective color is not represented in the scene input. A
+  // contrast warning here would claim certainty we do not have. Text elements
+  // retain their existing explicit background behavior.
+  if (object.kind === "card" && object.opacity !== undefined && object.opacity < 1) return false;
   const foreground = hexColor(object.textColor);
   const background = hexColor(object.backgroundColor);
   if (!foreground || !background) return false;
@@ -137,7 +152,23 @@ function segmentsIntersect(
 }
 
 function connectorConflict(left: LayoutHealthConnector, right: LayoutHealthConnector): boolean {
-  return left.segments.some((leftSegment) => right.segments.some((rightSegment) => segmentsIntersect(leftSegment, rightSegment)));
+  return left.segments.some((leftSegment) => right.segments.some((rightSegment) => {
+    if (!segmentsIntersect(leftSegment, rightSegment)) return false;
+    const sharedEndpoint = [leftSegment.start, leftSegment.end].some((a) => [rightSegment.start, rightSegment.end].some((b) => Math.hypot(a.x - b.x, a.y - b.y) <= EPSILON));
+    // Two cards may legitimately point to the same city/province. A shared endpoint
+    // is not a crossing; collinear overlap beyond the endpoint remains a conflict.
+    if (sharedEndpoint) {
+      const parallel = Math.abs((leftSegment.end.x - leftSegment.start.x) * (rightSegment.end.y - rightSegment.start.y)
+        - (leftSegment.end.y - leftSegment.start.y) * (rightSegment.end.x - rightSegment.start.x)) <= EPSILON;
+      if (!parallel) return false;
+      const leftLength = Math.hypot(leftSegment.end.x - leftSegment.start.x, leftSegment.end.y - leftSegment.start.y);
+      const rightLength = Math.hypot(rightSegment.end.x - rightSegment.start.x, rightSegment.end.y - rightSegment.start.y);
+      const endpoints = [leftSegment.start, leftSegment.end, rightSegment.start, rightSegment.end];
+      const span = Math.max(...endpoints.flatMap((a) => endpoints.map((b) => Math.hypot(a.x - b.x, a.y - b.y))));
+      return leftLength + rightLength > span + EPSILON;
+    }
+    return true;
+  }));
 }
 
 export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[] {
@@ -179,7 +210,7 @@ export function checkLayoutHealth(input: LayoutHealthInput): LayoutHealthIssue[]
       if (!overlaps(left.bounds, right.bounds)) continue;
       const leftZ = left.object.zIndex ?? 0;
       const rightZ = right.object.zIndex ?? 0;
-      if (leftZ === rightZ) continue;
+      if (leftZ === rightZ && (left.object.kind !== "card" || right.object.kind !== "card")) continue;
       const back = leftZ < rightZ ? left.object : right.object;
       const front = leftZ < rightZ ? right.object : left.object;
       // 地图是底图：卡片、标题、素材本来就摆在它上面，把这种压盖报成遮挡

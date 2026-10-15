@@ -7,8 +7,9 @@ import {
 } from "./tool-registry";
 
 describe("agent tool registry", () => {
-  it("defines the 15 tools in the design", () => {
-    expect(AGENT_TOOLS).toHaveLength(15);
+  it("defines scene inspection and semantic style tools alongside existing tools", () => {
+    expect(ALL_TOOL_NAMES).toEqual(expect.arrayContaining(["inspect_scene", "list_card_styles", "apply_card_style"]));
+    expect(new Set(ALL_TOOL_NAMES).size).toBe(AGENT_TOOLS.length);
     expect(ALL_TOOL_NAMES).toContain("inspect_project");
     expect(ALL_TOOL_NAMES).toContain("finish");
   });

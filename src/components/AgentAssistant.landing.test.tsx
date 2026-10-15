@@ -100,7 +100,7 @@ describe("AgentAssistant landing failures", () => {
 
     const alerts = Array.from(container.querySelectorAll('[role="alert"]')).map((node) => node.textContent ?? "");
     const landingAlert = alerts.find((text) => text.includes("未能应用")) ?? "";
-    expect(landingAlert).toContain("manage_students");
+    expect(landingAlert).toContain("调整名单");
     expect(landingAlert).toContain("找不到指定学生");
     expect(landingAlert).toContain("历史记录都没有变化");
     expect(landingAlert).not.toContain("空操作");
@@ -146,7 +146,7 @@ describe("AgentAssistant landing failures", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("未能应用"));
 
     const studentCheckbox = Array.from(container.querySelectorAll<HTMLInputElement>('.agent-assistant-window input[type="checkbox"]'))
-      .find((checkbox) => checkbox.getAttribute("aria-label")?.includes("manage_students"));
+      .find((checkbox) => checkbox.getAttribute("aria-label")?.includes("调整名单"));
     expect(studentCheckbox).toBeDefined();
     flushSync(() => studentCheckbox!.click());
     clickText(container, "确认应用");

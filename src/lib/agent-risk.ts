@@ -26,7 +26,7 @@ export function classifyAgentCall(project: ProjectDocument, call: AgentToolCall)
     return { level: "low", reason: "显示或隐藏学生记录，可撤销" };
   }
   if (name === "auto_layout") {
-    return hasManualPositions(project)
+    return hasManualPositions(project) && args.preservePositions !== true
       ? { level: "high", reason: "自动排版会丢弃手工卡片位置" }
       : { level: "medium", reason: "自动排版会重新计算卡片位置" };
   }
@@ -37,14 +37,15 @@ export function classifyAgentCall(project: ProjectDocument, call: AgentToolCall)
       : { level: "low", reason: "调整贴图样式或位置" };
   }
   if (name === "set_data_view") return { level: "medium", reason: "切换数据分组视图" };
+  if (name === "apply_card_style") return { level: "medium", reason: args.mode === "visual-and-layout" ? "修改展示框外观与分组布局" : "应用展示框样式并可能改变尺寸" };
   if (name === "update_cards") {
-    const patch = (args.patch ?? {}) as Record<string, unknown>;
-    if (["preset", "visibleFields", "layoutMode", "columns"].some((key) => key in patch)) {
+    const patch = (args.patch ?? args) as Record<string, unknown>;
+    if (["preset", "presentation", "visibleFields", "layoutMode", "columns", "fontSize", "fieldFonts", "fieldTypography", "maxWidth", "padding", "horizontalPadding", "bottomPadding", "gap", "compactLayout", "expressionTemplates", "nameFormat"].some((key) => key in patch)) {
       return { level: "medium", reason: "改变卡片布局结构" };
     }
   }
   if (name === "update_map") {
-    const patch = (args.patch ?? {}) as Record<string, unknown>;
+    const patch = (args.patch ?? args) as Record<string, unknown>;
     if (["x", "y", "width", "height", "scale"].some((key) => key in patch)) {
       return { level: "medium", reason: "改变地图尺寸或位置" };
     }

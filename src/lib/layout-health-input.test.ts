@@ -12,24 +12,25 @@ function objectIds(project: ProjectDocument): string[] {
 }
 
 describe("buildProjectLayoutHealthInput", () => {
-  it("scales the map bounds by the current zoom", () => {
+  it("scales the map about its actual center rather than its top-left corner", () => {
     const project = baseProject();
-    project.map = { ...project.map, x: 10, y: 20, width: 100, height: 50, scale: 2 };
+    project.map = { ...project.map, x: 10, y: 20, width: 100, height: 50, scale: 2,
+      renderSource: { kind: "image", assetId: "map-image", src: "data:image/png;base64,", fit: "stretch", opacity: 1, composition: "replace" } };
 
     const [map] = buildProjectLayoutHealthInput(project).objects;
 
-    expect(map).toMatchObject({ id: "map", kind: "map", bounds: { x: 10, y: 20, width: 200, height: 100 } });
+    expect(map).toMatchObject({ id: "map", kind: "map", bounds: { x: -40, y: -5, width: 200, height: 100 } });
   });
 
-  it("checks the card group as one object until a card is placed by hand", () => {
+  it("does not invent cards for an empty roster or stale saved positions", () => {
     const project = baseProject();
     project.cards = { ...project.cards, positions: {} };
 
-    expect(objectIds(project)).toContain("cards");
+    expect(objectIds(project)).not.toContain("cards");
 
     project.cards = { ...project.cards, positions: { 浙江省: { x: 40, y: 60 } } };
 
-    expect(objectIds(project)).toContain("浙江省");
+    expect(objectIds(project)).not.toContain("浙江省");
     expect(objectIds(project)).not.toContain("cards");
   });
 

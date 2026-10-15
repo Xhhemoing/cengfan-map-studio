@@ -7,6 +7,8 @@ import type { LocalOverwriteStatus } from "../lib/incremental-workspace-sync";
 import type { ProjectDocument, ProjectTransaction } from "../lib/project-document";
 import type { LayoutHealthIssue } from "../lib/layout-health";
 import type { SceneSelection } from "../lib/scene-document";
+import type { UserFont } from "../lib/fonts";
+import type { ResolvedProjectScene } from "../lib/resolved-scene";
 
 export type CollaborationStatus = "idle" | "connecting" | "connected" | "syncing" | "conflict" | "error" | "closed";
 
@@ -37,6 +39,11 @@ export interface StudioAssistantRailProps {
   /** 本阶段总览模型（T2 窄只读 DTO）。 */
   stageOverview: StageOverviewModel;
   onStageOverviewAction: (action: StageOverviewAction) => void;
+  onLocalLayout?: () => void;
+  onLocalDiagnose?: () => void;
+  contextStage?: string;
+  userFonts?: UserFont[];
+  scene?: ResolvedProjectScene | null;
 }
 
 const SYNC_LABELS: Record<LocalOverwriteStatus, string> = {
@@ -94,6 +101,11 @@ export function StudioAssistantRail({
   onCommit,
   stageOverview,
   onStageOverviewAction,
+  onLocalLayout,
+  onLocalDiagnose,
+  contextStage,
+  userFonts,
+  scene,
 }: StudioAssistantRailProps) {
   // 空名单时先看「本阶段」清单（导入名单是第一件事）；有数据后默认 AI 助手。
   const [activeTab, setActiveTab] = useState<"ai" | "stage" | "advanced">(
@@ -160,7 +172,7 @@ export function StudioAssistantRail({
           aria-labelledby="studio-ai-tab"
           aria-label="AI 助手"
         >
-          <AgentAssistant presentation="docked" project={project} assets={assets} onPreview={onPreview} onCommit={onCommit} />
+          <AgentAssistant presentation="docked" project={project} assets={assets} selection={selection} contextStage={contextStage} userFonts={userFonts} scene={scene} onLocalLayout={onLocalLayout} onLocalDiagnose={onLocalDiagnose} onPreview={onPreview} onCommit={onCommit} />
         </section>
       ) : activeTab === "stage" ? (
         <section

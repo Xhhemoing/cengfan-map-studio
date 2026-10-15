@@ -14,7 +14,6 @@
  *
  * Soft goals: keep each card near its geographic anchor; deterministic output.
  */
-
 import {
   buildConnectorGeometry,
   connectorGeometriesIntersect,
@@ -936,6 +935,7 @@ function validateHard(placements: CardPlacement[], bounds: CardLayoutBounds): bo
   return true;
 }
 
+export const validateCardLayout = (placements: CardPlacement[], bounds: CardLayoutBounds): boolean => validateHard(placements, bounds);
 interface LayoutCandidate {
   placement: CardPlacement;
   geometry: ConnectorGeometry;

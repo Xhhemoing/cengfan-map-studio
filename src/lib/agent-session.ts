@@ -1,15 +1,15 @@
-import { applyDataViewChange } from "./catalog-usage";
-import { solveCardLayout, type CardLayoutInput, type CardLayoutMode } from "./card-layout";
-import { checkLayoutHealth, type LayoutHealthInput, type LayoutHealthObject } from "./layout-health";
+import type { UserFont } from "./fonts";
+import type { ResolvedProjectScene } from "./resolved-scene";
+import type { AgentTaskContext } from "./agent-task-constraints";
 import type { StudioAsset } from "./assets";
-import { duplicateStudentIds } from "./data-duplicate";
 import { createId } from "./ids";
 import { classifyAgentCall, highestRisk, type AgentToolCall, type RiskLevel } from "./agent-risk";
-import { buildProjectDigest } from "./project-digest";
+import { buildProjectDigest, fingerprintProject } from "./project-digest";
 import type { ProjectDocument, ProjectTransaction } from "./project-document";
-import { updateSceneTarget, type SceneSelection } from "./scene-document";
-import type { DataViewId, Student } from "./project-data";
-import { buildProvinceSummary } from "./project-data";
+import type { SceneSelection } from "./scene-document";
+import type { AgentTaskBrief } from "./agent-task-brief";
+import { executeAgentTool } from "./agent-tool-executor";
+import { READ_ONLY_AGENT_TOOLS } from "./agent-tool-contract";
 
 const MAX_TOOL_RESULT_BYTES = 16 * 1024;
 const MAX_CONVERSATION_MESSAGES = 24;
@@ -59,10 +59,11 @@ export function compactAgentToolResult(callName: string, content: string): strin
     compact = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { ok: false, value: parsed };
     if (callName === "auto_layout" && Array.isArray(compact.placements)) {
       const placements = compact.placements as unknown[];
-      compact = { ok: compact.ok, placementCount: placements.length, samples: placements.slice(0, MAX_LAYOUT_SAMPLES), lostManualLayout: compact.lostManualLayout };
+      const { placements: _placements, ...metadata } = compact;
+      compact = { ...metadata, placementCount: placements.length, samples: placements.slice(0, MAX_LAYOUT_SAMPLES) };
     } else if (callName === "check_health" && Array.isArray(compact.issues)) {
       const issues = compact.issues as unknown[];
-      compact = { ok: compact.ok, issueCount: issues.length, issues: issues.slice(0, MAX_HEALTH_ISSUES) };
+      compact = { ...compact, issueCount: issues.length, issues: issues.slice(0, MAX_HEALTH_ISSUES) };
     } else if (callName === "find_assets" && Array.isArray(compact.assets)) {
       compact = { ok: compact.ok, assets: compact.assets.slice(0, MAX_ASSET_RESULTS) };
     }
@@ -89,35 +90,8 @@ export function compactAgentToolResult(callName: string, content: string): strin
   }
   return best;
 }
-type SceneDomain = "canvas" | "map" | "province" | "cards" | "guests" | "text" | "asset";
-
-const SCENE_DOMAIN_PROPS: Record<SceneDomain, readonly string[]> = {
-  canvas: ["width", "height", "safeMargin", "backgroundColor", "backgroundImageSrc", "backgroundFit", "backgroundOpacity", "lineHeight"],
-  map: ["x", "y", "width", "height", "scale", "zIndex", "opacity", "landColor", "activeColor", "edgeColor", "edgeStyle", "edgeWidth", "showProvinceLabels", "provinceLabelFontId", "provinceLabelTypography", "collapseSouthChinaSea", "fillMode", "heatScale", "emptyProvinceFill", "renderSource", "provinceStyles", "provinceTextureUniformSize", "mapBoundaryMargin"],
-  province: ["fill", "textureSrc", "visible", "labelFontId", "appearance"],
-  cards: ["preset", "displayFrame", "compactLayout", "x", "y", "maxWidth", "padding", "horizontalPadding", "bottomPadding", "gap", "columns", "background", "opacity", "textColor", "fontSize", "fieldFonts", "fieldTypography", "connectorStyle", "connectorColor", "connectorWidth", "connectorDash", "visibleFields", "noWrapFields", "citySubgroups", "expressionTemplates", "nameFormat", "layoutMode", "autoBalance", "allowMapOverlap", "showProvinceTexture", "showCount", "zIndex"],
-  guests: ["title", "x", "y", "width", "padding", "background", "opacity", "textColor", "fontSize", "titleFontId", "peopleFontId", "titleTypography", "peopleTypography", "displayMode", "customText", "visibility", "people"],
-  text: ["role", "content", "x", "y", "fontSize", "color", "fontWeight", "fontId", "textAlign", "maxWidth", "visibility"],
-  asset: ["assetId", "label", "kind", "province", "x", "y", "width", "height", "rotation", "opacity", "zIndex", "visibility"],
-};
-
-const PROTECTED_SCENE_FIELDS: Record<SceneDomain, readonly string[]> = {
-  canvas: [], map: [], province: [], cards: ["positions"], guests: [], text: ["id"], asset: ["id", "src"],
-};
-
-function validateScenePatch(domain: SceneDomain, patch: Record<string, unknown>): { ok: true } | { ok: false; error: { domain: SceneDomain; unknownProps: string[]; protectedProps: string[]; availableProps: string[] } } {
-  const writable = SCENE_DOMAIN_PROPS[domain];
-  const protectedFields = PROTECTED_SCENE_FIELDS[domain];
-  const keys = Object.keys(patch);
-  const unknownProps = keys.filter((key) => !writable.includes(key) && !protectedFields.includes(key));
-  const protectedProps = keys.filter((key) => protectedFields.includes(key));
-  return unknownProps.length === 0 && protectedProps.length === 0
-    ? { ok: true }
-    : { ok: false, error: { domain, unknownProps, protectedProps, availableProps: [...writable] } };
-}
-
 const MAX_ROUNDS = 20;
-const READ_ONLY_TOOLS = new Set(["inspect_project", "describe_capability", "check_health", "find_assets"]);
+const READ_ONLY_TOOLS = READ_ONLY_AGENT_TOOLS;
 
 export interface AgentToolResult {
   id: string;
@@ -177,6 +151,11 @@ export interface AgentSessionSnapshot {
 export interface AgentSessionOptions {
   mode: "conservative" | "smart";
   assets?: StudioAsset[];
+  taskBrief?: AgentTaskBrief;
+  selection?: SceneSelection | null;
+  contextStage?: string;
+  userFonts?: UserFont[];
+  scene?: ResolvedProjectScene | null;
   endpoint?: string;
   /** Per-request deadline in milliseconds; non-positive or non-finite values fall back to the default. */
   requestTimeoutMs?: number;
@@ -279,104 +258,9 @@ export function validateAgentSessionSnapshot(value: unknown): asserts value is A
   if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_SNAPSHOT_BYTES) throw new Error("Agent 会话快照过大");
 }
 
-function readPath(value: unknown, path: string): unknown {
-  const tokens = path.match(/[^.[\]]+/g) ?? [];
-  let current: unknown = value;
-  for (const token of tokens) {
-    if (current && typeof current === "object" && token in current) current = (current as Record<string, unknown>)[token];
-    else return undefined;
-  }
-  return current;
-}
-
-function sceneTargetForTool(name: string, args: Record<string, unknown>): SceneSelection | null {
-  if (name === "update_canvas") return { type: "canvas" };
-  if (name === "update_map") return { type: "map" };
-  if (name === "update_cards") return { type: "cards" };
-  if (name === "update_guests") return { type: "guests" };
-  if (name === "update_province") return { type: "province", province: String(args.province ?? "") };
-  if (name === "update_text") return { type: "text", id: String(args.id ?? "") };
-  if (name === "update_asset") return { type: "asset", id: String(args.id ?? "") };
-  return null;
-}
-
-function patchForTool(name: string, args: Record<string, unknown>): { domain: SceneDomain; patch: Record<string, unknown> } | null {
-  const target = sceneTargetForTool(name, args);
-  if (!target) return null;
-  const patch = name.startsWith("update_") && ["update_province", "update_text", "update_asset"].includes(name)
-    ? (args.patch ?? {})
-    : args.patch ?? args;
-  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { domain: target.type, patch: {} };
-  return { domain: target.type, patch: patch as Record<string, unknown> };
-}
-
-/** Id-addressed scene targets vanish when the element is deleted; patching them would be a silent no-op. */
-function sceneTargetExists(project: ProjectDocument, target: SceneSelection): boolean {
-  if (target.type === "text") return project.textElements.some((element) => element.id === target.id);
-  if (target.type === "asset") return project.assetElements.some((element) => element.id === target.id);
-  return true;
-}
-
-function findStudent(project: ProjectDocument, args: Record<string, unknown>): Student | undefined {
-  const studentId = typeof args.studentId === "string" ? args.studentId : "";
-  const name = typeof args.name === "string" ? args.name.trim() : "";
-  return project.students.find((student) => student.id === studentId || (!studentId && name && student.name === name));
-}
-
-function groupCards(project: ProjectDocument): CardLayoutInput[] {
-  const summary = buildProvinceSummary(project.students);
-  const mapCenterX = project.map.x + (project.map.width * project.map.scale) / 2;
-  const mapCenterY = project.map.y + (project.map.height * project.map.scale) / 2;
-  const maxWidth = Math.max(120, project.cards.maxWidth);
-  return summary.map((group, index) => ({
-    id: group.province,
-    anchorX: mapCenterX + Math.cos(index * 1.7) * project.map.width * project.map.scale * 0.28,
-    anchorY: mapCenterY + Math.sin(index * 1.7) * project.map.height * project.map.scale * 0.28,
-    width: maxWidth,
-    height: Math.max(72, project.cards.fontSize * Math.max(2, Math.min(group.students.length + 1, 6))),
-  }));
-}
-
-function runAutoLayout(project: ProjectDocument, mode: string): { project: ProjectDocument; placements: unknown[] } {
-  const cards = groupCards(project);
-  const result = solveCardLayout(cards, {
-    width: project.canvas.width,
-    height: project.canvas.height,
-    map: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale },
-    margin: project.canvas.safeMargin,
-    gap: Math.max(10, project.cards.gap),
-    occupiedAreas: project.guests.visibility ? [{ x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 }] : [],
-    allowMapOverlap: project.cards.allowMapOverlap === true,
-  }, { mode: (mode || project.cards.layoutMode || "quadrant") as CardLayoutMode, autoBalance: project.cards.autoBalance !== false });
-  const positions = Object.fromEntries(result.placements.map((placement) => [placement.id, { x: placement.x, y: placement.y }]));
-  return {
-    project: { ...project, cards: { ...project.cards, positions } },
-    placements: result.placements,
-  };
-}
-
-function healthInput(project: ProjectDocument): LayoutHealthInput {
-  const objects: LayoutHealthObject[] = [
-    { id: "map", kind: "map", zIndex: project.map.zIndex, bounds: { x: project.map.x, y: project.map.y, width: project.map.width * project.map.scale, height: project.map.height * project.map.scale } },
-    { id: "cards", kind: "card", zIndex: project.cards.zIndex, bounds: { x: project.cards.x, y: project.cards.y, width: project.cards.maxWidth, height: 180 } },
-    ...(project.guests.visibility ? [{ id: "guests", kind: "guests" as const, zIndex: 20, bounds: { x: project.guests.x, y: project.guests.y, width: project.guests.width, height: 120 } }] : []),
-    ...project.textElements.map((text) => ({
-      id: text.id,
-      kind: "text" as const,
-      zIndex: 40,
-      bounds: { x: text.x, y: text.y - text.fontSize, width: text.maxWidth, height: text.fontSize * 1.3 },
-      visible: text.visibility,
-      content: text.content,
-      textColor: text.color,
-      backgroundColor: project.canvas.backgroundColor,
-    })),
-    ...project.assetElements.map((asset) => ({ id: asset.id, kind: "asset" as const, zIndex: asset.zIndex, bounds: { x: asset.x, y: asset.y, width: asset.width, height: asset.height }, visible: asset.visibility })),
-  ];
-  return { canvas: { width: project.canvas.width, height: project.canvas.height, safeMargin: project.canvas.safeMargin }, objects, cardsPositions: project.cards.positions };
-}
-
 export class AgentSession {
   private shadow: ProjectDocument;
+  private instructionId = createId("instruction");
   private readonly options: AgentSessionOptions;
   private readonly conversation: Array<Record<string, unknown>> = [];
   private _steps: AgentStep[] = [];
@@ -458,23 +342,6 @@ export class AgentSession {
     this.activeController?.abort();
   }
 
-  private validateClientCall(call: AgentToolCall): string | null {
-    if (call.name === "manage_students" && call.arguments.action === "update_fact") {
-      const fields = call.arguments.fields;
-      if (!fields || typeof fields !== "object" || Array.isArray(fields)) return JSON.stringify({ ok: false, code: "TOOL_ARGUMENTS_INVALID", tool: call.name, message: "fields 必须是对象" });
-      const fieldRecord = fields as Record<string, unknown>;
-      const unknownProps = Object.keys(fieldRecord).filter((key) => !["name", "university", "city"].includes(key));
-      if (unknownProps.length > 0) return JSON.stringify({ ok: false, code: "TOOL_ARGUMENTS_INVALID", tool: call.name, unknownProps, allowedProps: ["name", "university", "city"], message: "update_fact 只允许修改 name、university、city" });
-      if (Object.values(fieldRecord).some((value) => typeof value !== "string" || !value.trim() || value.trim().length > 200)) return JSON.stringify({ ok: false, code: "TOOL_ARGUMENTS_INVALID", tool: call.name, message: "update_fact 字段值必须是非空字符串且 trim 后不超过 200 个字符" });
-    }
-    const patch = patchForTool(call.name, call.arguments);
-    if (!patch) return null;
-    const validation = validateScenePatch(patch.domain, patch.patch);
-    if (!validation.ok) return JSON.stringify({ ok: false, code: "PATCH_REJECTED", ...validation.error });
-    if (call.name === "update_asset" && "src" in patch.patch) return JSON.stringify({ ok: false, code: "PROTECTED_FIELD", field: "src" });
-    return null;
-  }
-
   private compactToolResult(callName: string, content: string): string {
     return compactAgentToolResult(callName, content);
   }
@@ -513,7 +380,7 @@ export class AgentSession {
         response = await fetch(this.options.endpoint ?? "/api/ai/agent", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userMessage: message, digest: buildProjectDigest(this.shadow), messages: this.conversation, budget: this.budget, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
+          body: JSON.stringify({ userMessage: message, digest: { ...buildProjectDigest(this.shadow), context: { instructionId: this.instructionId, selection: this.options.selection, taskBrief: this.options.taskBrief, stage: this.options.contextStage } }, messages: this.conversation, budget: this.budget, taskId: this.taskId, budgetReceipt: this.budgetReceipt }),
           signal: roundController.signal,
         });
       } catch (cause) {
@@ -581,82 +448,18 @@ export class AgentSession {
   }
 
   private execute(call: AgentToolCall): AgentToolResult {
-    const rejected = this.validateClientCall(call);
-    if (rejected) return { id: call.id, ok: false, content: rejected };
-    const args = call.arguments;
     try {
-      if (call.name === "inspect_project") {
-        const path = String(args.path ?? "");
-        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, path, value: readPath(buildProjectDigest(this.shadow), path) }) };
-      }
-      if (call.name === "describe_capability") {
-        const domain = String(args.domain);
-        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, domain, properties: SCENE_DOMAIN_PROPS[domain as SceneDomain] ?? [] }) };
-      }
-      if (call.name === "check_health") {
-        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, issues: checkLayoutHealth(healthInput(this.shadow)) }) };
-      }
-      if (call.name === "find_assets") {
-        const province = String(args.province ?? "").trim();
-        const keyword = String(args.keyword ?? "").trim().toLocaleLowerCase("zh-CN");
-        const assets = (this.options.assets ?? []).filter((asset) => {
-          const provinceMatch = !province || asset.provinceIds.some((id) => id.includes(province) || province.includes(id.replace(/省|市|自治区|壮族自治区|回族自治区|维吾尔自治区/g, "")));
-          const keywordMatch = !keyword || asset.label.toLocaleLowerCase("zh-CN").includes(keyword);
-          return provinceMatch && keywordMatch;
-        }).map(({ id, label, kind, provinceIds, source }) => ({ id, label, kind, provinceIds, source }));
-        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, assets }) };
-      }
-      const target = sceneTargetForTool(call.name, args);
-      if (target) {
-        if (!sceneTargetExists(this.shadow, target)) {
-          return { id: call.id, ok: false, content: JSON.stringify({ ok: false, code: "SCENE_TARGET_MISSING", target }) };
-        }
-        const patch = patchForTool(call.name, args)?.patch ?? {};
-        this.shadow = { ...this.shadow, ...scenePatch(this.shadow, target, patch) };
-        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, target }) };
-      }
-      if (call.name === "set_data_view") {
-        this.shadow = applyDataViewChange(this.shadow, String(args.view) as DataViewId);
-        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, view: args.view }) };
-      }
-      if (call.name === "auto_layout") {
-        const hadManualPositions = Object.keys(this.shadow.cards.positions ?? {}).length > 0;
-        const layout = runAutoLayout(this.shadow, String(args.mode ?? "quadrant"));
-        this.shadow = layout.project;
-        return { id: call.id, ok: true, content: JSON.stringify({ ok: true, placements: layout.placements, lostManualLayout: hadManualPositions }) };
-      }
-      if (call.name === "manage_students") {
-        const action = String(args.action ?? "");
-        if (action === "remove_duplicate") {
-          const duplicateIds = duplicateStudentIds(this.shadow.students);
-          const seenKeys = new Set<string>();
-          const nextStudents = this.shadow.students.filter((student) => {
-            const key = `${student.name}\u001f${student.university}\u001f${student.city}`;
-            if (!duplicateIds.has(student.id)) return true;
-            if (seenKeys.has(key)) return false;
-            seenKeys.add(key);
-            return true;
-          });
-          const removed = this.shadow.students.length - nextStudents.length;
-          this.shadow = { ...this.shadow, students: nextStudents };
-          return { id: call.id, ok: true, content: JSON.stringify({ ok: true, removed }) };
-        }
-        const student = findStudent(this.shadow, args);
-        if (!student) throw new Error("找不到指定学生");
-        if (action === "hide" || action === "show") {
-          this.shadow = { ...this.shadow, students: this.shadow.students.map((item) => item.id === student.id ? { ...item, visibility: action === "show" } : item) };
-          return { id: call.id, ok: true, content: JSON.stringify({ ok: true, studentId: student.id, visibility: action === "show" }) };
-        }
-        if (action === "update_fact") {
-          const fields = (args.fields ?? {}) as Partial<Pick<Student, "name" | "university" | "city" | "province">>;
-          this.shadow = { ...this.shadow, students: this.shadow.students.map((item) => item.id === student.id ? { ...item, ...fields } : item) };
-          return { id: call.id, ok: true, content: JSON.stringify({ ok: true, studentId: student.id, before: student, after: { ...student, ...fields } }) };
-        }
-      }
-      throw new Error(`未知工具 ${call.name}`);
+      const result = executeAgentTool(this.shadow, call, this.options);
+      if (result.payload.ok !== false) this.shadow = result.project;
+      return { id: call.id, ok: result.payload.ok !== false, content: JSON.stringify(result.payload) };
     } catch (error) {
-      return { id: call.id, ok: false, content: JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }) };
+      return { id: call.id, ok: false, content: JSON.stringify({ ok: false, code: "TOOL_EXECUTION_FAILED", error: error instanceof Error ? error.message : String(error) }) };
     }
+  }
+
+  setTaskContext(context: AgentTaskContext & { contextStage?: string }): void {
+    if (this.activeRun) throw new Error("正在执行时不能更改任务约束");
+    Object.assign(this.options, context, { contextStage: context.stage ?? context.contextStage ?? this.options.contextStage });
   }
 
   async run(message: string, options: { signal?: AbortSignal; continue?: boolean } = {}): Promise<AgentRunOutcome> {
@@ -670,7 +473,10 @@ export class AgentSession {
       this.taskId = undefined;
       this.budgetReceipt = undefined;
     }
-    if (!options.continue || !this.tailIsUnansweredRequest(message)) this.conversation.push({ role: "user", content: message });
+    if (!options.continue || !this.tailIsUnansweredRequest(message)) {
+      this.instructionId = createId("instruction");
+      this.conversation.push({ role: "user", content: message });
+    }
     const controller = new AbortController();
     this.activeController = controller;
     const onAbort = () => controller.abort();
@@ -768,6 +574,7 @@ export class AgentSession {
             return current;
           }
         }
+        if (fingerprintProject(replay.shadowProject) === fingerprintProject(current)) return current;
         const finalSnapshot = cloneProject(replay.shadowProject);
         return { ...finalSnapshot, history: current.history, version: current.version };
       },
@@ -782,18 +589,5 @@ export class AgentSession {
       source: "ai",
       apply: (current) => current,
     };
-  }
-}
-
-function scenePatch(project: ProjectDocument, target: SceneSelection, patch: Record<string, unknown>): Partial<ProjectDocument> {
-  const next = updateSceneTarget(project, target, patch);
-  switch (target.type) {
-    case "canvas": return { canvas: next.canvas };
-    case "map": return { map: next.map };
-    case "province": return { map: next.map };
-    case "cards": return { cards: next.cards };
-    case "guests": return { guests: next.guests };
-    case "text": return { textElements: next.textElements };
-    case "asset": return { assetElements: next.assetElements };
   }
 }

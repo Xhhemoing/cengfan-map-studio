@@ -239,15 +239,16 @@ export function deriveFixedDisplayFrameFromCardSettings(cards: CardSettings): Di
     padding: clamp(cards.padding, 0, 120, frame.style.padding),
     margin: clamp(cards.gap, 0, 120, frame.style.margin),
   };
+  const horizontalPadding = cards.horizontalPadding ?? cards.padding;
   frame.fixed.items = fieldOrder.map((field, index) => {
     const style = itemStyleFromCard(cards, field);
     return {
       id: field,
       kind: "field" as const,
       field,
-      x: 12,
-      y: field === "title" ? 12 : 42 + (index - 1) * 20,
-      width: field === "title" ? Math.max(80, cards.maxWidth - 48) : Math.max(80, cards.maxWidth - 24),
+      x: horizontalPadding,
+      y: field === "title" ? cards.padding : cards.padding + 30 + (index - 1) * 20,
+      width: Math.max(1, cards.maxWidth - horizontalPadding * 2 - (field === "title" ? 24 : 0)),
       height: field === "title" ? 24 : 18,
       zIndex: index,
       ...(style ? { style, ...styleToLegacyFields(style) } : {}),

@@ -144,7 +144,7 @@ describe("AgentAssistant proposals", () => {
     const project = assistantProject();
     const pending = vi.fn();
     installResponses(
-      { kind: "tool-call", calls: [{ id: "first", name: "update_cards", arguments: { patch: { fontSize: project.cards.fontSize + 2 } } }], assistantMessage: { role: "assistant", content: null } },
+      { kind: "tool-call", calls: [{ id: "first", name: "update_cards", arguments: { patch: { textColor: "#204f46" } } }], assistantMessage: { role: "assistant", content: null } },
       { kind: "finish", summary: "完成" },
     );
     const { container, root } = renderAssistant(project);

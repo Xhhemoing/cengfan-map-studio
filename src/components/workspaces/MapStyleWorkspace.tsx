@@ -1,3 +1,4 @@
+import type { ResolvedProjectScene } from "../../lib/resolved-scene";
 import { Redo2, Undo2 } from "lucide-react";
 import type { DataViewId } from "../../lib/project-data";
 import type { ProjectDocument } from "../../lib/project-document";
@@ -18,6 +19,8 @@ const DATA_VIEWS: Array<{ id: DataViewId; label: string; ariaLabel: string }> = 
 
 
 export interface MapStyleWorkspaceProps {
+  selectedCardIds?: string[];
+  onSceneResolved?: (scene: ResolvedProjectScene) => void;
   project: ProjectDocument;
   selectedProvince: string | null;
   userFonts?: UserFont[];
@@ -105,6 +108,8 @@ export function MapStyleRail({
  * map/province controls live in the unified right rail (`MapStyleRail`).
  */
 export function MapStyleWorkspace({
+  selectedCardIds,
+  onSceneResolved,
   project,
   selectedProvince,
   userFonts = [],
@@ -126,6 +131,8 @@ export function MapStyleWorkspace({
           </div>
           <div className="map-style-workspace__canvas">
             <PosterCanvas
+              selectedCardIds={selectedCardIds}
+              onSceneResolved={onSceneResolved}
               project={project}
               selectedProvince={selectedProvince}
               userFonts={userFonts}

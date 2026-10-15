@@ -172,11 +172,11 @@ describe("template store", () => {
     expect(JSON.stringify(custom)).not.toContain("不应保存");
   });
 
-  it("applies the saved scene without replacing current students", () => {
+  it("explicitly applies the saved layout scene without replacing current students", () => {
     const custom = createCustomTemplateFromProject({
       name: "可应用场景",
       baseTemplateId: "scenery",
-      scope: "visual",
+      scope: "layout",
       overrides: {},
       scene: {
         ...createProjectDocument({ students: [], templateId: "scenery", dataView: "province" }),
@@ -200,7 +200,7 @@ describe("template store", () => {
     expect(next.assetElements).toEqual(custom.scene?.assetElements);
   });
 
-  it("preserves an uploaded image map when saving and applying an overall template", () => {
+  it("preserves an uploaded image map when saving and explicitly applying a layout template", () => {
     const scene = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     scene.map.renderSource = {
       kind: "image",
@@ -215,7 +215,7 @@ describe("template store", () => {
     const custom = createCustomTemplateFromProject({
       name: "图片地图模板",
       baseTemplateId: "original",
-      scope: "visual",
+      scope: "layout",
       overrides: {},
       scene,
       students: [],
@@ -293,8 +293,8 @@ describe("template store", () => {
     const next = applyCustomTemplateToProject(project, custom);
 
     expect(next.canvas.backgroundColor).toBe("#123456");
-    expect(next.map).toMatchObject({ scale: 1.25, x: 12, y: 24, landColor: "#eeeeee", activeColor: "#345678", edgeColor: "#789abc", showProvinceLabels: false });
+    expect(next.map).toMatchObject({ scale: project.map.scale, x: project.map.x, y: project.map.y, landColor: "#eeeeee", activeColor: "#345678", edgeColor: "#789abc", showProvinceLabels: project.map.showProvinceLabels });
     expect(next.cards.preset).toBe("compact");
-    expect(next.cards.visibleFields).toEqual(["name"]);
+    expect(next.cards.visibleFields).toEqual(project.cards.visibleFields);
   });
 });

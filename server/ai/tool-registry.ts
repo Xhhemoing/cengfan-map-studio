@@ -1,4 +1,6 @@
 import type { ToolDefinition } from "./agent-types";
+import { scenePatchSchema, type SceneDomain } from "../../src/lib/scene-capabilities";
+import { READ_ONLY_AGENT_TOOLS } from "../../src/lib/agent-tool-contract";
 
 export const MAX_TOOL_RESULT_BYTES = 16 * 1024;
 export const MAX_HEALTH_ISSUES = 20;
@@ -13,18 +15,16 @@ const objectParameters = (description: string, properties: Record<string, unknow
   required,
 });
 
-const patchParameters = (description: string): Record<string, unknown> => ({
-  type: "object",
-  description,
-  additionalProperties: true,
-});
+const scopeIds = { type: "array", minItems: 1, maxItems: 200, items: { type: "string" }, description: "真实展示框 ID。省略为全图；指定后不能扩大范围。" };
+const patchParameters = (domain: SceneDomain): Record<string, unknown> => ({ ...scenePatchSchema(domain) });
+const updateParameters = (domain: SceneDomain): Record<string, unknown> => objectParameters("类型化场景修改，返回实际值与规范化差异。", { patch: patchParameters(domain), ...(domain === "cards" ? { scopeIds } : {}) }, ["patch"]);
 
 export const AGENT_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
       name: "inspect_project",
-      description: "读取工程精简投影中的真实当前值。修改前先查询，path 使用点分路径，例如 map.scale、cards.fontSize、textElements.0.fontSize。",
+      description: "按需读取真实场景属性，缺失明确返回 NOT_AVAILABLE。path 使用点分路径，例如 cards.background、textElements.0.fontSize；名单仅返回聚合。",
       parameters: objectParameters("要读取的工程路径。", {
         path: { type: "string", description: "点分路径" },
       }, ["path"]),
@@ -34,7 +34,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "describe_capability",
-      description: "查询一个场景域允许修改的属性名。domain 取 canvas、map、province、cards、guests、text、asset。",
+      description: "查询一个场景域允许修改的属性、类型、枚举、单位和边界。domain 取 canvas、map、province、cards、guests、text、asset。",
       parameters: objectParameters("要查询的场景域。", {
         domain: { type: "string", enum: ["canvas", "map", "province", "cards", "guests", "text", "asset"] },
       }, ["domain"]),
@@ -44,8 +44,8 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "check_health",
-      description: "检查当前影子画布的出界、遮挡、文字不可读和连线冲突问题。修改布局后应调用。",
-      parameters: objectParameters("无需参数。", {}),
+      description: "使用与画布相同的场景输入检查布局和连线，返回测量状态、问题和指标；estimated 不得解释为实际字体已测。",
+      parameters: objectParameters("可限定问题的展示框范围。", { scopeIds }),
     },
   },
   {
@@ -64,7 +64,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "update_canvas",
       description: "修改画布的尺寸、边距、背景和全局行高等设置。",
-      parameters: patchParameters("属性名到新值的补丁；先用 describe_capability 查询。"),
+      parameters: updateParameters("canvas"),
     },
   },
   {
@@ -72,7 +72,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "update_map",
       description: "修改地图位置、尺寸、缩放、配色、标签、填充和图层设置。",
-      parameters: patchParameters("属性名到新值的补丁；不要写 cards 或 text 的属性。"),
+      parameters: updateParameters("map"),
     },
   },
   {
@@ -82,7 +82,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       description: "修改指定省份的样式。appearance 的 src/assetId 只能引用 find_assets 返回的已有素材。",
       parameters: objectParameters("省份与样式补丁。", {
         province: { type: "string" },
-        patch: patchParameters("省份样式补丁。"),
+        patch: patchParameters("province"),
       }, ["province", "patch"]),
     },
   },
@@ -91,7 +91,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "update_cards",
       description: "修改卡片预设、字号、字段、间距、连线和布局模式。cards.positions 受保护，只能由 auto_layout 修改。",
-      parameters: patchParameters("卡片设置补丁；禁止包含 positions。"),
+      parameters: updateParameters("cards"),
     },
   },
   {
@@ -99,7 +99,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     function: {
       name: "update_guests",
       description: "修改特邀嘉宾面板的标题、位置、尺寸、样式、显示模式和人员列表。",
-      parameters: patchParameters("嘉宾面板补丁。"),
+      parameters: updateParameters("guests"),
     },
   },
   {
@@ -109,7 +109,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       description: "修改指定文本元素的内容、位置、字号、颜色、对齐和可见性。id 必须来自 inspect_project。",
       parameters: objectParameters("文本元素与补丁。", {
         id: { type: "string" },
-        patch: patchParameters("文本元素补丁；不能修改 id。"),
+        patch: patchParameters("text"),
       }, ["id", "patch"]),
     },
   },
@@ -120,7 +120,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       description: "修改指定贴图元素的位置、尺寸、旋转、透明度、层级和可见性。不能修改 src 或 id。",
       parameters: objectParameters("贴图元素与补丁。", {
         id: { type: "string" },
-        patch: patchParameters("贴图元素补丁；不能修改 src 或 id。"),
+        patch: patchParameters("asset"),
       }, ["id", "patch"]),
     },
   },
@@ -138,9 +138,12 @@ export const AGENT_TOOLS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "auto_layout",
-      description: "使用真实自动排版算法重新计算所有卡片位置。会覆盖手工卡片位置，若已有手工位置属于高风险。",
+      description: "用与画布一致的分组、测量和求解器生成布局。scopeIds 限定范围；锁定框保持。不可行则不落地并返回原因。全图重排可能覆盖未锁定手工位置。",
       parameters: objectParameters("自动排版选项。", {
         mode: { type: "string", enum: ["quadrant", "radial", "right-stack", "grid"] },
+        scopeIds,
+        goal: { type: "string", enum: ["balanced", "readable", "map-clear"] },
+        preservePositions: { type: "boolean", description: "保留已保存位置；显式锁定始终生效。" },
       }),
     },
   },
@@ -160,6 +163,30 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "inspect_scene",
+      description: "读取真实展示框 ID、实际解析样式、尺寸、位置和锁定状态；不返回整份姓名名单。",
+      parameters: objectParameters("查询全部或指定展示框。", { scopeIds }),
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_card_styles",
+      description: "列出可用展示框外观模板的真实 ID 与中文说明；应用前先查询，禁止编造模板。",
+      parameters: objectParameters("无需参数。", {}),
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "apply_card_style",
+      description: "应用展示框外观，默认保留分组、字段和位置。只有用户明确要求改变分组/布局时使用 visual-and-layout，且不能局部使用。",
+      parameters: objectParameters("模板与作用范围。", { templateId: { type: "string" }, scopeIds, mode: { type: "string", enum: ["visual", "visual-and-layout"] } }, ["templateId"]),
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "finish",
       description: "任务完成后返回中文总结。若丢弃了手工位置，必须将 lostManualLayout 设为 true 并说明。",
       parameters: objectParameters("完成总结。", {
@@ -171,12 +198,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
 ];
 
 export const ALL_TOOL_NAMES = AGENT_TOOLS.map((tool) => tool.function.name);
-export const READ_ONLY_TOOLS = new Set([
-  "inspect_project",
-  "describe_capability",
-  "check_health",
-  "find_assets",
-]);
+export const READ_ONLY_TOOLS = READ_ONLY_AGENT_TOOLS;
 export const WRITE_TOOLS = new Set(
   ALL_TOOL_NAMES.filter((name) => !READ_ONLY_TOOLS.has(name) && name !== "finish"),
 );

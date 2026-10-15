@@ -1,244 +1,21 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { AlertTriangle, Check, LoaderCircle, Minus, Plus, ShieldCheck, Sparkles, X } from "lucide-react";
-import { AgentSession, type AgentReplayFailure, type AgentSessionSnapshot, type AgentStep } from "../lib/agent-session";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Minus, Plus, Sparkles, X } from "lucide-react";
+import { AgentSession } from "../lib/agent-session";
 import type { UserAsset } from "../lib/assets";
-import { loadAssistantConversationState, saveAssistantConversationState, type AssistantConversationRecord } from "../lib/agent-conversation-store";
-import { fingerprintProject } from "../lib/project-digest";
+import { saveAssistantConversationState } from "../lib/agent-conversation-store";
 import type { ProjectDocument, ProjectTransaction } from "../lib/project-document";
-
-const READ_ONLY = new Set(["inspect_project", "describe_capability", "check_health", "find_assets"]);
+import { AssistantConversationContext, createConversation, digestFor, browserStorage, persistedConversation, rebaseTextSession, landingFailureMessage, isNoopStep, type AssistantConversation } from "./agent-assistant-state";
+import type { SceneSelection } from "../lib/scene-document";
+import { AgentConversationPanel } from "./AgentConversationPanel";
+import { useAssistantWindowDrag } from "./use-assistant-window-drag";
+import { useAssistantCapability } from "./use-assistant-capability";
+import { READ_ONLY_AGENT_TOOLS as READ_ONLY } from "../lib/agent-tool-contract";
+import type { UserFont } from "../lib/fonts";
+import type { ResolvedProjectScene } from "../lib/resolved-scene";
+import { useAssistantSceneContext } from "./use-assistant-scene-context";
+import "../styles/assistant-intelligence.css";
+export { AssistantConversationProvider } from "./AssistantConversationProvider";
 const AUTO_APPLIED_NOTE = " 低风险修改已自动应用。";
-type Mode = "conservative" | "smart";
-type ConversationStatus = "draft" | "running" | "completed" | "failed" | "cancelled" | "applied";
-
-type AssistantConversation = {
-  id: string;
-  title: string;
-  session: AgentSession;
-  request: string;
-  status: ConversationStatus;
-  summary: string;
-  error: string;
-  steps: AgentStep[];
-  selectedStepIds: string[];
-  mode: Mode;
-  progress: string;
-  route?: "primary" | "fallback" | "local";
-  provider: string;
-  restored: boolean;
-  projectDigest: string;
-  landingError: string;
-  /** 传输中断留下的会话仍能续跑：只有这种失败可以接着聊，模型拒绝或快照失败仍要重开。 */
-  resumable: boolean;
-};
-
-function digestFor(project: ProjectDocument): string {
-  return fingerprintProject(project);
-}
-
-function browserStorage(): Storage | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null;
-  }
-}
-
-function restoreConversation(project: ProjectDocument, assets: UserAsset[], record: AssistantConversationRecord): AssistantConversation {
-  const session = record.snapshot
-    ? (() => {
-      try {
-        return AgentSession.restore(project, record.snapshot, { mode: record.mode, assets });
-      } catch {
-        return new AgentSession(project, { mode: record.mode, assets });
-      }
-    })()
-    : new AgentSession(project, { mode: record.mode, assets });
-  return {
-    id: record.id,
-    title: record.title,
-    session,
-    request: record.request,
-    status: record.status,
-    summary: record.summary,
-    error: record.error,
-    steps: record.snapshot ? session.steps : [],
-    selectedStepIds: record.selectedStepIds,
-    mode: record.mode,
-    progress: "",
-    route: record.route,
-    provider: record.provider,
-    restored: true,
-    projectDigest: record.projectDigest ?? digestFor(project),
-    landingError: "",
-    resumable: false,
-  };
-}
-
-function persistedConversation(conversation: AssistantConversation): AssistantConversationRecord {
-  const snapshot: AgentSessionSnapshot | null = (() => {
-    try {
-      return conversation.session.exportSnapshot();
-    } catch {
-      return null;
-    }
-  })();
-  const snapshotFailed = snapshot === null && (conversation.steps.length > 0 || conversation.status === "running" || conversation.status === "completed");
-  return {
-    id: conversation.id,
-    title: conversation.title,
-    request: conversation.request,
-    status: snapshotFailed ? "failed" : conversation.status,
-    summary: snapshotFailed ? "会话无法保存，预览已取消" : conversation.summary,
-    error: snapshotFailed ? "会话快照过大或无效" : conversation.error,
-    steps: snapshotFailed ? [] : conversation.steps
-      .filter((step) => !READ_ONLY.has(step.name) && step.result.ok)
-      .map(({ id, name, arguments: args, risk, lostManualLayout }) => ({ id, name, arguments: structuredClone(args), risk, lostManualLayout })),
-    selectedStepIds: snapshotFailed ? [] : conversation.selectedStepIds,
-    mode: conversation.mode,
-    route: conversation.route,
-    provider: conversation.provider,
-    restored: conversation.restored,
-    projectDigest: conversation.projectDigest,
-    snapshot,
-  };
-}
-
-function stepLabel(step: AgentStep): string {
-  const patch = step.arguments.patch;
-  if (patch && typeof patch === "object" && !Array.isArray(patch)) {
-    const fields = Object.keys(patch as Record<string, unknown>);
-    if (fields.length > 0) return `${step.name}：${fields.join("、")}`;
-  }
-  if (step.name === "set_data_view") return `切换数据视图：${String(step.arguments.view ?? "")}`;
-  if (step.name === "auto_layout") return `自动排版：${String(step.arguments.mode ?? "quadrant")}`;
-  return step.name;
-}
-
-function riskLabel(risk: AgentStep["risk"]): string {
-  if (risk === "high") return "高风险";
-  if (risk === "medium") return "中风险";
-  return "低风险";
-}
-
-function replayFailureReason(content: string): string {
-  try {
-    const parsed = JSON.parse(content) as { code?: unknown; error?: unknown; message?: unknown };
-    if (parsed.code === "SCENE_TARGET_MISSING") return "目标元素已不在当前工程中";
-    for (const candidate of [parsed.error, parsed.message, parsed.code]) {
-      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
-    }
-  } catch {
-    // 工具结果可能已被压缩成非 JSON 文本，退回到原文摘要。
-  }
-  return content.slice(0, 80) || "原因未知";
-}
-
-/**
- * 落地被整体放弃时给用户的解释：哪一步失败、为什么，否则用户只看到一次“什么都没发生”。
- * project-document 的拒绝契约保证工程文档原样返回，无需再提醒用户清理历史。
- */
-function landingFailureMessage(failure: AgentReplayFailure, steps: AgentStep[]): string {
-  const step = steps.find((candidate) => candidate.id === failure.stepId);
-  const label = step ? stepLabel(step) : failure.name;
-  return `未能应用：「${label}」在当前工程上已无法执行（${replayFailureReason(failure.content)}）。`
-    + "为避免只落地一半，本次全部改动都已放弃，画布内容与历史记录都没有变化。"
-    + "请取消该步骤或重新规划后再次确认应用。";
-}
-
-function newId(): string {
-  return `assistant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-type PrimaryAction = { kind: "start" | "continue" | "resume"; label: string; disabled: boolean };
-
-/**
- * 主按钮是唯一的续跑入口：传输中断后默认重发原需求，用户改写输入框后才换成带新文本的续跑。
- * 两个按钮同时出现会让用户在“重试”和“继续对话”之间二选一，而它们发出的其实是同一种请求。
- */
-function primaryAction(conversation: { status: ConversationStatus; resumable: boolean; request: string }, draft: string, projectIsCurrent: boolean): PrimaryAction {
-  const typed = draft.trim();
-  const rewritten = typed.length > 0 && typed !== conversation.request.trim();
-  const canResume = projectIsCurrent && conversation.status === "failed" && conversation.resumable;
-  if (canResume && !rewritten) return { kind: "resume", label: "网络恢复后重试", disabled: false };
-  const canContinue = projectIsCurrent && (conversation.status === "completed" || canResume);
-  return {
-    kind: canContinue ? "continue" : "start",
-    label: canContinue ? "继续对话" : "开始规划",
-    disabled: !projectIsCurrent || typed.length === 0 || conversation.status === "applied",
-  };
-}
-
-function rebaseTextSession(project: ProjectDocument, assets: UserAsset[], conversation: AssistantConversation): AgentSession {
-  try {
-    const snapshot = conversation.session.exportSnapshot();
-    return AgentSession.restoreTextHistory(project, snapshot, { mode: conversation.mode, assets });
-  } catch {
-    return new AgentSession(project, { mode: conversation.mode, assets });
-  }
-}
-
-function createConversation(project: ProjectDocument, mode: Mode, assets: UserAsset[], onProgress?: (progress: { round: number; name: string; status: "running" | "done" | "rejected" }) => void): AssistantConversation {
-  return {
-    id: newId(),
-    title: "新对话",
-    session: new AgentSession(project, { mode, assets, onProgress }),
-    request: "",
-    status: "draft",
-    summary: "",
-    error: "",
-    steps: [],
-    selectedStepIds: [],
-    mode,
-    progress: "",
-    provider: "",
-    restored: false,
-    projectDigest: digestFor(project),
-    landingError: "",
-    resumable: false,
-  };
-}
-
-type AssistantConversationState = {
-  open: boolean;
-  setOpen: Dispatch<SetStateAction<boolean>>;
-  mode: Mode;
-  setMode: Dispatch<SetStateAction<Mode>>;
-  conversations: AssistantConversation[];
-  setConversations: Dispatch<SetStateAction<AssistantConversation[]>>;
-  activeId: string | null;
-  setActiveId: Dispatch<SetStateAction<string | null>>;
-  position: { x: number; y: number } | null;
-  setPosition: Dispatch<SetStateAction<{ x: number; y: number } | null>>;
-  hydrated: boolean;
-  hydrate: (project: ProjectDocument, assets: UserAsset[]) => void;
-};
-
-const AssistantConversationContext = createContext<AssistantConversationState | null>(null);
-
-export function AssistantConversationProvider({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<Mode>("conservative");
-  const [conversations, setConversations] = useState<AssistantConversation[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-  const [hydrated, setHydrated] = useState(false);
-  const hydratedRef = useRef(false);
-  const hydrate = (project: ProjectDocument, assets: UserAsset[]) => {
-    if (hydratedRef.current) return;
-    hydratedRef.current = true;
-    const storage = browserStorage();
-    const saved = storage ? loadAssistantConversationState(storage, project) : null;
-    if (saved) {
-      setMode(saved.mode);
-      setActiveId(saved.activeId);
-      setConversations(saved.conversations.map((record) => restoreConversation(project, assets, record)));
-    }
-    setHydrated(true);
-  };
-  return <AssistantConversationContext.Provider value={{ open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, position, setPosition, hydrated, hydrate }}>{children}</AssistantConversationContext.Provider>;
-}
-
 export function AgentAssistant({
   project,
   assets,
@@ -246,6 +23,12 @@ export function AgentAssistant({
   onCommit,
   onPendingCountChange,
   presentation = "floating",
+  selection,
+  onLocalLayout,
+  onLocalDiagnose,
+  contextStage,
+  userFonts,
+  scene,
 }: {
   project: ProjectDocument;
   assets: UserAsset[];
@@ -253,21 +36,28 @@ export function AgentAssistant({
   onCommit: (transaction: ProjectTransaction) => void;
   onPendingCountChange?: (count: number) => void;
   presentation?: "floating" | "docked";
+  selection?: SceneSelection;
+  onLocalLayout?: () => void;
+  onLocalDiagnose?: () => void;
+  contextStage?: string;
+  userFonts?: UserFont[];
+  scene?: ResolvedProjectScene | null;
 }) {
   const state = useContext(AssistantConversationContext);
   if (!state) throw new Error("AgentAssistant must be rendered inside AssistantConversationProvider");
   const { open, setOpen, mode, setMode, conversations, setConversations, activeId, setActiveId, position, setPosition, hydrated, hydrate } = state;
   const [message, setMessage] = useState("");
+  const { capability, check: checkCapability, publicDemo, canPlan } = useAssistantCapability();
   const mountedRef = useRef(false);
   const hasMountedRef = useRef(false);
   const projectDigestRef = useRef<string | null>(null);
   const latestProjectDigestRef = useRef<string | null>(null);
   const projectGenerationRef = useRef(0);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
+  const { beginDrag, moveDrag, endDrag } = useAssistantWindowDrag(position, setPosition);
   const activeRunRef = useRef<AgentSession | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
-
+  useAssistantSceneContext({ scene, userFonts, selection, contextStage, project, assets, conversations, setConversations, activeRunRef, projectGenerationRef, onPreview });
   const active = conversations.find((conversation) => conversation.id === activeId) ?? null;
   const currentProjectDigest = useMemo(() => digestFor(project), [project]);
   latestProjectDigestRef.current = currentProjectDigest;
@@ -281,7 +71,6 @@ export function AgentAssistant({
   useEffect(() => {
     hydrate(project, assets);
   }, [assets, hydrate, project]);
-
   useEffect(() => {
     if (!hydrated) return;
     if (hasMountedRef.current) return;
@@ -292,7 +81,6 @@ export function AgentAssistant({
       setActiveId(draft.id);
     }
   }, [assets, conversations.length, hydrated, mode, project, setActiveId, setConversations]);
-
   useEffect(() => {
     if (!hydrated) return;
     const currentDigest = currentProjectDigest;
@@ -307,18 +95,19 @@ export function AgentAssistant({
         return {
           ...conversation,
           session: rebaseTextSession(project, assets, conversation),
-          status: conversation.status === "running" || conversation.status === "completed" ? "draft" : conversation.status,
+          status: conversation.status === "completed" ? "completed" : conversation.status === "running" ? "draft" : conversation.status,
           steps: [],
           selectedStepIds: [],
           projectDigest: currentDigest,
           landingError: "",
           resumable: false,
+          staleNotice: "项目已变化，旧提案已取消；任务目标和保留约束已保留，请基于当前项目重新规划。",
         };
       }));
       onPreview?.(null);
       const changedRecords = conversations.map((conversation) => conversation.projectDigest === currentDigest ? conversation : {
         ...conversation,
-        status: conversation.status === "running" || conversation.status === "completed" ? "draft" as const : conversation.status,
+          status: conversation.status === "completed" ? "completed" as const : conversation.status === "running" ? "draft" as const : conversation.status,
         steps: [],
         selectedStepIds: [],
         session: rebaseTextSession(project, assets, conversation),
@@ -354,15 +143,12 @@ export function AgentAssistant({
       }
     };
   }, [activeId, assets, conversations, currentProjectDigest, hydrated, mode, onPreview, project, setConversations]);
-
   useEffect(() => () => {
     if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);
   }, []);
-
   useEffect(() => {
     onPendingCountChange?.(pendingCount);
   }, [onPendingCountChange, pendingCount]);
-
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -372,7 +158,6 @@ export function AgentAssistant({
       if (runningId) setConversations((current) => current.map((conversation) => conversation.id === runningId && conversation.status === "running" ? { ...conversation, status: "cancelled", summary: "已取消，预览未应用" } : conversation));
     };
   }, [setConversations]);
-
   const openAssistant = () => {
     if (!activeId) {
       const draft = createConversation(project, mode, assets);
@@ -381,24 +166,9 @@ export function AgentAssistant({
     }
     setOpen(true);
   };
-
-  useEffect(() => {
-    if (!open || !position) return;
-    const clamp = () => {
-      const width = 390;
-      setPosition((current) => current ? {
-        x: Math.max(0, Math.min(current.x, Math.max(0, window.innerWidth - width))),
-        y: Math.max(0, Math.min(current.y, Math.max(0, window.innerHeight - 52))),
-      } : current);
-    };
-    window.addEventListener("resize", clamp);
-    return () => window.removeEventListener("resize", clamp);
-  }, [open, position, setPosition]);
-
   const updateConversation = (id: string, update: (conversation: AssistantConversation) => AssistantConversation) => {
     setConversations((current) => current.map((conversation) => conversation.id === id ? update(conversation) : conversation));
   };
-
   const createNewConversation = () => {
     if (active?.status === "running") return;
     const conversation = createConversation(project, mode, assets);
@@ -407,7 +177,6 @@ export function AgentAssistant({
     setMessage("");
     onPreview?.(null);
   };
-
   const selectConversation = (conversation: AssistantConversation) => {
     if (conversation.status === "running") return;
     setActiveId(conversation.id);
@@ -423,7 +192,6 @@ export function AgentAssistant({
     const transaction = conversation.session.transactionForSteps(new Set(conversation.selectedStepIds));
     onPreview?.(transaction?.apply(project) ?? null);
   };
-
   /**
    * 宿主通常在 React 状态更新函数里才调用 `transaction.apply`，所以 `onCommit` 返回时会话上还看不到
    * 重放结果。改为观察被包装的事务，并在渲染阶段之外回报：整体放弃时把对话退回可重试的已完成态。
@@ -454,10 +222,9 @@ export function AgentAssistant({
       },
     });
   };
-
   /** `resumeRequest` 重发那次被网络中断的需求，此时输入框可能已被清空或改写。 */
   const run = async (resumeRequest?: string) => {
-    if (!mountedRef.current || !active || !projectIsCurrent || active.status === "running") return;
+    if (!mountedRef.current || !active || !projectIsCurrent || active.status === "running" || !canPlan) return;
     const request = (resumeRequest ?? message).trim();
     if (!request) return;
     const runProjectDigest = currentProjectDigest;
@@ -472,8 +239,9 @@ export function AgentAssistant({
     };
     const isFresh = active.status === "draft" || active.status === "cancelled" || (active.status === "failed" && !active.resumable);
     const session = isFresh
-      ? new AgentSession(project, { mode: active.mode, assets, onProgress: progress })
+      ? new AgentSession(project, { mode: active.mode, assets, onProgress: progress, taskBrief: active.taskBrief, selection, contextStage, userFonts, scene })
       : active.session;
+    session.setTaskContext({ taskBrief: active.taskBrief, selection, stage: contextStage, userFonts, scene });
     activeRunRef.current = session;
     activeRunIdRef.current = active.id;
     updateConversation(active.id, (conversation) => ({
@@ -490,13 +258,14 @@ export function AgentAssistant({
       progress: "",
       mode: active.mode,
       resumable: false,
+      staleNotice: undefined,
     }));
     try {
       const sessionWithProgress = session;
       const outcome = await (isFresh ? sessionWithProgress.run(request) : sessionWithProgress.continue(request));
       if (!isCurrentRun()) return;
       const preview = sessionWithProgress.landingPreview();
-      const validWrites = preview.steps.filter((step) => !READ_ONLY.has(step.name) && step.result.ok);
+      const validWrites = preview.steps.filter((step) => !READ_ONLY.has(step.name) && step.result.ok && !isNoopStep(step));
       try {
         sessionWithProgress.exportSnapshot();
       } catch {
@@ -547,9 +316,7 @@ export function AgentAssistant({
       }
     }
   };
-
   const cancel = () => activeRunRef.current?.cancel();
-
   const toggleStep = (stepId: string, checked: boolean) => {
     if (!active || !projectIsCurrent || active.status === "running" || active.status === "applied") return;
     const next = checked ? [...new Set([...active.selectedStepIds, stepId])] : active.selectedStepIds.filter((id) => id !== stepId);
@@ -557,7 +324,6 @@ export function AgentAssistant({
     const transaction = active.session.transactionForSteps(new Set(next));
     onPreview?.(transaction?.apply(project) ?? null);
   };
-
   const applySelected = () => {
     if (!active || !projectIsCurrent || active.status === "running" || active.status === "applied") return;
     const stepIds = active.selectedStepIds;
@@ -567,104 +333,16 @@ export function AgentAssistant({
     onPreview?.(null);
     updateConversation(active.id, (conversation) => ({ ...conversation, status: "applied", selectedStepIds: [], landingError: "" }));
   };
-
-  const beginDrag = (event: React.PointerEvent<HTMLElement>) => {
-    const target = event.target as HTMLElement;
-    if (target.closest("button, input, label, textarea")) return;
-    const panel = event.currentTarget.closest(".agent-assistant-window") as HTMLElement | null;
-    const rect = panel?.getBoundingClientRect();
-    if (!rect) return;
-    dragRef.current = { pointerId: event.pointerId, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top };
-    setPosition({ x: Math.max(0, rect.left), y: Math.max(0, rect.top) });
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const moveDrag = (event: React.PointerEvent<HTMLElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const width = 390;
-    const x = Math.max(0, Math.min(event.clientX - drag.offsetX, Math.max(0, window.innerWidth - width)));
-    const y = Math.max(0, Math.min(event.clientY - drag.offsetY, Math.max(0, window.innerHeight - 52)));
-    setPosition({ x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 });
-  };
-
-  const endDrag = (event: React.PointerEvent<HTMLElement>) => {
-    if (dragRef.current?.pointerId === event.pointerId) {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-      dragRef.current = null;
-    }
-  };
-
-  const renderConversation = (conversation: AssistantConversation) => (
-    <>
-      <div className="agent-assistant-history" aria-label="对话历史">
-        {conversations.map((item) => (
-          <button key={item.id} type="button" className={item.id === conversation.id ? "is-active" : undefined} disabled={item.status === "running"} title={item.request || "新对话"} onClick={() => selectConversation(item)}>
-            <span>{item.title}</span>
-            {item.selectedStepIds.length > 0 && item.status === "completed" && <small>待应用</small>}
-          </button>
-        ))}
-      </div>
-      <div className="agent-assistant-body">
-        <div className="agent-mode-control" role="radiogroup" aria-label="AI 执行模式">
-          <label><input type="radio" name={`agent-mode-${conversation.id}`} value="conservative" checked={conversation.mode === "conservative"} disabled={conversation.status !== "draft"} onChange={() => { setMode("conservative"); updateConversation(conversation.id, (item) => ({ ...item, mode: "conservative" })); }} />保守模式</label>
-          <label><input type="radio" name={`agent-mode-${conversation.id}`} value="smart" checked={conversation.mode === "smart"} disabled={conversation.status !== "draft"} onChange={() => { setMode("smart"); updateConversation(conversation.id, (item) => ({ ...item, mode: "smart" })); }} />智能模式</label>
-        </div>
-        {conversation.request && <p className="agent-assistant-request">需求：{conversation.request}</p>}
-        <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="描述你的需求" aria-label="描述 AI 修改需求" disabled={conversation.status === "running"} />
-        {conversation.status === "running" ? (
-          <button className="wide-button" type="button" onClick={cancel} aria-label="取消 AI 会话"><LoaderCircle size={16} className="spin" aria-hidden /> 取消</button>
-        ) : (() => {
-          const action = primaryAction(conversation, message, projectIsCurrent);
-          return (
-            <button className="wide-button" type="button" data-agent-action={action.kind} aria-label={action.label} onClick={() => void run(action.kind === "resume" ? conversation.request : undefined)} disabled={action.disabled}><Sparkles size={16} aria-hidden /> {action.label}</button>
-          );
-        })()}
-        {conversation.progress && <p className="panel-note" role="status">{conversation.progress}</p>}
-        {conversation.error && <p className="panel-note agent-error" role="alert">{conversation.error}</p>}
-        {conversation.landingError && <p className="panel-note agent-error" role="alert">{conversation.landingError}</p>}
-        {conversation.route === "local" && <p className="panel-note" role="status">已使用本地规则完成可识别的修改。</p>}
-        {conversation.route === "fallback" && <p className="panel-note" role="status">已切换备选模型：{conversation.provider || "备选模型"}。</p>}
-        {conversation.summary && <p className="panel-note agent-summary">{conversation.summary}</p>}
-        {conversation.status === "applied" && <p className="panel-note agent-summary" role="status">已应用</p>}
-        {activeWriteSteps.length > 0 && conversation.status !== "failed" && conversation.status !== "applied" && (
-          <section className="ai-proposal agent-review" aria-label="AI 修改预览">
-            <div className="agent-review-heading"><strong>修改预览</strong><small>{selectedWriteSteps.length}/{activeWriteSteps.filter((step) => step.result.ok).length} 项已选</small></div>
-            <div className="review-list">
-              {activeWriteSteps.filter((step) => step.result.ok).map((step) => (
-                <label key={step.id} className="review-row agent-review-row">
-                  <input type="checkbox" checked={selectedIds.has(step.id)} onChange={(event) => toggleStep(step.id, event.target.checked)} aria-label={`选择 ${stepLabel(step)}`} />
-                  <span className="agent-review-icon" aria-hidden>{step.risk === "high" ? <AlertTriangle size={16} /> : step.result.ok ? <Check size={16} /> : <ShieldCheck size={16} />}</span>
-                  <span><strong>{stepLabel(step)}</strong><small>{riskLabel(step.risk)} · 影子画布已执行{step.lostManualLayout ? " · 将丢弃手工位置" : ""}</small></span>
-                </label>
-              ))}
-            </div>
-            <button className="wide-button" type="button" aria-label="确认应用" onClick={applySelected} disabled={selectedWriteSteps.length === 0}><Check size={16} aria-hidden />确认应用（{selectedWriteSteps.length}）</button>
-          </section>
-        )}
-      </div>
-    </>
-  );
-
-  const displayConversation = active ?? conversations[0] ?? (presentation === "docked" ? {
-    id: "docked-initializing",
-    title: "AI 对话",
-    session: new AgentSession(project, { mode, assets }),
-    request: "",
-    status: "draft" as const,
-    summary: "",
-    error: "",
-    steps: [],
-    selectedStepIds: [],
-    mode,
-    progress: "",
-    provider: "",
-    restored: false,
-    projectDigest: currentProjectDigest,
-    landingError: "",
-    resumable: false,
-  } : null);
-
+  const displayConversation = active ?? conversations[0] ?? null;
+  const renderConversation = (conversation: AssistantConversation) => <AgentConversationPanel
+    conversation={conversation} conversations={conversations} activeWriteSteps={activeWriteSteps}
+    selectedWriteSteps={selectedWriteSteps} selectedIds={selectedIds} projectIsCurrent={projectIsCurrent}
+    message={message} setMessage={setMessage} capability={capability} publicDemo={publicDemo} canPlan={canPlan}
+    selection={selection} onCheckCapability={() => void checkCapability()} onLocalLayout={onLocalLayout} onLocalDiagnose={onLocalDiagnose}
+    onSelectConversation={selectConversation} onModeChange={(next) => { setMode(next); updateConversation(conversation.id, (item) => ({ ...item, mode: next })); }}
+    onBriefChange={(taskBrief) => updateConversation(conversation.id, (item) => ({ ...item, taskBrief }))}
+    onRun={(request) => void run(request)} onCancel={cancel} onToggleStep={toggleStep} onApplySelected={applySelected}
+  />;
   if (presentation === "docked") {
     return (
       <section className="agent-assistant agent-assistant--docked" data-agent-presentation="docked" aria-label="AI 助手">
@@ -672,7 +350,6 @@ export function AgentAssistant({
       </section>
     );
   }
-
   return (
     <div className="agent-assistant">
       {!open && (

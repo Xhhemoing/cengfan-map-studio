@@ -83,13 +83,17 @@ const targetLabels: Record<SceneSelection["type"], string> = {
 export function createSceneTransaction(target: SceneSelection, patch: ScenePatch): ProjectTransaction {
   const targetKey = target.type === "province"
     ? `${target.type}:${target.province}`
+    : target.type === "cards" && target.ids?.length
+      ? `${target.type}:${target.scopeGrouping ?? "legacy"}:${[...target.ids].sort().join("|")}`
     : target.type === "text" || target.type === "asset"
       ? `${target.type}:${target.id}`
       : target.type;
   const patchKey = Object.keys(patch).sort().join(",");
   return {
     id: createId(`scene-${target.type}`),
-    label: `更新${targetLabels[target.type]}`,
+    label: target.type === "cards" && target.ids?.length
+      ? `更新${target.ids.length === 1 ? "当前展示框" : `${target.ids.length} 个展示框`}`
+      : `更新${targetLabels[target.type]}`,
     source: "manual",
     historyGroup: `${targetKey}:${patchKey}`,
     apply: (project) => updateProjectTarget(project, target, patch),

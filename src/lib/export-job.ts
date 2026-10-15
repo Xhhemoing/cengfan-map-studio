@@ -1,5 +1,7 @@
 import { buildExportFileName } from "./export-filename";
 import { PosterExportError, serializePosterSvg } from "./export-poster";
+import { fingerprintProject } from "./project-digest";
+import type { ProjectDocument } from "./project-document";
 
 // Product guardrails, not a promise that every browser can allocate this much.
 // A2 at 300 ppi fits; larger jobs should use SVG or a lower raster scale.
@@ -11,6 +13,35 @@ export function assertRasterSize(width: number, height: number): void {
     || width > MAX_EXPORT_EDGE || height > MAX_EXPORT_EDGE || width * height > MAX_EXPORT_PIXELS) {
     throw new PosterExportError("budget", "PNG 尺寸超出导出预算（4000 万像素 / 单边 16384 px），请降低倍率或改用 SVG");
   }
+}
+
+export interface ManagedPosterState {
+  sceneRevision: string;
+  fontRevision: number;
+  layoutPending: boolean;
+  measurementStatus: "estimated" | "measured";
+}
+
+/** Returns null for old/synthetic SVG callers that have no scene contract attributes. */
+export function readManagedPosterState(svg: SVGSVGElement): ManagedPosterState | null {
+  const scene = svg.getAttribute("data-scene-revision");
+  const font = svg.getAttribute("data-font-revision");
+  const pending = svg.getAttribute("data-layout-pending");
+  if (scene === null && font === null && pending === null) return null;
+  const fontRevision = Number(font);
+  if (!scene || !Number.isFinite(fontRevision) || (pending !== "true" && pending !== "false")) {
+    throw new PosterExportError("stale", "海报状态不完整，请等待画布更新后重试");
+  }
+  return { sceneRevision: scene, fontRevision, layoutPending: pending === "true", measurementStatus: svg.getAttribute("data-measurement-status") === "measured" ? "measured" : "estimated" };
+}
+
+export function assertManagedPosterReady(svg: SVGSVGElement, project: ProjectDocument, fontRevision: number): ManagedPosterState | null {
+  const state = readManagedPosterState(svg);
+  if (!state) return null;
+  if (state.layoutPending) throw new PosterExportError("stale", "海报排布仍在计算，请等待完成后重试");
+  if (state.sceneRevision !== fingerprintProject(project)) throw new PosterExportError("stale", "海报预览已更新，请等待画布同步后重试");
+  if (state.fontRevision !== fontRevision) throw new PosterExportError("stale", "字体测量已更新，请等待画布同步后重试");
+  return state;
 }
 
 /** Snapshot of the currently rendered frame, NOT the future RenderPlan barrier. */

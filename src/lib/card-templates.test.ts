@@ -59,7 +59,7 @@ describe("card-templates", () => {
   it("applyCardTemplate records the chosen template id even when presets collide", () => {
     const patch = applyCardTemplate("city-story", baseCards);
     expect(patch.templateId).toBe("city-story");
-    expect(patch.grouping).toBe("city");
+    expect(patch.grouping).toBeUndefined();
     expect(patch.preset).toBe("standard");
 
   });

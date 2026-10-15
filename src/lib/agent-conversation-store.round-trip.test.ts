@@ -100,4 +100,21 @@ describe("agent-conversation-store round-trip", () => {
     expect(target.value()).toContain("safe-style");
     expect(loadAssistantConversationState(target, project)?.conversations[0]).toMatchObject({ status: "completed", selectedStepIds: ["safe-style"] });
   });
+
+  it("persists content sizing and field typography updates", () => {
+    const project = createStoreProject();
+    const target = storage();
+    const snapshot = new AgentSession(project, { mode: "conservative" }).exportSnapshot();
+    const step = {
+      id: "card-content-style",
+      name: "update_cards",
+      arguments: { patch: { presentation: "glass-stat", widthMode: "content", minWidth: 180, minFontSize: 11, visibleFields: ["name", "city"], fieldTypography: { name: { fontSize: 18, color: "#123456" } } } },
+      risk: "medium" as const,
+    };
+    saveAssistantConversationState(target, project, state([record(project, { steps: [step], selectedStepIds: [step.id], snapshot: { ...snapshot, steps: [step] } })]));
+    const loaded = loadAssistantConversationState(target, project)?.conversations[0];
+    expect(loaded).toMatchObject({ status: "completed", selectedStepIds: [step.id] });
+    expect(loaded?.steps[0]?.arguments).toEqual(step.arguments);
+    expect(loaded?.snapshot?.steps[0]?.arguments).toEqual(step.arguments);
+  });
 });

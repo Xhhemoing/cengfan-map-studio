@@ -1,3 +1,4 @@
+import type { ResolvedProjectScene } from "../../lib/resolved-scene";
 import { useId, useState, type CSSProperties, type RefObject } from "react";
 import type { DataIssue } from "../../lib/data-health";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
@@ -19,6 +20,7 @@ export type DeliveryIssue =
 export type DeliveryExportState = "idle" | "exporting" | "success" | "error";
 
 export interface DeliveryWorkspaceProps {
+  onSceneResolved?: (scene: ResolvedProjectScene) => void;
   project: ProjectDocument;
   userFonts?: UserFont[];
   posterRef?: RefObject<SVGSVGElement | null>;
@@ -74,6 +76,7 @@ export function DeliveryRail(props: DeliveryRailProps) {
  * (`DeliveryRail`).
  */
 export function DeliveryWorkspace({
+  onSceneResolved,
   project,
   userFonts = [],
   posterRef,
@@ -98,7 +101,7 @@ export function DeliveryWorkspace({
             aria-describedby={previewHintId}
             tabIndex={previewMode === "actual" ? 0 : undefined}
             style={{ "--delivery-poster-width": `${project.canvas.width}px`, "--delivery-poster-height": `${project.canvas.height}px` } as CSSProperties}
-          ><PosterCanvas project={project} posterRef={posterRef} exportMode userFonts={userFonts} /></div>
+          ><PosterCanvas project={project} posterRef={posterRef} exportMode userFonts={userFonts} onSceneResolved={onSceneResolved} /></div>
         </section>
       </div>
     </main>

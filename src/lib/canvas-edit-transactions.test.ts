@@ -210,3 +210,26 @@ describe("sceneResetPatch", () => {
     expect(sceneResetPatch("original", "cards")).not.toMatchObject({ preset: "mutated" });
   });
 });
+
+
+describe("explicit card locks", () => {
+  it("retains locked positions on refresh and blocks manual drags", () => {
+    const project = documentFixture();
+    project.cards = { ...project.cards,
+      positions: { A: { x: 10, y: 20 }, B: { x: 30, y: 40 } },
+      positionPolicies: { "province:A": "locked", "province:B": "preserve" },
+      positionSources: { "province:A": "manual", "province:B": "frozen" },
+    };
+    expect(moveCardTransaction("A", { x: 99, y: 99 }).apply(project)).toBe(project);
+    const refreshed = refreshDisplayFramePositionsTransaction().apply(project);
+    expect(refreshed.cards.positions).toEqual({ A: { x: 10, y: 20 } });
+    expect(refreshed.cards.positionPolicies).toEqual({ "province:A": "locked", "province:B": "auto" });
+    expect(refreshed.cards.positionSources?.["province:A"]).toBe("manual");
+    expect(refreshed.cards.positionSources?.["province:B"]).toBe("auto");
+  });
+  it("records a drag as manual preservation rather than an automatic freeze", () => {
+    const next = moveCardTransaction("A", { x: 25, y: 35 }).apply(documentFixture());
+    expect(next.cards.positionSources?.["province:A"]).toBe("manual");
+    expect(next.cards.positionPolicies?.["province:A"]).toBe("preserve");
+  });
+});

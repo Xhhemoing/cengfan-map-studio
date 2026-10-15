@@ -76,3 +76,15 @@ describe("createProvinceThemeTransaction", () => {
     expect(next.history.past[0]?.label).toBe("一键匹配 2 个省份底色");
   });
 });
+
+describe("scoped card edit history", () => {
+  it("keeps edits on different target sets independently undoable", () => {
+    const one = createSceneTransaction({ type: "cards", ids: ["北京"] }, { fontSize: 24 });
+    const two = createSceneTransaction({ type: "cards", ids: ["上海"] }, { fontSize: 24 });
+    expect(one.historyGroup).not.toBe(two.historyGroup);
+    const both = createSceneTransaction({ type: "cards", ids: ["北京", "上海"] }, { fontSize: 24 });
+    const reversed = createSceneTransaction({ type: "cards", ids: ["上海", "北京"] }, { fontSize: 24 });
+    expect(both.historyGroup).toBe(reversed.historyGroup);
+    expect(both.label).toBe("更新2 个展示框");
+  });
+});

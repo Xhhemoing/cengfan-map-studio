@@ -1,3 +1,4 @@
+import { getSelectedCardIds } from "./card-settings-scope";
 import type { UserAsset } from "./assets";
 import type { UserFont } from "./fonts";
 import { createProjectPackageEnvelope, type ProjectPackage } from "./project-package";
@@ -34,6 +35,10 @@ function rememberedSceneSelection(session: WorkspaceSession): SceneSelection {
 export function restoredSceneSelection(session: WorkspaceSession, project?: ProjectDocument): SceneSelection {
   const selection = rememberedSceneSelection(session);
   if (!project) return { ...selection };
+  if (selection.type === "cards" && selection.ids?.length) {
+    const ids = getSelectedCardIds(selection, project.cards, project);
+    return ids.length ? { type: "cards", ids, ...(selection.scopeGrouping ? { scopeGrouping: selection.scopeGrouping } : {}) } : { type: "cards" };
+  }
   const missing = (selection.type === "text" && !project.textElements.some((element) => element.id === selection.id))
     || (selection.type === "asset" && !project.assetElements.some((element) => element.id === selection.id));
   if (missing) {

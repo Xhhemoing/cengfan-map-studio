@@ -1,44 +1,30 @@
-import { geoMercator, geoPath } from "d3-geo";
-import { Fragment, memo, useCallback, useEffect, useMemo, type PointerEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useSyncExternalStore, type PointerEvent, type ReactNode, type RefObject } from "react";
 import type { DestinationCardStyle } from "./DestinationCard";
 import type {
-  CardArea,
   CardLayoutBounds,
-  CardLayoutMode,
-  CardPlacement,
-  CardPoint,
   CardPolygon,
-  CardSide,
 } from "../../lib/card-layout";
 import { createCardLayoutCacheKey } from "../../lib/card-layout-cache";
 import type { CardLayoutWorkerRequest } from "../../lib/card-layout-worker-protocol";
-import { computeMapContentBounds, computeMapOccupiedAreas } from "../../lib/map-content-bounds";
 import { buildLayoutGroups } from "../../lib/layout";
 import { buildProvinceSummary, getVisibleStudents } from "../../lib/project-data";
 import { CANVAS_LAYER_Z } from "../../lib/scene-document";
-import type { AssetElement, CanvasText, CardFontField, SceneSelection } from "../../lib/scene-document";
+import type { AssetElement, CardFontField, SceneSelection } from "../../lib/scene-document";
 import { deriveFixedDisplayFrameFromCardSettings, normalizeDisplayFrame } from "../../lib/display-frame";
 import type { ProjectDocument } from "../../lib/project-document";
 import { resolveStudentLocation } from "../../lib/student-data";
-import { findProvinceFeature, getChinaMapFeatures, type MapFeature, type Position } from "../../lib/map-data";
+import { getChinaMapFeatures, type MapFeature } from "../../lib/map-data";
 import { resolveEdgeStyle } from "../../lib/edge-styles";
 import { resolveFontFamily, buildFontFaceCss, type UserFont } from "../../lib/fonts";
 import { clampGridSize, DEFAULT_GRID_SIZE } from "../../lib/grid";
-import { DEFAULT_CARD_EXPRESSION_TEMPLATES } from "../../lib/card-expression";
 import {
-  buildPreparedCardContents,
   cardFieldFontSize,
-  resolveCardAnchor,
-  type CardAnchor,
-  type PreparedCard,
 } from "../../lib/prepared-card-content";
 import {
   destinationCardFixedRowHeight,
   destinationCardFlowContentStart,
-  destinationCardHeaderOffset,
   destinationCardRowFontSize,
 } from "../../lib/destination-card-metrics";
-import { splitMapFeaturesForSouthChinaSea } from "../../lib/south-china-sea";
 import { computeGuestPanelLayout, DEFAULT_GUEST_PANEL } from "../../lib/guest-panel-layout";
 import { DecorationLayer } from "./DecorationLayer";
 import { DestinationCardsLayer, type DestinationCardsAppearance, type PlacedDestinationCard } from "./DestinationCardsLayer";
@@ -47,10 +33,16 @@ import { MapLayer } from "./MapLayer";
 import { RegionalAssetLayer } from "./RegionalAssetLayer";
 import { TextLayer } from "./TextLayer";
 import { useCardLayoutWorker } from "./useCardLayoutWorker";
+import { resolveSceneMapGeometry, sceneTextObstacle } from "../../lib/resolved-scene-geometry";
+import { buildProjectCardContents, anchorProjectCards } from "../../lib/resolved-card-content";
+import { createSceneLayoutRequest, mergeScenePlacements } from "../../lib/scene-layout-request";
+import { resolveCardSettings } from "../../lib/card-settings-scope";
+import { diagnoseCardTypography } from "../../lib/card-typography-diagnostics";
+import { fingerprintProject } from "../../lib/project-digest";
+import { createSceneTextMeasurement, getSceneTextMeasurer } from "../../lib/scene-text-measurement";
+import { createResolvedSceneSnapshot, resolveStoredScenePositions, type ResolvedProjectScene } from "../../lib/resolved-scene";
 
 const features = getChinaMapFeatures();
-const openMapSplit = splitMapFeaturesForSouthChinaSea(features, false);
-const foldedMapSplit = splitMapFeaturesForSouthChinaSea(features, true);
 const HEAT_COLORS = ["#d9f0e5", "#8ccfb6", "#4da184", "#17675e"] as const;
 const LANDMARK_ASSET_KINDS: AssetElement["kind"][] = ["landmark"];
 const EMPTY_USER_FONTS: UserFont[] = [];
@@ -61,57 +53,10 @@ const MemoizedRegionalAssetLayer = memo(RegionalAssetLayer);
 const MemoizedDecorationLayer = memo(DecorationLayer);
 const MemoizedTextLayer = memo(TextLayer);
 
-function featureCoordinatePolygons(feature: MapFeature): Position[][][] {
-  return feature.geometry.type === "Polygon"
-    ? [feature.geometry.coordinates as Position[][]]
-    : feature.geometry.coordinates as Position[][][];
-}
-
-function simplifyProjectedRing(points: CardPoint[], tolerance = 1.5, maximumPoints = 180): CardPoint[] {
-  if (points.length <= 4) return points;
-  const simplified = [points[0]!];
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const point = points[index]!;
-    const previous = simplified[simplified.length - 1]!;
-    if (Math.hypot(point.x - previous.x, point.y - previous.y) >= tolerance) simplified.push(point);
-  }
-  const last = points[points.length - 1]!;
-  if (Math.hypot(last.x - simplified[simplified.length - 1]!.x, last.y - simplified[simplified.length - 1]!.y) > 0.01) {
-    simplified.push(last);
-  }
-  if (simplified.length <= maximumPoints) return simplified.length >= 3 ? simplified : points;
-
-  // Collision needs the outer contour, not every source vertex. Bound the work
-  // per province so dense coastlines cannot stall auto-layout or jsdom renders.
-  const sampled: CardPoint[] = [];
-  const lastIndex = simplified.length - 1;
-  for (let index = 0; index < maximumPoints; index += 1) {
-    sampled.push(simplified[Math.round(index * lastIndex / (maximumPoints - 1))]!);
-  }
-  return sampled;
-}
-
-function projectedPolygon(rings: CardPoint[][]): CardPolygon | null {
-  const shell = rings[0];
-  if (!shell || shell.length < 3) return null;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const point of rings.flat()) {
-    minX = Math.min(minX, point.x);
-    minY = Math.min(minY, point.y);
-    maxX = Math.max(maxX, point.x);
-    maxY = Math.max(maxY, point.y);
-  }
-  return {
-    rings,
-    bounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
-  };
-}
-
 export interface PosterCanvasProps {
   project: ProjectDocument;
+  selectedCardIds?: string[];
+  onSceneResolved?: (scene: ResolvedProjectScene) => void;
   posterRef?: RefObject<SVGSVGElement | null>;
   exportMode?: boolean;
   dataTemplateId?: string;
@@ -142,34 +87,6 @@ export interface PosterCanvasProps {
   onCardPositionsResolved?: (positions: Record<string, { x: number; y: number }>) => void;
 }
 
-function textLayoutObstacle(text: CanvasText): CardArea | null {
-  if (!text.visibility || !text.content.trim()) return null;
-  const x = text.textAlign === "right"
-    ? text.x - text.maxWidth
-    : text.textAlign === "center"
-      ? text.x - text.maxWidth / 2
-      : text.x;
-  return {
-    x,
-    y: text.y - text.fontSize,
-    width: text.maxWidth,
-    height: text.fontSize * 1.3,
-  };
-}
-
-/**
- * Which side of the map a stored card box sits on, classified the same way the solver
- * classifies a placement it produced itself. A placement's `side` only picks the connector
- * port in the degenerate case where the anchor coincides with the card center, so a frozen
- * card never needs the side the discarded solver run would have assigned it.
- */
-function frozenCardSide(card: CardArea, map: CardArea): CardSide {
-  const horizontal = (card.x + card.width / 2 - (map.x + map.width / 2)) / Math.max(1, map.width / 2);
-  const vertical = (card.y + card.height / 2 - (map.y + map.height / 2)) / Math.max(1, map.height / 2);
-  if (Math.abs(horizontal) >= Math.abs(vertical)) return horizontal < 0 ? "left" : "right";
-  return vertical < 0 ? "top" : "bottom";
-}
-
 /** Document slices painted for a given document object. A caller may edit a document in place
  *  (same object, a replaced `cards` / `map` / … slice); prop identity cannot see that, because
  *  both sides of the memo comparison are then the very same object. */
@@ -193,6 +110,8 @@ function arePosterCanvasPropsEqual(previous: PosterCanvasProps, next: PosterCanv
 
 function PosterCanvasView({
   project,
+  selectedCardIds,
+  onSceneResolved,
   posterRef,
   exportMode = false,
   dataTemplateId,
@@ -231,125 +150,10 @@ function PosterCanvasView({
     [visibleStudents],
   );
   const grouping = project.cards.grouping;
-  const expressionTemplates = project.cards.expressionTemplates ?? DEFAULT_CARD_EXPRESSION_TEMPLATES;
   const groups = useMemo(() => buildLayoutGroups(visibleStudents, grouping), [grouping, visibleStudents]);
-  const collapse = project.map.collapseSouthChinaSea === true;
-  const mainlandFeatures = collapse ? foldedMapSplit.mainlandFeatures : openMapSplit.mainlandFeatures;
-  const projection = useMemo(() => geoMercator().fitExtent(
-    [[0, 0], [project.map.width, project.map.height]],
-    { type: "FeatureCollection", features: mainlandFeatures } as never,
-  ), [mainlandFeatures, project.map.height, project.map.width]);
-  const mapPath = useMemo(() => geoPath(projection), [projection]);
-  // Province extents in projection space. `mapPath.bounds` streams every ring of every
-  // feature, so it is kept off the pan path: only the projection (map size and the folded
-  // South China Sea split) can move these.
-  const projectedProvinceBounds = useMemo(() => mainlandFeatures.flatMap((feature) => {
-    const [[left, top], [right, bottom]] = mapPath.bounds(feature as never);
-    if (![left, top, right, bottom].every(Number.isFinite)) return [];
-    return [{ left, top, right, bottom }];
-  }), [mainlandFeatures, mapPath]);
-  const provinceAreas = useMemo(() => {
-    const centerX = project.map.width / 2;
-    const centerY = project.map.height / 2;
-    return projectedProvinceBounds.map(({ left, top, right, bottom }) => ({
-      x: project.map.x + centerX + (left - centerX) * project.map.scale,
-      y: project.map.y + centerY + (top - centerY) * project.map.scale,
-      width: (right - left) * project.map.scale,
-      height: (bottom - top) * project.map.scale,
-    }));
-  }, [
-    projectedProvinceBounds,
-    project.map.height,
-    project.map.scale,
-    project.map.width,
-    project.map.x,
-    project.map.y,
-  ]);
-  const mapRenderSource = project.map.renderSource;
-  const mapImageReplacesProvinces = mapRenderSource?.kind === "image" && mapRenderSource.composition !== "overlay";
-  // Visibility is the only thing the collision geometry reads out of `provinceStyles`, and
-  // a recolor replaces that record wholesale. Reducing it to a sorted name list first means
-  // a color edit leaves the set — and therefore the projected rings — identical.
-  const hiddenProvincesKey = useMemo(() => {
-    const styles = project.map.provinceStyles;
-    if (!styles) return "";
-    return Object.keys(styles).filter((name) => styles[name]?.visible === false).sort().join("\n");
-  }, [project.map.provinceStyles]);
-  const hiddenProvinces = useMemo(
-    () => new Set(hiddenProvincesKey === "" ? [] : hiddenProvincesKey.split("\n")),
-    [hiddenProvincesKey],
-  );
-  const mapOriginX = project.map.x + project.map.width / 2;
-  const mapOriginY = project.map.y + project.map.height / 2;
-  // Collision geometry expressed as offsets from the map center, which is where scaling
-  // happens. Panning only slides that center across the canvas, so it must not reproject —
-  // and because a translation preserves every distance, simplification decided here is the
-  // same one the canvas-space rings would have made.
-  const centeredProvincePolygons = useMemo<CardPolygon[]>(() => {
-    if (mapImageReplacesProvinces) return [];
-    const centerX = project.map.width / 2;
-    const centerY = project.map.height / 2;
-    const projectPoint = (coordinate: Position): CardPoint | null => {
-      const point = projection(coordinate);
-      if (!point || !point.every(Number.isFinite)) return null;
-      return {
-        x: (point[0] - centerX) * project.map.scale,
-        y: (point[1] - centerY) * project.map.scale,
-      };
-    };
-    return mainlandFeatures.flatMap((feature): CardPolygon[] => {
-      if (hiddenProvinces.has(feature.name)) return [];
-      return featureCoordinatePolygons(feature).flatMap((polygon) => {
-        const rings = polygon.map((ring) => simplifyProjectedRing(
-          ring.flatMap((coordinate) => {
-            const point = projectPoint(coordinate);
-            return point ? [point] : [];
-          }),
-        ));
-        const projected = projectedPolygon(rings);
-        return projected ? [projected] : [];
-      });
-    });
-    // Depend on the map fields the projection actually reads instead of the whole
-    // project.map object — and on the derived visibility set rather than provinceStyles,
-    // which a recolor replaces wholesale. Either would otherwise reproject every province
-    // ring and invalidate the layout cache key for an edit that moves no geometry.
-  }, [
-    hiddenProvinces,
-    mainlandFeatures,
-    mapImageReplacesProvinces,
-    project.map.height,
-    project.map.scale,
-    project.map.width,
-    projection,
-  ]);
-  const provincePolygons = useMemo<CardPolygon[]>(
-    () => centeredProvincePolygons.map(({ rings, bounds }) => ({
-      rings: rings.map((ring) => ring.map((point) => ({ x: mapOriginX + point.x, y: mapOriginY + point.y }))),
-      ...(bounds
-        ? { bounds: { x: mapOriginX + bounds.x, y: mapOriginY + bounds.y, width: bounds.width, height: bounds.height } }
-        : {}),
-    })),
-    [centeredProvincePolygons, mapOriginX, mapOriginY],
-  );
-  const mapContentBounds = useMemo(
-    () => computeMapContentBounds({ map: project.map, provinceAreas }),
-    [project.map, provinceAreas],
-  );
-  const mapOccupiedAreas = useMemo(
-    () => computeMapOccupiedAreas({ map: project.map, provinceAreas }),
-    [project.map, provinceAreas],
-  );
-  const nonProvinceMapAreas = useMemo(() => mapOccupiedAreas.filter((area) =>
-    !provinceAreas.some((province) => province.x === area.x
-      && province.y === area.y
-      && province.width === area.width
-      && province.height === area.height)), [mapOccupiedAreas, provinceAreas]);
+  const geometry = useMemo(() => resolveSceneMapGeometry(project.map), [project.map]);
+  const { projection, mapPath, mapContentBounds, provincePolygons, centeredProvincePolygons, nonProvinceMapAreas, mapOriginX, mapOriginY } = geometry;
   const lineHeightMultiplier = project.canvas.lineHeight ?? 1;
-  const noWrapFieldSet = useMemo(
-    () => new Set(project.cards.noWrapFields ?? []),
-    [project.cards.noWrapFields],
-  );
   const guests = project.guests ?? DEFAULT_GUEST_PANEL;
   const guestLayout = useMemo(
     () => computeGuestPanelLayout(guests, lineHeightMultiplier),
@@ -358,7 +162,7 @@ function PosterCanvasView({
   const guestHeight = guestLayout.height;
   const layoutOccupiedAreas = useMemo(() => {
     const textAreas = project.textElements.flatMap((text) => {
-      const area = textLayoutObstacle(text);
+      const area = sceneTextObstacle(text);
       return area ? [area] : [];
     });
     const guestAreas = guests.visibility === false
@@ -475,89 +279,35 @@ function PosterCanvasView({
   // Text wrapping and card sizing only read content and typography. Keeping the map
   // transform out of this memo means panning or zooming the map re-runs the anchor memo
   // below instead of re-wrapping every card.
-  const preparedCardContents = useMemo(() => {
-    if (project.cards.visibleFields.length === 0 || project.dataView === "pins") return [];
-    return buildPreparedCardContents({
-      groups,
-      grouping,
-      visibleFields: project.cards.visibleFields,
-      citySubgroups: project.cards.citySubgroups !== false,
-      expressionTemplates,
-      nameFormat: project.cards.nameFormat,
-      fontSize: project.cards.fontSize,
-      fieldTypography: project.cards.fieldTypography,
-      compactLayout: project.cards.compactLayout === true || project.cards.preset === "compact",
-      maxWidth: project.cards.maxWidth,
-      horizontalPadding,
-      bottomPadding: project.cards.bottomPadding ?? project.cards.padding,
-      showProvinceTexture: project.cards.showProvinceTexture === true,
-      headerOffset: destinationCardHeaderOffset(project.cards.preset),
-      noWrapFields: noWrapFieldSet,
-      lineHeightMultiplier,
-      canvasWidth: project.canvas.width,
-      safeMargin: project.canvas.safeMargin,
-    });
+  const measurer = getSceneTextMeasurer();
+  const fontRevision = useSyncExternalStore(measurer.subscribe, measurer.getVersion, measurer.getVersion);
+  const preparedContent = useMemo(() => {
+    const measurement = createSceneTextMeasurement(userFonts);
+    const contents = buildProjectCardContents(project, groups, measurement.options);
+    const typographyIssues = diagnoseCardTypography(project, contents, measurement.options);
+    return { contents, typographyIssues, measurementStatus: measurement.getStatus() };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- content dependencies intentionally exclude geography
   }, [
-    expressionTemplates,
-    groups,
-    grouping,
-    horizontalPadding,
-    lineHeightMultiplier,
-    noWrapFieldSet,
-    project.cards.bottomPadding,
-    project.cards.citySubgroups,
-    project.cards.compactLayout,
-    project.cards.fieldTypography,
-    project.cards.fontSize,
-    project.cards.maxWidth,
-    project.cards.nameFormat,
-    project.cards.padding,
-    project.cards.preset,
-    project.cards.showProvinceTexture,
-    project.cards.visibleFields,
-    project.canvas.safeMargin,
-    project.canvas.width,
-    project.dataView,
+    groups, userFonts, fontRevision, project.cards.fieldFonts, project.cards.bottomPadding, project.cards.citySubgroups, project.cards.compactLayout,
+    project.cards.fieldTypography, project.cards.fontSize, project.cards.maxWidth, project.cards.widthMode, project.cards.minWidth, project.cards.minFontSize, project.cards.nameFormat,
+    project.cards.padding, project.cards.horizontalPadding, project.cards.preset, project.cards.presentation,
+    project.cards.showCount, project.cards.showProvinceTexture, project.cards.visibleFields, project.cards.noWrapFields,
+    project.cards.expressionTemplates, project.cards.displayFrame, project.cards.styleOverrides,
+    project.canvas.safeMargin, project.canvas.width, project.canvas.lineHeight, project.dataView,
+    // Every content/typography dependency is listed above; map movement must not rewrap text.
+  ]);
+  const preparedCardContents = preparedContent.contents;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- anchors only read map geometry
+  const anchoredCards = useMemo(() => anchorProjectCards(project, preparedCardContents, { projection, mapPath }), [
+    preparedCardContents, projection, mapPath, project.map.height, project.map.width, project.map.scale, project.map.x, project.map.y,
   ]);
 
-  const cardAnchors = useMemo<CardAnchor[]>(() => {
-    const map = {
-      x: project.map.x,
-      y: project.map.y,
-      width: project.map.width,
-      height: project.map.height,
-      scale: project.map.scale,
-    };
-    const byProvince = new Map<string, CardAnchor>();
-    return preparedCardContents.map((content) => {
-      const cached = byProvince.get(content.province);
-      if (cached) return cached;
-      const feature = findProvinceFeature(features, content.province);
-      const administrativeCenter = feature ? projection(feature.center) : null;
-      const point = administrativeCenter && administrativeCenter.every(Number.isFinite)
-        ? administrativeCenter
-        : feature
-          ? mapPath.centroid(feature as never)
-          : [map.width / 2, map.height / 2];
-      const anchor = resolveCardAnchor(point, map);
-      byProvince.set(content.province, anchor);
-      return anchor;
-    });
-  }, [
-    mapPath,
-    preparedCardContents,
-    project.map.height,
-    project.map.scale,
-    project.map.width,
-    project.map.x,
-    project.map.y,
-    projection,
-  ]);
-
-  const preparedCards = useMemo<PreparedCard[]>(
-    () => preparedCardContents.map((content, index) => ({ ...content, ...cardAnchors[index]! })),
-    [cardAnchors, preparedCardContents],
-  );
+  const preparedCards = useMemo(() => anchoredCards.map((card) => {
+    const hasScopedStyle = Boolean(project.cards.styleOverrides && Object.keys(project.cards.styleOverrides).length > 0);
+    return hasScopedStyle
+      ? { ...card, resolvedSettings: resolveCardSettings(project.cards, card.group.key) }
+      : card;
+  }), [anchoredCards, project.cards]);
 
   // Shared by auto-layout and by the clamp applied while a card is dragged, so both agree
   // on the protected geometry.
@@ -581,90 +331,36 @@ function PosterCanvasView({
     project.cards.gap,
   ]);
 
-  // Every card pinned to a stored position makes the solver pure overhead: `destinationCards`
-  // overwrites its x/y with those positions anyway, so a map pan would pay for a full re-solve
-  // that cannot move a single card. The stored positions are used exactly as saved — clamping
-  // them here would drag frozen cards around as the map slides underneath them.
-  const frozenPlacements = useMemo<CardPlacement[] | null>(() => {
-    const positions = project.cards.positions;
-    if (!positions || preparedCards.length === 0) return null;
-    const placements: CardPlacement[] = [];
-    for (const card of preparedCards) {
-      const position = positions[card.group.key];
-      if (!position) return null;
-      const box = { x: position.x, y: position.y, width: card.width, height: card.height };
-      placements.push({
-        id: card.group.key,
-        anchorX: card.anchorX,
-        anchorY: card.anchorY,
-        ...box,
-        side: frozenCardSide(box, mapContentBounds),
-      });
-    }
-    return placements;
-  }, [mapContentBounds, preparedCards, project.cards.positions]);
-
-  const layoutRequest = useMemo<CardLayoutWorkerRequest | null>(() => {
-    if (frozenPlacements || preparedCards.length === 0) return null;
-    const layoutMode = (project.cards.layoutMode ?? "quadrant") as CardLayoutMode;
-    const cards = preparedCards.map(({ group, anchorX, anchorY, width, height }) => ({
-      id: group.key,
-      anchorX,
-      anchorY,
-      width,
-      height,
-    }));
-    const options = {
-      mode: layoutMode,
-      autoBalance: project.cards.autoBalance !== false,
-      connectorStyle: project.cards.connectorStyle,
-      connectorWidth: project.cards.connectorWidth,
-    };
-    return {
-      key: createCardLayoutCacheKey({
-        cards,
-        bounds: cardLayoutBounds,
-        options,
-        polygonOrigin: {
-          polygons: layoutOccupiedCenteredPolygons,
-          originX: mapOriginX,
-          originY: mapOriginY,
-        },
-      }),
-      cards,
-      bounds: cardLayoutBounds,
-      options,
-    };
-  }, [
-    cardLayoutBounds,
-    frozenPlacements,
-    layoutOccupiedCenteredPolygons,
-    mapOriginX,
-    mapOriginY,
-    preparedCards,
-    project.cards.autoBalance,
-    project.cards.connectorStyle,
-    project.cards.connectorWidth,
-    project.cards.layoutMode,
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- storage policy dependencies are listed explicitly
+  const storedPositions = useMemo(() => resolveStoredScenePositions(project, preparedCards, cardLayoutBounds), [
+    preparedCards, cardLayoutBounds, project.cards.positions, project.cards.positionPolicies, project.cards.positionSources, project.cards.grouping,
   ]);
-
+  const layoutOptions = useMemo(() => ({
+    mode: project.cards.layoutMode ?? "quadrant", autoBalance: project.cards.autoBalance !== false,
+    connectorStyle: project.cards.connectorStyle, connectorWidth: project.cards.connectorWidth,
+  }), [project.cards.layoutMode, project.cards.autoBalance, project.cards.connectorStyle, project.cards.connectorWidth]);
+  const layoutRequest = useMemo<CardLayoutWorkerRequest | null>(() => createSceneLayoutRequest(
+    preparedCards, cardLayoutBounds, layoutOptions, storedPositions,
+    { polygons: layoutOccupiedCenteredPolygons, originX: mapOriginX, originY: mapOriginY },
+  ), [preparedCards, cardLayoutBounds, layoutOptions, storedPositions, layoutOccupiedCenteredPolygons, mapOriginX, mapOriginY]);
   const layoutState = useCardLayoutWorker(layoutRequest, exportMode);
-  const destinationCards = useMemo<PlacedDestinationCard[]>(() => {
-    const solved = frozenPlacements ?? (layoutRequest ? layoutState.result?.placements : null);
-    if (!solved) return [];
-    const placements = new Map(solved.map((placement) => [placement.id, placement]));
-    return preparedCards.flatMap((card) => {
-      const placement = placements.get(card.group.key);
-      if (!placement) return [];
-      const manual = project.cards.positions?.[card.group.key];
-      return [manual ? { ...card, placement: { ...placement, x: manual.x, y: manual.y } } : { ...card, placement }];
-    });
-  }, [frozenPlacements, layoutRequest, layoutState.result, preparedCards, project.cards.positions]);
-
+  const destinationCards = useMemo<PlacedDestinationCard[]>(() => mergeScenePlacements(
+    preparedCards, cardLayoutBounds, layoutState.result?.placements ?? [], storedPositions,
+  ), [preparedCards, cardLayoutBounds, layoutState.result, storedPositions]);
   useEffect(() => {
     if (!onCardPositionsResolved || destinationCards.length === 0) return;
     onCardPositionsResolved(Object.fromEntries(destinationCards.map(({ group, placement }) => [group.key, { x: placement.x, y: placement.y }])));
   }, [destinationCards, onCardPositionsResolved]);
+  useEffect(() => {
+    if (!onSceneResolved || layoutState.pending) return;
+    const cards = preparedCards.map(({ group, anchorX, anchorY, width, height }) => ({ id: group.key, anchorX, anchorY, width, height }));
+    const input = {
+      preparedCards, bounds: cardLayoutBounds, mapVisualBounds: geometry.mapVisualBounds, options: layoutOptions, measurementStatus: preparedContent.measurementStatus, fontRevision, typographyIssues: preparedContent.typographyIssues,
+      key: createCardLayoutCacheKey({ cards, bounds: cardLayoutBounds, options: layoutOptions,
+        polygonOrigin: { polygons: layoutOccupiedCenteredPolygons, originX: mapOriginX, originY: mapOriginY } }),
+    };
+    onSceneResolved(createResolvedSceneSnapshot(project, input, destinationCards.map((card) => card.placement), layoutState.result?.status));
+  }, [project, preparedCards, cardLayoutBounds, layoutOptions, destinationCards, layoutState.pending, layoutState.result?.status, onSceneResolved, preparedContent.measurementStatus, preparedContent.typographyIssues, fontRevision, geometry.mapVisualBounds, layoutOccupiedCenteredPolygons, mapOriginX, mapOriginY]);
 
   const connectorEdge = useMemo(() => resolveEdgeStyle({
     style: project.cards.connectorDash,
@@ -707,7 +403,12 @@ function PosterCanvasView({
     return point.matrixTransform(svg.getScreenCTM()?.inverse());
   }, [project.canvas.height, project.canvas.width]);
 
-  const selectCards = useCallback(() => onSelect?.({ type: "cards" }), [onSelect]);
+  const selectCards = useCallback((id?: string, additive?: boolean) => {
+    if (!id) { onSelect?.({ type: "cards" }); return; }
+    const current = selectedCardIds ?? [];
+    const ids = additive ? current.includes(id) ? current.filter((key) => key !== id) : [...current, id] : [id];
+    onSelect?.({ type: "cards", ...(ids.length ? { ids, scopeGrouping: project.cards.grouping } : {}) });
+  }, [onSelect, selectedCardIds, project.cards.grouping]);
 
   // Grouped so the cards layer keeps its memo across edits to unrelated card settings.
   const cardsAppearance = useMemo<DestinationCardsAppearance>(() => ({
@@ -803,6 +504,7 @@ function PosterCanvasView({
       node: (
         <DestinationCardsLayer
           cards={destinationCards}
+          selectedCardIds={selectedCardIds}
           style={cardStyle}
           appearance={cardsAppearance}
           connectorEdge={connectorEdge}
@@ -875,6 +577,10 @@ function PosterCanvasView({
     <svg
       ref={posterRef}
       className="poster"
+      data-scene-revision={fingerprintProject(project)}
+      data-font-revision={fontRevision}
+      data-layout-pending={layoutState.pending ? "true" : "false"}
+      data-measurement-status={preparedContent.measurementStatus}
       data-template-preview={dataTemplateId ? "true" : undefined}
       data-template-id={dataTemplateId}
       data-render-interval-ms={renderIntervalMs}

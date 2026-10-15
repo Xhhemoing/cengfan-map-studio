@@ -1,3 +1,4 @@
+import { getCardPositionPolicy, getCardScopeKey } from "./card-settings-scope";
 import type { CanvasPosition } from "./asset-elements";
 import type { StudioAsset, UserAsset } from "./assets";
 import type { CanvasText } from "./canvas-data";
@@ -157,9 +158,13 @@ export function moveCardTransaction(id: string, position: CanvasPosition): Proje
     id: createId(`tx-card-position-${id}`),
     label: "调整数据框位置",
     source: "manual",
-    apply: (current) => ({
+    apply: (current) => getCardPositionPolicy(current.cards, id) === "locked" ? current : ({
       ...current,
-      cards: { ...current.cards, positions: { ...current.cards.positions, [id]: position } },
+      cards: { ...current.cards,
+        positions: { ...current.cards.positions, [id]: position },
+        positionSources: { ...current.cards.positionSources, [getCardScopeKey(current.cards, id)]: "manual" },
+        positionPolicies: { ...current.cards.positionPolicies, [getCardScopeKey(current.cards, id)]: "preserve" },
+      },
     }),
   };
 }
@@ -172,7 +177,20 @@ export function refreshDisplayFramePositionsTransaction(): ProjectTransaction {
     id: createId("tx-display-frame-position-refresh"),
     label: "刷新展示框位置",
     source: "manual",
-    apply: (current) => ({ ...current, cards: { ...current.cards, positions: {} } }),
+    apply: (current) => {
+      const positions = Object.fromEntries(Object.entries(current.cards.positions ?? {})
+        .filter(([id]) => getCardPositionPolicy(current.cards, id) === "locked"));
+      const positionSources = { ...current.cards.positionSources };
+      const positionPolicies = { ...current.cards.positionPolicies };
+      for (const id of Object.keys(current.cards.positions ?? {})) {
+        if (!positions[id]) {
+          const key = getCardScopeKey(current.cards, id);
+          positionSources[key] = "auto";
+          positionPolicies[key] = "auto";
+        }
+      }
+      return { ...current, cards: { ...current.cards, positions, positionSources, positionPolicies } };
+    },
   };
 }
 

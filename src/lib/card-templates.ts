@@ -10,13 +10,33 @@ export interface CardTemplate {
   builtin: boolean;
 }
 
+export type CardTemplateApplicationMode = "visual" | "visual-and-layout";
+
+/** Complete, owned appearance tokens: changing templates never inherits the previous preset. */
+export const CARD_TEMPLATE_VISUAL_DEFAULTS = {
+  preset: "standard",
+  presentation: "standard",
+  compactLayout: false,
+  padding: 12,
+  horizontalPadding: 12,
+  bottomPadding: 12,
+  opacity: 1,
+  background: "#ffffff",
+  textColor: "#1c3154",
+  showProvinceTexture: false,
+  connectorStyle: "curve",
+  connectorDash: "dashed",
+} as const satisfies Partial<CardSettings>;
+
+const LAYOUT_SUGGESTION_KEYS = ["grouping", "citySubgroups", "showCount", "maxWidth", "gap", "allowMapOverlap"] as const;
+
 const BUILTIN_TEMPLATES: CardTemplate[] = [
   {
     id: "color-pill",
     name: "彩色胶囊省份卡",
     description: "省名叠放、圆角纯色卡片，适合活泼班级海报",
     category: "compact",
-    cards: { presentation: "color-pill", preset: "borderless", grouping: "province", compactLayout: true, showCount: false, citySubgroups: false, connectorStyle: "straight", connectorDash: "dotted", opacity: 1, padding: 9, horizontalPadding: 15, bottomPadding: 10, maxWidth: 210 },
+    cards: { presentation: "color-pill", preset: "borderless", grouping: "province", compactLayout: true, showCount: false, citySubgroups: false, connectorStyle: "straight", connectorDash: "dotted", background: "#efb8c6", textColor: "#1c3154", opacity: 1, padding: 9, horizontalPadding: 15, bottomPadding: 10, maxWidth: 210 },
     builtin: true,
   },
   {
@@ -125,14 +145,30 @@ const LEGACY_PRESET_MAP: Record<string, string> = {
   compact: "compact",
 };
 
-export function applyCardTemplate(templateId: string, _currentCards: CardSettings): Partial<CardSettings> {
+export function getCardTemplateLayoutSuggestions(templateId: string, currentCards: CardSettings): Partial<CardSettings> {
   const template = getCardTemplateById(templateId) || getCardTemplateById(LEGACY_PRESET_MAP[templateId] || "");
   if (!template) return {};
+  return Object.fromEntries(LAYOUT_SUGGESTION_KEYS.flatMap((key) => {
+    const proposed = template.cards[key];
+    return proposed !== undefined && proposed !== currentCards[key] ? [[key, proposed]] : [];
+  }));
+}
+
+/** Appearance is independent of roster structure, font overrides and manually positioned cards. */
+export function applyCardTemplate(
+  templateId: string,
+  currentCards: CardSettings,
+  mode: CardTemplateApplicationMode = "visual",
+): Partial<CardSettings> {
+  const template = getCardTemplateById(templateId) || getCardTemplateById(LEGACY_PRESET_MAP[templateId] || "");
+  if (!template) return {};
+  const visualTokens = Object.fromEntries(Object.entries(CARD_TEMPLATE_VISUAL_DEFAULTS).map(([key, fallback]) => [
+    key,
+    template.cards[key as keyof typeof CARD_TEMPLATE_VISUAL_DEFAULTS] ?? fallback,
+  ]));
   return {
-    ...template.cards,
-    // A template without its own presentation is a standard card. Stating that explicitly is
-    // what lets the canvas leave a reference renderer such as the colour pill behind.
-    presentation: template.cards.presentation ?? "standard",
+    ...visualTokens,
+    ...(mode === "visual-and-layout" ? getCardTemplateLayoutSuggestions(templateId, currentCards) : {}),
     templateId: template.id,
     displayFrame: undefined,
   };

@@ -2,11 +2,14 @@ import type { EdgeStyle } from "./edge-styles";
 import { normalizeEdgeStyle } from "./edge-styles";
 import { DEFAULT_HEAT_SCALE, normalizeHeatScale, type HeatScale } from "./heat-scale";
 import type { MapTemplateId } from "./project-data";
-import { createSystemTemplate, type CardGrouping, type CardPreset, type VisibleField } from "./template-document";
-import { normalizeCardExpressionTemplates, type CardExpressionTemplates } from "./card-expression";
+import { createSystemTemplate, type VisibleField } from "./template-document";
+import { normalizeCardExpressionTemplates } from "./card-expression";
 import { DEFAULT_NAME_FORMAT, normalizeNameFormat } from "./name-format";
-import { normalizeDisplayFrame, type DisplayFrameDefinition } from "./display-frame";
+import { normalizeDisplayFrame } from "./display-frame";
 
+import type { CardFontField, CardSettings, CardPresentation, TextStyleOverride } from "./card-settings-types";
+export type { CardFontField, CardSettings, CardPresentation, TextStyleOverride, CardStyleOverride, CardPositionPolicy, CardPositionSource } from "./card-settings-types";
+import { normalizeCardScopedSettings, patchCardStyles, resetCardStyles, setCardPositionPolicy } from "./card-settings-scope";
 
 export type CanvasTextRole =
   | "eyebrow"
@@ -180,79 +183,6 @@ export interface ProvinceStyle {
   appearance?: ProvinceAppearance;
 }
 
-export type CardFontField = "title" | VisibleField;
-export type CardPresentation = "standard" | "color-pill" | "emblem-list" | "city-label" | "glass-stat";
-
-export interface TextStyleOverride {
-  fontSize?: number;
-  color?: string;
-}
-
-export interface CardSettings {
-  preset: CardPreset;
-  /** Semantic renderer used by data-driven reference poster styles. */
-  presentation?: CardPresentation;
-  /** 最近一次应用的展示框模板 id（src/lib/card-templates.ts），用于选择器回显。 */
-  templateId?: string;
-  /** @deprecated legacy fixed/flow definition */
-  displayFrame?: DisplayFrameDefinition;
-  /** Reduce card row spacing without changing its visual preset. */
-  compactLayout?: boolean;
-  grouping: CardGrouping;
-  x: number;
-  y: number;
-  maxWidth: number;
-  padding: number;
-  /** 画布内层级（SVG 绘制顺序 = z 顺序，数值越大越靠上）。默认 CANVAS_LAYER_Z.cards。 */
-  zIndex?: number;
-  /** Left/right whitespace inside destination cards. Defaults to padding. */
-  horizontalPadding?: number;
-  /** Empty space below the final destination-card row. Defaults to padding. */
-  bottomPadding?: number;
-  gap: number;
-  columns: number | "auto";
-  background: string;
-  opacity: number;
-  textColor: string;
-  fontSize: number;
-  /** Per-field font ids (see lib/fonts). Missing/empty entry = inherit default font. */
-  fieldFonts?: Partial<Record<CardFontField, string>>;
-  /** Per-field size/color overrides. Missing values inherit the legacy card style. */
-  fieldTypography?: Partial<Record<CardFontField, TextStyleOverride>>;
-  connectorStyle: "straight" | "elbow" | "curve";
-  connectorColor: string;
-  connectorWidth: number;
-  /**
-   * Connector line texture. Shares the same palette as province border textures
-   * (solid / dashed / dotted / double / soft-glow / stitch / rail / wave / ornament / ink).
-   * Legacy values solid|dashed|dotted remain valid.
-   */
-  connectorDash: EdgeStyle;
-  visibleFields: VisibleField[];
-  /**
-   * Fields whose card content must never be split across lines
-   * (e.g. a person name stays on one line). Default [].
-   */
-  noWrapFields?: VisibleField[];
-  /** Show city headings inside province-grouped cards. Default true. */
-  citySubgroups?: boolean;
-  /** Restricted placeholder templates for card titles, city headings, and rows. */
-  expressionTemplates?: CardExpressionTemplates;
-  /** Pseudo-code template controlling how student names appear in card rows. Default "{name}". */
-  nameFormat?: string;
-  positions?: Record<string, { x: number; y: number }>;
-  /** Auto-layout algorithm. Default "quadrant" (four-sided isotonic packing). */
-  layoutMode?: "quadrant" | "radial" | "right-stack" | "grid";
-  /** Optimize the left/right split to balance column heights (quadrant only). */
-  autoBalance?: boolean;
-  /** Permit destination cards to overlap map geometry. Default false. */
-  allowMapOverlap?: boolean;
-  /** Show the matching province texture as a thumbnail inside destination cards. */
-  showProvinceTexture?: boolean;
-  /** Show the "N 人" count in the card header. Default true. */
-  showCount?: boolean;
-}
-
 export interface GuestPerson {
   id: string;
   name: string;
@@ -335,7 +265,7 @@ export type SceneSelection =
   | { type: "canvas" }
   | { type: "map" }
   | { type: "province"; province: string }
-  | { type: "cards" }
+  | { type: "cards"; ids?: string[]; scopeGrouping?: CardSettings["grouping"] }
   | { type: "guests" }
   | { type: "text"; id: string }
   | { type: "asset"; id: string };
@@ -516,6 +446,9 @@ export function createDefaultScene(templateId: MapTemplateId): SceneDocument {
       x: 1140,
       y: 160,
       maxWidth: template.cards.maxWidth,
+      widthMode: "fixed",
+      minWidth: 80,
+      minFontSize: 8,
       padding: template.cards.padding,
       zIndex: CANVAS_LAYER_Z.cards,
       horizontalPadding: template.cards.padding,
@@ -535,6 +468,9 @@ export function createDefaultScene(templateId: MapTemplateId): SceneDocument {
       expressionTemplates: normalizeCardExpressionTemplates(undefined),
       nameFormat: DEFAULT_NAME_FORMAT,
       positions: {},
+      styleOverrides: {},
+      positionPolicies: {},
+      positionSources: {},
       layoutMode: "quadrant",
       autoBalance: true,
       allowMapOverlap: false,
@@ -600,6 +536,7 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
     },
     cards: {
       ...scene.cards,
+      ...normalizeCardScopedSettings(scene.cards),
       preset: scene.cards.preset === "compact" ? "standard" : scene.cards.preset,
       presentation: normalizeCardPresentation(scene.cards.presentation),
       // 老项目 preset: "compact" 在此被归一化为 standard + compactLayout，
@@ -609,6 +546,9 @@ export function normalizeScene(scene: SceneDocument): SceneDocument {
       x: clamp(scene.cards.x, 0, canvasWidth, fallback.cards.x),
       y: clamp(scene.cards.y, 0, canvasHeight, fallback.cards.y),
       maxWidth: clamp(scene.cards.maxWidth, 80, canvasWidth, fallback.cards.maxWidth),
+      widthMode: scene.cards.widthMode === "content" ? "content" : "fixed",
+      minWidth: clamp(scene.cards.minWidth, 80, clamp(scene.cards.maxWidth, 80, canvasWidth, fallback.cards.maxWidth), 80),
+      minFontSize: clamp(scene.cards.minFontSize, 8, 48, 8),
       padding: clamp(scene.cards.padding, 0, 120, fallback.cards.padding),
       horizontalPadding: clamp(scene.cards.horizontalPadding, 0, 240, scene.cards.padding),
       bottomPadding: clamp(scene.cards.bottomPadding, 0, 240, scene.cards.padding),
@@ -744,8 +684,17 @@ export function updateSceneTarget(
           },
         },
       });
-    case "cards":
-      return normalizeScene({ ...scene, cards: { ...scene.cards, ...patch } });
+    case "cards": {
+      if (target.ids?.length && target.scopeGrouping && target.scopeGrouping !== scene.cards.grouping) return scene;
+      if (!target.ids?.length) return normalizeScene({ ...scene, cards: { ...scene.cards, ...patch } });
+      const cards = patch.resetStyleOverrides === true
+        ? resetCardStyles(scene.cards, target.ids)
+        : patchCardStyles(scene.cards, target.ids, patch);
+      const policy = patch.positionPolicy;
+      return normalizeScene({ ...scene, cards: policy === "locked" || policy === "preserve" || policy === "auto"
+        ? setCardPositionPolicy(cards, target.ids, policy)
+        : cards });
+    }
     case "guests":
       return normalizeScene({ ...scene, guests: { ...scene.guests, ...patch } as typeof scene.guests });
     case "text":

@@ -1,5 +1,7 @@
 import { DEFAULT_CARD_EXPRESSION_TEMPLATES, formatCardExpression, type CardExpressionTemplates } from "./card-expression";
-import { wrapCardText, type CardTextFragment, type CardTextLine } from "./card-text-layout";
+import type { CardTextFragment, CardTextLine } from "./card-text-layout";
+import type { UserFont } from "./fonts";
+import { wrapStyledCardText, type CardTextMeasure } from "./styled-card-text";
 import {
   buildCitySections,
   buildSchoolRows,
@@ -9,15 +11,15 @@ import {
   type SchoolRowPart,
 } from "./layout";
 import { DEFAULT_NAME_FORMAT, formatStudentName } from "./name-format";
-import type { CardFontField, CardSettings } from "./scene-document";
+import type { CardFontField, CardPresentation, CardSettings } from "./scene-document";
+import { referenceCardMetrics, type ReferenceCardMetrics } from "./reference-card-metrics";
+import { computePreparedCardMetrics } from "./prepared-card-metrics";
+import { cardRowTextOptions, resolveContentCardWidth } from "./content-card-width";
+export { cardFieldFontSize, computePreparedCardMetrics, type PreparedCardMetrics } from "./prepared-card-metrics";
 import { resolveStudentLocation } from "./student-data";
 import type { VisibleField } from "./template-document";
 import {
   DESTINATION_CARD_HEADER_HEIGHT,
-  DESTINATION_CARD_TEXTURE_HEADER_WIDTH,
-  destinationCardFixedRowHeight,
-  destinationCardRowFontSize,
-  destinationCardTitleLineHeight,
 } from "./destination-card-metrics";
 
 /** One body row of a destination card, before its text is wrapped. */
@@ -47,6 +49,11 @@ export interface PreparedCardContent {
   headerExtra: number;
   width: number;
   height: number;
+  /** Resolved per-card style, when a scoped compiler is used. */
+  resolvedSettings?: CardSettings;
+  /** Reference cards paint exactly the geometry measured during preparation. */
+  referenceMetrics?: ReferenceCardMetrics;
+  topInset?: number;
 }
 
 /** A prepared card placed against the current map transform. */
@@ -54,6 +61,8 @@ export interface PreparedCard extends PreparedCardContent, CardAnchor {}
 
 export interface PreparedCardContentOptions {
   groups: LayoutGroup[];
+  presentation?: CardPresentation;
+  showCount?: boolean;
   grouping: CardSettings["grouping"];
   visibleFields: readonly VisibleField[];
   /** Show city headings inside province-grouped cards. */
@@ -62,9 +71,16 @@ export interface PreparedCardContentOptions {
   nameFormat?: string;
   fontSize: number;
   fieldTypography?: CardSettings["fieldTypography"];
+  fieldFonts?: CardSettings["fieldFonts"];
+  userFonts?: UserFont[];
+  measureText?: CardTextMeasure;
   /** Already resolved from `cards.compactLayout` / the compact preset. */
   compactLayout: boolean;
   maxWidth: number;
+  widthMode?: "fixed" | "content";
+  minWidth?: number;
+  minFontSize?: number;
+  topPadding?: number;
   /** Left/right whitespace inside the card, as resolved by the display frame. */
   horizontalPadding: number;
   bottomPadding: number;
@@ -82,31 +98,6 @@ export interface PreparedCardContentOptions {
   safeMargin: number;
 }
 
-/** Shared vertical/horizontal metrics every card in a document uses. */
-export interface PreparedCardMetrics {
-  /** Largest size a body line can paint; body text wraps and steps against it. */
-  rowFontSize: number;
-  /** Fixed-mode step between body lines, the one the card renderer walks rows with. */
-  rowHeight: number;
-  titleFontSize: number;
-  titleLineHeight: number;
-  cardWidth: number;
-  contentWidth: number;
-  /** Available width for the title once the count badge and thumbnail are reserved. */
-  titleWidth: number;
-}
-
-/** Effective font size of one card field, falling back to the card font size
- *  (city rows sit one step smaller unless overridden). */
-export function cardFieldFontSize(
-  field: CardFontField,
-  fontSize: number,
-  fieldTypography?: CardSettings["fieldTypography"],
-): number {
-  return fieldTypography?.[field]?.fontSize
-    ?? (field === "city" ? Math.max(9, fontSize - 1) : fontSize);
-}
-
 /** Card height: header block + wrapped title overflow + body rows + bottom padding. */
 export function destinationCardHeight(
   lineCount: number,
@@ -117,36 +108,6 @@ export function destinationCardHeight(
   return DESTINATION_CARD_HEADER_HEIGHT + headerExtra + lineCount * rowHeight + bottomPadding;
 }
 
-export function computePreparedCardMetrics(options: PreparedCardContentOptions): PreparedCardMetrics {
-  const fieldFontSize = (field: CardFontField) => cardFieldFontSize(field, options.fontSize, options.fieldTypography);
-  const rowFontSize = destinationCardRowFontSize({
-    // A row field keeps the card font size even when it is `city`: only the city *heading*
-    // shrinks one step, and it joins the step separately below.
-    visibleFieldFontSizes: options.visibleFields.map((field) => options.fieldTypography?.[field]?.fontSize ?? options.fontSize),
-    cityHeadingFontSize: fieldFontSize("city"),
-  });
-  const titleFontSize = fieldFontSize("title");
-  const cardWidth = Math.min(options.maxWidth, Math.max(80, options.canvasWidth - options.safeMargin * 2));
-  const contentWidth = Math.max(rowFontSize, cardWidth - options.horizontalPadding * 2);
-  const textureHeaderWidth = options.showProvinceTexture ? DESTINATION_CARD_TEXTURE_HEADER_WIDTH : 0;
-  const headerOffset = options.headerOffset ?? 0;
-  return {
-    rowFontSize,
-    rowHeight: destinationCardFixedRowHeight({
-      rowFontSize,
-      compactLayout: options.compactLayout,
-      lineHeightMultiplier: options.lineHeightMultiplier,
-    }),
-    titleFontSize,
-    titleLineHeight: destinationCardTitleLineHeight(titleFontSize, options.lineHeightMultiplier),
-    cardWidth,
-    contentWidth,
-    titleWidth: Math.max(
-      titleFontSize,
-      contentWidth - Math.max(42, titleFontSize * 3) - textureHeaderWidth - headerOffset,
-    ),
-  };
-}
 
 function studentFieldParts(
   student: { name: string; university: string; city: string },
@@ -225,56 +186,75 @@ export function cardRowsForGroup(
  * and attach anchors separately (see {@link resolveCardAnchor}).
  */
 export function buildPreparedCardContents(options: PreparedCardContentOptions): PreparedCardContent[] {
-  const metrics = computePreparedCardMetrics(options);
-  const fieldFontSize = (field: CardFontField) => cardFieldFontSize(field, options.fontSize, options.fieldTypography);
+  const standardMetrics = computePreparedCardMetrics(options);
   const formatName = (name: string) => formatStudentName(name, options.nameFormat ?? DEFAULT_NAME_FORMAT);
   const { expressionTemplates, grouping } = options;
 
   return options.groups.map((group) => {
+    const referenceInput = options.presentation && options.presentation !== "standard" ? {
+      presentation: options.presentation,
+      width: standardMetrics.cardWidth,
+      fontSize: options.fontSize,
+      fieldTypography: options.fieldTypography,
+      fieldFonts: options.fieldFonts,
+      userFonts: options.userFonts,
+      measureText: options.measureText,
+      visibleFields: [...options.visibleFields],
+      horizontalPadding: options.horizontalPadding,
+      bottomPadding: options.bottomPadding,
+      topPadding: options.topPadding,
+      lineHeightMultiplier: options.lineHeightMultiplier,
+      compactLayout: options.compactLayout,
+      showCount: options.showCount !== false,
+      count: group.count,
+    } : undefined;
+    const initialReference = referenceInput ? referenceCardMetrics(referenceInput) : undefined;
+    const initialMetrics = initialReference ? { ...standardMetrics, ...initialReference } : standardMetrics;
     const isInternational = group.students.every((student) => student.locationScope === "international");
     const province = isInternational || !group.students[0] ? "" : resolveStudentLocation(group.students[0]).province;
-    const rows = cardRowsForGroup(group, grouping, options.visibleFields, options.citySubgroups, formatName)
-      .map((row): PreparedCardRow => {
-        const context = {
-          group: group.title,
-          count: group.count,
-          province: grouping === "province" ? group.title : resolveStudentLocation(group.students[0]!).province,
-          city: row.city ?? group.students[0]?.city,
-          university: row.university,
-          names: row.names,
-        };
+    const sourceRows = cardRowsForGroup(group, grouping, options.visibleFields, options.citySubgroups, formatName)
+      .map((row) => {
+        const context = { group: group.title, count: group.count,
+          province: grouping === "province" ? group.title : province,
+          city: row.city ?? group.students[0]?.city, university: row.university, names: row.names };
         const fragments = row.cityHeading
           ? [{ text: formatCardExpression(expressionTemplates.city, context, row.cityHeading), field: "city" as const }]
           : rowFragments(row, expressionTemplates.row, context);
-        return {
-          ...row,
-          lines: wrapCardText(
-            fragments,
-            metrics.contentWidth,
-            row.cityHeading ? fieldFontSize("city") : metrics.rowFontSize,
-            { preserveFields: options.noWrapFields },
-          ),
-        };
+        return { row, fragments };
       });
-    const lineCount = rows.reduce((total, row) => total + row.lines.length, 0);
     const title = formatCardExpression(expressionTemplates.title, {
-      group: group.title,
-      count: group.count,
-      province: grouping === "province" ? group.title : resolveStudentLocation(group.students[0]!).province,
+      group: group.title, count: group.count,
+      province: grouping === "province" ? group.title : province,
       city: grouping === "city" ? group.title : undefined,
       university: grouping === "university" ? group.students[0]?.university : undefined,
     }, group.title);
-    const titleLines = wrapCardText([{ text: title, field: "title" as const }], metrics.titleWidth, metrics.titleFontSize);
+    const width = resolveContentCardWidth(options, initialMetrics, title, sourceRows);
+    const measuredStandard = width === standardMetrics.cardWidth ? standardMetrics : computePreparedCardMetrics({ ...options, maxWidth: width });
+    if (referenceInput) referenceInput.width = width;
+    const reference = referenceInput ? referenceCardMetrics(referenceInput) : undefined;
+    const metrics = reference ? { ...measuredStandard, ...reference } : measuredStandard;
+    const rows: PreparedCardRow[] = sourceRows.map(({ row, fragments }) => ({
+      ...row, lines: wrapStyledCardText(fragments, metrics.contentWidth, cardRowTextOptions(options, Boolean(row.cityHeading))),
+    }));
+    const lineCount = rows.reduce((total, row) => total + row.lines.length, 0);
+    const titleLines = wrapStyledCardText([{ text: title, field: "title" }], metrics.titleWidth, {
+      fontSize: metrics.titleFontSize,
+      fontWeight: options.presentation === "city-label" ? 900 : referenceInput ? 800 : 700,
+      fieldFonts: options.fieldFonts,
+      userFonts: options.userFonts,
+      measureText: options.measureText,
+    });
     const headerExtra = Math.max(0, titleLines.length - 1) * metrics.titleLineHeight;
+    const referenceMetrics = referenceInput
+      ? referenceCardMetrics({ ...referenceInput, titleLineCount: titleLines.length, bodyLineCount: lineCount })
+      : undefined;
+    const topInset = options.topPadding === undefined ? 0 : options.topPadding - 12;
     return {
-      group,
-      province,
-      isInternational,
-      rows,
-      titleLines,
-      headerExtra,
+      group, province, isInternational, rows, titleLines, headerExtra,
       width: metrics.cardWidth,
-      height: destinationCardHeight(lineCount, metrics.rowHeight, options.bottomPadding, headerExtra),
+      height: referenceMetrics?.height ?? destinationCardHeight(lineCount, metrics.rowHeight, options.bottomPadding, headerExtra) + topInset,
+      ...(referenceMetrics ? { referenceMetrics } : {}),
+      ...(topInset ? { topInset } : {}),
     };
   });
 }

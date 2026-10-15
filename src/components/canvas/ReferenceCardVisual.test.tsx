@@ -96,16 +96,13 @@ describe("ReferenceCardVisual", () => {
     }
   });
 
-  it("hides the city heading everywhere except the stat card, which keeps it smaller", () => {
-    const pill = renderVisual("color-pill");
-    expect(pill.container.querySelector('[data-card-row-line="city-北京市"]')).toBeNull();
-    pill.dispose();
-
-    const stat = renderVisual("glass-stat");
-    const heading = stat.container.querySelector('[data-card-row-line="city-北京市"]')!;
+  it.each(presentations)("preserves requested city headings in %s with secondary typography", (presentation) => {
+    const { container, dispose } = renderVisual(presentation);
+    const heading = container.querySelector('[data-card-row-line="city-北京市"]')!;
+    expect(heading.textContent).toBe("北京市");
     expect(heading.getAttribute("font-size")).toBe("11");
     expect(heading.getAttribute("fill")).toBe("#e95646");
-    stat.dispose();
+    dispose();
   });
 
   it("numbers body lines continuously so later rows start below the wrapped ones", () => {
