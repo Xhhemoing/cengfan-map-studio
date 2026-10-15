@@ -231,6 +231,7 @@ describe("LegacyEditorSidebar 交付面板", () => {
     return {
       exportingPng: false,
       exportState: "idle",
+      exportIsStale: false,
       exportError: undefined,
       lastExportFileName: undefined,
       pngScale: 1,

@@ -1,9 +1,11 @@
-import { Copy, FolderOpen, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { ProjectActionsMenu } from "./ProjectActionsMenu";
 import type { ProjectListItem } from "../../lib/project-store";
+import { ProjectPreview } from "./ProjectPreview";
+import { useId } from "react";
 
 export function ProjectCard({ project, updatedAtLabel, menuOpen, onOpen, onToggleMenu, onRename, onDuplicate, onExport, onDelete }: {
   /** 元数据视图即可渲染卡片;`StoredProject` 也满足这个形状。 */
-  project: Pick<ProjectListItem, "name" | "pack">;
+  project: Pick<ProjectListItem, "name" | "pack" | "preview">;
   updatedAtLabel: string;
   menuOpen: boolean;
   onOpen: () => void;
@@ -14,28 +16,18 @@ export function ProjectCard({ project, updatedAtLabel, menuOpen, onOpen, onToggl
   onDelete: () => void;
 }) {
   const studentCount = project.pack.project.students.length;
+  const previewId = useId();
   return (
     <article className="workbench-card">
-      <button type="button" className="workbench-card-main" aria-label={`打开项目 ${project.name}`} onClick={onOpen}>
-        <span className="workbench-card-preview" aria-hidden="true">
-          <span className="workbench-card-preview__map" />
-          <span className="workbench-card-preview__pin" />
-        </span>
-        <strong>{project.name}</strong>
+      <button type="button" className="workbench-card-main" aria-label={`打开项目 ${project.name}`} aria-describedby={previewId} onClick={onOpen}>
+        <ProjectPreview id={previewId} preview={project.preview} />
+        <strong title={project.name}>{project.name}</strong>
         <small>
           <span className="workbench-card-count">{studentCount}</span>
           {" "}名学生 · 更新于 {updatedAtLabel}
         </small>
       </button>
-      <div className="workbench-card-menu">
-        <button type="button" aria-label="项目菜单" aria-expanded={menuOpen} onClick={onToggleMenu}><MoreHorizontal size={16} /></button>
-        {menuOpen && <div className="workbench-menu" role="menu">
-          <button type="button" role="menuitem" onClick={onRename}><Pencil size={14} /> 重命名</button>
-          <button type="button" role="menuitem" onClick={onDuplicate}><Copy size={14} /> 复制</button>
-          <button type="button" role="menuitem" onClick={onExport}><FolderOpen size={14} /> 导出工程包</button>
-          <button type="button" role="menuitem" onClick={onDelete}><Trash2 size={14} /> 删除</button>
-        </div>}
-      </div>
+      <ProjectActionsMenu name={project.name} open={menuOpen} onToggle={onToggleMenu} onRename={onRename} onDuplicate={onDuplicate} onExport={onExport} onDelete={onDelete} />
     </article>
   );
 }

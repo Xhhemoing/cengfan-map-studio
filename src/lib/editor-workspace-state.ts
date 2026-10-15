@@ -19,15 +19,29 @@ export interface EditorWorkspaceSnapshot {
 /** 编辑器工作区在会话、协作与本地存储之间的搬运:全部是纯换算,setState 留给 App。 */
 
 /**
- * 上次会话记下的选区。省份优先于其它对象:省份是唯一带自己坐标的选择,
- * 认不出来的对象一律退回副标题,而不是留空选区(空选区会让属性面板首屏是空的)。
+ * 优先读取完整选区,并兼容旧省份/对象键。只有真实工作区水合后才传 project 校验
+ * 文字/素材是否存在:项目加载前的浏览器镜像可能属于另一个项目,不能据此清除选区。
  */
-export function restoredSceneSelection(session: WorkspaceSession): SceneSelection {
+function rememberedSceneSelection(session: WorkspaceSession): SceneSelection {
+  if (session.selection) return session.selection;
   if (session.selectedProvince) return { type: "province", province: session.selectedProvince };
   if (session.selectedObject === "cards") return { type: "cards" };
   if (session.selectedObject === "guests") return { type: "guests" };
   if (session.selectedObject) return { type: "asset", id: session.selectedObject };
   return { type: "text", id: "text-note" };
+}
+
+export function restoredSceneSelection(session: WorkspaceSession, project?: ProjectDocument): SceneSelection {
+  const selection = rememberedSceneSelection(session);
+  if (!project) return { ...selection };
+  const missing = (selection.type === "text" && !project.textElements.some((element) => element.id === selection.id))
+    || (selection.type === "asset" && !project.assetElements.some((element) => element.id === selection.id));
+  if (missing) {
+    return project.textElements.some((element) => element.id === "text-note")
+      ? { type: "text", id: "text-note" }
+      : { type: "canvas" };
+  }
+  return { ...selection };
 }
 
 /** 一份完整工作区落到编辑器状态上要动的全部 setter。 */

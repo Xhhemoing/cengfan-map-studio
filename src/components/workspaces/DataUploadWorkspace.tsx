@@ -9,6 +9,7 @@ import { DataQualityPanel } from "../DataQualityPanel";
 import { DataWorkspace } from "../DataWorkspace";
 import { SearchCombobox } from "../SearchCombobox";
 import { CompactButton, PanelHeader } from "../StudioUi";
+import "./data-upload-workspace.css";
 
 function MappingIssueRow({
   student,
@@ -108,7 +109,9 @@ export function DataUploadWorkspace({
         <div className="data-upload-workspace__status" aria-label="名单状态">
           <span><strong>{summary.total}</strong> 总记录</span>
           <span><strong>{summary.visible}</strong> 可见</span>
+          <span><strong>{summary.hidden}</strong> 隐藏</span>
           <span><strong>{summary.duplicate ?? 0}</strong> 重复</span>
+          {summary.unresolved > 0 && <span><strong>{summary.unresolved}</strong> 未匹配城市</span>}
         </div>
       </header>
       <div className="data-upload-workspace__body">
@@ -118,6 +121,7 @@ export function DataUploadWorkspace({
             {...dataWorkspaceProps}
             hideDataExpression
             hideWorkbenchHeader
+            hideRosterSummary
             compactRosterControls
             selectedStudentId={dataWorkspaceProps.selectedStudentId}
             onSelectStudent={handleSelectStudent}
@@ -173,16 +177,18 @@ export function DataUploadRail({
   }
   const distributionEntries = [...provinceDistribution.entries()]
     .sort((left, right) => right[1].count - left[1].count || left[0].localeCompare(right[0], "zh-CN"));
+  const warningCount = issues.filter((issue) => issue.severity === "warning").length;
+  const infoCount = issues.length - warningCount;
 
   return (
     <aside className="data-upload-workspace__rail" aria-label="数据工作台侧栏">
       <section className="data-upload-workspace__quality" aria-label="数据质量">
-        <PanelHeader title="数据质量" meta={`${issues.length} 项待检查`} />
+        <PanelHeader title="数据质量" meta={`${warningCount} 项提醒 · ${infoCount} 项说明`} />
         <div className="data-upload-workspace__quality-intro">
           <ShieldCheck size={18} aria-hidden />
           <span>问题只提示，不会自动删除记录。</span>
         </div>
-        <DataQualityPanel issues={issues} onSelectStudent={handleSelectStudent} />
+        <DataQualityPanel issues={issues} onSelectStudent={handleSelectStudent} embedded />
 
         <section className="data-upload-workspace__mapping" aria-label="地图映射">
           <PanelHeader title="地图映射 · 省份管理" meta={`${distributionEntries.length} 个省`} />

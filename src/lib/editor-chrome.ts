@@ -25,8 +25,8 @@ export function loadStoredRenderSettings(getStorage: () => StorageLike | null | 
 }
 
 /**
- * 会话快照只记「回来时该停在哪」。省份/对象两个选区键在没有选中时要真的不写入,
- * 留一个 undefined 会被序列化成缺席以外的状态,下次启动就恢复出一个并不存在的选区。
+ * 会话快照记下完整选区;旧省份/对象键继续写入,供较早版本读取。
+ * 每次都移除旧选区键再重建,避免文字或画布选择继承上一次选中的省份/素材。
  */
 export function nextWorkspaceSession(
   base: WorkspaceSession,
@@ -43,6 +43,7 @@ export function nextWorkspaceSession(
   return {
     ...sessionBase,
     stage: input.stage,
+    selection: { ...selection },
     ...(selectedProvince ? { selectedProvince } : {}),
     ...(selectedObject ? { selectedObject } : {}),
     savedAt: input.savedAt ?? new Date().toISOString(),

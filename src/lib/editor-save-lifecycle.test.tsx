@@ -130,6 +130,67 @@ describe("useWorkspaceSaveLifecycle", () => {
     expect(harness.saved).toHaveLength(1);
   });
 
+  it("keeps the editor after a failed save and permits a successful back-navigation retry", async () => {
+    window.location.hash = "#/project/project-1";
+    const saveLocal = vi.fn().mockRejectedValueOnce(new Error("quota")).mockResolvedValue(undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const harness = mount({ projectId: "project-1", saveLocal });
+
+    await act(async () => { await harness.lifecycle.backToWorkbench(); });
+    expect(window.location.hash).toBe("#/project/project-1");
+    expect(harness.sync.getState().status).toBe("failed");
+    expect(harness.statuses[0]).toContain("当前编辑器已保留");
+    expect(harness.statuses[0]).toContain("导出工程包");
+
+    await act(async () => { await harness.lifecycle.backToWorkbench(); });
+    expect(saveLocal).toHaveBeenCalledTimes(2);
+    expect(window.location.hash).toBe("#/");
+  });
+
+  it("keeps project-record failures in the editor and releases the page-leave save guard", async () => {
+    window.location.hash = "#/project/project-2";
+    const saveLocal = vi.fn().mockRejectedValueOnce(new Error("project write")).mockResolvedValue(undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const harness = mount({ projectId: "project-2", saveLocal });
+    harness.record.saveErrorRef.current = "QuotaExceededError";
+    harness.hasLocalEdits.current = true;
+
+    await act(async () => { await harness.lifecycle.backToWorkbench(); });
+    expect(window.location.hash).toBe("#/project/project-2");
+    expect(harness.statuses[0]).toContain("项目记录写入失败（QuotaExceededError）");
+
+    await act(async () => { window.dispatchEvent(new Event("pagehide")); await Promise.resolve(); });
+    expect(saveLocal).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the editor when new edits arrive during back-navigation saving", async () => {
+    window.location.hash = "#/project/project-3";
+    let release!: () => void;
+    const saveLocal = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; })).mockResolvedValue(undefined);
+    const harness = mount({ projectId: "project-3", saveLocal });
+    let pending!: Promise<void>;
+    act(() => { pending = harness.lifecycle.backToWorkbench(); });
+    harness.sync.markPending();
+    await act(async () => { release(); await pending; });
+
+    expect(window.location.hash).toBe("#/project/project-3");
+    expect(harness.sync.getState().status).toBe("pending");
+    expect(harness.statuses).toEqual(["保存期间产生了新修改，当前编辑器已保留。请再次保存当前版本后返回项目列表。"]);
+    await act(async () => { await harness.lifecycle.backToWorkbench(); });
+    expect(window.location.hash).toBe("#/");
+    expect(saveLocal).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports newer changes after a direct save without misreporting a storage failure", async () => {
+    let release!: () => void;
+    const harness = mount({ projectId: "project-4", saveLocal: () => new Promise<void>((resolve) => { release = resolve; }) });
+    let pending!: Promise<void>;
+    act(() => { pending = harness.lifecycle.overwriteBrowserStorage(); });
+    harness.sync.markPending();
+    await act(async () => { release(); await pending; });
+    expect(harness.statuses).toEqual(["点击保存时的版本已保存，期间产生了新修改。请再次保存当前版本。"]);
+  });
+
   it("navigates without saving while the project is still loading or missing", async () => {
     const loading = mount({ projectId: "project-1", projectLoading: true });
     await act(async () => { await loading.lifecycle.backToWorkbench(); });

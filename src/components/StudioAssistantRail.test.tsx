@@ -172,6 +172,9 @@ describe("StudioAssistantRail", () => {
       },
     });
     click(container.querySelector('[role="tab"][aria-controls="studio-stage-panel"]')!);
+    // 空名单仍可编辑内容；ready 不应被描述成用户已完成制作。
+    expect(container.querySelector('[data-stage-status="ready"]')?.textContent).toBe("可继续");
+    expect(container.querySelector("#studio-stage-panel")?.textContent).not.toContain("已完成");
     click(container.querySelector("button.studio-stage-overview__card--action")!);
 
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("高级功能");

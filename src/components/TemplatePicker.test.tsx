@@ -31,6 +31,14 @@ const baseProps = {
 };
 
 describe("TemplatePicker", () => {
+  it("announces exactly the current built-in template and no unknown selection", () => {
+    const selected = render(<TemplatePicker {...baseProps} onApplyTemplate={vi.fn()} />);
+    expect(selected.querySelectorAll('[aria-pressed="true"]')).toHaveLength(1);
+    expect(selected.querySelector('[aria-pressed="true"]')?.textContent).toBe("原始地图");
+    const unknown = render(<TemplatePicker {...baseProps} currentTemplateId="missing" onApplyTemplate={vi.fn()} />);
+    expect(unknown.querySelectorAll('[aria-pressed="true"]')).toHaveLength(0);
+    expect(unknown.querySelectorAll('[aria-pressed="false"]')).toHaveLength(2);
+  });
   it("renders nothing extra when no exchange slot is provided", () => {
     const container = render(<TemplatePicker {...baseProps} onApplyTemplate={vi.fn()} />);
 

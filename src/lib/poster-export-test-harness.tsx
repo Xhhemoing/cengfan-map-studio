@@ -127,6 +127,8 @@ export interface Harness {
   statuses: string[];
   imported: ProjectPackage[];
   render: () => void;
+  setProject: (next: ReturnType<typeof createProjectDocument>) => void;
+  setRenderProject: (next: ReturnType<typeof createProjectDocument> | undefined) => void;
   poster: SVGSVGElement | null;
   project: ReturnType<typeof createProjectDocument>;
 }
@@ -135,7 +137,8 @@ export function mountHook(options: { withPoster?: boolean; getProjectName?: () =
   const statuses: string[] = [];
   const imported: ProjectPackage[] = [];
   let latest: UsePosterExportResult | null = null;
-  const project = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+  let project = createProjectDocument({ students: sampleStudents, templateId: "original", dataView: "province" });
+  let renderProject: ReturnType<typeof createProjectDocument> | undefined;
   const poster = options.withPoster === false
     ? null
     : (document.createElementNS("http://www.w3.org/2000/svg", "svg") as SVGSVGElement);
@@ -145,6 +148,7 @@ export function mountHook(options: { withPoster?: boolean; getProjectName?: () =
     latest = usePosterExport({
       posterRef,
       project,
+      renderProject,
       userAssets: [],
       userFonts: [],
       customTemplates: [],
@@ -170,8 +174,16 @@ export function mountHook(options: { withPoster?: boolean; getProjectName?: () =
     statuses,
     imported,
     poster,
-    project,
+    get project() { return project; },
     render: () => act(() => root.render(<HookHarness />)),
+    setProject: (next) => {
+      project = next;
+      act(() => root.render(<HookHarness />));
+    },
+    setRenderProject: (next) => {
+      renderProject = next;
+      act(() => root.render(<HookHarness />));
+    },
   };
 }
 

@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { type CSSProperties, type KeyboardEvent, useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 export interface SearchComboboxOption {
   value: string;
@@ -26,6 +26,7 @@ export function SearchCombobox({
 }) {
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
+  const blurTimerRef = useRef<number | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [portalStyle, setPortalStyle] = useState<CSSProperties | null>(null);
@@ -35,6 +36,17 @@ export function SearchCombobox({
     if (options.some((option) => option.value === value)) return options;
     return [{ value, label: value, detail: "使用自定义" }, ...options];
   }, [options, value, allowFreeInput]);
+  const listVisible = isOpen && displayOptions.length > 0 && (!portal || portalStyle !== null);
+  const activeOption = listVisible && activeIndex >= 0 ? displayOptions[activeIndex] : undefined;
+
+  const cancelBlurTimer = () => {
+    if (blurTimerRef.current !== null) window.clearTimeout(blurTimerRef.current);
+    blurTimerRef.current = null;
+  };
+
+  useEffect(() => () => {
+    if (blurTimerRef.current !== null) window.clearTimeout(blurTimerRef.current);
+  }, []);
 
   const updatePortalPosition = useCallback(() => {
     const input = inputRef.current;
@@ -72,12 +84,13 @@ export function SearchCombobox({
 
   const selectOption = (option: SearchComboboxOption) => {
     onChange(option.value);
+    inputRef.current?.focus();
     setIsOpen(false);
     setActiveIndex(-1);
-    inputRef.current?.blur();
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       if (displayOptions.length > 0) {
@@ -97,17 +110,22 @@ export function SearchCombobox({
     }
 
     if (event.key === "Enter") {
+      if (!listVisible) return;
       event.preventDefault();
-      if (isOpen && activeIndex >= 0) {
-        selectOption(displayOptions[activeIndex]!);
+      if (activeOption) {
+        selectOption(activeOption);
       } else if (allowFreeInput && value.trim()) {
         setIsOpen(false);
-        inputRef.current?.blur();
+        setActiveIndex(-1);
       }
       return;
     }
 
     if (event.key === "Escape") {
+      if (listVisible) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       setIsOpen(false);
       setActiveIndex(-1);
     }
@@ -126,6 +144,7 @@ export function SearchCombobox({
           key={option.value}
           type="button"
           role="option"
+          tabIndex={-1}
           aria-selected={activeIndex === index}
           className={activeIndex === index ? "is-active" : undefined}
           onMouseDown={(event) => event.preventDefault()}
@@ -144,9 +163,9 @@ export function SearchCombobox({
         ref={inputRef}
         aria-label={label}
         aria-autocomplete="list"
-        aria-controls={listId}
-        aria-expanded={isOpen && options.length > 0}
-        aria-activedescendant={activeIndex >= 0 ? `${listId}-option-${activeIndex}` : undefined}
+        aria-controls={listVisible ? listId : undefined}
+        aria-expanded={listVisible}
+        aria-activedescendant={activeOption ? `${listId}-option-${activeIndex}` : undefined}
         role="combobox"
         value={value}
         placeholder={placeholder}
@@ -155,9 +174,20 @@ export function SearchCombobox({
           setIsOpen(true);
           setActiveIndex(-1);
         }}
-        onFocus={() => setIsOpen(true)}
+        onFocus={() => {
+          cancelBlurTimer();
+          setIsOpen(true);
+        }}
         onBlur={() => {
-          window.setTimeout(() => setIsOpen(false), 120);
+          cancelBlurTimer();
+          blurTimerRef.current = window.setTimeout(() => {
+            blurTimerRef.current = null;
+            const input = inputRef.current;
+            // A quick Tab back must not let an older blur close new suggestions.
+            if (!input || input.ownerDocument.activeElement === input) return;
+            setIsOpen(false);
+            setActiveIndex(-1);
+          }, 120);
         }}
         onKeyDown={handleKeyDown}
       />

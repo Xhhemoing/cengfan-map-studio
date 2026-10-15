@@ -37,6 +37,8 @@ export interface EditorNavigationActionDeps {
   toggleProjectMenu(): void;
   setCollaborationOpen(open: boolean): void;
   exportPng(): void;
+  /** Retry the format remembered by the export pipeline. */
+  retryLastExport(): void;
   /**
    * 旧版编辑器仍以「全局设置」承载画布/展示框/渲染三块设置;新版把它们拆进了
    * 名单/版式/内容三个阶段,同一个入口按钮在两条路径上要落到不同的地方。
@@ -175,6 +177,10 @@ export function createEditorNavigationActions(deps: EditorNavigationActionDeps) 
       }
       if (action.kind === "export-png") {
         deps.exportPng();
+        return;
+      }
+      if (action.kind === "retry-export") {
+        deps.retryLastExport();
         return;
       }
     },

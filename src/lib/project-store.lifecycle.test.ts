@@ -41,6 +41,7 @@ describe("IndexedDB project store lifecycle", () => {
       assetCount: 1,
       fontCount: 0,
       customTemplateCount: 0,
+      preview: { canvasWidth: 1500, canvasHeight: 1000, dataView: "province" },
     });
     expect(listed?.pack).not.toHaveProperty("assets");
     expect((await store.get("proj-metadata"))?.pack.assets[0]?.id).toBe("asset-1");

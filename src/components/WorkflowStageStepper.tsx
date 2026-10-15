@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useId, useRef } from "react";
 import { AlertTriangle, Check, Circle } from "lucide-react";
 import type { WorkflowProgress, WorkflowStepStatus } from "../lib/workflow-progress";
 import {
@@ -27,6 +27,7 @@ export function WorkflowStageStepper({
   onChange: (id: WorkflowStageId) => void;
 }) {
   const navRef = useRef<HTMLElement>(null);
+  const descriptionId = useId();
   useEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
@@ -73,14 +74,18 @@ export function WorkflowStageStepper({
       {WORKFLOW_STAGES.map((stage, index) => {
         const status = project ? getWorkflowStageStatus(stage.id, project, progress) : "ready";
         const warningCount = getWorkflowStageWarningCount(stage.id, progress);
-        return (
+        const hiddenCount = stage.id === "data" || stage.id === "export" ? progress.roster.counts.hidden : 0;
+        const statusDescription = hiddenCount > 0
+          ? `${hiddenCount} 条隐藏记录需检查${warningCount > 0 ? `，${warningCount} 条记录未定位` : ""}`
+          : status === "empty" ? "未开始" : status === "warning" ? "需检查" : "可继续";
+        return <Fragment key={stage.id}>
           <button
-            key={stage.id}
             type="button"
             className={activeId === stage.id ? "is-active" : undefined}
             aria-current={activeId === stage.id ? "step" : undefined}
             aria-label={warningCount > 0 ? `${stage.label}，${warningCount} 项待处理` : stage.label}
-            title={stage.description}
+            aria-describedby={`${descriptionId}-${stage.id}`}
+            title={`${stage.description} · ${statusDescription}`}
             onClick={() => onChange(stage.id)}
           >
             <span className="workflow-stepper__number">{index + 1}</span>
@@ -90,7 +95,8 @@ export function WorkflowStageStepper({
               {warningCount > 0 && <small>{warningCount}</small>}
             </span>
           </button>
-        );
+          <span className="sr-only" id={`${descriptionId}-${stage.id}`}>{statusDescription}</span>
+        </Fragment>;
       })}
     </nav>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import Drawer from "@mui/material/Drawer";
+import { useStudioUiThemeScope } from "../lib/studio-ui-theme";
 
 export type StudioAssistantDrawerProps = {
   open: boolean;
@@ -23,6 +24,7 @@ export function StudioAssistantDrawer({
   returnFocusTo,
 }: StudioAssistantDrawerProps) {
   const titleId = useId();
+  const uiScope = useStudioUiThemeScope();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const prevOpenRef = useRef(open);
 
@@ -48,7 +50,13 @@ export function StudioAssistantDrawer({
       onClose={onClose}
       aria-labelledby={titleId}
       slotProps={{
-        paper: { className: "studio-assistant-drawer__paper" },
+        paper: {
+          className: "app-shell studio-ui-theme-scope studio-assistant-drawer__paper",
+          ...uiScope,
+          role: "dialog",
+          "aria-modal": true,
+          "aria-labelledby": titleId,
+        },
       }}
     >
       <div className="studio-assistant-drawer__head">
@@ -58,6 +66,7 @@ export function StudioAssistantDrawer({
           type="button"
           className="studio-assistant-drawer__close"
           aria-label={`关闭${label}`}
+          title={`关闭${label}`}
           onClick={onClose}
         >
           ×

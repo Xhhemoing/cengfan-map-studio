@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { StudioEditorShell } from "./StudioEditorShell";
 import { StudioTopbar } from "./StudioTopbar";
 import { StudioAssistantDrawer } from "./StudioAssistantDrawer";
+import { StudioUiThemeProvider } from "./StudioUiThemeProvider";
 import type { WorkflowStageId } from "../lib/workflow-stages";
 
 /** 阶段渲染分派返回的槽位（T1）。rightRailLabel 由 STAGE_METADATA 提供，不在此重复。 */
@@ -15,6 +16,8 @@ export interface StageSlots {
 }
 
 export type StudioLayoutTemplateProps = {
+  /** Always-visible project name and save action, independent of the tools menu. */
+  projectIdentity?: ReactNode;
   /** 编辑器主题（浅色/深色/跟随系统）与皮肤（atelier/classic）。 */
   theme: string;
   skin: string;
@@ -54,6 +57,7 @@ export type StudioLayoutTemplateProps = {
  * 阶段之间只通过槽位（slots）区分内容，外壳本身完全共用。
  */
 export function StudioLayoutTemplate({
+  projectIdentity,
   theme,
   skin,
   stage,
@@ -72,22 +76,25 @@ export function StudioLayoutTemplate({
   children,
 }: StudioLayoutTemplateProps) {
   return (
-    <div className="app-shell" data-editor-theme={theme} data-editor-skin={skin}>
-      <StudioTopbar
-        assistantEntry={assistantEntry}
-        historyActions={historyActions}
-        stageActions={stageActions}
-        projectActions={projectActions}
-        workflowNav={workflowNav}
-      />
-      <StudioEditorShell stage={stage} leftRail={leftRail} rightRail={rightRail} rightRailLabel={rightRailLabel}>
-        {children}
-      </StudioEditorShell>
-      {statusStrip}
-      <StudioAssistantDrawer open={drawerOpen} onClose={onDrawerClose} label="AI 助手与高级功能">
-        {leftRail}
-      </StudioAssistantDrawer>
-      {dialogs}
-    </div>
+    <StudioUiThemeProvider theme={theme} skin={skin}>
+      <div className="app-shell" data-editor-theme={theme} data-editor-skin={skin}>
+        <StudioTopbar
+          projectIdentity={projectIdentity}
+          assistantEntry={assistantEntry}
+          historyActions={historyActions}
+          stageActions={stageActions}
+          projectActions={projectActions}
+          workflowNav={workflowNav}
+        />
+        <StudioEditorShell stage={stage} leftRail={leftRail} rightRail={rightRail} rightRailLabel={rightRailLabel}>
+          {children}
+        </StudioEditorShell>
+        {statusStrip}
+        <StudioAssistantDrawer open={drawerOpen} onClose={onDrawerClose} label="AI 助手与高级功能">
+          {leftRail}
+        </StudioAssistantDrawer>
+        {dialogs}
+      </div>
+    </StudioUiThemeProvider>
   );
 }

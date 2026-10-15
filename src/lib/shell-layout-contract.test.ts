@@ -8,7 +8,9 @@ import { describe, expect, it } from "vitest";
  * row and collapsed the 1fr canvas row (map clipped, stepper hidden).
  */
 describe("editor shell layout contract", () => {
-  const css = readFileSync("src/styles.css", "utf-8");
+  const css = ["src/styles.css", "src/styles/studio-shell.css"]
+    .map((path) => readFileSync(path, "utf-8"))
+    .join("\n");
 
   function ruleBody(selector: string): string {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

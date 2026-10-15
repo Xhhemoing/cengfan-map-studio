@@ -92,6 +92,7 @@ describe("WorkflowGuide", () => {
     const bar = container.querySelector(".workflow-guide__bar");
     expect(bar?.textContent).toContain("准备名单");
     expect(bar?.textContent).toContain("1/5");
+    expect(bar?.getAttribute("aria-label")).toBe("制作流程：1/5 准备名单，可继续");
     expect(container.querySelectorAll(".workflow-guide__dot")).toHaveLength(5);
     expect(container.querySelector(".workflow-guide__dot")?.getAttribute("data-status")).toBe("ready");
   });
@@ -117,6 +118,7 @@ describe("WorkflowGuide", () => {
     }
     const active = buttons.find((button) => button.getAttribute("aria-current") === "step");
     expect(active?.textContent).toContain("准备名单");
+    expect(active?.querySelector(".workflow-nav__badge")?.getAttribute("aria-label")).toBe("准备名单：可继续");
   });
 
   it("clicking a step reports its id", () => {
@@ -156,9 +158,15 @@ describe("WorkflowGuide", () => {
   });
 
   it("expands the layout step with global section shortcuts", () => {
-    const { container, onOpenGlobalSettings } = renderGuide({ activeStep: "layout" });
+    const { container, onOpenGlobalSettings } = renderGuide({
+      activeStep: "layout",
+      progress: computeWorkflowProgress(createProjectDocument({ students: [], templateId: "original", dataView: "province" })),
+    });
     clickBar(container);
 
+    // 版式在空名单时也可编辑；状态说明不能宣称制作已完成。
+    expect(container.querySelector(".workflow-guide__bar")?.getAttribute("aria-label")).toBe("制作流程：3/5 全局布局，可继续");
+    expect(container.querySelector('[aria-current="step"] .workflow-nav__badge')?.getAttribute("aria-label")).toBe("全局布局：可继续");
     click(Array.from(container.querySelectorAll(".workflow-step-panel button"))
       .find((item) => item.textContent?.trim() === "画布")!);
     expect(onOpenGlobalSettings).toHaveBeenCalledWith("canvas");
@@ -240,6 +248,8 @@ describe("WorkflowGuide", () => {
     const { container, onExportPng, onExportSvg, onExportProject, onSaveLocal } = renderGuide({ activeStep: "export" });
     clickBar(container);
 
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain("前往交付检查");
+    expect(container.querySelector('[aria-current="step"]')?.textContent).not.toContain("可以导出海报");
     click(Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.includes("导出 PNG"))!);
     click(Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.includes("导出 SVG"))!);
     click(Array.from(container.querySelectorAll("button")).find((item) => item.textContent?.includes("导出工程"))!);

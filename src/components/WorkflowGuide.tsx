@@ -52,7 +52,7 @@ function stepSubtitle(step: WorkflowStepProgress, dataViewLabel: string): string
         if (step.counts.hidden > 0) parts.push(`${step.counts.hidden} 条隐藏`);
         return parts.join(" · ");
       }
-      return "可以导出海报";
+      return "前往交付检查";
     }
   }
 }
@@ -151,7 +151,7 @@ export function WorkflowGuide({
               <span
                 className="workflow-nav__badge"
                 data-status={progressForStep.status}
-                aria-label={`${step.title}：${progressForStep.status === "ready" ? "已完成" : progressForStep.status === "warning" ? "有警告" : "未开始"}`}
+                aria-label={`${step.title}：${progressForStep.status === "ready" ? "可继续" : progressForStep.status === "warning" ? "有警告" : "未开始"}`}
               >
                 {badgeText(progressForStep.status, step.index)}
               </span>
@@ -290,7 +290,7 @@ export function WorkflowGuide({
         type="button"
         className="workflow-guide__bar"
         aria-expanded={open}
-        aria-label={`制作流程：${activeStepMeta.index}/5 ${activeStepMeta.title}，${activeProgress.status === "ready" ? "已完成" : activeProgress.status === "warning" ? "有警告" : "未开始"}`}
+        aria-label={`制作流程：${activeStepMeta.index}/5 ${activeStepMeta.title}，${activeProgress.status === "ready" ? "可继续" : activeProgress.status === "warning" ? "有警告" : "未开始"}`}
         onClick={() => setOpen((value) => !value)}
       >
         <span className="workflow-guide__step">

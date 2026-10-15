@@ -10,6 +10,7 @@ import { RENDER_SETTINGS_KEY } from "./app-constants";
 import type { UserFont } from "./fonts";
 import { DEFAULT_RENDER_SETTINGS } from "./render-settings";
 import { DEFAULT_WORKSPACE_SESSION, type WorkspaceSession } from "./workspace-session";
+import type { SceneSelection } from "./scene-document";
 
 function storageWith(value: string | null): Pick<Storage, "getItem"> {
   return { getItem: () => value };
@@ -58,7 +59,7 @@ describe("nextWorkspaceSession", () => {
       savedAt: "2024-02-02T00:00:00.000Z",
     });
 
-    expect(session).toEqual({ stage: "map", selectedProvince: "浙江省", savedAt: "2024-02-02T00:00:00.000Z" });
+    expect(session).toEqual({ stage: "map", selection: { type: "province", province: "浙江省" }, selectedProvince: "浙江省", savedAt: "2024-02-02T00:00:00.000Z" });
   });
 
   it("records cards and guests selections under the object key", () => {
@@ -74,6 +75,19 @@ describe("nextWorkspaceSession", () => {
 
     expect("selectedProvince" in session).toBe(false);
     expect("selectedObject" in session).toBe(false);
+    expect(session.selection).toEqual({ type: "canvas" });
+  });
+
+  it.each<SceneSelection>([
+    { type: "text", id: "text-title" }, { type: "map" }, { type: "canvas" },
+  ])("remembers $type selections and clears stale legacy object keys", (selection) => {
+    const session = nextWorkspaceSession({ ...base, selectedObject: "old-asset", selectedProvince: "浙江省" }, {
+      stage: "content", selection, savedAt: "now",
+    });
+    expect(session.selection).toEqual(selection);
+    expect(session.selection).not.toBe(selection);
+    expect(session.selectedObject).toBeUndefined();
+    expect(session.selectedProvince).toBeUndefined();
   });
 
   it("stamps the current time when the caller does not supply one", () => {

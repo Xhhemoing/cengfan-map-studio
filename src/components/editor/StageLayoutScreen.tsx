@@ -32,6 +32,7 @@ export interface StageLayoutScreenProps {
   assistantEntry: ReactNode;
   historyActions: ReactNode;
   projectActions: ReactNode;
+  projectIdentity?: ReactNode;
   workflowNav: ReactNode;
   leftRail: ReactNode;
   drawerOpen: boolean;
@@ -78,6 +79,7 @@ export interface StageLayoutScreenProps {
   onRedo: () => void;
   onRefreshPositions: () => void;
   onBackToMap: () => void;
+  onBackToData?: () => void;
   onLocateDeliveryIssue: (issue: DeliveryIssue) => void;
 }
 
@@ -93,6 +95,7 @@ export function StageLayoutScreen(props: StageLayoutScreenProps) {
     assistantEntry,
     historyActions,
     projectActions,
+    projectIdentity,
     workflowNav,
     leftRail,
     drawerOpen,
@@ -112,6 +115,7 @@ export function StageLayoutScreen(props: StageLayoutScreenProps) {
       historyActions={historyActions}
       stageActions={slots.stageActions}
       projectActions={projectActions}
+      projectIdentity={projectIdentity}
       workflowNav={workflowNav}
       leftRail={leftRail}
       rightRail={slots.rightRail}
@@ -168,6 +172,7 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
     onRedo,
     onRefreshPositions,
     onBackToMap,
+    onBackToData,
     onLocateDeliveryIssue,
   } = props;
 
@@ -292,6 +297,8 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             exportState={posterExport.exportState}
             exportError={posterExport.exportError}
             lastExportFileName={posterExport.lastExportFileName}
+            exportIsStale={posterExport.exportIsStale}
+            onEditRoster={onBackToData}
             onPngScaleChange={posterExport.setPngScale}
             onTransparentExportChange={posterExport.setTransparentExport}
             onIncludeResourcesChange={posterExport.setIncludeResourcesInProjectExport}
@@ -317,6 +324,8 @@ function buildStageSlots(stage: WorkflowStageId, props: StageLayoutScreenProps):
             exportState={posterExport.exportState}
             exportError={posterExport.exportError}
             lastExportFileName={posterExport.lastExportFileName}
+            exportIsStale={posterExport.exportIsStale}
+            onEditRoster={onBackToData}
             onPngScaleChange={posterExport.setPngScale}
             onTransparentExportChange={posterExport.setTransparentExport}
             onIncludeResourcesChange={posterExport.setIncludeResourcesInProjectExport}

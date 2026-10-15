@@ -20,10 +20,13 @@ import type { UserAsset } from "./assets";
 import type { ProjectDocument } from "./project-document";
 import type { RenderSettings } from "./render-settings";
 import type { DeliveryExportState } from "../components/workspaces/DeliveryWorkspace";
+import { fingerprintProject, fingerprintWorkspaceData } from "./project-digest";
 
 export interface UsePosterExportOptions {
   posterRef: RefObject<SVGSVGElement | null>;
   project: ProjectDocument;
+  /** The displayed preview may include unapplied AI changes; image exports follow it. */
+  renderProject?: ProjectDocument;
   userAssets: UserAsset[];
   userFonts: UserFont[];
   customTemplates: CustomTemplateRecord[];
@@ -40,6 +43,8 @@ export interface UsePosterExportResult {
   exportingPng: boolean;
   exportState: DeliveryExportState;
   exportError: string | undefined;
+  /** The current workspace or format options differ from the last successful file. */
+  exportIsStale: boolean;
   /** File name written by the most recent successful export; undefined once a new export starts. */
   lastExportFileName: string | undefined;
   pngScale: number;
@@ -62,6 +67,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const {
     posterRef,
     project,
+    renderProject = project,
     userAssets,
     userFonts,
     customTemplates,
@@ -74,6 +80,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const [exportState, setExportState] = useState<DeliveryExportState>("idle");
   const [exportError, setExportError] = useState<string>();
   const [lastExportFileName, setLastExportFileName] = useState<string>();
+  const [lastExportRevision, setLastExportRevision] = useState<string>();
+  const [lastExportKind, setLastExportKind] = useState<"png" | "svg" | "project">("png");
   const lastExportRef = useRef<"png" | "svg" | "project">("png");
   // PNG 导出是异步的：连点两次、或失败后立刻重试时，先发起的那次落地后不能再
   // 改状态，否则用户看到的是上一轮的结果（旧错误覆盖新成功，或反过来）。
@@ -89,6 +97,25 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   const [showProjectExportDialog, setShowProjectExportDialog] = useState(false);
   const [includeResourcesInProjectExport, setIncludeResourcesInProjectExport] = useState(true);
 
+  // Content signatures avoid false changes from equivalent arrays or undo history.
+  // Resource signatures are cached by immutable identity so large embedded images
+  // and fonts are scanned only when their owning workspace data changes.
+  const resourcesRevision = [
+    fingerprintWorkspaceData(userAssets),
+    fingerprintWorkspaceData(userFonts),
+    fingerprintWorkspaceData(customTemplates),
+    fingerprintWorkspaceData(renderSettings),
+  ].join(":");
+  const revisionFor = (kind: "png" | "svg" | "project") => {
+    // Images describe the displayed frame; editable packages contain only the
+    // committed document. Cancelling an AI preview changes only the former.
+    const documentRevision = fingerprintProject(kind === "project" ? project : renderProject);
+    const formatOptions = kind === "project" ? includeResourcesInProjectExport
+      : kind === "png" ? `${pngScale}:${transparentExport}` : transparentExport;
+    return `${documentRevision}:${resourcesRevision}:${kind}:${formatOptions}`;
+  };
+  const exportIsStale = exportState === "success" && lastExportRevision !== revisionFor(lastExportKind);
+
   const exportSvg = () => {
     lastExportRef.current = "svg";
     exportGenerationRef.current += 1;
@@ -102,6 +129,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       const fileName = buildExportFileName({ projectName: getProjectName?.(), kind: "svg" });
       downloadText(source, fileName, "image/svg+xml;charset=utf-8");
       setLastExportFileName(fileName);
+      setLastExportRevision(revisionFor("svg"));
+      setLastExportKind("svg");
       setExportState("success");
       reportStatus("SVG 已导出");
     } catch (error) {
@@ -141,6 +170,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       downloadProjectPackage(pack, fileName);
       setShowProjectExportDialog(false);
       setLastExportFileName(fileName);
+      setLastExportRevision(revisionFor("project"));
+      setLastExportKind("project");
       setExportState("success");
       reportStatus(includeResourcesInProjectExport
         ? `完整工程包已导出：${project.students.length} 条名单、${exportedAssets.length} 个素材、${exportedFonts.length} 个字体、${customTemplates.length} 个模板`
@@ -180,6 +211,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
   };
 
   const exportPng = async () => {
+    // Capture the revision alongside the PNG job before any asynchronous work.
+    const revision = revisionFor("png");
     lastExportRef.current = "png";
     const generation = (exportGenerationRef.current += 1);
     const isCurrent = () => exportGenerationRef.current === generation;
@@ -194,7 +227,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       const svg = posterRef.current;
       if (!svg) throw new Error("海报预览尚未准备好");
       const job = capturePngExport({
-        svg, width: project.canvas.width, height: project.canvas.height,
+        svg, width: renderProject.canvas.width, height: renderProject.canvas.height,
         scale: pngScale, transparentBackground: transparentExport, projectName: getProjectName?.(),
       });
       await waitForExportFonts(ensureUserFontsLoaded(userFonts.map((font) => ({ ...font }))));
@@ -207,6 +240,8 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
       if (isLatestPng()) downloadBlob(blob, fileName);
       if (!isCurrent()) return;
       setLastExportFileName(fileName);
+      setLastExportRevision(revision);
+      setLastExportKind("png");
       setExportState("success");
       reportStatus("PNG 已导出");
     } catch (error) {
@@ -237,6 +272,7 @@ export function usePosterExport(options: UsePosterExportOptions): UsePosterExpor
     exportingPng,
     exportState,
     exportError,
+    exportIsStale,
     lastExportFileName,
     pngScale,
     transparentExport,

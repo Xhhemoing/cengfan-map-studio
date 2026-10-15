@@ -103,7 +103,65 @@ describe("deriveStageOverviewCards", () => {
     const resource = cards.find((c) => c.id === "export-resource");
     expect(resource?.action).toMatchObject({ kind: "locate-delivery", issue: { kind: "resource" } });
     const state = cards.find((c) => c.id === "export-state");
-    expect(state).toMatchObject({ severity: "warning", action: { kind: "export-png" } });
+    expect(state).toMatchObject({ severity: "warning", action: { kind: "retry-export" } });
+  });
+
+  it("identifies a blank template in delivery without reporting the checks complete", () => {
+    const emptyProject = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const cards = deriveStageOverviewCards(makeInput({ stage: "export", project: emptyProject }));
+
+    expect(cards.find((card) => card.id === "export-empty")).toMatchObject({ severity: "info", action: { kind: "data-diagnostics" } });
+    expect(cards.find((card) => card.id === "export-empty")?.status).toContain("工程包备份");
+    expect(cards.some((card) => card.id === "export-clean")).toBe(false);
+  });
+
+  it("identifies a fully hidden roster separately and retains the source-data reminder", () => {
+    const hiddenProject = createProjectDocument({ students: sampleStudents.map((student) => ({ ...student, visibility: false })), templateId: "original", dataView: "province" });
+    const cards = deriveStageOverviewCards(makeInput({ stage: "export", project: hiddenProject }));
+
+    expect(cards.find((card) => card.id === "export-hidden")).toMatchObject({ severity: "info", action: { kind: "data-diagnostics" } });
+    expect(cards.find((card) => card.id === "export-hidden")?.status).toContain("12 人全部隐藏");
+    expect(cards.find((card) => card.id === "export-hidden")?.status).toContain("工程包仍保留完整名单");
+    expect(cards.some((card) => card.id === "export-empty" || card.id === "export-clean")).toBe(false);
+  });
+
+  it("does not turn informational data notes into delivery warnings", () => {
+    const note: StageOverviewInput["dataIssues"][number] = { studentId: sampleStudents[0]!.id, studentName: "林舟", kind: "manual-province", detail: "使用省份覆盖：北京", severity: "info" };
+    const cards = deriveStageOverviewCards(makeInput({ stage: "export", dataIssues: [note] }));
+
+    expect(cards.some((card) => card.id === "export-data")).toBe(false);
+    expect(cards.some((card) => card.severity === "warning")).toBe(false);
+    expect(cards.find((card) => card.id === "export-clean")?.severity).toBe("ok");
+    expect(cards.find((card) => card.id === "export-notes")).toMatchObject({ severity: "info" });
+  });
+
+  it("surfaces missing fonts even when resources and the roster have no warnings", () => {
+    const font: ResourceHealthIssue = { kind: "font", target: "text:text-title", detail: "标题字体缺失", severity: "error" };
+    const cards = deriveStageOverviewCards(makeInput({ stage: "export", fontIssues: [font] }));
+
+    expect(cards.find((card) => card.id === "export-resource")).toMatchObject({ severity: "warning", action: { kind: "locate-delivery", issue: { kind: "resource", issue: font } } });
+    expect(cards.find((card) => card.id === "export-resource")?.status).toContain("1 处字体缺失");
+    expect(cards.some((card) => card.id === "export-clean")).toBe(false);
+  });
+
+  it("keeps the last-format retry available even with an empty roster and several warning types", () => {
+    const emptyProject = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    const cards = deriveStageOverviewCards(makeInput({
+      stage: "export", project: emptyProject, exportState: "error",
+      dataIssues: [{ studentId: "s1", studentName: "林舟", kind: "missing-field", detail: "缺少城市", severity: "warning" }],
+      layoutIssues: [{ id: "map", kind: "overflow", detail: "地图越界", severity: "warning" }],
+      resourceIssues: [{ target: "map", kind: "resource", detail: "地图缺失", severity: "error" }],
+    }));
+
+    expect(cards).toHaveLength(MAX_OVERVIEW_CARDS);
+    expect(cards.at(-1)).toMatchObject({ id: "export-state", action: { kind: "retry-export" } });
+  });
+
+  it("marks a successful older snapshot as stale and retries through the remembered format", () => {
+    const cards = deriveStageOverviewCards(makeInput({ stage: "export", exportState: "success", exportIsStale: true }));
+    expect(cards.find((card) => card.id === "export-state")).toMatchObject({ status: "当前版本有修改，请重新导出", severity: "info", action: { kind: "retry-export" } });
+    const fresh = deriveStageOverviewCards(makeInput({ stage: "export", exportState: "success", exportIsStale: false }));
+    expect(fresh.find((card) => card.id === "export-state")).toMatchObject({ status: "上次导出成功", action: undefined });
   });
 
   it("offers a next-stage card only when the current stage has no blocking warnings", () => {

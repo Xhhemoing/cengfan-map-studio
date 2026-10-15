@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -18,6 +19,7 @@ import {
 } from "../lib/editor-layout";
 import { ResizablePanelDivider } from "./ResizablePanelDivider";
 import { StageGuideLine } from "./StageGuideLine";
+import { useStudioUiThemeScope } from "../lib/studio-ui-theme";
 
 export type StudioEditorShellProps = {
   stage: WorkflowStageId;
@@ -33,7 +35,7 @@ export type StudioEditorShellProps = {
  * resizers and persists their widths through `editor-layout`. The workflow
  * guidance lives in the topbar (old-style), so most stages render without a
  * left rail; when one is omitted the shell collapses to canvas + right rail.
- * At <=760px the right rail is presented as a labelled MUI `Drawer` (Escape +
+ * At <=1120px the right rail is presented as a labelled MUI `Drawer` (Escape +
  * focus return handled by MUI's Modal).
  */
 export function StudioEditorShell({
@@ -47,6 +49,9 @@ export function StudioEditorShell({
   const [resizingPanel, setResizingPanel] = useState<PanelSide | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerToggleRef = useRef<HTMLButtonElement>(null);
+  const drawerId = useId();
+  const drawerTitleId = useId();
+  const uiScope = useStudioUiThemeScope();
 
   const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
   const sidebarBounds = getPanelWidthBounds("sidebar", viewportWidth, panelLayout.inspectorWidth);
@@ -61,6 +66,22 @@ export function StudioEditorShell({
       // Panel sizing remains usable when browser storage is unavailable.
     }
   }, [panelLayout]);
+
+  useEffect(() => {
+    const onResize = () => {
+      setPanelLayout((current) => normalizeEditorPanelLayout(current, window.innerWidth));
+    };
+    const desktop = window.matchMedia?.("(min-width: 1121px)");
+    const closeOnDesktop = () => {
+      if (desktop?.matches) setDrawerOpen(false);
+    };
+    window.addEventListener("resize", onResize);
+    desktop?.addEventListener?.("change", closeOnDesktop);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      desktop?.removeEventListener?.("change", closeOnDesktop);
+    };
+  }, []);
 
   const updatePanelWidth = (side: PanelSide, value: number) => {
     setPanelLayout((current) => normalizeEditorPanelLayout({
@@ -103,7 +124,9 @@ export function StudioEditorShell({
             type="button"
             className="studio-editor-shell__rail-toggle"
             aria-label={`打开${rightRailLabel}`}
+            title={`打开${rightRailLabel}`}
             aria-expanded={drawerOpen}
+            aria-controls={drawerId}
             onClick={() => setDrawerOpen(true)}
           >
             <PanelRight size={16} aria-hidden="true" />
@@ -112,14 +135,24 @@ export function StudioEditorShell({
             anchor="right"
             open={drawerOpen}
             onClose={() => setDrawerOpen(false)}
+            slotProps={{
+              paper: {
+                className: "app-shell studio-ui-theme-scope studio-editor-shell__drawer-paper",
+                ...uiScope,
+                role: "dialog",
+                "aria-modal": true,
+                "aria-labelledby": drawerTitleId,
+              },
+            }}
           >
-            <div className="studio-editor-shell__drawer" role="region" aria-label={rightRailLabel}>
+            <div id={drawerId} className="studio-editor-shell__drawer" role="region" aria-label={rightRailLabel}>
               <div className="studio-editor-shell__drawer-head">
-                <strong>{rightRailLabel}</strong>
+                <strong id={drawerTitleId}>{rightRailLabel}</strong>
                 <button
                   type="button"
                   className="studio-editor-shell__drawer-close"
                   aria-label={`关闭${rightRailLabel}`}
+                  title={`关闭${rightRailLabel}`}
                   onClick={() => {
                     setDrawerOpen(false);
                     drawerToggleRef.current?.focus();

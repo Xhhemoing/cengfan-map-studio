@@ -4,6 +4,8 @@
  */
 import { CircleHelp, Copy } from "lucide-react";
 import "./HelpFeedbackMenu.css";
+import { useDisclosureDismissal } from "../lib/use-disclosure-dismissal";
+import { useClipboardFeedback } from "../lib/use-clipboard-feedback";
 import {
   APP_VERSION,
   CHANGELOG_URL,
@@ -45,15 +47,16 @@ export function HelpFeedbackMenu({
   /** 复制成功后的回执，交给宿主决定怎么提示。 */
   onCopyEnvironment?: (text: string) => void;
 }) {
+  const disclosureRef = useDisclosureDismissal();
   const resolved = environment ?? currentEnvironment();
   const environmentText = formatEnvironmentForIssue(resolved);
-  const copyEnvironment = () => {
-    void navigator.clipboard?.writeText(environmentText);
-    onCopyEnvironment?.(environmentText);
+  const { copy, status } = useClipboardFeedback(environmentText);
+  const copyEnvironment = async () => {
+    if (await copy(environmentText)) onCopyEnvironment?.(environmentText);
   };
 
   return (
-    <details className={["help-menu", variant === "workbench" ? "help-menu--workbench" : ""].filter(Boolean).join(" ")}>
+    <details ref={disclosureRef} className={["help-menu", variant === "workbench" ? "help-menu--workbench" : ""].filter(Boolean).join(" ")}>
       <summary className="secondary-button" aria-label="帮助与反馈">
         <CircleHelp size={16} /> <span>帮助</span>
       </summary>
@@ -73,10 +76,12 @@ export function HelpFeedbackMenu({
         <section className="help-menu__environment">
           <div className="help-menu__environment-line">
             <small>{environmentText}</small>
-            <button type="button" aria-label="复制环境信息" title="复制环境信息" onClick={copyEnvironment}>
+            <button type="button" aria-label="复制环境信息" title="复制环境信息" disabled={status === "copying"} onClick={() => void copyEnvironment()}>
               <Copy size={15} />
             </button>
           </div>
+          {status === "copied" && <small role="status">已复制环境信息</small>}
+          {status === "error" && <small role="alert">无法复制，请手动选择环境信息后复制。</small>}
           <small>版本 v{APP_VERSION}</small>
           <small>只会带上系统与浏览器版本，不会上传名单或工程内容。</small>
         </section>

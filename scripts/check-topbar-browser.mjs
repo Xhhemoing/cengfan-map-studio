@@ -119,9 +119,15 @@ try {
         const more = page.getByRole("button", { name: "更多操作", exact: true });
         await more.click();
         assert.equal(await more.getAttribute("aria-expanded"), "true");
-        await page.locator(".studio-topbar .project-menu > summary").click();
+        const projectMenu = page.locator(".studio-topbar .project-menu");
+        await projectMenu.locator("summary").click();
         const menu = await page.locator(".studio-topbar__tools").boundingBox();
         assert.ok(menu.x >= 0 && menu.x + menu.width <= width, "tools overflow");
+        // Escape dismisses the deepest disclosure before its containing tools.
+        await page.keyboard.press("Escape");
+        assert.equal(await projectMenu.getAttribute("open"), null);
+        assert.equal(await more.getAttribute("aria-expanded"), "true");
+        assert.equal(await projectMenu.locator("summary").evaluate((element) => element === document.activeElement), true);
         await page.keyboard.press("Escape");
         assert.equal(await more.getAttribute("aria-expanded"), "false");
         assert.equal(await more.evaluate((element) => element === document.activeElement), true);

@@ -29,6 +29,56 @@ function setInputValue(input: HTMLInputElement, value: string) {
 }
 
 describe("DeferredInput", () => {
+  it.each([{ isComposing: true }, { keyCode: 229 }])("does not submit or discard an input while an IME owns the keys: %j", (composition) => {
+    const onCommit = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createTrackedRoot(container);
+    flushSync(() => root.render(<DeferredInput id="ime-input" value="原标题" onCommit={onCommit} />));
+    const input = container.querySelector<HTMLInputElement>("#ime-input")!;
+    flushSync(() => input.focus());
+    flushSync(() => setInputValue(input, "正在选择中文"));
+
+    for (const key of ["Enter", "Escape"]) {
+      const event = new KeyboardEvent("keydown", { ...composition, key, bubbles: true, cancelable: true });
+      flushSync(() => input.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(input);
+      expect(input.value).toBe("正在选择中文");
+      expect(onCommit).not.toHaveBeenCalled();
+    }
+    flushSync(() => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onCommit).toHaveBeenCalledOnce();
+    expect(onCommit).toHaveBeenCalledWith("正在选择中文");
+  });
+
+  it.each([{ isComposing: true }, { keyCode: 229 }])("does not submit or discard multiline IME text: %j", (composition) => {
+    const onCommit = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createTrackedRoot(container);
+    flushSync(() => root.render(<DeferredTextarea id="ime-textarea" value="原文本" onCommit={onCommit} />));
+    const textarea = container.querySelector<HTMLTextAreaElement>("#ime-textarea")!;
+    flushSync(() => textarea.focus());
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    flushSync(() => {
+      setter?.call(textarea, "正在选择中文");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    for (const key of ["Enter", "Escape"]) {
+      const event = new KeyboardEvent("keydown", { ...composition, key, bubbles: true, cancelable: true });
+      flushSync(() => textarea.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(textarea);
+      expect(textarea.value).toBe("正在选择中文");
+      expect(onCommit).not.toHaveBeenCalled();
+    }
+    flushSync(() => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onCommit).toHaveBeenCalledOnce();
+    expect(onCommit).toHaveBeenCalledWith("正在选择中文");
+  });
+
   it("keeps edits local until blur", () => {
     const onCommit = vi.fn();
     const container = document.createElement("div");

@@ -29,7 +29,8 @@ export type StageOverviewAction =
   | { kind: "locate-delivery"; issue: StageOverviewDeliveryIssue }
   | { kind: "elements" }
   | { kind: "stage"; stage: WorkflowStageId }
-  | { kind: "export-png" };
+  | { kind: "export-png" }
+  | { kind: "retry-export" };
 
 export interface StageOverviewCard {
   id: string;
@@ -56,8 +57,10 @@ export interface StageOverviewInput {
   dataIssues: DataIssue[];
   layoutIssues: LayoutHealthIssue[];
   resourceIssues: ResourceHealthIssue[];
+  fontIssues?: ResourceHealthIssue[];
   dataViewLabel: string;
   exportState: "idle" | "exporting" | "success" | "error";
+  exportIsStale?: boolean;
 }
 
 export const MAX_OVERVIEW_CARDS = 4;
@@ -217,31 +220,45 @@ function contentCards(input: StageOverviewInput): StageOverviewCard[] {
 
 function exportCards(input: StageOverviewInput): StageOverviewCard[] {
   const cards: StageOverviewCard[] = [];
+  const visibleCount = input.project.students.filter((student) => student.visibility !== false).length;
+  const hiddenCount = input.project.students.length - visibleCount;
+  const dataNotes = input.dataIssues.filter((item) => item.severity === "info").length;
   const dataWarnings = input.dataIssues.filter((item) => item.severity === "warning").length;
+  if (input.project.students.length === 0) {
+    cards.push({ id: "export-empty", question: "当前是空白模板", status: "可导出空白模板或工程包备份；制作去向图请先完善名单", severity: "info", action: { kind: "data-diagnostics" } });
+  } else if (visibleCount === 0) {
+    cards.push({ id: "export-hidden", question: "当前海报不显示学生", status: `${hiddenCount} 人全部隐藏，请确认展示范围；工程包仍保留完整名单`, severity: "info", action: { kind: "data-diagnostics" } });
+  }
   if (dataWarnings > 0) {
     cards.push({ id: "export-data", question: "数据告警", status: `${dataWarnings} 项数据告警会影响导出`, severity: "warning", action: { kind: "data-diagnostics" } });
   }
   if (input.layoutIssues.length > 0) {
     cards.push({ id: "export-layout", question: "排版问题", status: `${input.layoutIssues.length} 项排版问题`, severity: "warning", action: { kind: "locate-layout", issue: input.layoutIssues[0] } });
   }
-  if (input.resourceIssues.length > 0) {
+  const fontIssues = input.fontIssues ?? [];
+  if (input.resourceIssues.length > 0 || fontIssues.length > 0) {
+    const firstIssue = input.resourceIssues[0] ?? fontIssues[0];
     cards.push({
       id: "export-resource",
-      question: "资源缺失",
-      status: `${input.resourceIssues.length} 处资源缺失`,
+      question: fontIssues.length ? "资源与字体" : "资源缺失",
+      status: [input.resourceIssues.length ? `${input.resourceIssues.length} 处资源缺失` : "", fontIssues.length ? `${fontIssues.length} 处字体缺失` : ""].filter(Boolean).join(" · "),
       severity: "warning",
-      action: { kind: "locate-delivery", issue: { kind: "resource", issue: input.resourceIssues[0] } },
+      action: { kind: "locate-delivery", issue: { kind: "resource", issue: firstIssue } },
     });
   }
   if (cards.length === 0) {
-    cards.push({ id: "export-clean", question: "导出检查通过", status: "数据、排版、资源均无问题", severity: "ok" });
+    cards.push({ id: "export-clean", question: "导出检查通过", status: "数据、排版、资源与字体均无待处理问题", severity: "ok" });
   }
-  cards.push({
+  if (visibleCount > 0 && dataNotes > 0) {
+    cards.push({ id: "export-notes", question: "数据说明", status: `${dataNotes} 项补充说明${hiddenCount > 0 ? `，其中 ${hiddenCount} 人已隐藏，请确认展示范围` : "，请确认预期的地图展示"}`, severity: "info", action: { kind: "data-diagnostics" } });
+  }
+  const stateCard: StageOverviewCard = {
     id: "export-state",
     question: "导出状态",
-    status: EXPORT_STATE_LABELS[input.exportState],
+    status: input.exportState === "success" && input.exportIsStale ? "当前版本有修改，请重新导出" : EXPORT_STATE_LABELS[input.exportState],
     severity: input.exportState === "error" ? "warning" : "info",
-    action: input.exportState === "error" ? { kind: "export-png" } : undefined,
-  });
-  return cards.slice(0, MAX_OVERVIEW_CARDS);
+    action: input.exportState === "error" || (input.exportState === "success" && input.exportIsStale) ? { kind: "retry-export" } : undefined,
+  };
+  // Keep the actual last-format retry reachable even when several checks need attention.
+  return [...cards.slice(0, MAX_OVERVIEW_CARDS - 1), stateCard];
 }

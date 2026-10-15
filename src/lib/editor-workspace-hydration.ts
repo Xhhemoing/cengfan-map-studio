@@ -9,7 +9,7 @@
  * 水合写回来的那一次不能算成用户编辑,否则「离开页面要不要保存」会永远为真——
  * `skipNextPending` 与 `hydrated` 两个标记就是为此存在的。
  */
-import { useEffect, useRef, type MutableRefObject } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { BrowserWorkspaceStores } from "./browser-workspace-store";
 import {
   loadAdoptableWorkspace,
@@ -47,6 +47,8 @@ export interface EditorWorkspaceHydrationOptions extends EditorWorkspaceSnapshot
 }
 
 export interface EditorWorkspaceHydration {
+  /** Loaded project identity for rendering; public editor workspaces have no name. */
+  projectName: string | null;
   /** 最近一次渲染出去的完整工作区,供保存与协作在渲染期之外取用。 */
   readWorkspace(): EditorWorkspaceSnapshot;
   /** 水合之后用户是否真的改过东西。 */
@@ -99,6 +101,7 @@ export function useEditorWorkspaceHydration(
   const hydratedRef = useRef(false);
   const skipNextPendingRef = useRef(false);
   const hasLocalEditsRef = useRef(false);
+  const [projectName, setProjectName] = useState<string | null>(null);
 
   // 异步读回来的工作区要铺到最新一次渲染的 setter 上,采用 latest-ref 模式:
   // ref 在每次渲染后的 effect 中同步(lint 禁止渲染期写 ref),且这一条必须先于下面两个
@@ -133,13 +136,13 @@ export function useEditorWorkspaceHydration(
       if (cancelled || !pack) return;
       const sink = sinkRef.current;
       adoptWorkspace(hydratedRef, skipNextPendingRef, sink, restoreProjectPackage(pack));
-      sink.setSyncState({ status: "saved", savedAt: pack.exportedAt });
+      workspaceSync.restoreSaved(pack.exportedAt);
       sink.reportStatus("已从浏览器本地完整工作区恢复");
     }).catch(() => undefined).finally(() => {
       hydratedRef.current = true;
     });
     return () => { cancelled = true; };
-  }, [browserStores, initialExportedAt, projectId]);
+  }, [browserStores, initialExportedAt, projectId, workspaceSync]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -156,14 +159,17 @@ export function useEditorWorkspaceHydration(
         return;
       }
       projectNameRef.current = outcome.record.name;
+      setProjectName(outcome.record.name);
       projectCreatedAtRef.current = outcome.record.createdAt;
       adoptWorkspace(hydratedRef, skipNextPendingRef, sink, outcome.restored);
+      workspaceSync.restoreSaved(outcome.record.updatedAt);
       sink.reportStatus(`已打开项目「${outcome.record.name}」`);
     });
     return () => { cancelled = true; };
-  }, [projectId, projectStore, projectIdRef, projectNameRef, projectCreatedAtRef]);
+  }, [projectId, projectStore, projectIdRef, projectNameRef, projectCreatedAtRef, workspaceSync]);
 
   return {
+    projectName,
     readWorkspace: () => latestWorkspaceRef.current,
     hasLocalEdits: () => hasLocalEditsRef.current,
   };

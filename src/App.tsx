@@ -1,9 +1,4 @@
 import {
-  Bot,
-  Redo2,
-  Undo2,
-} from "lucide-react";
-import {
   useCallback,
   useEffect,
   useMemo,
@@ -37,7 +32,6 @@ import type { MissingProjectObservation } from "./lib/missing-project-notice";
 import { AssistantConversationProvider } from "./components/AgentAssistant";
 import { ProjectMenu } from "./components/ProjectMenu";
 import { WorkbenchBackButton } from "./components/WorkbenchBackButton";
-import { WorkflowStageStepper } from "./components/WorkflowStageStepper";
 import { StudioAssistantRail } from "./components/StudioAssistantRail";
 
 import "./components/workflow-workspaces.css";
@@ -51,17 +45,18 @@ import { LegacyEditorStage } from "./components/editor/LegacyEditorStage";
 import { LegacyEditorTopbar } from "./components/editor/LegacyEditorTopbar";
 import { MissingProjectShell } from "./components/editor/MissingProjectShell";
 import { ProjectLoadingShell } from "./components/editor/ProjectLoadingShell";
-import { EditorTopbarActions } from "./components/editor/EditorTopbarActions";
+import { createEditorTopbarSlots } from "./components/editor/editor-topbar-slots";
+import { EditorAssistantEntry } from "./components/editor/EditorAssistantEntry";
 import { StageLayoutScreen } from "./components/editor/StageLayoutScreen";
 
-import { ToolbarButton, ToolbarGroup } from "./components/StudioUi";
+import { ToolbarGroup } from "./components/StudioUi";
 import {
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
   deriveWorkflowStageProgress,
   type WorkflowStageId,
 } from "./lib/workflow-stages";
 import { deriveStageOverviewModel } from "./lib/stage-overview";
-import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession } from "./lib/workspace-session";
+import { LEGACY_EDITOR_STORAGE_KEY, loadWorkspaceSession, workspaceSessionStorageKey } from "./lib/workspace-session";
 import { ResizablePanelDivider } from "./components/ResizablePanelDivider";
 import { buildDataHealthSummary, listDataIssues } from "./lib/data-health";
 import { computeWorkflowProgress, listStudentWarnings, type WorkflowStepId } from "./lib/workflow-progress";
@@ -132,8 +127,9 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const [project, setProject] = useState<ProjectDocument>(() => initialWorkspace?.project ?? loadInitialProject());
   const [previewCommands, setPreviewCommands] = useState<EditorCommand[]>([]);
   const [agentPreview, setAgentPreview] = useState<ProjectDocument | null>(null);
+  const sessionStorageKey = workspaceSessionStorageKey(projectId);
   const [workspaceSession] = useState(() => loadBrowserState(
-    () => loadWorkspaceSession(window.localStorage),
+    () => loadWorkspaceSession(window.localStorage, sessionStorageKey),
     loadWorkspaceSession(null),
   ));
   const [selection, setSelection] = useState<SceneSelection>(() => restoredSceneSelection(workspaceSession));
@@ -200,6 +196,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const resolvedTheme = resolveTheme(themeMode, prefersDark);
   useEditorChromeEffects({
     workspaceSession,
+    sessionStorageKey,
     activeStage,
     selection,
     themeMode,
@@ -249,7 +246,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const summary = buildProvinceSummary(renderProject.students);
   const resolvedTemplate = useMemo(() => resolveRenderedTemplate(renderProject), [renderProject]);
 
-  const { readWorkspace, hasLocalEdits } = useEditorWorkspaceHydration({
+  const { readWorkspace, hasLocalEdits, projectName } = useEditorWorkspaceHydration({
     project,
     assets: userAssets,
     fonts: userFonts,
@@ -262,7 +259,10 @@ function StudioApp({ projectId }: { projectId?: string }) {
     record: projectRecord,
     workspaceSync,
     sink: {
-      setProject,
+      setProject: (next) => {
+        setProject(next);
+        setSelection(restoredSceneSelection(workspaceSession, next));
+      },
       setUserAssets,
       setUserFonts,
       setCustomTemplates,
@@ -321,6 +321,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   const posterExport = usePosterExport({
     posterRef,
     project,
+    renderProject,
     userAssets,
     userFonts,
     customTemplates,
@@ -474,6 +475,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
     },
     setCollaborationOpen: collaboration.setCollaborationOpen,
     exportPng: () => void posterExport.exportPng(),
+    retryLastExport: posterExport.retryLastExport,
     legacyEditorEnabled,
   }));
   const {
@@ -598,10 +600,12 @@ function StudioApp({ projectId }: { projectId?: string }) {
       dataIssues,
       layoutIssues: contentLayoutIssues,
       resourceIssues: resourceHealthIssues.filter((issue) => issue.kind === "resource"),
+      fontIssues: resourceHealthIssues.filter((issue) => issue.kind === "font"),
       dataViewLabel: dataViews.find((view) => view.id === dataView)?.name ?? dataView,
       exportState: posterExport.exportState,
+      exportIsStale: posterExport.exportIsStale,
     }),
-    [activeStage, project, workflowProgress, dataHealth, dataIssues, contentLayoutIssues, resourceHealthIssues, dataView, posterExport.exportState],
+    [activeStage, project, workflowProgress, dataHealth, dataIssues, contentLayoutIssues, resourceHealthIssues, dataView, posterExport.exportState, posterExport.exportIsStale],
   );
 
   const studioAssistantRail = (
@@ -629,42 +633,30 @@ function StudioApp({ projectId }: { projectId?: string }) {
     />
   );
 
-  const assistantEntryButton = (
-    <button
-      ref={assistantEntryRef}
-      type="button"
-      aria-label="打开AI助手与高级功能"
-      aria-expanded={assistantDrawerOpen}
-      onClick={() => setAssistantDrawerOpen(true)}
-    >
-      <Bot size={17} />
-    </button>
-  );
-
-  const historyActionsNode = (
-    <ToolbarGroup label="历史" className="topbar-action-group--history">
-      <ToolbarButton label={undoLabel} icon={<Undo2 size={18} />} disabled={!canUndo} onClick={handleUndo} />
-      <ToolbarButton label={redoLabel} icon={<Redo2 size={18} />} disabled={!canRedo} onClick={handleRedo} />
-    </ToolbarGroup>
-  );
-
-  const projectActionsNode = (
-    <EditorTopbarActions
-      backButton={projectId ? <WorkbenchBackButton onClick={() => void backToWorkbench()} /> : null}
-      exportActions={projectExportActions}
-      appearance={{ skin, themeMode, resolvedTheme, onSkinChange: setSkin, onThemeChange: setThemeMode }}
-      onCopyEnvironment={() => setStatusMessage("已复制环境信息")}
-    />
-  );
-
-  const workflowNavNode = (
-    <WorkflowStageStepper
-      activeId={activeStage}
-      project={project}
-      progress={workflowProgress}
-      onChange={changeWorkflowStage}
-    />
-  );
+  const topbarSlots = createEditorTopbarSlots({
+    assistantEntry: (
+      <EditorAssistantEntry
+        buttonRef={assistantEntryRef}
+        open={assistantDrawerOpen}
+        onOpen={() => setAssistantDrawerOpen(true)}
+      />
+    ),
+    history: { canUndo, canRedo, undoLabel, redoLabel },
+    onUndo: handleUndo,
+    onRedo: handleRedo,
+    projectId,
+    projectName,
+    syncState,
+    onSave: () => void overwriteBrowserStorage(),
+    onBackToWorkbench: () => void backToWorkbench(),
+    exportActions: projectExportActions,
+    appearance: { skin, themeMode, resolvedTheme, onSkinChange: setSkin, onThemeChange: setThemeMode },
+    onCopyEnvironment: () => setStatusMessage("已复制环境信息"),
+    activeStage,
+    project,
+    workflowProgress,
+    onChangeStage: changeWorkflowStage,
+  });
 
   if (projectId && projectLoading) {
     return <ProjectLoadingShell />;
@@ -676,6 +668,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
   if (globalSettingsSection) {
     return (
       <GlobalSettingsShell
+        projectIdentity={topbarSlots.projectIdentity}
         section={globalSettingsSection}
         theme={resolvedTheme}
         skin={skin}
@@ -683,7 +676,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
         userFonts={userFonts}
         templateActions={templateActions}
         dataWorkspaceProps={dataWorkspaceProps}
-        workflowNav={workflowNavNode}
+        workflowNav={topbarSlots.workflowNav}
         backButton={projectId ? <WorkbenchBackButton onClick={() => void backToWorkbench()} /> : null}
         canUndo={canUndo}
         canRedo={canRedo}
@@ -709,13 +702,14 @@ function StudioApp({ projectId }: { projectId?: string }) {
   if (activeStage !== "content" || !legacyEditorEnabled) {
     return (
       <StageLayoutScreen
+        projectIdentity={topbarSlots.projectIdentity}
         stage={activeStage}
         theme={resolvedTheme}
         skin={skin}
-        assistantEntry={assistantEntryButton}
-        historyActions={historyActionsNode}
-        projectActions={projectActionsNode}
-        workflowNav={workflowNavNode}
+        assistantEntry={topbarSlots.assistantEntry}
+        historyActions={topbarSlots.historyActions}
+        projectActions={topbarSlots.projectActions}
+        workflowNav={topbarSlots.workflowNav}
         leftRail={studioAssistantRail}
         drawerOpen={assistantDrawerOpen}
         onDrawerClose={() => setAssistantDrawerOpen(false)}
@@ -762,6 +756,7 @@ function StudioApp({ projectId }: { projectId?: string }) {
           setActiveStage("map");
           setActivePanel("map");
         }}
+        onBackToData={() => changeWorkflowStage("data")}
         onLocateDeliveryIssue={locateDeliveryIssue}
       />
     );
@@ -771,7 +766,8 @@ function StudioApp({ projectId }: { projectId?: string }) {
   return (
     <main className="app-shell" data-editor-theme={resolvedTheme} data-editor-skin={skin}>
       <LegacyEditorTopbar
-        workflowNav={workflowNavNode}
+        projectIdentity={topbarSlots.projectIdentity}
+        workflowNav={topbarSlots.workflowNav}
         legacyActivePanel={activePanel}
         workflowProgress={workflowProgress}
         backButton={projectId ? <WorkbenchBackButton onClick={() => void backToWorkbench()} /> : null}
@@ -900,5 +896,5 @@ function StudioApp({ projectId }: { projectId?: string }) {
 }
 
 export function App({ projectId }: { projectId?: string }) {
-  return <AssistantConversationProvider><StudioApp projectId={projectId} /></AssistantConversationProvider>;
+  return <AssistantConversationProvider><StudioApp key={projectId ? `project:${projectId}` : "local-workspace"} projectId={projectId} /></AssistantConversationProvider>;
 }

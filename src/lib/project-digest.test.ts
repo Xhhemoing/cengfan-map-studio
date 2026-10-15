@@ -1,8 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { createProjectDocument } from "./project-document";
-import { buildProjectDigest, buildProjectFingerprint, digestByteLength, fingerprintProject } from "./project-digest";
+import { buildProjectDigest, buildProjectFingerprint, digestByteLength, fingerprintProject, fingerprintWorkspaceData } from "./project-digest";
 
 describe("buildProjectDigest", () => {
+  it("compares workspace resources by content and caches large embedded sources", () => {
+    const dataUrl = `data:image/png;base64,${"a".repeat(100_000)}`;
+    let reads = 0;
+    const resource = { id: "asset-1", get src() { reads += 1; return dataUrl; } };
+    const resources = [resource];
+    const first = fingerprintWorkspaceData(resources);
+    const firstReads = reads;
+    expect(fingerprintWorkspaceData(resources)).toBe(first);
+    expect(reads).toBe(firstReads);
+    expect(fingerprintWorkspaceData([{ src: dataUrl, id: "asset-1" }])).toBe(first);
+    expect(fingerprintWorkspaceData([{ id: "asset-1", src: `${dataUrl.slice(0, -1)}b` }])).not.toBe(first);
+  });
+
   it("removes binary data from asset elements", () => {
     const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
     const digest = buildProjectDigest({

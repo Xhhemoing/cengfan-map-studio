@@ -83,6 +83,7 @@ async function mount(options: {
   browserStores?: BrowserWorkspaceStores;
   initialExportedAt?: string;
   projectStore?: ProjectStore;
+  saveLocal?: (pack: ProjectPackage) => Promise<void>;
 } = {}): Promise<Harness> {
   const syncStates: LocalWorkspaceOverwriteState[] = [];
   const applied: ProjectDocument[] = [];
@@ -91,7 +92,7 @@ async function mount(options: {
   const loading: boolean[] = [];
   const record = recordRefs();
   const sync = new LocalWorkspaceOverwrite({
-    saveLocal: async () => undefined,
+    saveLocal: options.saveLocal ?? (async () => undefined),
     onStateChange: (state) => syncStates.push(state),
   });
   const sink: WorkspaceHydrationSink = {
@@ -192,6 +193,35 @@ describe("useEditorWorkspaceHydration", () => {
     expect(harness.syncStates.map((state) => state.status)).not.toContain("pending");
   });
 
+  it("keeps an adopted workspace pending when hydration arrives during an older snapshot's save", async () => {
+    let completeHydration!: (pack: ProjectPackage) => void;
+    const stored = new Promise<ProjectPackage>((resolve) => { completeHydration = resolve; });
+    let completeSave!: () => void;
+    const saveLocal = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { completeSave = resolve; })).mockResolvedValue(undefined);
+    const harness = await mount({
+      browserStores: { mirror: { get: () => null, set: () => undefined }, durable: { get: () => stored, set: async () => undefined } },
+      saveLocal,
+    });
+    const oldPack = packOf(project("点击保存时的旧版本"), "2026-10-01T09:00:00.000Z");
+    const pendingSave = harness.sync.overwrite(oldPack);
+    const adopted = project("完整存储中的新版本");
+    await act(async () => { completeHydration(packOf(adopted, "2026-10-01T08:00:00.000Z")); });
+    expect(harness.applied).toHaveLength(1);
+    expect(harness.sync.getState().status).toBe("saving");
+    await harness.setWorkspaceProject(adopted);
+    await act(async () => { completeSave(); await pendingSave; });
+
+    expect(harness.sync.getState()).toEqual({ status: "pending", savedAt: oldPack.exportedAt });
+    expect(harness.hydration.readWorkspace().project.textElements.find((item) => item.id === "text-title")?.content).toBe("完整存储中的新版本");
+    await harness.sync.overwrite(packOf(adopted, "2026-10-01T09:00:01.000Z"));
+    expect(harness.sync.getState()).toEqual({ status: "saved", savedAt: "2026-10-01T09:00:01.000Z" });
+    expect(saveLocal).toHaveBeenLastCalledWith(expect.objectContaining({
+      project: expect.objectContaining({
+        textElements: expect.arrayContaining([expect.objectContaining({ id: "text-title", content: "完整存储中的新版本" })]),
+      }),
+    }));
+  });
+
   it("leaves a stale browser workspace alone", async () => {
     const stored = packOf(project("旧镜像"), "2026-01-01T00:00:00.000Z");
     const harness = await mount({
@@ -220,16 +250,21 @@ describe("useEditorWorkspaceHydration", () => {
       id: "project-9",
       name: "计算机一班",
       createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-02-02T00:00:00.000Z",
+      updatedAt: "2026-02-03T00:00:00.000Z",
       pack: packOf(project("项目里的标题"), "2026-02-02T00:00:00.000Z"),
     };
     const harness = await mount({ projectId: "project-9", projectStore: projectStoreWith(stored) });
 
     expect(harness.record.nameRef.current).toBe("计算机一班");
+    expect(harness.hydration.projectName).toBe("计算机一班");
     expect(harness.record.createdAtRef.current).toBe("2026-01-01T00:00:00.000Z");
     expect(harness.applied).toHaveLength(1);
     expect(harness.loading).toEqual([false]);
     expect(harness.reported).toEqual(["已打开项目「计算机一班」"]);
+    expect(harness.sync.getState()).toEqual({ status: "saved", savedAt: stored.updatedAt });
+    expect(harness.syncStates.map((state) => state.status)).not.toContain("pending");
+    await harness.setWorkspaceProject(project("打开后修改标题"));
+    expect(harness.sync.getState()).toEqual({ status: "pending", savedAt: stored.updatedAt });
   });
 
   it("reports a missing project instead of applying an empty workspace", async () => {

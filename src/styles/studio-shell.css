@@ -1,0 +1,230 @@
+/* Studio editor shell: stable left rail | center | optional resizable right rail.
+ * The shell exposes its live widths as --studio-left-width / --studio-right-width;
+ * they are aliased to the --sidebar-width / --inspector-width the shared
+ * ResizablePanelDivider CSS reads so the resizers track the persisted values. */
+.studio-editor-shell {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: var(--studio-left-width, 200px) minmax(0, 1fr);
+  position: relative;
+  height: calc(100vh - var(--studio-topbar-height, 62px));
+  min-height: 0;
+  overflow: hidden;
+  color: var(--editor-ink);
+  background: var(--editor-bg);
+  --sidebar-width: var(--studio-left-width, 200px);
+  --inspector-width: var(--studio-right-width, 240px);
+}
+.studio-editor-shell[data-has-right-rail="true"] {
+  grid-template-columns: var(--studio-left-width, 200px) minmax(0, 1fr) var(--studio-right-width, 240px);
+}
+/* Old-style top workflow guidance: no left rail — canvas | right rail only. */
+.studio-editor-shell[data-has-left-rail="false"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.studio-editor-shell[data-has-left-rail="false"][data-has-right-rail="true"] {
+  grid-template-columns: minmax(0, 1fr) var(--studio-right-width, 240px);
+}
+.studio-editor-shell .studio-sidebar,
+.studio-editor-shell__left {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--editor-surface);
+  border-right: 1px solid var(--editor-line);
+}
+.studio-editor-shell__main {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.studio-editor-shell__right {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  background: var(--editor-surface-muted);
+  border-left: 1px solid var(--editor-line);
+  overscroll-behavior: contain;
+}
+/* Portalled tools retain the app-shell palette without a page-sized minimum. */
+.app-shell.studio-ui-theme-scope {
+  min-height: 0;
+}
+.app-shell.studio-ui-theme-scope.studio-editor-shell__drawer-paper {
+  width: min(320px, 100vw);
+  background: var(--editor-surface);
+}
+/* Right-rail drawer toggle: hidden on desktop, floating control on smaller screens. */
+.studio-editor-shell__rail-toggle {
+  display: none;
+}
+/* Drawer carrying the right rail below the desktop breakpoint. */
+.studio-editor-shell__drawer {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: min(320px, 100vw);
+  height: 100%;
+  color: var(--editor-ink);
+  background: var(--editor-surface);
+}
+.studio-editor-shell__drawer > :last-child {
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.studio-editor-shell__drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--editor-surface-raised);
+  border-bottom: 1px solid var(--editor-line);
+}
+.studio-editor-shell__drawer-head strong {
+  overflow: hidden;
+  color: var(--editor-ink);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.studio-editor-shell__drawer-close {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  color: var(--editor-ink-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  place-items: center;
+}
+.studio-editor-shell__drawer-close:hover {
+  color: var(--editor-ink);
+  background: var(--editor-surface-muted);
+  border-color: var(--editor-line);
+}
+.studio-editor-shell__drawer-close:focus-visible {
+  outline: 2px solid var(--editor-focus);
+  outline-offset: 1px;
+}
+@media (max-width: 1120px) {
+  .studio-editor-shell[data-has-right-rail="true"] {
+    grid-template-columns: var(--studio-left-width, 280px) minmax(0, 1fr);
+  }
+  .studio-editor-shell[data-has-left-rail="false"][data-has-right-rail="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .studio-editor-shell__right {
+    display: none; /* the labelled drawer replaces the inline right rail */
+  }
+  .studio-editor-shell__rail-toggle {
+    display: grid;
+    position: fixed;
+    z-index: 60;
+    right: 12px;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    color: var(--studio-on-accent);
+    background: var(--editor-accent);
+    border: 1px solid var(--editor-accent);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgb(28 31 26 / 18%);
+    cursor: pointer;
+    transition: transform 120ms ease-out, filter 140ms ease-out;
+  }
+  .studio-editor-shell__rail-toggle:hover {
+    filter: brightness(1.06);
+  }
+  .studio-editor-shell__rail-toggle:active {
+    transform: scale(0.96);
+  }
+  .studio-editor-shell__rail-toggle:focus-visible {
+    outline: 2px solid var(--editor-focus);
+    outline-offset: 2px;
+  }
+}
+@media (max-width: 760px) {
+  .studio-editor-shell,
+  .studio-editor-shell[data-has-right-rail="true"],
+  .studio-editor-shell[data-has-left-rail="false"][data-has-right-rail="true"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    height: calc(100vh - var(--studio-topbar-height, 56px));
+    overflow-y: auto;
+  }
+  .studio-editor-shell .studio-sidebar,
+  .studio-editor-shell__left {
+    display: none; /* the topbar AI entry and its drawer replace the inline left rail */
+  }
+}
+/* Topbar-opened assistant drawer: labelled paper for the AI assistant and
+   advanced functions, themed with the editor surface/line tokens. */
+.app-shell.studio-ui-theme-scope.studio-assistant-drawer__paper {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(320px, 100vw);
+  height: 100%;
+  color: var(--editor-ink);
+  background: var(--editor-surface-raised);
+  border-left: 1px solid var(--editor-line);
+}
+.studio-assistant-drawer__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--editor-surface-raised);
+  border-bottom: 1px solid var(--editor-line);
+}
+.studio-assistant-drawer__head strong {
+  overflow: hidden;
+  color: var(--editor-ink);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.studio-assistant-drawer__close {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  color: var(--editor-ink-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  place-items: center;
+}
+.studio-assistant-drawer__close:hover {
+  color: var(--editor-ink);
+  background: var(--editor-surface-muted);
+  border-color: var(--editor-line);
+}
+.studio-assistant-drawer__close:focus-visible {
+  outline: 2px solid var(--editor-focus);
+  outline-offset: 1px;
+}
+.studio-assistant-drawer__body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}

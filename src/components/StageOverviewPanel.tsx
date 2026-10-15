@@ -8,7 +8,7 @@ import type {
 
 const STATUS_LABELS: Record<WorkflowStepStatus, string> = {
   empty: "未开始",
-  ready: "已完成",
+  ready: "可继续",
   warning: "待处理",
 };
 

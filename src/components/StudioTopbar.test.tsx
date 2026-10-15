@@ -7,11 +7,13 @@ import { StudioTopbar } from "./StudioTopbar";
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 function renderTopbar({
+  projectIdentity,
   assistantEntry,
   stageActions = <button type="button">阶段动作</button>,
   projectActions = <button type="button">工程动作</button>,
   workflowNav,
 }: {
+  projectIdentity?: ReactNode;
   assistantEntry?: ReactNode;
   stageActions?: ReactNode;
   projectActions?: ReactNode;
@@ -23,6 +25,7 @@ function renderTopbar({
   roots.push({ root, container });
   flushSync(() => root.render(
     <StudioTopbar
+      projectIdentity={projectIdentity}
       assistantEntry={assistantEntry}
       stageActions={stageActions}
       projectActions={projectActions}
@@ -40,6 +43,14 @@ afterEach(() => {
 });
 
 describe("StudioTopbar", () => {
+  it("keeps project identity and direct save outside the collapsed tools", () => {
+    const { container } = renderTopbar({ projectIdentity: <div>计算机一班<button type="button">保存当前项目</button></div> });
+    expect(container.querySelector(".brand")?.textContent).toContain("计算机一班");
+    expect(container.querySelector(".brand")?.textContent).toContain("保存当前项目");
+    expect(container.querySelector(".studio-topbar__tools")?.textContent).not.toContain("保存当前项目");
+    expect(container.querySelectorAll(".brand button")).toHaveLength(1);
+  });
+
   it("renders a single labelled topbar with brand and action slots only", () => {
     const { container } = renderTopbar();
 

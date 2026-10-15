@@ -13,7 +13,7 @@ export function StageGuideLine({ stage }: { stage: WorkflowStageId }) {
     <details className="studio-stage-guide" aria-label={`${definition.label}说明`}>
       <summary>{definition.description}</summary>
       <p className="studio-stage-guide__body">
-        完成本阶段的关键动作后，步骤条会标记为已完成，即可进入下一步。
+        可通过制作步骤随时切换阶段。请确认本阶段效果，导出前查看交付检查。
       </p>
     </details>
   );

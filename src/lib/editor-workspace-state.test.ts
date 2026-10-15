@@ -27,6 +27,48 @@ function workspace(project: ProjectDocument): EditorWorkspaceSnapshot {
 }
 
 describe("restoredSceneSelection", () => {
+  it("prefers a complete selection over compatibility fields", () => {
+    expect(restoredSceneSelection({ ...DEFAULT_WORKSPACE_SESSION, selection: { type: "map" }, selectedProvince: "浙江省", selectedObject: "cards" }))
+      .toEqual({ type: "map" });
+  });
+
+  it("keeps a remembered object while the actual project has not hydrated", () => {
+    expect(restoredSceneSelection({ ...DEFAULT_WORKSPACE_SESSION, selection: { type: "text", id: "project-only-text" } }))
+      .toEqual({ type: "text", id: "project-only-text" });
+  });
+
+  it("restores a text that exists in the hydrated project", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    expect(restoredSceneSelection({ ...DEFAULT_WORKSPACE_SESSION, selection: { type: "text", id: "text-title" } }, project))
+      .toEqual({ type: "text", id: "text-title" });
+  });
+
+  it("restores assets by their instance id rather than the resource id", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.assetElements = [{
+      id: "instance-1", assetId: "resource-1", label: "装饰", src: "", kind: "decoration",
+      x: 0, y: 0, width: 100, height: 100, rotation: 0, opacity: 1, zIndex: 30, visibility: true,
+    }];
+    expect(restoredSceneSelection({ ...DEFAULT_WORKSPACE_SESSION, selection: { type: "asset", id: "instance-1" } }, project))
+      .toEqual({ type: "asset", id: "instance-1" });
+    expect(restoredSceneSelection({ ...DEFAULT_WORKSPACE_SESSION, selectedObject: "instance-1" }, project))
+      .toEqual({ type: "asset", id: "instance-1" });
+  });
+
+  it.each(["text", "asset"] as const)("falls back from a missing %s to an existing note", (type) => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    expect(restoredSceneSelection({ ...DEFAULT_WORKSPACE_SESSION, selection: { type, id: "deleted" } }, project))
+      .toEqual({ type: "text", id: "text-note" });
+  });
+
+  it("uses the canvas when the fallback note has also been removed", () => {
+    const project = createProjectDocument({ students: [], templateId: "original", dataView: "province" });
+    project.textElements = [];
+    expect(restoredSceneSelection({ ...DEFAULT_WORKSPACE_SESSION, selectedObject: "deleted-asset" }, project))
+      .toEqual({ type: "canvas" });
+    expect(restoredSceneSelection(DEFAULT_WORKSPACE_SESSION, project)).toEqual({ type: "canvas" });
+  });
+
   it("restores a province over any other remembered object", () => {
     expect(restoredSceneSelection({ ...DEFAULT_WORKSPACE_SESSION, selectedProvince: "浙江", selectedObject: "cards" }))
       .toEqual({ type: "province", province: "浙江" });

@@ -40,6 +40,7 @@ export function FileDropzone({
 }: FileDropzoneProps) {
   const generatedId = useId();
   const inputId = id ?? generatedId;
+  const hintId = `${inputId}-hint`;
   const zoneRef = useRef<HTMLLabelElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -140,13 +141,24 @@ export function FileDropzone({
         htmlFor={inputId}
         className={classes}
         data-file-dropzone=""
+        role="button"
+        tabIndex={inactive ? -1 : 0}
+        aria-label={busy ? busyLabel : label}
+        aria-describedby={!busy ? hintId : undefined}
+        aria-busy={busy || undefined}
         aria-disabled={inactive || undefined}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          if (!inactive && !event.repeat) inputRef.current?.click();
+        }}
       >
         <span className="file-dropzone__icon">{displayIcon}</span>
         <span className="file-dropzone__body">
           <span className="file-dropzone__label">{busy ? busyLabel : label}</span>
-          {hint && !busy ? <span className="file-dropzone__hint">{hint}</span> : null}
-          {!busy && !hint ? <span className="file-dropzone__hint">点击或拖拽到此处</span> : null}
+          {hint && !busy ? <span id={hintId} className="file-dropzone__hint">{hint}</span> : null}
+          {!busy && !hint ? <span id={hintId} className="file-dropzone__hint">点击或拖拽到此处</span> : null}
         </span>
         <input
           ref={inputRef}

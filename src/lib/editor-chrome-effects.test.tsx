@@ -10,7 +10,7 @@ import {
 } from "./editor-layout";
 import type { SceneSelection } from "./scene-document";
 import { SKIN_STORAGE_KEY, THEME_STORAGE_KEY, type ResolvedTheme, type StudioSkin, type ThemeMode } from "./theme";
-import { DEFAULT_WORKSPACE_SESSION, WORKSPACE_SESSION_STORAGE_KEY } from "./workspace-session";
+import { DEFAULT_WORKSPACE_SESSION, WORKSPACE_SESSION_STORAGE_KEY, workspaceSessionStorageKey } from "./workspace-session";
 import type { WorkflowStageId } from "./workflow-stages";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,6 +18,7 @@ import type { WorkflowStageId } from "./workflow-stages";
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 interface ProbeProps {
+  sessionStorageKey?: string;
   themeMode?: ThemeMode;
   skin?: StudioSkin;
   resolvedTheme?: ResolvedTheme;
@@ -38,6 +39,7 @@ function Probe(props: ProbeProps) {
   });
   useEditorChromeEffects({
     workspaceSession: DEFAULT_WORKSPACE_SESSION,
+    sessionStorageKey: props.sessionStorageKey,
     activeStage: props.activeStage ?? "map",
     selection: props.selection ?? { type: "canvas" },
     themeMode: props.themeMode ?? "dark",
@@ -96,6 +98,16 @@ afterEach(() => {
 });
 
 describe("useEditorChromeEffects", () => {
+  it("writes the complete selection to the project key without changing the public session", () => {
+    const publicSession = JSON.stringify({ stage: "export", savedAt: "public" });
+    window.localStorage.setItem(WORKSPACE_SESSION_STORAGE_KEY, publicSession);
+    mount({ sessionStorageKey: workspaceSessionStorageKey("project-a"), activeStage: "content", selection: { type: "text", id: "text-title" } });
+    expect(JSON.parse(window.localStorage.getItem(workspaceSessionStorageKey("project-a"))!))
+      .toMatchObject({ stage: "content", selection: { type: "text", id: "text-title" } });
+    expect(window.localStorage.getItem(WORKSPACE_SESSION_STORAGE_KEY)).toBe(publicSession);
+    expect(window.localStorage.getItem(workspaceSessionStorageKey("project-b"))).toBeNull();
+  });
+
   it("persists the workspace session, theme mode, skin and panel layout", () => {
     mount({ activeStage: "content", selection: { type: "province", province: "浙江省" } });
 

@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { StudioAssistantDrawer } from "./StudioAssistantDrawer";
+import { StudioUiThemeProvider } from "./StudioUiThemeProvider";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -43,6 +44,33 @@ afterEach(() => {
 });
 
 describe("StudioAssistantDrawer", () => {
+  it.each([
+    ["light", "atelier"], ["dark", "atelier"], ["light", "classic"], ["dark", "classic"],
+  ])("keeps the %s/%s scope on the portalled assistant and follows palette changes", (theme, skin) => {
+    const { root } = renderDrawer({ open: false });
+    const onClose = vi.fn();
+    const renderPalette = (nextTheme: string, nextSkin: string) => flushSync(() => root.render(
+      <StudioUiThemeProvider theme={nextTheme} skin={nextSkin}>
+        <StudioAssistantDrawer open onClose={onClose} label="AI 助手">
+          <button type="button" className="secondary-button">打开诊断</button>
+        </StudioAssistantDrawer>
+      </StudioUiThemeProvider>,
+    ));
+    renderPalette(theme, skin);
+    const paper = document.querySelector(".studio-assistant-drawer__paper");
+    expect(paper?.classList.contains("app-shell")).toBe(true);
+    expect(paper?.getAttribute("data-editor-theme")).toBe(theme);
+    expect(paper?.getAttribute("data-editor-skin")).toBe(skin);
+    expect(paper?.getAttribute("role")).toBe("dialog");
+    expect(paper?.textContent).toContain("打开诊断");
+
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    const nextSkin = skin === "atelier" ? "classic" : "atelier";
+    renderPalette(nextTheme, nextSkin);
+    expect(paper?.getAttribute("data-editor-theme")).toBe(nextTheme);
+    expect(paper?.getAttribute("data-editor-skin")).toBe(nextSkin);
+  });
+
   it("renders a labelled drawer with the assistant content and a labelled close button", () => {
     renderDrawer();
     const drawerRoot = document.querySelector(".MuiDrawer-root");

@@ -6,6 +6,7 @@ import { DataUploadRail, DataUploadWorkspace } from "./DataUploadWorkspace";
 import { createProjectDocument } from "../../lib/project-document";
 import type { Student } from "../../lib/project-data";
 import type { DataWorkspace } from "../DataWorkspace";
+import { buildDataHealthSummary, listDataIssues } from "../../lib/data-health";
 
 const students: Student[] = [{
   id: "student-1",
@@ -70,6 +71,65 @@ function renderWorkspace(overrides: Partial<ComponentProps<typeof DataUploadWork
 }
 
 describe("DataUploadWorkspace", () => {
+  it("keeps one full-roster summary with hidden, duplicate and unresolved counts during filtering", () => {
+    const records: Student[] = [
+      students[0]!,
+      { ...students[0]!, id: "student-2", visibility: false },
+      { ...students[0]!, id: "student-3", name: "星河", city: "火星市" },
+    ];
+    const project = createProjectDocument({ students: records, templateId: "original", dataView: "province" });
+    const { container } = renderWorkspace({
+      project,
+      summary: buildDataHealthSummary(project),
+      issues: listDataIssues(project),
+      dataWorkspaceProps: { ...defaultDataWorkspaceProps(), students: records },
+    });
+    const statuses = container.querySelectorAll('[aria-label="名单状态"]');
+    expect(statuses).toHaveLength(1);
+    expect(container.querySelector(".data-summary")).toBeNull();
+    const readCounts = () => Array.from(statuses[0]!.children, (child) => child.textContent?.replace(/\s/g, ""));
+    expect(readCounts()).toEqual(["3总记录", "2可见", "1隐藏", "2重复", "1未匹配城市"]);
+
+    const filter = container.querySelector<HTMLInputElement>('input[aria-label="筛选学生"]')!;
+    flushSync(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(filter, "星河");
+      filter.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(container.querySelectorAll("[data-student-row]")).toHaveLength(1);
+    expect(container.textContent).toContain("找到 1 条匹配记录（名单共 3 条）");
+    expect(readCounts()).toEqual(["3总记录", "2可见", "1隐藏", "2重复", "1未匹配城市"]);
+  });
+
+  it("renders one quality heading and distinguishes warnings from informational records", () => {
+    const { container } = renderWorkspace({
+      issues: [
+        { studentId: "student-1", studentName: "林舟", kind: "duplicate", detail: "记录重复", severity: "warning" },
+        { studentId: "student-2", studentName: "周晴", kind: "hidden", detail: "记录已隐藏", severity: "info" },
+      ],
+    });
+
+    const headings = Array.from(container.querySelectorAll(".panel-heading__title > span"))
+      .filter((heading) => heading.textContent === "数据质量");
+    expect(headings).toHaveLength(1);
+    expect(container.querySelectorAll('section[aria-label="数据质量"]')).toHaveLength(1);
+    expect(headings[0]?.parentElement?.textContent).toContain("1 项提醒 · 1 项说明");
+    expect(container.querySelector('[aria-label="名单质量项目"]')?.textContent).toContain("重复记录");
+    expect(container.querySelector('[aria-label="名单质量项目"]')?.textContent).toContain("隐藏记录");
+  });
+
+  it("puts import and add controls before filtering and the table in keyboard order", () => {
+    const { container } = renderWorkspace();
+    const importControl = container.querySelector('button[aria-label="展开导入名单"]')!;
+    const addControl = container.querySelector('button[aria-label="展开新增学生"]')!;
+    const filter = container.querySelector('input[aria-label="筛选学生"]')!;
+    const table = container.querySelector('table[aria-label="学生数据表"]')!;
+
+    expect(importControl.compareDocumentPosition(addControl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(addControl.compareDocumentPosition(filter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(filter.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("is the roster workbench and excludes map expression controls", () => {
     const { container } = renderWorkspace();
 

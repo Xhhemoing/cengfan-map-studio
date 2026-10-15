@@ -8,6 +8,7 @@ import { WorkflowPrototypeRoute } from "./components/WorkflowPrototypeRoute";
 import { editorProjectStore } from "./lib/editor-project-store";
 import { isPrototypePath } from "./lib/public-base-path";
 import "./styles.css";
+import "./styles/studio-shell.css";
 import "./styles/studio-tokens.css";
 import "./styles/studio-chrome.css";
 

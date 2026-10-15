@@ -4,11 +4,11 @@
   "server/collaboration.ts": 1011,
   "server/index.ts": 979,
   "src/App.collaboration-terminal.test.tsx": 402,
-  "src/App.tsx": 904,
+  "src/App.tsx": 900,
   "src/components/AgentAssistant.tsx": 705,
   "src/components/AppErrorBoundary.tsx": 403,
   "src/components/AssetPanel.tsx": 754,
-  "src/components/DataWorkspace.tsx": 699,
+  "src/components/DataWorkspace.tsx": 690,
   "src/components/canvas/MapDataLayer.tsx": 508,
   "src/components/canvas/MapLayer.tsx": 606,
   "src/components/canvas/PosterCanvas.tsx": 948,
@@ -23,9 +23,9 @@
   "src/lib/project-document.test.ts": 403,
   "src/lib/project-migration.ts": 601,
   "src/lib/project-package.test.ts": 452,
-  "src/lib/project-store.ts": 748,
+  "src/lib/project-store.ts": 655,
   "src/lib/scene-document.test.ts": 401,
   "src/lib/scene-document.ts": 766,
   "src/lib/useCollaborationRoom.ts": 846,
-  "src/styles.css": 3804
+  "src/styles.css": 3594
 }

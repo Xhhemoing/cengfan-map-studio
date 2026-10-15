@@ -3,6 +3,7 @@ import { Ellipsis, MapPinned } from "lucide-react";
 import "../styles/studio-topbar.css";
 
 export type StudioTopbarProps = {
+  projectIdentity?: ReactNode;
   assistantEntry?: ReactNode;
   historyActions?: ReactNode;
   stageActions?: ReactNode;
@@ -16,6 +17,7 @@ export type StudioTopbarProps = {
  * stay in one disclosure so they cannot displace the centred workflow.
  */
 export function StudioTopbar({
+  projectIdentity,
   assistantEntry,
   historyActions,
   stageActions,
@@ -67,12 +69,13 @@ export function StudioTopbar({
         }
       }}
     >
-      <div className="brand">
+      <div className="brand" data-has-project={Boolean(projectIdentity)} title="蹭饭地图工作室">
         <MapPinned size={24} aria-hidden="true" />
-        <span className="studio-topbar__brand-copy">
+        {projectIdentity && <span className="sr-only">蹭饭地图工作室</span>}
+        {projectIdentity ?? <span className="studio-topbar__brand-copy">
           <span className="brand-label brand-label__full">蹭饭地图工作室</span>
           <span className="brand-label brand-label__compact">蹭饭图</span>
-        </span>
+        </span>}
       </div>
       {workflowNav && (
         <div className="topbar-workflow" onClick={() => setToolsOpen(false)}>{workflowNav}</div>

@@ -21,6 +21,7 @@ interface Recorded {
   menuToggles: number;
   collaborationOpen: boolean[];
   exports: number;
+  retries: number;
 }
 
 function harness(overrides: Partial<EditorNavigationActionDeps> = {}): {
@@ -38,6 +39,7 @@ function harness(overrides: Partial<EditorNavigationActionDeps> = {}): {
     menuToggles: 0,
     collaborationOpen: [],
     exports: 0,
+    retries: 0,
   };
   const actions = createEditorNavigationActions({
     project: createProjectDocument({ students: [], templateId: "original", dataView: "province" }),
@@ -52,6 +54,7 @@ function harness(overrides: Partial<EditorNavigationActionDeps> = {}): {
     toggleProjectMenu: () => { log.menuToggles += 1; },
     setCollaborationOpen: (open) => log.collaborationOpen.push(open),
     exportPng: () => { log.exports += 1; },
+    retryLastExport: () => { log.retries += 1; },
     ...overrides,
   });
   return { actions, log };
@@ -228,6 +231,21 @@ describe("stage overview actions", () => {
     const png = harness();
     png.actions.runStageOverviewAction({ kind: "export-png" });
     expect(png.log.exports).toBe(1);
+
+    const retry = harness();
+    retry.actions.runStageOverviewAction({ kind: "retry-export" });
+    expect(retry.log.retries).toBe(1);
+    expect(retry.log.exports).toBe(0);
+  });
+
+  it("delegates a failed export retry to the remembered format without starting a new PNG", () => {
+    const formats: string[] = [];
+    for (const format of ["svg", "project", "png"]) {
+      const { actions, log } = harness({ retryLastExport: () => formats.push(format) });
+      actions.runStageOverviewAction({ kind: "retry-export" });
+      expect(log.exports).toBe(0);
+    }
+    expect(formats).toEqual(["svg", "project", "png"]);
   });
 
   it("locates a layout issue named by the overview card", () => {

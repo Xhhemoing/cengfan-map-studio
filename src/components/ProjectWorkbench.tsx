@@ -18,6 +18,8 @@ import { loadStudioSkin, loadThemeMode, resolveTheme } from "../lib/theme";
 import { ProjectGrid } from "./workbench/ProjectGrid";
 import { WorkbenchHeader } from "./workbench/WorkbenchHeader";
 import { ContinueEditingCard } from "./workbench/ContinueEditingCard";
+import { WorkbenchGuide } from "./workbench/WorkbenchGuide";
+import "./workbench/workbench-experience.css";
 import { StorageNotice, StorageNoticeActionError, StorageNoticeExportAction } from "./StorageNotice";
 
 interface ProjectWorkbenchProps {
@@ -307,6 +309,8 @@ export function ProjectWorkbench({ store, health, recoverError, navigate, public
       {error && <section className="workbench-error" role="alert">{error}</section>}
 
       {localEntry && <ContinueEditingCard entry={localEntry} onResume={() => void continueEditing()} />}
+
+      <WorkbenchGuide />
 
       <ProjectGrid
         projects={sorted}

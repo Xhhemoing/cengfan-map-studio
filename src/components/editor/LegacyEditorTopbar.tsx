@@ -12,6 +12,7 @@ import { WorkflowStepper } from "../WorkflowStepper";
 import { ZoomControls } from "../ZoomControls";
 
 export interface LegacyEditorTopbarProps {
+  projectIdentity?: ReactNode;
   workflowNav: ReactNode;
   legacyActivePanel: ActivePanel;
   workflowProgress: WorkflowProgress;
@@ -38,6 +39,7 @@ export interface LegacyEditorTopbarProps {
 
 /** Legacy controls share the same header and navigation geometry as every stage. */
 export function LegacyEditorTopbar({
+  projectIdentity,
   workflowNav,
   legacyActivePanel,
   workflowProgress,
@@ -63,6 +65,7 @@ export function LegacyEditorTopbar({
 }: LegacyEditorTopbarProps) {
   return (
     <StudioTopbar
+      projectIdentity={projectIdentity}
       workflowNav={<>
         {workflowNav}
         <div className="topbar-workflow__legacy" aria-hidden="true">

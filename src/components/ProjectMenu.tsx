@@ -5,7 +5,9 @@
  * the room nickname, a device-local preference read/written here.
  */
 import { useState } from "react";
-import { Copy, Download, FolderOpen, ImageDown, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
+import { Download, FolderOpen, ImageDown, LogOut, PackageOpen, Plus, Save, Share2 } from "lucide-react";
+import { ClipboardButton } from "./ClipboardButton";
+import { useDisclosureDismissal } from "../lib/use-disclosure-dismissal";
 import type { CollaborationRole, RoomAccessAction, RoomMember, RoomPersistenceOutcome } from "../lib/collaboration-client";
 import {
   describeRole,
@@ -142,6 +144,7 @@ export function ProjectMenu({
   onExportProject,
   onImportProject,
 }: ProjectMenuProps) {
+  const disclosureRef = useDisclosureDismissal();
   // 终局与离线是互斥的两种处境:终局房间不会再重连,离线只是等网络回来,提示语不能混用。
   const terminalKind = roomClosed ? "closed" : roomExpired ? "expired" : undefined;
   const isOffline = collaborationOffline && terminalKind === undefined;
@@ -162,7 +165,7 @@ export function ProjectMenu({
     saveDisplayName(next);
   };
   return (
-    <details className="project-menu">
+    <details ref={disclosureRef} className="project-menu">
       <summary className="secondary-button" aria-label="打开项目与协作菜单">
         <FolderOpen size={16} /> <span>项目</span>
       </summary>
@@ -206,7 +209,7 @@ export function ProjectMenu({
                   <>
                     <div className="collaboration-room-code">
                       <b>{roomId}</b>
-                      <button type="button" aria-label="复制房间码" onClick={() => void navigator.clipboard?.writeText(roomId)}><Copy size={15} /></button>
+                      <ClipboardButton text={roomId} label="复制房间码" iconOnly />
                     </div>
                     <DisplayNameInput value={displayName} connected onChange={handleDisplayNameChange} />
                     <small>{describeRole(roomRole).label} · {members.length} 位成员</small>
@@ -225,7 +228,7 @@ export function ProjectMenu({
                         {roomRole === "owner" && <div className="collaboration-invitations">
                           <button type="button" onClick={() => onCreateInvitation("editor")}>邀请编辑者</button>
                           <button type="button" onClick={() => onCreateInvitation("viewer")}>邀请查看者</button>
-                          {invitationToken && <button type="button" aria-label="复制邀请凭证" title="邀请凭证仅可使用一次，请通过私密渠道发送" onClick={() => void navigator.clipboard?.writeText(invitationToken)}><Copy size={15} /> 复制邀请凭证</button>}
+                          {invitationToken && <ClipboardButton text={invitationToken} label="复制邀请凭证" title="邀请凭证仅可使用一次，请通过私密渠道发送" />}
                           <button type="button" onClick={() => onSetRoomAccess("set-readonly")}>{roomReadonly ? "恢复编辑" : "设为只读"}</button>
                           <button type="button" onClick={() => onSetRoomAccess("close")}>关闭房间</button>
                         </div>}

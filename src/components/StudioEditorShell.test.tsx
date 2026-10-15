@@ -4,6 +4,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { StudioEditorShell } from "./StudioEditorShell";
+import { StudioUiThemeProvider } from "./StudioUiThemeProvider";
 import { EDITOR_PANEL_LAYOUT_STORAGE_KEY } from "../lib/editor-layout";
 
 const roots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -12,26 +13,33 @@ function renderShell({
   rightRail,
   rightRailLabel,
   leftRail = <div aria-label="编辑器左侧栏">左栏</div>,
+  theme = "light",
+  skin = "atelier",
 }: {
   rightRail?: ReactNode;
   rightRailLabel?: string;
   leftRail?: ReactNode | null;
+  theme?: string;
+  skin?: string;
 } = {}) {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
   roots.push({ root, container });
-  flushSync(() => root.render(
-    <StudioEditorShell
-      stage="map"
-      leftRail={leftRail ?? undefined}
-      rightRail={rightRail}
-      rightRailLabel={rightRailLabel}
-    >
-      <div>中心</div>
-    </StudioEditorShell>,
+  const renderPalette = (nextTheme: string, nextSkin: string) => flushSync(() => root.render(
+    <StudioUiThemeProvider theme={nextTheme} skin={nextSkin}>
+      <StudioEditorShell
+        stage="map"
+        leftRail={leftRail ?? undefined}
+        rightRail={rightRail}
+        rightRailLabel={rightRailLabel}
+      >
+        <div>中心</div>
+      </StudioEditorShell>
+    </StudioUiThemeProvider>,
   ));
-  return { container, root };
+  renderPalette(theme, skin);
+  return { container, root, renderPalette };
 }
 
 function click(element: Element | null): void {
@@ -49,6 +57,31 @@ afterEach(() => {
 });
 
 describe("StudioEditorShell", () => {
+  it.each([
+    ["light", "atelier"], ["dark", "atelier"], ["light", "classic"], ["dark", "classic"],
+  ])("keeps the %s/%s scope on the portalled right rail", (theme, skin) => {
+    const { container, renderPalette } = renderShell({
+      theme, skin, rightRail: <button type="button" className="secondary-button">导出工程包</button>, rightRailLabel: "交付检查",
+    });
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="打开交付检查"]');
+    click(toggle);
+    const paper = document.querySelector(".studio-editor-shell__drawer-paper");
+    expect(paper?.classList.contains("app-shell")).toBe(true);
+    expect(paper?.getAttribute("data-editor-theme")).toBe(theme);
+    expect(paper?.getAttribute("data-editor-skin")).toBe(skin);
+    expect(paper?.getAttribute("role")).toBe("dialog");
+    const titleId = paper?.getAttribute("aria-labelledby");
+    expect(document.getElementById(titleId ?? "")?.textContent).toBe("交付检查");
+    expect(document.getElementById(toggle?.getAttribute("aria-controls") ?? "")?.textContent).toContain("导出工程包");
+
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    const nextSkin = skin === "atelier" ? "classic" : "atelier";
+    renderPalette(nextTheme, nextSkin);
+    expect(paper?.getAttribute("data-editor-theme")).toBe(nextTheme);
+    expect(paper?.getAttribute("data-editor-skin")).toBe(nextSkin);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("renders the persistent left rail, center region and an optional labelled right rail", () => {
     const { container } = renderShell({ rightRail: <div>右栏内容</div>, rightRailLabel: "地图属性" });
 
@@ -66,9 +99,13 @@ describe("StudioEditorShell", () => {
     const dockedGuide = container.querySelector(".studio-editor-shell__right .studio-stage-guide");
     expect(dockedGuide?.textContent).toContain("选择呈现方式并调整地图外观");
     expect(dockedGuide?.getAttribute("aria-label")).toBe("地图说明");
+    expect(dockedGuide?.textContent).toContain("请确认本阶段效果，导出前查看交付检查");
+    expect(dockedGuide?.textContent).not.toContain("已完成");
 
     click(container.querySelector<HTMLButtonElement>('button[aria-label="打开地图属性"]')!);
-    expect(document.querySelector(".studio-editor-shell__drawer .studio-stage-guide")?.textContent).toContain("选择呈现方式并调整地图外观");
+    const drawerGuide = document.querySelector(".studio-editor-shell__drawer .studio-stage-guide");
+    expect(drawerGuide?.textContent).toContain("选择呈现方式并调整地图外观");
+    expect(drawerGuide?.textContent).toContain("请确认本阶段效果，导出前查看交付检查");
   });
 
   it("expands the center region when no right rail is supplied", () => {

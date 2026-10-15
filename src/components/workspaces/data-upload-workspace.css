@@ -1,0 +1,65 @@
+/* The embedded roster follows its DOM order: import / add, filter, then table.
+ * Explicit workspace scope overrides the old cross-workspace grid ordering. */
+.data-upload-workspace.data-upload-workspace--expanded {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.data-upload-workspace.data-upload-workspace--expanded > .data-upload-workspace__header {
+  padding-block: 12px;
+}
+
+.data-upload-workspace--expanded .data-workspace.data-workspace--roster {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--studio-space-3, 12px);
+}
+
+.data-upload-workspace--expanded .data-workspace.data-workspace--roster > * {
+  grid-column: 1 / -1;
+  order: 0;
+}
+
+.data-upload-workspace--expanded .data-workspace.data-workspace--roster > .import-box,
+.data-upload-workspace--expanded .data-workspace.data-workspace--roster > .data-workspace__new-student {
+  grid-column: auto;
+}
+
+.data-upload-workspace--expanded .data-workspace.data-workspace--roster > .data-table-wrap {
+  /* A fixed-height grid stretches a single filtered table row out of view. */
+  display: block;
+  height: auto;
+  max-height: min(62vh, 680px);
+}
+
+.data-upload-workspace--expanded .data-workspace--roster > .student-actions {
+  grid-template-columns: minmax(160px, 1fr) auto;
+  align-items: center;
+}
+
+.student-filter-feedback {
+  color: var(--editor-ink-muted, #64748b);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.data-upload-workspace--expanded .student-filter-feedback {
+  grid-column: 1 / -1;
+}
+
+/* The drawer chrome already names this section; keep its status counts below. */
+.studio-editor-shell__drawer .data-upload-workspace__quality > .panel-heading .panel-heading__title > span {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .data-upload-workspace.data-upload-workspace--expanded > .data-upload-workspace__header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--studio-space-2, 8px);
+  }
+}
+
+@media (max-width: 560px) {
+  .data-upload-workspace--expanded .data-workspace.data-workspace--roster,
+  .data-upload-workspace--expanded .data-workspace--roster > .student-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

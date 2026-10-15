@@ -111,7 +111,7 @@ describe("HelpFeedbackMenu", () => {
     expect(container.textContent).toContain("只会带上系统与浏览器版本，不会上传名单或工程内容。");
   });
 
-  it("copies the environment line so it can be pasted into fields GitHub cannot prefill", () => {
+  it("copies the environment line so it can be pasted into fields GitHub cannot prefill", async () => {
     const writeText = vi.fn((_text: string) => Promise.resolve());
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     const onCopyEnvironment = vi.fn();
@@ -127,8 +127,42 @@ describe("HelpFeedbackMenu", () => {
     expect(copied).toBe(formatEnvironmentForIssue(environment));
     expect(copied).not.toContain("http");
     expect(copied).not.toContain("?");
-    expect(onCopyEnvironment).toHaveBeenCalledWith(copied);
+    await vi.waitFor(() => expect(onCopyEnvironment).toHaveBeenCalledWith(copied));
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("已复制环境信息");
     vi.unstubAllGlobals();
+  });
+
+  it("reports clipboard refusal without announcing success", async () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+    const onCopyEnvironment = vi.fn();
+    const container = renderMenu({ onCopyEnvironment });
+    flushSync(() => container.querySelector<HTMLButtonElement>('[aria-label="复制环境信息"]')!.click());
+    await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toContain("无法复制"));
+    expect(onCopyEnvironment).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("dismisses with Escape, outside pointer and focus leaving the disclosure", () => {
+    const container = renderMenu();
+    const details = container.querySelector("details")!;
+    const summary = details.querySelector("summary")!;
+    const anchor = details.querySelector("a")!;
+    const outside = document.createElement("button");
+    container.append(outside);
+    details.open = true;
+    anchor.focus();
+    anchor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(details.open).toBe(false);
+    expect(document.activeElement).toBe(summary);
+    details.open = true;
+    outside.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    expect(details.open).toBe(false);
+    details.open = true;
+    anchor.focus();
+    outside.focus();
+    expect(details.open).toBe(false);
+    expect(document.activeElement).toBe(outside);
   });
 
   it("marks the workbench placement without changing the markup contract", () => {

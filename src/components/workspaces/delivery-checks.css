@@ -1,0 +1,143 @@
+.delivery-workspace__issue-description {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.delivery-workspace__issue-description strong { font-size: 12px; }
+.delivery-workspace__issue-description > span { font-size: 12px; }
+.delivery-workspace__issue-list button > small { flex-shrink: 0; }
+
+.delivery-workspace__roster-notice {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  color: var(--editor-ink, #222a28);
+  background: var(--editor-surface-muted, #eeeae0);
+  border-left: 3px solid var(--editor-accent, #315f57);
+}
+.delivery-workspace__roster-notice p { margin: 0; font-size: 12px; line-height: 1.6; }
+.delivery-workspace__roster-notice button { justify-self: start; }
+.delivery-workspace__format-help { color: var(--editor-ink-muted, #68716c); font-size: 12px; }
+.delivery-workspace__format-help summary { padding: 8px 0; cursor: pointer; }
+.delivery-workspace__format-help dl { display: grid; gap: 8px; margin: 8px 0; }
+.delivery-workspace__format-help dl > div { display: grid; grid-template-columns: 48px 1fr; gap: 8px; }
+.delivery-workspace__format-help dt { color: var(--editor-ink, #222a28); font-weight: 600; }
+.delivery-workspace__format-help dd { margin: 0; line-height: 1.5; }
+.app-shell[data-editor-skin] .delivery-workspace__result[data-export-stale="true"] { color: var(--editor-ink, #222a28); }
+.delivery-workspace__result-copy { display: grid; gap: 4px; overflow-wrap: anywhere; }
+
+/* Flat sections keep the artifact checks readable without stacking nested cards. */
+.delivery-workspace__checks .delivery-workspace__check-results {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+.delivery-workspace__check-list { display: grid; min-width: 0; }
+.delivery-workspace__checks .delivery-workspace__check[aria-label][data-check-state] {
+  min-width: 0;
+  padding: 0;
+  color: var(--editor-ink, #222a28);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--editor-line, #d0cdc2);
+  border-radius: 0;
+  box-shadow: none;
+}
+.delivery-workspace__check[data-check-state] :is(header, summary) {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+.delivery-workspace__check[data-check-state] :is(header, summary) > div {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.delivery-workspace__check[data-check-state] :is(header, summary) strong { font-size: 12px; }
+.delivery-workspace__check[data-check-state] :is(header, summary) small { color: var(--editor-ink-muted, #68716c); font-size: 11px; }
+.delivery-workspace__check[data-check-state] summary { cursor: pointer; list-style: none; }
+.delivery-workspace__check[data-check-state] summary::-webkit-details-marker { display: none; }
+.delivery-workspace__check[data-check-state="passed"] header > svg { color: var(--editor-accent, #315f57); }
+.delivery-workspace__check[data-check-state="warning"] summary > svg:not(.delivery-workspace__check-disclosure) { color: var(--editor-warning, #9a6728); }
+.delivery-workspace__check[data-check-state="info"] summary > svg:not(.delivery-workspace__check-disclosure) { color: var(--editor-ink-muted, #68716c); }
+.delivery-workspace__check-disclosure { flex-shrink: 0; transform: rotate(-90deg); }
+.delivery-workspace__check details[open] .delivery-workspace__check-disclosure { transform: none; }
+.delivery-workspace__check[data-check-state] .delivery-workspace__issue-list { margin: 0 0 10px; }
+.delivery-workspace__check[data-check-state] .delivery-workspace__issue-list button { min-height: 44px; }
+.delivery-workspace__pending-summary { margin: 0; color: var(--editor-ink-muted, #68716c); font-size: 12px; line-height: 1.6; }
+
+.delivery-workspace__checks :is(.delivery-workspace__controls, .delivery-workspace__export) {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 12px 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--editor-line, #d0cdc2);
+  border-radius: 0;
+  box-shadow: none;
+}
+.delivery-workspace__checks :is(.delivery-workspace__controls, .delivery-workspace__export) h3 {
+  margin: 0 0 4px;
+  color: var(--editor-ink, #222a28);
+  font-size: 13px;
+}
+.delivery-workspace__export p { margin: 0; color: var(--editor-ink-muted, #68716c); font-size: 12px; line-height: 1.6; }
+.delivery-workspace__checks section.delivery-workspace__controls[aria-label] {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--editor-line, #d0cdc2);
+  border-radius: 0;
+}
+.delivery-workspace__checks .delivery-workspace__controls > label {
+  min-height: 32px;
+  align-items: center;
+  color: var(--editor-ink, #222a28);
+  font-size: 12px;
+}
+.delivery-workspace__controls select[aria-label] {
+  min-width: 78px;
+  min-height: 32px;
+  padding: 4px 8px;
+  color: var(--editor-ink, #222a28);
+  background: var(--editor-surface-raised, #fffdf8);
+  border: 1px solid var(--editor-line, #d0cdc2);
+  border-radius: var(--studio-radius-sm, 5px);
+  font: inherit;
+}
+.delivery-workspace__controls > span { color: var(--editor-ink-muted, #68716c); font-size: 12px; line-height: 1.5; }
+.delivery-workspace__checks .delivery-workspace__controls label.boolean-control.checkbox-row {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+.delivery-workspace__controls label.boolean-control.checkbox-row input[type="checkbox"] {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
+  accent-color: var(--editor-accent, #315f57);
+}
+.delivery-workspace__controls label.boolean-control.checkbox-row:focus-within {
+  outline: 2px solid var(--editor-focus, #315f57);
+  outline-offset: 2px;
+}
+.delivery-workspace__format-help summary { min-height: 44px; display: flex; align-items: center; }
+
+@media (max-width: 760px), (pointer: coarse) {
+  .delivery-workspace__controls select[aria-label] { min-height: 44px; }
+  .delivery-workspace__check[data-check-state] summary { min-height: 44px; }
+  .delivery-workspace__checks .delivery-workspace__actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .delivery-workspace__checks .delivery-workspace__actions button { min-height: 44px; padding: 6px 8px; }
+}

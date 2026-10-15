@@ -20,6 +20,7 @@ type DataWorkspaceProps = ComponentProps<typeof DataWorkspace> & {
 };
 
 export interface GlobalSettingsShellProps {
+  projectIdentity?: ReactNode;
   section: GlobalSettingsSection;
   theme: ResolvedTheme;
   skin: string;
@@ -53,6 +54,7 @@ export interface GlobalSettingsShellProps {
  * 系统模板清单与自定义模板的 id→记录回查留在这里,App 只交出原始数据。
  */
 export function GlobalSettingsShell({
+  projectIdentity,
   section,
   theme,
   skin,
@@ -83,6 +85,7 @@ export function GlobalSettingsShell({
   return (
     <div className="app-shell" data-editor-theme={theme} data-editor-skin={skin}>
       <StudioTopbar
+        projectIdentity={projectIdentity}
         workflowNav={workflowNav}
         historyActions={
           <ToolbarGroup label="全局设置历史" className="global-settings-history">

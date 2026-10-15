@@ -2,6 +2,16 @@ import { createProjectDocument, type ProjectDocument } from "./project-document"
 import { createProjectPackage, restoreProjectPackage, type ProjectPackage } from "./project-package";
 import { sampleStudents } from "./project-data";
 import { createId } from "./ids";
+import {
+  metadataFromStoredValue,
+  parseProjectMetadata,
+  projectListItem,
+  projectMetadata,
+  timestampOrEpoch,
+  type ProjectListItem,
+  type ProjectMetadata,
+} from "./project-store-metadata";
+export type { ProjectListItem, ProjectMetadata, ProjectPreviewMetadata } from "./project-store-metadata";
 
 export interface StoredProject {
   id: string;
@@ -9,31 +19,6 @@ export interface StoredProject {
   createdAt: string;
   updatedAt: string;
   pack: ProjectPackage;
-}
-
-export interface ProjectMetadata {
-  id: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
-  exportedAt: string;
-  studentCount: number;
-  assetCount: number;
-  fontCount: number;
-  customTemplateCount: number;
-}
-
-/**
- * 项目卡片仍通过 pack.exportedAt / pack.project.students.length 展示已有信息。
- * 这里是只含时间与计数的兼容视图，不是完整工程包；需要工程包的操作必须调用 get(id)。
- */
-export interface ProjectListItem extends ProjectMetadata {
-  pack: {
-    exportedAt: string;
-    project: {
-      students: { readonly length: number };
-    };
-  };
 }
 
 /** `"memory"` 表示本次会话的改动不会落到本机磁盘，调用方应提示用户导出备份。 */
@@ -112,30 +97,6 @@ export function duplicateStoredProject(source: StoredProject, name = `${source.n
   };
 }
 
-function projectMetadata(project: StoredProject): ProjectMetadata {
-  return {
-    id: project.id,
-    name: project.name,
-    createdAt: project.createdAt,
-    updatedAt: project.updatedAt,
-    exportedAt: project.pack.exportedAt,
-    studentCount: project.pack.project.students.length,
-    assetCount: project.pack.assets.length,
-    fontCount: project.pack.fonts.length,
-    customTemplateCount: project.pack.customTemplates.length,
-  };
-}
-
-function projectListItem(metadata: ProjectMetadata): ProjectListItem {
-  return {
-    ...metadata,
-    pack: {
-      exportedAt: metadata.exportedAt,
-      project: { students: { length: metadata.studentCount } },
-    },
-  };
-}
-
 export function createMemoryProjectStore(): ProjectStore {
   const records = new Map<string, StoredProject>();
   return {
@@ -155,60 +116,6 @@ export function createMemoryProjectStore(): ProjectStore {
     async remove(id) {
       records.delete(id);
     },
-  };
-}
-
-function timestampOrEpoch(value: unknown): string {
-  return typeof value === "string" ? value : new Date(0).toISOString();
-}
-
-function parseCount(value: unknown): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-
-function parseProjectMetadata(value: unknown): ProjectMetadata | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (typeof record.id !== "string" || typeof record.name !== "string" || typeof record.exportedAt !== "string") return null;
-  const studentCount = parseCount(record.studentCount);
-  const assetCount = parseCount(record.assetCount);
-  const fontCount = parseCount(record.fontCount);
-  const customTemplateCount = parseCount(record.customTemplateCount);
-  if (studentCount === null || assetCount === null || fontCount === null || customTemplateCount === null) return null;
-  return {
-    id: record.id,
-    name: record.name,
-    createdAt: timestampOrEpoch(record.createdAt),
-    updatedAt: timestampOrEpoch(record.updatedAt),
-    exportedAt: record.exportedAt,
-    studentCount,
-    assetCount,
-    fontCount,
-    customTemplateCount,
-  };
-}
-
-/** 旧版 projects 记录的轻量解析：升级时不反序列化其中可能很大的 base64 资源。 */
-function metadataFromStoredValue(value: unknown): ProjectMetadata | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  const pack = record.pack;
-  if (!pack || typeof pack !== "object" || Array.isArray(pack)) return null;
-  const packageRecord = pack as Record<string, unknown>;
-  const project = packageRecord.project;
-  if (packageRecord.kind !== "cengfan-project-package" || !project || typeof project !== "object" || Array.isArray(project)) return null;
-  const projectRecord = project as Record<string, unknown>;
-  if (typeof record.id !== "string" || typeof record.name !== "string" || !Array.isArray(projectRecord.students)) return null;
-  return {
-    id: record.id,
-    name: record.name,
-    createdAt: timestampOrEpoch(record.createdAt),
-    updatedAt: timestampOrEpoch(record.updatedAt),
-    exportedAt: timestampOrEpoch(packageRecord.exportedAt),
-    studentCount: projectRecord.students.length,
-    assetCount: Array.isArray(packageRecord.assets) ? packageRecord.assets.length : 0,
-    fontCount: Array.isArray(packageRecord.fonts) ? packageRecord.fonts.length : 0,
-    customTemplateCount: Array.isArray(packageRecord.customTemplates) ? packageRecord.customTemplates.length : 0,
   };
 }
 

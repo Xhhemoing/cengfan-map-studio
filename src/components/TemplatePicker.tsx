@@ -39,6 +39,7 @@ export function TemplatePicker({
             key={template.id}
             type="button"
             className={currentTemplateId === template.id ? "selected" : undefined}
+            aria-pressed={currentTemplateId === template.id}
             onClick={() => onApplyTemplate(template.id)}
           >
             {template.name}

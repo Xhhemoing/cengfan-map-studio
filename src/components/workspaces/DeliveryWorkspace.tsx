@@ -1,14 +1,15 @@
-import { SourceProjectNotice } from "../SourceProjectNotice";
-import { CheckCircle2, Download, ImageDown, PackageOpen, RotateCcw, TriangleAlert } from "lucide-react";
-import type { ReactNode, RefObject } from "react";
+import { useId, useState, type CSSProperties, type RefObject } from "react";
 import type { DataIssue } from "../../lib/data-health";
 import type { LayoutHealthIssue } from "../../lib/layout-health";
 import type { ProjectDocument } from "../../lib/project-document";
 import type { ResourceHealthIssue } from "../../lib/resource-health";
 import type { UserFont } from "../../lib/fonts";
-import { describeExportPrintHint } from "../../lib/print-size";
-import { resolveStudentLocation } from "../../lib/student-data";
 import { PosterCanvas } from "../canvas/PosterCanvas";
+import { DeliveryChecks } from "./DeliveryChecks";
+import { DeliveryExportActions } from "./DeliveryExportActions";
+import { DeliveryExportControls } from "./DeliveryExportControls";
+import { SourceProjectNotice } from "../SourceProjectNotice";
+import "./delivery-preview.css";
 
 export type DeliveryIssue =
   | { kind: "data"; issue: DataIssue }
@@ -32,6 +33,9 @@ export interface DeliveryWorkspaceProps {
   exportError?: string;
   /** File name of the most recent successful export, when the pipeline knows it. */
   lastExportFileName?: string;
+  /** Whether the current project differs from the last successful export snapshot. */
+  exportIsStale?: boolean;
+  onEditRoster?: () => void;
   onPngScaleChange: (scale: number) => void;
   onTransparentExportChange: (value: boolean) => void;
   onIncludeResourcesChange: (value: boolean) => void;
@@ -45,105 +49,21 @@ export interface DeliveryWorkspaceProps {
 /** Props for the export stage's right rail: everything except the canvas concerns. */
 export type DeliveryRailProps = Omit<DeliveryWorkspaceProps, "posterRef" | "userFonts">;
 
-function issueKey(item: DeliveryIssue, index: number): string {
-  if (item.kind === "data") return `data-${item.issue.studentId}-${item.issue.kind}-${index}`;
-  if (item.kind === "layout") return `layout-${item.issue.id}-${item.issue.kind}-${index}`;
-  return `resource-${item.issue.target}-${item.issue.kind}-${index}`;
-}
-
-function CheckSection({
-  title,
-  issues,
-  onLocate,
-  children,
-}: {
-  title: string;
-  issues: DeliveryIssue[];
-  onLocate: (issue: DeliveryIssue) => void;
-  children?: ReactNode;
-}) {
-  return (
-    <section className="delivery-workspace__check" aria-label={title}>
-      <header>
-        <div><strong>{title}</strong><small>{issues.length} 项</small></div>
-        {issues.length === 0 ? <CheckCircle2 size={17} aria-label="检查通过" /> : <TriangleAlert size={17} aria-label="有待处理问题" />}
-      </header>
-      {issues.length > 0 && <div className="delivery-workspace__issue-list">
-        {issues.map((item, index) => (
-          <button key={issueKey(item, index)} type="button" onClick={() => onLocate(item)}>
-            <span>{item.issue.detail}</span><small>定位</small>
-          </button>
-        ))}
-      </div>}
-      {children}
-    </section>
-  );
-}
-
 /**
  * The export stage's unified right rail: 交付检查 checks, 导出设置 controls,
  * the export error state and the PNG/SVG/工程包 action buttons. The shell owns
  * the labelled aside + resizer + mobile drawer chrome.
  */
-export function DeliveryRail({
-  project,
-  dataIssues,
-  layoutIssues,
-  resourceIssues,
-  fontIssues,
-  pngScale,
-  transparentExport,
-  includeResources,
-  exportState,
-  exportError,
-  lastExportFileName,
-  onPngScaleChange,
-  onTransparentExportChange,
-  onIncludeResourcesChange,
-  onLocate,
-  onExportPng,
-  onExportSvg,
-  onExportProjectPackage,
-  onRetry,
-}: DeliveryRailProps) {
-  const allClear = dataIssues.length === 0 && layoutIssues.length === 0
-    && resourceIssues.length === 0 && fontIssues.length === 0;
-  const visibleStudents = project.students.filter((student) => student.visibility !== false);
-  const provinceCount = new Set(
-    visibleStudents
-      .map((student) => student.province?.trim() || resolveStudentLocation(student).province)
-      .filter(Boolean),
-  ).size;
-
+export function DeliveryRail(props: DeliveryRailProps) {
+  const formatHelpId = useId();
+  const hiddenCount = props.project.students.filter((student) => student.visibility === false).length;
   return (
     <aside className="delivery-workspace__checks" aria-label="交付检查">
       <h2 className="delivery-workspace__checks-title">交付检查</h2>
-      {allClear && (
-        <p className="delivery-workspace__all-clear" role="status">
-          检查全部通过：{visibleStudents.length} 人 · 覆盖 {provinceCount} 个省市，可直接导出。
-        </p>
-      )}
-      <CheckSection title="数据完整性" issues={dataIssues.map((issue) => ({ kind: "data", issue }))} onLocate={onLocate} />
-      <CheckSection title="排版问题" issues={layoutIssues.map((issue) => ({ kind: "layout", issue }))} onLocate={onLocate} />
-      <CheckSection title="资源缺失" issues={resourceIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
-      <CheckSection title="字体问题" issues={fontIssues.map((issue) => ({ kind: "resource", issue }))} onLocate={onLocate} />
-      {exportState === "success" && <div className="delivery-workspace__result" role="status"><CheckCircle2 size={16} aria-hidden /><span>{lastExportFileName ? `已导出 ${lastExportFileName}` : "已导出，请到浏览器下载目录查看"}</span><button type="button" aria-label="再次导出" onClick={onRetry}><RotateCcw size={15} aria-hidden /> 再次导出</button></div>}
-      {exportState === "success" && <p>文件已交给浏览器下载，请检查下载列表；应用不能确认是否已写入磁盘。</p>}
-      {exportState === "exporting" && <p role="status">正在导出点击时的预览快照，后续编辑不会写入此文件。</p>}
-      {exportState === "error" && <div className="delivery-workspace__error" role="alert"><strong>导出失败</strong><span>{exportError ?? "请检查浏览器下载权限后重试"}</span><button type="button" aria-label="重试导出" onClick={onRetry}><RotateCcw size={15} aria-hidden /> 重试</button></div>}
-      <section className="delivery-workspace__controls" aria-label="导出设置">
-        <label htmlFor="delivery-png-scale">PNG 倍率<select id="delivery-png-scale" aria-label="PNG 导出倍率" value={pngScale} onChange={(event) => onPngScaleChange(Number(event.target.value))}><option value={1}>1×</option><option value={2}>2×</option><option value={3}>3×</option></select></label>
-        <span>最终像素尺寸：{project.canvas.width * pngScale} × {project.canvas.height * pngScale} px</span>
-        <span data-export-print-size>{describeExportPrintHint(project.canvas.width, project.canvas.height, pngScale)}</span>
-        <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="透明背景" checked={transparentExport} onChange={(event) => onTransparentExportChange(event.target.checked)} />透明背景</label>
-        <label className="boolean-control checkbox-row"><input type="checkbox" aria-label="工程包包含资源" checked={includeResources} onChange={(event) => onIncludeResourcesChange(event.target.checked)} />工程包包含资源</label>
-      </section>
-      <SourceProjectNotice total={project.students.length} hidden={project.students.length - visibleStudents.length} />
-      <div className="delivery-workspace__actions" role="group" aria-label="导出操作" aria-busy={exportState === "exporting"}>
-        <button type="button" className="primary-button" onClick={onExportPng} disabled={exportState === "exporting"}><ImageDown size={16} aria-hidden />PNG</button>
-        <button type="button" className="secondary-button" aria-label="导出 SVG" onClick={onExportSvg} disabled={exportState === "exporting"}><Download size={16} aria-hidden />SVG</button>
-        <button type="button" className="secondary-button" aria-label="导出工程包" onClick={onExportProjectPackage} disabled={exportState === "exporting"}><PackageOpen size={16} aria-hidden />工程包</button>
-      </div>
+      <DeliveryChecks {...props} />
+      <SourceProjectNotice total={props.project.students.length} hidden={hiddenCount} />
+      <DeliveryExportActions {...props} formatHelpId={formatHelpId} />
+      <DeliveryExportControls {...props} formatHelpId={formatHelpId} />
     </aside>
   );
 }
@@ -158,12 +78,27 @@ export function DeliveryWorkspace({
   userFonts = [],
   posterRef,
 }: DeliveryWorkspaceProps) {
+  const [previewMode, setPreviewMode] = useState<"fit" | "actual">("fit");
+  const previewHintId = useId();
   return (
     <main className="delivery-workspace" aria-label="交付">
       <div className="delivery-workspace__body">
         <section className="delivery-workspace__preview" aria-label="最终预览">
           <div className="delivery-workspace__preview-heading"><strong>最终预览</strong><span>{project.canvas.width} × {project.canvas.height} px</span></div>
-          <div className="delivery-workspace__canvas"><PosterCanvas project={project} posterRef={posterRef} exportMode userFonts={userFonts} /></div>
+          <div className="delivery-workspace__preview-tools" role="group" aria-label="预览缩放">
+            <button type="button" className="secondary-button" aria-pressed={previewMode === "fit"} onClick={() => setPreviewMode("fit")}>完整预览</button>
+            <button type="button" className="secondary-button" aria-pressed={previewMode === "actual"} onClick={() => setPreviewMode("actual")}>原始尺寸</button>
+          </div>
+          <p className="delivery-workspace__preview-hint" id={previewHintId}>{previewMode === "fit" ? "完整查看海报；切换原始尺寸可检查细节。" : "按画布原始尺寸查看，可滚动检查细节；导出尺寸不变。"}</p>
+          <div
+            className="delivery-workspace__canvas"
+            data-preview-mode={previewMode}
+            role="region"
+            aria-label={previewMode === "actual" ? "原始尺寸海报" : "完整海报预览"}
+            aria-describedby={previewHintId}
+            tabIndex={previewMode === "actual" ? 0 : undefined}
+            style={{ "--delivery-poster-width": `${project.canvas.width}px`, "--delivery-poster-height": `${project.canvas.height}px` } as CSSProperties}
+          ><PosterCanvas project={project} posterRef={posterRef} exportMode userFonts={userFonts} /></div>
         </section>
       </div>
     </main>

@@ -1,0 +1,51 @@
+.project-save-indicator {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+.project-save-indicator__copy {
+  display: grid;
+  flex: 1 1 0;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.35;
+}
+.project-save-indicator__copy strong {
+  overflow: hidden;
+  color: var(--editor-ink);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-save-indicator__copy [role="status"] {
+  overflow: hidden;
+  color: var(--editor-ink-muted);
+  font-size: 10px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-save-indicator[data-save-status="failed"] [role="status"] { color: var(--editor-danger); }
+.project-save-indicator[data-save-status="pending"] [role="status"] { color: var(--editor-accent); }
+.app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .brand[data-has-project="true"] {
+  gap: 8px;
+  padding: 0 12px;
+}
+@media (max-width: 560px) {
+  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .brand[data-has-project="true"] {
+    gap: 6px;
+    padding: 0 6px 0 10px;
+  }
+}
+@media (pointer: coarse) {
+  .app-shell[data-editor-skin][data-editor-theme] > .studio-topbar .project-save-indicator__save {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+}

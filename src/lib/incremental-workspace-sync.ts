@@ -23,6 +23,7 @@ export class LocalWorkspaceOverwrite {
   private state: LocalWorkspaceOverwriteState = { ...INITIAL_STATE };
   private queued: ProjectPackage | null = null;
   private active: Promise<void> | null = null;
+  private pendingRevision = 0;
 
   constructor(options: LocalWorkspaceOverwriteOptions) {
     this.saveLocal = options.saveLocal;
@@ -33,7 +34,19 @@ export class LocalWorkspaceOverwrite {
     return { ...this.state };
   }
 
+  /** Hydration adopts an existing persisted version without writing it again. */
+  restoreSaved(savedAt: string): void {
+    if (this.active || this.queued || this.state.status === "saving") {
+      // The write owns an older snapshot. Adopting another workspace must not
+      // announce its contents as saved before that newer version has been written.
+      this.markPending();
+      return;
+    }
+    this.update({ status: "saved", savedAt });
+  }
+
   markPending(): void {
+    this.pendingRevision += 1;
     if (this.state.status !== "saving") this.update({ status: "pending" });
   }
 
@@ -56,10 +69,14 @@ export class LocalWorkspaceOverwrite {
     while (this.queued) {
       const current = this.queued;
       this.queued = null;
+      const savingRevision = this.pendingRevision;
       this.update({ status: "saving" });
       try {
         await this.saveLocal(current);
-        this.update({ status: this.queued ? "pending" : "saved", savedAt: current.exportedAt });
+        // An edit during this write is newer than its snapshot. A queued overwrite
+        // will catch up in the next iteration; otherwise keep the editor pending.
+        const hasNewerVersion = this.queued || this.pendingRevision !== savingRevision;
+        this.update({ status: hasNewerVersion ? "pending" : "saved", savedAt: current.exportedAt });
       } catch (reason) {
         console.error("Failed to persist workspace", reason);
         this.update({ status: "failed" });

@@ -181,12 +181,22 @@ function fingerprintHash(value: string): string {
   return `fnv1a32:${hash32(value).toString(16).padStart(8, "0")}`;
 }
 
+const projectFingerprintCache = new WeakMap<ProjectDocument, string>();
+const workspaceDataFingerprintCache = new WeakMap<object, string>();
+
+/** Content identity for immutable workspace resources, including large data URLs. */
+export function fingerprintWorkspaceData(value: object): string {
+  const cached = workspaceDataFingerprintCache.get(value);
+  if (cached) return cached;
+  const fingerprint = fingerprintHash(stableSerialize(value));
+  workspaceDataFingerprintCache.set(value, fingerprint);
+  return fingerprint;
+}
+
 /**
  * Fingerprint every executable project field while excluding undo/redo history.
  * The canonical form makes the result independent of object insertion order.
  */
-const projectFingerprintCache = new WeakMap<ProjectDocument, string>();
-
 export function fingerprintProject(project: ProjectDocument): string {
   const cached = projectFingerprintCache.get(project);
   if (cached) return cached;

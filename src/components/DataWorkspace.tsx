@@ -1,5 +1,5 @@
 import { Check, Download, Eye, EyeOff, FileUp, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   applyUniversityAutoLocation,
   confirmImportCandidates,
@@ -33,6 +33,7 @@ import { SearchCombobox } from "./SearchCombobox";
 import { FileDropzone } from "./FileDropzone";
 import { UniversityEmblem } from "./UniversityEmblem";
 import { ActionButton, ActionGroup, CompactButton, IconButton, PanelHeader, SegmentedControl } from "./StudioUi";
+import { useRosterEditSession } from "./use-roster-edit-session";
 
 /** 未导入行最多列几条：一份 60 行的名单全废时不该把整个面板刷满。 */
 const UNPARSED_PREVIEW_LIMIT = 20;
@@ -60,6 +61,7 @@ export function DataWorkspace({
   hideDataExpression = false,
   hideTemplateDownload = false,
   hideWorkbenchHeader = false,
+  hideRosterSummary = false,
   compactRosterControls = false,
 }: {
   students: Student[];
@@ -81,11 +83,11 @@ export function DataWorkspace({
   hideTemplateDownload?: boolean;
   /** 名单阶段外壳已有「名单」标题时隐藏内部的「学生数据中心」头。 */
   hideWorkbenchHeader?: boolean;
+  /** 名单工作台外壳已有全量计数时隐藏内部摘要；独立渲染默认保留。 */
+  hideRosterSummary?: boolean;
   compactRosterControls?: boolean;
 }) {
   const [draft, setDraft] = useState<StudentDraft>(createEmptyStudentDraft());
-  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
-  const [editingDraft, setEditingDraft] = useState<StudentDraft>(createEmptyStudentDraft());
   const [provinceEditingId, setProvinceEditingId] = useState<string | null>(null);
   const [provinceDraft, setProvinceDraft] = useState("");
   const [filter, setFilter] = useState("");
@@ -93,6 +95,13 @@ export function DataWorkspace({
   const [reviewRows, setReviewRows] = useState<ImportReviewRow[]>([]);
   const [excelRecognition, setExcelRecognition] = useState<Pick<ExcelImportResult, "headerRowIndex" | "columnMappings" | "unmappedHeaders" | "missingRequiredFields"> | null>(null);
   const [message, setMessage] = useState("");
+  const {
+    workspaceRef, editingStudentId, editingDraft, setEditingDraft,
+    startEditing, saveEditing, cancelEditing, handleEditingKeyDown,
+  } = useRosterEditSession(onUpdateStudent, setMessage);
+  const importTextId = useId();
+  const importFormatId = `${importTextId}-format`;
+  const filterResultId = useId();
   const [isAiParsing, setIsAiParsing] = useState(false);
   const [replaceConfirmation, setReplaceConfirmation] = useState<{ currentCount: number; nextCount: number } | null>(null);
   const [unparsedRows, setUnparsedRows] = useState<UnparsedLine[]>([]);
@@ -115,12 +124,12 @@ export function DataWorkspace({
   }, [filter, students]);
 
   const unresolvedCount = useMemo(
-    () => filteredStudents.filter((student) => student.locationScope !== "international" && resolveStudentLocation(student).status === "unresolved").length,
-    [filteredStudents],
+    () => students.filter((student) => student.locationScope !== "international" && resolveStudentLocation(student).status === "unresolved").length,
+    [students],
   );
   const visibleCount = useMemo(
-    () => filteredStudents.filter((student) => student.visibility !== false).length,
-    [filteredStudents],
+    () => students.filter((student) => student.visibility !== false).length,
+    [students],
   );
   const [showImport, setShowImport] = useState(!compactRosterControls);
   const [showNewStudent, setShowNewStudent] = useState(!compactRosterControls);
@@ -172,36 +181,6 @@ export function DataWorkspace({
     })));
     setDraft(createEmptyStudentDraft());
     setMessage("已新增 1 名学生");
-  };
-
-  const startEditing = (student: Student) => {
-    setEditingStudentId(student.id);
-    setEditingDraft({
-      name: student.name,
-      university: student.university,
-      city: student.city,
-      province: student.province ?? "",
-      locationScope: student.locationScope ?? "china",
-    });
-  };
-
-  const saveEditing = (student: Student) => {
-    const next = {
-      name: editingDraft.name.trim(),
-      university: editingDraft.university.trim(),
-      city: editingDraft.city.trim(),
-      // Empty province clears override so city auto-match is used again.
-      province: editingDraft.province?.trim() || undefined,
-      locationScope: editingDraft.locationScope === "international" ? "international" as const : undefined,
-    };
-    if (!next.name || !next.university || !next.city) {
-      setMessage("学生姓名、就读院校和城市不能为空");
-      return;
-    }
-    onUpdateStudent(student.id, next);
-    setEditingStudentId(null);
-    setEditingDraft(createEmptyStudentDraft());
-    setMessage(`已更新 ${next.name}`);
   };
 
   const prepareImport = () => {
@@ -362,7 +341,7 @@ export function DataWorkspace({
   };
 
   return (
-    <div className={`data-workspace${compactRosterControls ? " data-workspace--roster" : ""}`}>
+    <div ref={workspaceRef} className={`data-workspace${compactRosterControls ? " data-workspace--roster" : ""}`}>
       {!hideWorkbenchHeader && <PanelHeader title="学生数据中心" meta={`${visibleCount} 显示 / ${students.length} 条`} />}
 
       {!hideDataExpression && <section className="data-expression" aria-labelledby="data-expression-title">
@@ -382,7 +361,7 @@ export function DataWorkspace({
         />
       </section>}
 
-      <div className="data-summary">
+      {!hideRosterSummary && <div className="data-summary" aria-label="名单状态">
         <div>
           <strong>{students.length}</strong>
           <span>总记录</span>
@@ -400,6 +379,65 @@ export function DataWorkspace({
             <strong>{unresolvedCount}</strong>
             <span>未匹配城市</span>
           </div>
+        )}
+      </div>}
+
+      <div className="import-box">
+        <button
+          type="button"
+          className="wide-button secondary import-toggle"
+          aria-label={showImport ? "收起导入名单" : "展开导入名单"}
+          aria-expanded={showImport}
+          onClick={() => setShowImport((current) => !current)}
+        >
+          {showImport ? "收起导入" : "展开导入 / OCR / Excel"}
+        </button>
+        {showImport && (
+          <>
+            <PanelHeader
+              title={<label htmlFor={importTextId}>导入文本</label>}
+              meta={<span id={importFormatId}>每行一名学生，按“姓名、院校、城市”顺序，用逗号、空格或 Tab 分隔；海外去向在第 4 列填写“海外”。也可粘贴 OCR 文字。</span>}
+            />
+            <textarea
+              id={importTextId}
+              aria-describedby={importFormatId}
+              value={importText}
+              onChange={(event) => setImportText(event.target.value)}
+              placeholder={"林舟 北京大学 北京\n周晴，哈佛大学，美国·波士顿，海外"}
+              rows={5}
+            />
+            <ActionGroup label="导入处理" className="review-actions">
+              <CompactButton icon={<FileUp size={14} aria-hidden />} onClick={prepareImport}>识别文本</CompactButton>
+              <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing || consentGate.isAsking}>
+                {isAiParsing ? "智能识别中..." : "智能识别名单"}
+              </CompactButton>
+              <CompactButton variant="secondary" onClick={prepareOcrImport}>识别 OCR 文本</CompactButton>
+              <ActionButton onClick={importDirectly} disabled={isAiParsing || consentGate.isAsking}>
+                {isAiParsing ? "识别并导入中..." : "一键识别并导入"}
+              </ActionButton>
+            </ActionGroup>
+            <AiUploadConsentDialog gate={consentGate} />
+            <AiUploadConsentMemo gate={consentGate} />
+            <div className="file-import-row">
+              <FileDropzone
+                id="data-excel-upload"
+                label="导入 Excel"
+                hint="XLSX / CSV · 最大 25 MB"
+                accept=".xlsx,.xls,.csv"
+                variant="secondary"
+                icon={<FileUp size={16} aria-hidden />}
+                onFile={(file) => { void handleExcelFile(file); }}
+              />
+              {!hideTemplateDownload && <CompactButton
+                variant="secondary"
+                aria-label="下载学生数据 XLSX 模板"
+                icon={<Download size={16} aria-hidden />}
+                onClick={() => { void downloadImportTemplate(); }}
+              >
+                下载 XLSX 模板
+              </CompactButton>}
+            </div>
+          </>
         )}
       </div>
 
@@ -472,60 +510,6 @@ export function DataWorkspace({
         </div>}
       </section>
 
-      <div className="import-box">
-        <button
-          type="button"
-          className="wide-button secondary import-toggle"
-          aria-label={showImport ? "收起导入名单" : "展开导入名单"}
-          aria-expanded={showImport}
-          onClick={() => setShowImport((current) => !current)}
-        >
-          {showImport ? "收起导入" : "展开导入 / OCR / Excel"}
-        </button>
-        {showImport && (
-          <>
-            <PanelHeader title="导入文本" meta="可粘贴 OCR 识别文字；学生姓名 · 就读院校 · 城市 · 去向类型（可选：海外）" />
-            <textarea
-              value={importText}
-              onChange={(event) => setImportText(event.target.value)}
-              placeholder={"林舟 北京大学 北京\n周晴，哈佛大学，美国·波士顿，海外"}
-              rows={5}
-            />
-            <ActionGroup label="导入处理" className="review-actions">
-              <CompactButton icon={<FileUp size={14} aria-hidden />} onClick={prepareImport}>识别文本</CompactButton>
-              <CompactButton variant="secondary" aria-label="智能识别名单" onClick={prepareAiImport} disabled={isAiParsing || consentGate.isAsking}>
-                {isAiParsing ? "智能识别中..." : "智能识别名单"}
-              </CompactButton>
-              <CompactButton variant="secondary" onClick={prepareOcrImport}>识别 OCR 文本</CompactButton>
-              <ActionButton onClick={importDirectly} disabled={isAiParsing || consentGate.isAsking}>
-                {isAiParsing ? "识别并导入中..." : "一键识别并导入"}
-              </ActionButton>
-            </ActionGroup>
-            <AiUploadConsentDialog gate={consentGate} />
-            <AiUploadConsentMemo gate={consentGate} />
-            <div className="file-import-row">
-              <FileDropzone
-                id="data-excel-upload"
-                label="导入 Excel"
-                hint="XLSX / CSV · 最大 25 MB"
-                accept=".xlsx,.xls,.csv"
-                variant="secondary"
-                icon={<FileUp size={16} aria-hidden />}
-                onFile={(file) => { void handleExcelFile(file); }}
-              />
-              {!hideTemplateDownload && <CompactButton
-                variant="secondary"
-                aria-label="下载学生数据 XLSX 模板"
-                icon={<Download size={16} aria-hidden />}
-                onClick={() => { void downloadImportTemplate(); }}
-              >
-                下载 XLSX 模板
-              </CompactButton>}
-            </div>
-          </>
-        )}
-      </div>
-
       {excelRecognition?.headerRowIndex !== undefined && (
         <section className="import-recognition" aria-label="Excel 表头识别结果">
           <PanelHeader title="表头识别" meta={`第 ${excelRecognition.headerRowIndex + 1} 行`} />
@@ -574,9 +558,10 @@ export function DataWorkspace({
       <div className="student-actions">
         <input
           aria-label="筛选学生"
+          aria-describedby={filterResultId}
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
-          placeholder="筛选姓名、就读院校或城市"
+          placeholder="筛选姓名、院校、城市或省份"
         />
         <ActionGroup label="名单批量操作">
           <CompactButton aria-label="全部显示" icon={<Eye size={14} aria-hidden />} onClick={() => onSetStudentsVisibility(true)}>
@@ -589,6 +574,11 @@ export function DataWorkspace({
             <CompactButton icon={<X size={14} aria-hidden />} variant="ghost" onClick={() => setFilter("")}>清空筛选</CompactButton>
           )}
         </ActionGroup>
+        <small id={filterResultId} className="student-filter-feedback" aria-live="polite" aria-atomic="true">
+          {filter.trim()
+            ? `找到 ${filteredStudents.length} 条匹配记录（名单共 ${students.length} 条）`
+            : "筛选只影响下方列表；显示或隐藏决定记录是否出现在地图中。"}
+        </small>
       </div>
 
       <div className="data-list data-table-wrap">
@@ -615,11 +605,12 @@ export function DataWorkspace({
                   data-editing={isEditing || undefined}
                   className={`${isVisible ? "" : "is-hidden"} ${selectedStudentId === student.id ? "is-selected" : ""}`}
                   onClick={selectRow}
-                  onDoubleClick={() => startEditing(student)}
+                  onDoubleClick={(event) => startEditing(student, event.currentTarget)}
+                  onKeyDown={isEditing ? (event) => handleEditingKeyDown(event, student) : undefined}
                 >
                   {isEditing ? (
                     <>
-                      <td><input aria-label="编辑学生名称" value={editingDraft.name} placeholder="姓名" onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "name", event.target.value))} /></td>
+                      <td><input data-roster-edit-name aria-label="编辑学生名称" value={editingDraft.name} placeholder="姓名" onChange={(event) => setEditingDraft(updateStudentDraft(editingDraft, "name", event.target.value))} /></td>
                       <td><input aria-label="编辑就读院校" value={editingDraft.university} placeholder="就读院校" onChange={(event) => setEditingDraft(applyUniversityAutoLocation(editingDraft, event.target.value))} /></td>
                       <td><SearchCombobox label="编辑城市" value={editingDraft.city} allowFreeInput portal onChange={(value) => setEditingDraft(updateStudentDraft(editingDraft, "city", value))} searchOptions={cityOptions} /></td>
                       <td>
@@ -631,7 +622,7 @@ export function DataWorkspace({
                       </td>
                       <td><div className="student-row__buttons">
                         <IconButton label={`保存 ${student.name}`} icon={<Check size={14} />} onClick={(event) => { event.stopPropagation(); saveEditing(student); }} />
-                        <IconButton label={`取消编辑 ${student.name}`} icon={<X size={14} />} variant="ghost" onClick={(event) => { event.stopPropagation(); setEditingStudentId(null); }} />
+                        <IconButton label={`取消编辑 ${student.name}`} icon={<X size={14} />} variant="ghost" onClick={(event) => { event.stopPropagation(); cancelEditing(); }} />
                       </div></td>
                     </>
                   ) : (
@@ -682,7 +673,7 @@ export function DataWorkspace({
                         )}
                       </td>
                       <td><div className="student-row__buttons">
-                        <IconButton label={`编辑 ${student.name}`} icon={<Pencil size={14} />} onClick={(event) => { event.stopPropagation(); startEditing(student); }} />
+                        <IconButton data-roster-edit-trigger label={`编辑 ${student.name}`} icon={<Pencil size={14} />} onClick={(event) => { event.stopPropagation(); startEditing(student, event.currentTarget.closest("tr")); }} />
                         <IconButton label={`${isVisible ? "隐藏" : "显示"} ${student.name}`} icon={isVisible ? <EyeOff size={14} /> : <Eye size={14} />} onClick={(event) => { event.stopPropagation(); onToggleVisibility(student.id); }} />
                         <IconButton label={`删除 ${student.name}`} icon={<Trash2 size={14} />} variant="danger" onClick={(event) => { event.stopPropagation(); if (confirmDelete(student)) onDeleteStudent(student.id); }} />
                       </div></td>

@@ -106,4 +106,42 @@ describe("FileDropzone", () => {
     expect(onFile).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLInputElement>("#test-upload")?.disabled).toBe(true);
   });
+
+  it("offers a named keyboard control and opens the file picker once with Enter or Space", () => {
+    const { container } = renderDropzone();
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+    const input = container.querySelector<HTMLInputElement>("#test-upload")!;
+    const click = vi.spyOn(input, "click").mockImplementation(() => undefined);
+
+    expect(dropzone.getAttribute("role")).toBe("button");
+    expect(dropzone.getAttribute("aria-label")).toBe("上传图片");
+    expect(dropzone.tabIndex).toBe(0);
+    expect(container.querySelector(`#${dropzone.getAttribute("aria-describedby")}`)?.textContent).toBe("PNG、JPG");
+    dropzone.focus();
+    expect(document.activeElement).toBe(dropzone);
+
+    for (const key of ["Enter", " "]) {
+      click.mockClear();
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      flushSync(() => dropzone.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(true);
+      expect(click).toHaveBeenCalledOnce();
+      flushSync(() => dropzone.dispatchEvent(new KeyboardEvent("keydown", { key, repeat: true, bubbles: true })));
+      expect(click).toHaveBeenCalledOnce();
+    }
+  });
+
+  it.each([{ disabled: true }, { busy: true }])("blocks keyboard activation while inactive: %j", (state) => {
+    const { container } = renderDropzone(state);
+    const dropzone = container.querySelector<HTMLElement>("[data-file-dropzone]")!;
+    const input = container.querySelector<HTMLInputElement>("#test-upload")!;
+    const click = vi.spyOn(input, "click").mockImplementation(() => undefined);
+
+    expect(dropzone.tabIndex).toBe(-1);
+    expect(dropzone.getAttribute("aria-disabled")).toBe("true");
+    for (const key of ["Enter", " "]) {
+      flushSync(() => dropzone.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })));
+    }
+    expect(click).not.toHaveBeenCalled();
+  });
 });

@@ -17,7 +17,7 @@ export function WorkbenchHeader({ importInputRef, onCreateProject, onImportProje
       <div className="workbench-actions">
         <HelpFeedbackMenu variant="workbench" />
         <button type="button" className="secondary-button" aria-label="导入工程包" onClick={() => importInputRef.current?.click()}>
-          <FolderOpen size={16} /> 导入
+          <FolderOpen size={16} /> 导入工程包
         </button>
         <button type="button" className="primary-button" aria-label="新建项目" onClick={onCreateProject}>
           <Plus size={16} /> 新建项目

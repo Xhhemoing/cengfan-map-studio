@@ -1,0 +1,25 @@
+.export-project-dialog :is(h2, button, input):focus-visible {
+  outline: 2px solid var(--editor-accent, #315f57);
+  outline-offset: 3px;
+}
+
+.dialog-backdrop:has(.export-project-dialog) {
+  overflow-y: auto;
+}
+
+.export-project-dialog {
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 760px), (any-pointer: coarse) {
+  .dialog-backdrop .export-project-dialog header > button {
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+  }
+  .dialog-backdrop .export-project-dialog footer button {
+    min-height: 44px;
+  }
+}

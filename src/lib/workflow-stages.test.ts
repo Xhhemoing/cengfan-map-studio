@@ -5,6 +5,7 @@ import { computeWorkflowProgress } from "./workflow-progress";
 import {
   WORKFLOW_STAGES,
   deriveWorkflowStageProgress,
+  getWorkflowStageWarningCount,
   LEGACY_PANEL_TO_WORKFLOW_STAGE,
   LEGACY_WORKFLOW_STEP_TO_STAGE,
   WORKFLOW_STAGE_TO_LEGACY_PANEL,
@@ -14,6 +15,13 @@ import {
 } from "./workflow-stages";
 
 describe("workflow stages", () => {
+  it("keeps hidden rows for review without counting them as location repairs", () => {
+    const project = createProjectDocument({ students: sampleStudents.map((student) => ({ ...student, visibility: false })), templateId: "original", dataView: "province" });
+    const progress = computeWorkflowProgress(project);
+    expect(progress.exportStep.counts.hidden).toBeGreaterThan(0);
+    expect(progress.exportStep.status).toBe("warning");
+    expect(getWorkflowStageWarningCount("export", progress)).toBe(0);
+  });
   it("defines the five public production stages in order", () => {
     expect(WORKFLOW_STAGES.map((stage) => stage.id)).toEqual([
       "data",

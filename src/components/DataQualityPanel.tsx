@@ -14,13 +14,19 @@ const issueLabels: Record<DataIssueKind, string> = {
 export function DataQualityPanel({
   issues,
   onSelectStudent,
+  embedded = false,
 }: {
   issues: DataIssue[];
   onSelectStudent: (id: string) => void;
+  /** 外壳负责质量标题时保留详情，避免第二个标题及同名区域。 */
+  embedded?: boolean;
 }) {
+  const Container = embedded ? "div" : "section";
+  const warningCount = issues.filter((issue) => issue.severity === "warning").length;
+  const infoCount = issues.length - warningCount;
   return (
-    <section className="data-quality-panel" aria-label="数据质量">
-      <PanelHeader title="数据质量" meta={`${issues.length} 项状态`} />
+    <Container className="data-quality-panel" aria-label={embedded ? undefined : "数据质量"}>
+      {!embedded && <PanelHeader title="数据质量" meta={`${warningCount} 项提醒 · ${infoCount} 项说明`} />}
       {issues.length === 0 ? (
         <div className="data-quality-empty">
           <CheckCircle2 size={20} aria-hidden />
@@ -28,7 +34,7 @@ export function DataQualityPanel({
           <span>当前名单可以直接进入地图与卡片编辑。</span>
         </div>
       ) : (
-        <div className="data-quality-list" role="list" aria-label="数据质量问题">
+        <div className="data-quality-list" role="list" aria-label="名单质量项目">
           {issues.map((issue, index) => (
             <div className={`data-quality-row data-quality-row--${issue.severity}`} key={`${issue.studentId}-${issue.kind}-${index}`} role="listitem">
               <div className="data-quality-row__content">
@@ -47,6 +53,6 @@ export function DataQualityPanel({
           ))}
         </div>
       )}
-    </section>
+    </Container>
   );
 }

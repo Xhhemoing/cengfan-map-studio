@@ -18,6 +18,19 @@ afterEach(() => {
 });
 
 describe("WorkflowStageStepper", () => {
+  it("describes visibility review separately from repair counts", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push({ root, container });
+    const project = createProjectDocument({ students: sampleStudents.map((student) => ({ ...student, visibility: false })), templateId: "original", dataView: "province" });
+    flushSync(() => root.render(<WorkflowStageStepper activeId="export" project={project} progress={computeWorkflowProgress(project)} onChange={vi.fn()} />));
+    const button = container.querySelector<HTMLButtonElement>('[aria-current="step"]')!;
+    expect(button.getAttribute("aria-label")).toBe("交付");
+    const description = container.querySelector(`[id="${button.getAttribute("aria-describedby")}"]`);
+    expect(description?.textContent).toContain("条隐藏记录需检查");
+    expect(button.querySelector("small")).toBeNull();
+  });
   it("renders the five stage labels and reports the selected stage", () => {
     const container = document.createElement("div");
     document.body.append(container);

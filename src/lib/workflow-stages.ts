@@ -97,5 +97,6 @@ export function getWorkflowStageWarningCount(
       : stage === "export"
         ? progress.exportStep
         : null;
-  return item?.status === "warning" ? item.counts.unresolved + item.counts.hidden : 0;
+  // Hidden rows need a visibility review, not a location repair.
+  return item?.status === "warning" ? item.counts.unresolved : 0;
 }

@@ -126,6 +126,7 @@ describe("project store IndexedDB version upgrade", () => {
 
     expect(projects).toHaveLength(1);
     expect(projects[0]!.name).toBe("迁移的项目");
+    expect(projects[0]!.preview).toEqual({ canvasWidth: 1500, canvasHeight: 1000, dataView: "province" });
   });
 
   it("upgrades a clean database (no legacy workspace) without errors", async () => {
@@ -146,6 +147,7 @@ describe("project store IndexedDB version upgrade", () => {
       id: "proj-pre-metadata",
       studentCount: 1,
       assetCount: 0,
+      preview: { canvasWidth: 1500, canvasHeight: 1000, dataView: "province" },
     });
     expect((await store.get("proj-pre-metadata"))?.pack.project.students[0]?.name).toBe("旧工作区学生");
   });
@@ -161,7 +163,7 @@ describe("project store IndexedDB version upgrade", () => {
     const listed = await reopened.list();
 
     expect(listed.map((project) => project.id).sort()).toEqual(["proj-orphan", "proj-paired"]);
-    expect(listed.find((project) => project.id === "proj-orphan")).toMatchObject({ studentCount: 1, assetCount: 0 });
+    expect(listed.find((project) => project.id === "proj-orphan")).toMatchObject({ studentCount: 1, assetCount: 0, preview: { canvasWidth: 1500, canvasHeight: 1000, dataView: "province" } });
     expect((await reopened.get("proj-orphan"))?.pack.project.students[0]?.name).toBe("旧工作区学生");
     expect((await readMetadataKeys(factory)).sort()).toEqual(["proj-orphan", "proj-paired"]);
   });

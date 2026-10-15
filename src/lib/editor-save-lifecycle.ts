@@ -63,10 +63,24 @@ export function useWorkspaceSaveLifecycle(options: WorkspaceSaveLifecycleOptions
   const backToWorkbench = async (): Promise<void> => {
     if (backNavigatingRef.current) return;
     backNavigatingRef.current = true;
-    if (record.idRef.current && !projectLoading && !projectMissing) {
-      await saveWorkspaceNow();
+    try {
+      if (record.idRef.current && !projectLoading && !projectMissing) {
+        await saveWorkspaceNow();
+        const status = workspaceSync.getState().status;
+        if (status !== "saved") {
+          options.reportStatus(status === "pending"
+            ? "保存期间产生了新修改，当前编辑器已保留。请再次保存当前版本后返回项目列表。"
+            : `当前编辑器已保留，请重试保存后再返回项目列表。${describeForceSaveOutcome(status, record.saveErrorRef.current)}`);
+          backNavigatingRef.current = false;
+          return;
+        }
+      }
+      window.location.hash = "#/";
+    } catch (error) {
+      backNavigatingRef.current = false;
+      const message = error instanceof Error ? error.message : "未知保存错误";
+      options.reportStatus(`返回前保存失败（${message}）。当前编辑器已保留，请重试保存或导出工程包备份。`);
     }
-    window.location.hash = "#/";
   };
 
   // 仅项目模式注册:visibilitychange/pagehide 时若存在未保存编辑,尽力保存到
@@ -88,7 +102,10 @@ export function useWorkspaceSaveLifecycle(options: WorkspaceSaveLifecycleOptions
 
   const overwriteBrowserStorage = async (): Promise<void> => {
     await saveWorkspaceNow();
-    options.reportStatus(describeForceSaveOutcome(workspaceSync.getState().status, record.saveErrorRef.current));
+    const status = workspaceSync.getState().status;
+    options.reportStatus(status === "pending"
+      ? "点击保存时的版本已保存，期间产生了新修改。请再次保存当前版本。"
+      : describeForceSaveOutcome(status, record.saveErrorRef.current));
   };
 
   return { saveWorkspaceNow, backToWorkbench, overwriteBrowserStorage };

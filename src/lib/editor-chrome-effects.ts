@@ -25,6 +25,8 @@ import { saveWorkspaceSession, type WorkspaceSession } from "./workspace-session
 
 export interface EditorChromeEffectsOptions {
   workspaceSession: WorkspaceSession;
+  /** Omit only for the public editor's legacy global session. */
+  sessionStorageKey?: string;
   activeStage: WorkflowStageId;
   selection: SceneSelection;
   themeMode: ThemeMode;
@@ -39,6 +41,7 @@ export interface EditorChromeEffectsOptions {
 export function useEditorChromeEffects(options: EditorChromeEffectsOptions): void {
   const {
     workspaceSession,
+    sessionStorageKey,
     activeStage,
     selection,
     themeMode,
@@ -54,8 +57,8 @@ export function useEditorChromeEffects(options: EditorChromeEffectsOptions): voi
     if (typeof window === "undefined") return;
     const storage = loadBrowserValue(() => window.localStorage, null);
     if (!storage) return;
-    saveWorkspaceSession(storage, nextWorkspaceSession(workspaceSession, { stage: activeStage, selection }));
-  }, [activeStage, selection, workspaceSession]);
+    saveWorkspaceSession(storage, nextWorkspaceSession(workspaceSession, { stage: activeStage, selection }), sessionStorageKey);
+  }, [activeStage, selection, workspaceSession, sessionStorageKey]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;

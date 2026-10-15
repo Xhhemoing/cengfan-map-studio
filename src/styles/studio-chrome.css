@@ -228,3 +228,15 @@
   background: color-mix(in srgb, var(--editor-danger) 8%, var(--editor-surface-raised));
   border-color: var(--editor-danger);
 }
+
+/* A boolean setting is neutral until enabled. Reserve danger for destructive actions. */
+.app-shell[data-editor-skin][data-editor-theme] label.boolean-control.checkbox-row {
+  color: var(--editor-ink);
+}
+.app-shell[data-editor-skin][data-editor-theme] label.boolean-control.checkbox-row:has(input:checked) {
+  color: var(--editor-accent);
+}
+.app-shell[data-editor-skin][data-editor-theme] label.boolean-control.checkbox-row:has(input:disabled) {
+  color: var(--editor-ink-muted);
+  cursor: not-allowed;
+}

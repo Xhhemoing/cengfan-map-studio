@@ -18,6 +18,19 @@ function workspace(name: string, exportedAt: string): ProjectPackage {
 }
 
 describe("local workspace overwrite", () => {
+  it("restores a hydrated save time without writing and preserves it after subsequent edits", () => {
+    const saveLocal = vi.fn(async () => undefined);
+    const onStateChange = vi.fn();
+    const sync = new LocalWorkspaceOverwrite({ saveLocal, onStateChange });
+
+    sync.restoreSaved("2026-10-01T09:00:00.000Z");
+    expect(sync.getState()).toEqual({ status: "saved", savedAt: "2026-10-01T09:00:00.000Z" });
+    expect(onStateChange).toHaveBeenLastCalledWith(sync.getState());
+    expect(saveLocal).not.toHaveBeenCalled();
+    sync.markPending();
+    expect(sync.getState()).toEqual({ status: "pending", savedAt: "2026-10-01T09:00:00.000Z" });
+  });
+
   it("overwrites the complete local workspace without sending it to a server", async () => {
     const saveLocal = vi.fn(async () => undefined);
     const sync = new LocalWorkspaceOverwrite({ saveLocal });
@@ -41,6 +54,7 @@ describe("local workspace overwrite", () => {
     const second = workspace("后续修改", "2026-07-27T12:00:01.000Z");
 
     const firstSave = sync.overwrite(first);
+    sync.markPending();
     const secondSave = sync.overwrite(second);
     release();
     await Promise.all([firstSave, secondSave]);
@@ -48,6 +62,39 @@ describe("local workspace overwrite", () => {
     expect(saveLocal).toHaveBeenCalledTimes(2);
     expect(saveLocal).toHaveBeenLastCalledWith(second);
     expect(sync.getState()).toEqual({ status: "saved", savedAt: second.exportedAt });
+  });
+
+  it("keeps edits made during an in-flight save pending until their own snapshot is saved", async () => {
+    let release!: () => void;
+    const saveLocal = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; })).mockResolvedValue(undefined);
+    const sync = new LocalWorkspaceOverwrite({ saveLocal });
+    const first = workspace("点击时版本", "2026-10-01T09:00:00.000Z");
+    const pending = sync.overwrite(first);
+    sync.markPending();
+    release();
+    await pending;
+
+    expect(sync.getState()).toEqual({ status: "pending", savedAt: first.exportedAt });
+    const latest = workspace("保存期间修改", "2026-10-01T09:00:01.000Z");
+    await sync.overwrite(latest);
+    expect(sync.getState()).toEqual({ status: "saved", savedAt: latest.exportedAt });
+  });
+
+  it("does not let hydration announce a newer workspace as saved while an older write is pending", async () => {
+    let release!: () => void;
+    const saveLocal = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; })).mockResolvedValue(undefined);
+    const sync = new LocalWorkspaceOverwrite({ saveLocal });
+    const older = workspace("正在写的快照", "2026-10-01T09:00:00.000Z");
+    const pending = sync.overwrite(older);
+    sync.restoreSaved("2026-10-01T08:00:00.000Z");
+    expect(sync.getState()).toEqual({ status: "saving", savedAt: null });
+    release();
+    await pending;
+    expect(sync.getState()).toEqual({ status: "pending", savedAt: older.exportedAt });
+
+    const adopted = workspace("水合读回的版本", "2026-10-01T09:00:01.000Z");
+    await sync.overwrite(adopted);
+    expect(sync.getState()).toEqual({ status: "saved", savedAt: adopted.exportedAt });
   });
 
   it("reports a local overwrite failure", async () => {

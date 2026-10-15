@@ -63,6 +63,7 @@ export function DeferredInput({ value, onCommit, onBlur, onFocus, onKeyDown, ...
       onKeyDown={(event) => {
         onKeyDown?.(event);
         if (event.defaultPrevented) return;
+        if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         if (event.key === "Enter") {
           event.preventDefault();
           commitDraft();
@@ -123,6 +124,7 @@ export function DeferredTextarea({ value, onCommit, onBlur, onFocus, onKeyDown, 
       onKeyDown={(event) => {
         onKeyDown?.(event);
         if (event.defaultPrevented) return;
+        if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
           commitDraft();
