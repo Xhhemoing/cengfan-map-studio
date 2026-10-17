@@ -44,3 +44,7 @@
 不引入支付、套餐、收费结算；见 [开源与收费边界](开源与收费边界.md)。不为压低告警修改默认构图或名单事实，不把本地编辑器改为必须登录/联网，也不整支恢复被淘汰的大型历史分支。
 
 所有 PR 基于 `main`；开放 PR 尽量控制在 2–3 个，先收口再扩张。分支超过 7 天应复核负责人和独有提交，不能按年龄盲删。合并之后清理已合入且未移动的分支。正式发布仅从审查过的主干 SHA 产生 tag，禁止重写已发布 tag；主干 Pages 是开发预览，Release 后显式部署对应 tag。流程见 [RELEASING](RELEASING.md)。
+
+## 2026-09-30：开放 PR 与交付边界
+
+[PR #69](https://github.com/Xhhemoing/cengfan-map-studio/pull/69) 补齐依赖审计、环境诊断和仓库维护门禁。[PR #66](https://github.com/Xhhemoing/cengfan-map-studio/pull/66) 继续实现实验性 AI 任务板、共享参数校验和整体确认。两者分开审查，不因仓库维护而默认开启实验功能。详细剩余工作见 [#68](https://github.com/Xhhemoing/cengfan-map-studio/issues/68)；持久恢复、真实模型评测与自动重规划尚未完成。PR 的实时状态以 GitHub 为准，不将待合并内容当成已发布功能。

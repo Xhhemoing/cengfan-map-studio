@@ -6,6 +6,7 @@
 
 ```bash
 npm ci
+npm run doctor
 npm run dev
 ```
 
@@ -27,6 +28,9 @@ npm run dev
 ## 常用命令
 
 ```bash
+npm run doctor         # 无密钥环境诊断；-- --json 可供工具读取
+npm run check:repository # 维护文档本地链接、元数据、工作流引用检查
+npm run test:maintenance # Node 原生维护工具回归
 npm run dev:web         # 仅 Vite
 npm run dev:ai          # 仅 Node API
 npx vitest run <file>   # 有针对性的回归
@@ -35,8 +39,8 @@ npm run typecheck
 npm run lint
 npm test
 npm run build
-npm run check           # 上述质量检查串行执行
-npm run security:audit  # 独立联网审计
+npm run check           # 维护、发布与应用质量检查串行执行
+npm run security:report # 全量及生产依赖结构化联网审计
 ```
 
 `npm run preview` 是 `npm run start` 的别名，会启动完整 API；静态构建预览请使用 `npx vite preview`。`scripts/run-heavy.mjs` 防止重型任务重叠；全量校验不要并行启动。
@@ -58,3 +62,9 @@ npm run security:audit  # 独立联网审计
 [CONTRIBUTING](CONTRIBUTING.md) 说明 PR 流程；[ROADMAP](docs/ROADMAP.md) 管理未来任务；[PROJECT_STATUS](docs/PROJECT_STATUS.md) 区分已合并和未完成。
 
 发布不再依赖手工推 tag 的隐含假设。必须准备 CHANGELOG 与 `docs/releases/vX.Y.Z.md`，审查主干 SHA，然后按 [RELEASING](docs/RELEASING.md) 执行验证、版本同步与发布。CI 通过、已合并和已发布是三个不同状态。
+
+## 维护与贡献者自检
+
+[项目治理](GOVERNANCE.md) · [架构导航](docs/ARCHITECTURE.md) · [维护手册](docs/MAINTAINERS.md)
+
+仓库检查不代表独立安全认证，也不代替人工评审或分支保护设置。

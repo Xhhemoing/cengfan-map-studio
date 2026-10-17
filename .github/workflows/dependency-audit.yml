@@ -1,0 +1,46 @@
+name: Dependency audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Audit reporter regression
+        run: node --test scripts/dependency-audit.test.mjs
+      - name: Retain exact audited source and runtime identity
+        run: |
+          mkdir -p artifacts/dependency-audit
+          git rev-parse HEAD > artifacts/dependency-audit/commit.txt
+          node --version > artifacts/dependency-audit/node.txt
+          npm --version > artifacts/dependency-audit/npm.txt
+          git archive --format=tar.gz HEAD > artifacts/dependency-audit/source.tar.gz
+      - name: Audit all and production dependencies
+        run: node scripts/dependency-audit.mjs
+      - name: Retain audit evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-audit
+          path: artifacts/dependency-audit/
+          retention-days: 14
+          if-no-files-found: error
